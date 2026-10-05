@@ -58,6 +58,7 @@ final class JcaContentSigner implements ContentSigner {
     /* default */ JcaContentSigner(PrivateKey privateKey, AlgorithmIdentifier algorithm) {
         this.algorithm = Objects.requireNonNull(algorithm, "algorithm");
         Objects.requireNonNull(privateKey, "privateKey");
+        zeroecho.core.alg.common.sig.StatefulSigningGuard.requireStateless(algorithm.oid(), privateKey);
         try {
             this.signature = Signature.getInstance(BcAlgorithmIdentifiers.jcaName(algorithm));
             this.signature.initSign(privateKey);

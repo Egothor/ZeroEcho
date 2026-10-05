@@ -33,7 +33,7 @@
  ******************************************************************************/
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { executeOperation } from '@/api/operations';
+import { executeOperation, loadOperationDescriptors } from '@/api/operations';
 import { operationSpec } from '@/api/operationCatalog';
 import { resetTransport, setTransport, type Transport } from '@/api/transport';
 
@@ -55,6 +55,38 @@ function transport(...responses: ReturnType<typeof response>[]) {
 }
 
 afterEach(() => { resetTransport(); vi.useRealTimers(); });
+
+describe('Authenticated operation discovery', () => {
+  const descriptor = { operation: 'ca.create', family: 'SIGNING_OPERATION', mutating: true,
+    resourceType: 'AUTHORITY', approval: 'HIGH_RISK', dataView: 'METADATA_REDACTED' };
+  const discovery = (result: unknown) => ({ version: 1, requestId: 'discovery', operation: 'operation.list',
+    status: 'SUCCEEDED', failure: null, result });
+
+  it('unwraps the real server envelope and preserves a successfully empty result', async () => {
+    transport(response(200, discovery({ count: 1, operations: [descriptor] })),
+      response(200, discovery({ count: 0, operations: [] })));
+    expect(await loadOperationDescriptors()).toEqual({ count: 1, operations: [descriptor] });
+    expect(await loadOperationDescriptors()).toEqual({ count: 0, operations: [] });
+  });
+
+  it.each([
+    { count: 1, operations: [descriptor] },
+    discovery({ count: 2, operations: [descriptor] }),
+    discovery({ count: 2, operations: [descriptor, descriptor] }),
+    discovery({ count: 1, operations: [{ ...descriptor, mutating: 'true' }] }),
+    discovery({ count: 1, operations: [{ ...descriptor, family: ['PKI_OPERATION'] }] }),
+    { ...discovery({ count: 1, operations: [descriptor] }), status: 'FAILED' },
+    { ...discovery({ count: 1, operations: [descriptor] }), operation: 'unrelated.list' },
+  ])('rejects malformed or unsuccessful discovery without a static fallback', async (body) => {
+    transport(response(200, body));
+    await expect(loadOperationDescriptors()).rejects.toMatchObject({ code: 'invalid_operation_response' });
+  });
+
+  it('does not accept denied discovery', async () => {
+    transport(response(403, { ...discovery(null), status: 'FAILED', failure: failure('AUTHORIZATION_DENIED') }));
+    await expect(loadOperationDescriptors()).rejects.toBeDefined();
+  });
+});
 
 describe('Asynchronous signing operation contract', () => {
   it.each(['CONFLICT', 'EXTERNAL_OUTCOME_UNKNOWN'])('does not turn HTTP 409 %s into approval', async (code) => {

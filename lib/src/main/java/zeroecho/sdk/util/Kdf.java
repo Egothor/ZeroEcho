@@ -92,6 +92,7 @@ public final class Kdf { // NOPMD
      * @throws GeneralSecurityException if the MAC operation fails
      * @throws IllegalArgumentException if {@code ikm} is empty or {@code length} is
      *                                  out of range
+     * @since 1.0
      */
     public static byte[] hkdfSha256(byte[] ikm, byte[] salt, byte[] info, int length) throws GeneralSecurityException {
 

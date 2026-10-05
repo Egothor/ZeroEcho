@@ -80,7 +80,11 @@ public final class SemanticPreparationFixture implements AutoCloseable {
 
     static SemanticPreparationFixture open(Path root, Clock clock) throws Exception {
         Files.createDirectories(root);
-        Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        try {
+            Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException ignored) {
+            // Windows does not support POSIX file permissions.
+        }
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         KeyPair keys = generator.generateKeyPair();

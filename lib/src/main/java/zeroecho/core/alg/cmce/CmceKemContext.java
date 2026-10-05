@@ -44,12 +44,12 @@ import java.util.Objects;
 import javax.security.auth.DestroyFailedException;
 
 import org.bouncycastle.crypto.SecretWithEncapsulation;
-import org.bouncycastle.pqc.crypto.cmce.CMCEKEMExtractor;
-import org.bouncycastle.pqc.crypto.cmce.CMCEKEMGenerator;
-import org.bouncycastle.pqc.crypto.cmce.CMCEPrivateKeyParameters;
-import org.bouncycastle.pqc.crypto.cmce.CMCEPublicKeyParameters;
-import org.bouncycastle.pqc.crypto.util.PrivateKeyFactory;
-import org.bouncycastle.pqc.crypto.util.PublicKeyFactory;
+import org.bouncycastle.crypto.kems.CMCEKEMExtractor;
+import org.bouncycastle.crypto.kems.CMCEKEMGenerator;
+import org.bouncycastle.crypto.params.CMCEPrivateKeyParameters;
+import org.bouncycastle.crypto.params.CMCEPublicKeyParameters;
+import org.bouncycastle.crypto.util.PrivateKeyFactory;
+import org.bouncycastle.crypto.util.PublicKeyFactory;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.context.KemContext;

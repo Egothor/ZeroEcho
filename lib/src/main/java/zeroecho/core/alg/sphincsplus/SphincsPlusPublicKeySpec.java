@@ -53,7 +53,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * array.</li>
  * <li>Marshalling and unmarshalling methods convert between this object and a
  * {@link PairSeq} representation using Base64 encoding.</li>
- * <li>The {@code providerName} defaults to {@code "BCPQC"} (Bouncy Castle PQC
+ * <li>The {@code providerName} defaults to {@code "BC"} (Bouncy Castle
  * provider) if not explicitly supplied.</li>
  * </ul>
  *
@@ -78,17 +78,18 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * @since 1.0
  */
 public final class SphincsPlusPublicKeySpec implements AlgorithmKeySpec {
+    private static final String LEGACY_PROVIDER = "BCPQC";
     private final byte[] encodedX509;
-    private final String providerName; // e.g. "BCPQC"
+    private final String providerName; // e.g. "BC"
 
     /**
-     * Constructs a new specification with the default provider {@code "BCPQC"}.
+     * Constructs a new specification with the default provider {@code "BC"}.
      *
      * @param encodedX509 X.509-encoded SPHINCS+ public key bytes
      * @throws IllegalArgumentException if {@code encodedX509} is {@code null}
      */
     public SphincsPlusPublicKeySpec(byte[] encodedX509) {
-        this(encodedX509, "BCPQC");
+        this(encodedX509, "BC");
     }
 
     /**
@@ -96,15 +97,19 @@ public final class SphincsPlusPublicKeySpec implements AlgorithmKeySpec {
      *
      * @param encodedX509  X.509-encoded SPHINCS+ public key bytes
      * @param providerName JCA provider to use for import; if {@code null}, defaults
-     *                     to {@code "BCPQC"}
+     *                     to {@code "BC"}
      * @throws IllegalArgumentException if {@code encodedX509} is {@code null}
+     *                                  or the provider is legacy {@code "BCPQC"}
      */
     public SphincsPlusPublicKeySpec(byte[] encodedX509, String providerName) {
         if (encodedX509 == null) {
             throw new IllegalArgumentException("encodedX509 must not be null");
         }
+        if (LEGACY_PROVIDER.equals(providerName)) {
+            throw new IllegalArgumentException("Legacy BCPQC SPHINCS+ imports are unsupported; use SLH-DSA keys with BC");
+        }
         this.encodedX509 = encodedX509.clone();
-        this.providerName = (providerName == null ? "BCPQC" : providerName);
+        this.providerName = (providerName == null ? "BC" : providerName);
     }
 
     /**
@@ -146,16 +151,17 @@ public final class SphincsPlusPublicKeySpec implements AlgorithmKeySpec {
      *
      * <p>
      * Expects keys {@code "x509.b64"} (required, Base64 string) and
-     * {@code "provider"} (optional, defaults to {@code "BCPQC"}).
+     * {@code "provider"} (optional, defaults to {@code "BC"}).
      * </p>
      *
      * @param p serialized input
      * @return a reconstructed public key spec
-     * @throws IllegalArgumentException if the encoded key is missing
+     * @throws IllegalArgumentException if the encoded key is missing, malformed
+     *                                  Base64, or the provider is legacy {@code "BCPQC"}
      */
     public static SphincsPlusPublicKeySpec unmarshal(PairSeq p) {
         byte[] out = null;
-        String prov = "BCPQC";
+        String prov = "BC";
         PairSeq.Cursor c = p.cursor();
         while (c.next()) {
             String k = c.key();

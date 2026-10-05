@@ -41,7 +41,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import java.util.Base64;
+
 import zeroecho.core.io.CancellationSignal;
+import zeroecho.pki.api.BackupService;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.AuditIntegrityReport;
 import zeroecho.pki.api.audit.AuditIntegrityService;
@@ -57,6 +60,12 @@ import zeroecho.pki.server.acme.AcmeState;
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
         "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
 public final class ServerControlOperationExecutor {
+    private static final String TEXT_SERVICE = "service";
+    private static final String TEXT_ITEMS = "items";
+    private static final String TEXT_NEXT_OFFSET = "nextOffset";
+    private static final String TEXT_HAS_MORE = "hasMore";
+    private static final String TEXT_AUTHORITY_ID = "authorityId";
+
     private static final String DISPLAY_NAME = "displayName";
 
     private final zeroecho.pki.application.PkiOperationExecutor pkiExecutor;
@@ -75,8 +84,13 @@ public final class ServerControlOperationExecutor {
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
     private final java.util.concurrent.atomic.AtomicReference<AcmeService> acme = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<OcspResponderService> ocsp = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.est.EstService> est = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.scep.ScepService> scep = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.cmp.CmpService> cmp = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.enrollment.EnrollmentProfileService> enrollmentProfiles = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<AuditService> auditSearch = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<AuditIntegrityService> auditIntegrity = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<BackupService> backup = new java.util.concurrent.atomic.AtomicReference<>();
 
     /**
      * Creates the one control dispatcher over existing durable authorities.
@@ -173,7 +187,7 @@ public final class ServerControlOperationExecutor {
      * @throws IllegalStateException if an ACME service is already installed
      */
     public void installAcme(AcmeService service) {
-        if (!acme.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
+        if (!acme.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
             throw new IllegalStateException("ACME administration capability is already installed");
         }
     }
@@ -185,8 +199,56 @@ public final class ServerControlOperationExecutor {
      * @throws IllegalStateException if an OCSP service is already installed
      */
     public void installOcsp(OcspResponderService service) {
-        if (!ocsp.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
+        if (!ocsp.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
             throw new IllegalStateException("OCSP administration capability is already installed");
+        }
+    }
+
+    /**
+     * Installs the EST RFC 7030 endpoint registry exactly once before listener readiness.
+     *
+     * @param service realm-owned EST service
+     * @throws IllegalStateException if an EST service is already installed
+     */
+    public void installEst(zeroecho.pki.server.est.EstService service) {
+        if (!est.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
+            throw new IllegalStateException("EST administration capability is already installed");
+        }
+    }
+
+    /**
+     * Installs the SCEP RFC 8894 endpoint registry exactly once before listener readiness.
+     *
+     * @param service realm-owned SCEP service
+     * @throws IllegalStateException if a SCEP service is already installed
+     */
+    public void installScep(zeroecho.pki.server.scep.ScepService service) {
+        if (!scep.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
+            throw new IllegalStateException("SCEP administration capability is already installed");
+        }
+    }
+
+    /**
+     * Installs the CMP RFC 4210/9480 endpoint registry exactly once before listener readiness.
+     *
+     * @param service realm-owned CMP service
+     * @throws IllegalStateException if a CMP service is already installed
+     */
+    public void installCmp(zeroecho.pki.server.cmp.CmpService service) {
+        if (!cmp.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
+            throw new IllegalStateException("CMP administration capability is already installed");
+        }
+    }
+
+    /**
+     * Installs the enrollment profile registry exactly once before listener readiness.
+     *
+     * @param service realm-owned enrollment profile service
+     * @throws IllegalStateException if an enrollment profile service is already installed
+     */
+    public void installEnrollmentProfiles(zeroecho.pki.server.enrollment.EnrollmentProfileService service) {
+        if (!enrollmentProfiles.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
+            throw new IllegalStateException("Enrollment profile administration capability is already installed");
         }
     }
 
@@ -207,6 +269,20 @@ public final class ServerControlOperationExecutor {
             throw new IllegalStateException("Audit query capability is already installed");
         }
         auditIntegrity.set(integrity);
+    }
+
+    /**
+     * Installs the backup capability exactly once.
+     *
+     * @param backupService backup service backed by the store
+     * @throws NullPointerException if {@code backupService} is {@code null}
+     * @throws IllegalStateException if a backup service is already installed
+     */
+    public void installBackup(BackupService backupService) {
+        Objects.requireNonNull(backupService, "backupService");
+        if (!backup.compareAndSet(null, backupService)) {
+            throw new IllegalStateException("Backup capability is already installed");
+        }
     }
 
     /** Resolves the authoritative credential authorization resource before admission. */
@@ -314,6 +390,10 @@ public final class ServerControlOperationExecutor {
             case ServerControlOperation.InspectAuditView value -> ordinary(operation, auditView(value, actor));
             case ServerControlOperation.SearchAudit value -> ordinary(operation, auditSearch(value));
             case ServerControlOperation.VerifyAuditIntegrity value -> ordinary(operation, auditVerify(value));
+            case ServerControlOperation.ExportBackup value -> ordinary(operation, exportBackup(value));
+            case ServerControlOperation.VerifyBackup value -> ordinary(operation, verifyBackup(value));
+            case ServerControlOperation.ExecuteRestore _ ->
+                    failure(operation, PkiOperationFailure.POLICY_REJECTION, "BACKUP_RESTORE_UNAVAILABLE");
             case ServerControlOperation.InspectRepositoryAlias value -> ordinary(operation,
                     alias(aliases().require(value.authorityId(), value.type())));
             case ServerControlOperation.ListRepositoryAliases value -> ordinary(operation,
@@ -347,6 +427,102 @@ public final class ServerControlOperationExecutor {
                     page(ocsp().list(value.offset(), value.limit()), ServerControlOperationExecutor::responder));
             case ServerControlOperation.SetOcspResponderActive value -> ordinary(operation,
                     responder(ocsp().setActive(value.responderId(), value.active())));
+            case ServerControlOperation.RegisterEstEndpoint value -> {
+                est().register(value.endpoint());
+                yield ordinary(operation, estEndpoint(value.endpoint()));
+            }
+            case ServerControlOperation.DeregisterEstEndpoint value -> ordinary(operation,
+                    est().deregister(value.label())
+                            .map(ServerControlOperationExecutor::estEndpoint)
+                            .orElseThrow(() -> new IllegalArgumentException("EST endpoint not found: " + value.label())));
+            case ServerControlOperation.InspectEstEndpoint value -> ordinary(operation,
+                    est().find(value.label())
+                            .map(ServerControlOperationExecutor::estEndpoint)
+                            .orElseThrow(() -> new IllegalArgumentException("EST endpoint not found: " + value.label())));
+            case ServerControlOperation.ListEstEndpoints value -> {
+                List<zeroecho.pki.server.est.EstEndpoint> all = est().list();
+                List<zeroecho.pki.server.est.EstEndpoint> slice =
+                        all.stream().skip(value.offset()).limit(value.limit()).toList();
+                boolean hasMore = all.size() > value.offset() + slice.size();
+                yield ordinary(operation, object(TEXT_ITEMS,
+                        new PkiOperationValue.ListValue(slice.stream()
+                                .<PkiOperationValue>map(ServerControlOperationExecutor::estEndpoint).toList()),
+                        TEXT_NEXT_OFFSET, integer(value.offset() + slice.size()),
+                        TEXT_HAS_MORE, bool(hasMore)));
+            }
+            case ServerControlOperation.RegisterScepEndpoint value -> {
+                scep().register(value.endpoint());
+                yield ordinary(operation, scepEndpoint(value.endpoint()));
+            }
+            case ServerControlOperation.DeregisterScepEndpoint value -> ordinary(operation,
+                    scep().deregister(value.label())
+                            .map(ServerControlOperationExecutor::scepEndpoint)
+                            .orElseThrow(() -> new IllegalArgumentException("SCEP endpoint not found: " + value.label())));
+            case ServerControlOperation.InspectScepEndpoint value -> ordinary(operation,
+                    scep().find(value.label())
+                            .map(ServerControlOperationExecutor::scepEndpoint)
+                            .orElseThrow(() -> new IllegalArgumentException("SCEP endpoint not found: " + value.label())));
+            case ServerControlOperation.ListScepEndpoints value -> {
+                List<zeroecho.pki.server.scep.ScepEndpoint> allScep = scep().list();
+                List<zeroecho.pki.server.scep.ScepEndpoint> scepSlice =
+                        allScep.stream().skip(value.offset()).limit(value.limit()).toList();
+                boolean scepHasMore = allScep.size() > value.offset() + scepSlice.size();
+                yield ordinary(operation, object(TEXT_ITEMS,
+                        new PkiOperationValue.ListValue(scepSlice.stream()
+                                .<PkiOperationValue>map(ServerControlOperationExecutor::scepEndpoint).toList()),
+                        TEXT_NEXT_OFFSET, integer(value.offset() + scepSlice.size()),
+                        TEXT_HAS_MORE, bool(scepHasMore)));
+            }
+            case ServerControlOperation.RegisterCmpEndpoint value -> {
+                cmp().register(value.endpoint());
+                yield ordinary(operation, cmpEndpoint(value.endpoint()));
+            }
+            case ServerControlOperation.DeregisterCmpEndpoint value -> ordinary(operation,
+                    cmp().deregister(value.label())
+                            .map(ServerControlOperationExecutor::cmpEndpoint)
+                            .orElseThrow(() -> new IllegalArgumentException("CMP endpoint not found: " + value.label())));
+            case ServerControlOperation.InspectCmpEndpoint value -> ordinary(operation,
+                    cmp().find(value.label())
+                            .map(ServerControlOperationExecutor::cmpEndpoint)
+                            .orElseThrow(() -> new IllegalArgumentException("CMP endpoint not found: " + value.label())));
+            case ServerControlOperation.ListCmpEndpoints value -> {
+                List<zeroecho.pki.server.cmp.CmpEndpoint> allCmp = cmp().list();
+                List<zeroecho.pki.server.cmp.CmpEndpoint> cmpSlice =
+                        allCmp.stream().skip(value.offset()).limit(value.limit()).toList();
+                boolean cmpHasMore = allCmp.size() > value.offset() + cmpSlice.size();
+                yield ordinary(operation, object(TEXT_ITEMS,
+                        new PkiOperationValue.ListValue(cmpSlice.stream()
+                                .<PkiOperationValue>map(ServerControlOperationExecutor::cmpEndpoint).toList()),
+                        TEXT_NEXT_OFFSET, integer(value.offset() + cmpSlice.size()),
+                        TEXT_HAS_MORE, bool(cmpHasMore)));
+            }
+            case ServerControlOperation.RegisterEnrollmentProfile value -> {
+                enrollmentProfiles().register(value.profile());
+                yield ordinary(operation, enrollmentProfile(value.profile()));
+            }
+            case ServerControlOperation.UpdateEnrollmentProfile value -> ordinary(operation,
+                    enrollmentProfile(enrollmentProfiles().update(value.profile())));
+            case ServerControlOperation.InspectEnrollmentProfile value -> ordinary(operation,
+                    enrollmentProfiles().find(value.id())
+                            .map(ServerControlOperationExecutor::enrollmentProfile)
+                            .orElseThrow(() -> new IllegalArgumentException("Enrollment profile not found: " + value.id())));
+            case ServerControlOperation.ListEnrollmentProfiles value -> {
+                List<zeroecho.pki.server.enrollment.EnrollmentProfile> allEp = enrollmentProfiles().list();
+                List<zeroecho.pki.server.enrollment.EnrollmentProfile> epSlice =
+                        allEp.stream().skip(value.offset()).limit(value.limit()).toList();
+                boolean epHasMore = allEp.size() > value.offset() + epSlice.size();
+                yield ordinary(operation, object(TEXT_ITEMS,
+                        new PkiOperationValue.ListValue(epSlice.stream()
+                                .<PkiOperationValue>map(ServerControlOperationExecutor::enrollmentProfile).toList()),
+                        TEXT_NEXT_OFFSET, integer(value.offset() + epSlice.size()),
+                        TEXT_HAS_MORE, bool(epHasMore)));
+            }
+            case ServerControlOperation.ActivateEnrollmentProfile value -> ordinary(operation,
+                    enrollmentProfile(enrollmentProfiles().setState(value.id(),
+                            zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE)));
+            case ServerControlOperation.SuspendEnrollmentProfile value -> ordinary(operation,
+                    enrollmentProfile(enrollmentProfiles().setState(value.id(),
+                            zeroecho.pki.server.enrollment.EnrollmentProfileState.SUSPENDED)));
         };
     }
 
@@ -358,7 +534,7 @@ public final class ServerControlOperationExecutor {
         zeroecho.pki.application.PkiConfigurationChoicesSource.Choices choices =
                 source.configurationChoices(query.limit(), query.after(), cancellation);
         Map<String, PkiOperationValue> keys = new LinkedHashMap<>();
-        keys.put("items", new PkiOperationValue.ListValue(choices.keys().stream()
+        keys.put(TEXT_ITEMS, new PkiOperationValue.ListValue(choices.keys().stream()
                 .<PkiOperationValue>map(key -> object("keyRef", text(key.value()), DISPLAY_NAME, text(key.value()))).toList()));
         keys.put("count", integer(choices.keys().size()));
         keys.put("truncated", bool(choices.nextCursor().isPresent()));
@@ -396,7 +572,7 @@ public final class ServerControlOperationExecutor {
         boolean more = selected.size() > query.limit();
         List<DisclosureService.Capability> rows = selected.subList(0, Math.min(selected.size(), query.limit()));
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
-        fields.put("items", new PkiOperationValue.ListValue(rows.stream().map(ServerControlOperationExecutor::capability).toList()));
+        fields.put(TEXT_ITEMS, new PkiOperationValue.ListValue(rows.stream().map(ServerControlOperationExecutor::capability).toList()));
         fields.put("count", integer(rows.size()));
         fields.put("truncated", bool(more));
         if (more) { fields.put("nextCursor", text(rows.getLast().capabilityId())); }
@@ -409,6 +585,23 @@ public final class ServerControlOperationExecutor {
 
     private OcspResponderService ocsp() {
         return Optional.ofNullable(ocsp.get()).orElseThrow(() -> new IllegalStateException("OCSP capability unavailable"));
+    }
+
+    private zeroecho.pki.server.est.EstService est() {
+        return Optional.ofNullable(est.get()).orElseThrow(() -> new IllegalStateException("EST capability unavailable"));
+    }
+
+    private zeroecho.pki.server.scep.ScepService scep() {
+        return Optional.ofNullable(scep.get()).orElseThrow(() -> new IllegalStateException("SCEP capability unavailable"));
+    }
+
+    private zeroecho.pki.server.cmp.CmpService cmp() {
+        return Optional.ofNullable(cmp.get()).orElseThrow(() -> new IllegalStateException("CMP capability unavailable"));
+    }
+
+    private zeroecho.pki.server.enrollment.EnrollmentProfileService enrollmentProfiles() {
+        return Optional.ofNullable(enrollmentProfiles.get())
+                .orElseThrow(() -> new IllegalStateException("Enrollment profile capability unavailable"));
     }
 
     /* default */ OcspResponderService.Responder ocspResponder(String responderId) {
@@ -556,6 +749,32 @@ public final class ServerControlOperationExecutor {
         return new PkiOperationValue.ObjectValue(fields);
     }
 
+    private PkiOperationValue exportBackup(ServerControlOperation.ExportBackup value) {
+        BackupService service = backup.get();
+        if (service == null) {
+            throw new IllegalStateException("Backup is not supported by the configured store");
+        }
+        zeroecho.pki.api.backup.BackupArtifact artifact = service.createBackup(
+                new zeroecho.pki.api.backup.BackupRequest(value.label(), value.attributes()));
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("backupId", text(artifact.backupId().value()));
+        fields.put("payload", text(Base64.getEncoder().encodeToString(artifact.payload().bytes())));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
+    private PkiOperationValue verifyBackup(ServerControlOperation.VerifyBackup value) {
+        BackupService service = backup.get();
+        if (service == null) {
+            throw new IllegalStateException("Backup is not supported by the configured store");
+        }
+        zeroecho.pki.api.backup.BackupVerificationReport report = service.verifyBackup(value.artifact());
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("valid", bool(report.valid()));
+        fields.put("issues", new PkiOperationValue.ListValue(
+                report.issues().stream().map(s -> (PkiOperationValue) text(s)).toList()));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
     // Payload-free safe projection of one audit event: scalar metadata only, never the free-form details map.
     private static PkiOperationValue auditEventValue(AuditEvent event) {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
@@ -604,7 +823,7 @@ public final class ServerControlOperationExecutor {
     private static PkiOperationValue alias(RepositoryAliasService.Record value) {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
         fields.put("aliasId", text(value.aliasId()));
-        fields.put("authorityId", text(value.authorityId().value()));
+        fields.put(TEXT_AUTHORITY_ID, text(value.authorityId().value()));
         fields.put("type", text(value.type().name()));
         fields.put("targetObjectId", text(value.targetObjectId().value()));
         value.issuerId().ifPresent(id -> fields.put("issuerId", text(id.value())));
@@ -615,7 +834,7 @@ public final class ServerControlOperationExecutor {
     }
     private static PkiOperationValue directory(AcmeState.Directory value) {
         return object("directoryId", text(value.directoryId()), "alias", text(value.alias()),
-                "revision", integer(value.revision()), "authorityId", text(value.authorityId().value()),
+                "revision", integer(value.revision()), TEXT_AUTHORITY_ID, text(value.authorityId().value()),
                 "profileId", text(value.profile().profileId()), "issuerId", text(value.issuerId().value()),
                 "pathId", text(value.issuancePathId().value()), "status", text(value.status().name()),
                 "policyCommitment", text(value.policyCommitment()));
@@ -625,9 +844,48 @@ public final class ServerControlOperationExecutor {
                 "directoryRevision", integer(value.directoryRevision()), "status", text(value.status().name()),
                 "createdAt", text(value.createdAt().toString()), "updatedAt", text(value.updatedAt().toString()));
     }
+    private static PkiOperationValue estEndpoint(zeroecho.pki.server.est.EstEndpoint value) {
+        return object("label", text(value.label()), TEXT_AUTHORITY_ID, text(value.authorityId()),
+                "profileId", text(value.profileId()),
+                "keygenEnabled", bool(value.keygen().enabled()),
+                "keygenAlgorithms", new PkiOperationValue.ListValue(
+                        value.keygen().permittedAlgorithms().stream()
+                                .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList()),
+                "keygenMaxKeySizeBits", integer(value.keygen().maximumKeySizeBits()),
+                "keygenStoreKeys", bool(value.keygen().storeGeneratedKeys()));
+    }
+
+    private static PkiOperationValue scepEndpoint(zeroecho.pki.server.scep.ScepEndpoint value) {
+        return object("label", text(value.label()), TEXT_AUTHORITY_ID, text(value.authorityId()),
+                "profileId", text(value.profileId()),
+                "challengePasswordHash", text(value.challengePasswordHash()));
+    }
+
+    private static PkiOperationValue cmpEndpoint(zeroecho.pki.server.cmp.CmpEndpoint value) {
+        return object("label", text(value.label()), TEXT_AUTHORITY_ID, text(value.authorityId()),
+                "profileId", text(value.profileId()),
+                "protectionPolicy", text(value.protectionPolicy().name()));
+    }
+
+    private static PkiOperationValue enrollmentProfile(zeroecho.pki.server.enrollment.EnrollmentProfile value) {
+        List<PkiOperationValue> allowedAuthorities = value.allowedAuthorityIds().stream()
+                .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
+        List<PkiOperationValue> requiredSans = value.requiredSanDomains().stream()
+                .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
+        return object("id", text(value.id()),
+                "displayName", text(value.displayName()),
+                "state", text(value.state().name()),
+                "certificateProfileId", text(value.certificateProfileId()),
+                "allowedAuthorityIds", new PkiOperationValue.ListValue(allowedAuthorities),
+                "subjectDnPattern", value.subjectDnPattern().map(ServerControlOperationExecutor::text)
+                        .orElse(text("")),
+                "requiredSanDomains", new PkiOperationValue.ListValue(requiredSans),
+                "requireApproval", bool(value.requireApproval()));
+    }
+
     private static PkiOperationValue responder(OcspResponderService.Responder value) {
         return object("responderId", text(value.responderId()), "alias", text(value.alias()),
-                "authorityId", text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
+                TEXT_AUTHORITY_ID, text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
                 "signingMode", text(value.signingMode().name()), "responderCredentialId",
                 text(value.responderCredentialId().value()), "state", text(value.state().name()),
                 "requestAuthenticationMode", text(value.requestAuthenticationMode().name()),
@@ -673,16 +931,16 @@ public final class ServerControlOperationExecutor {
     }
     private static <T> PkiOperationValue page(ServerControlStore.Page<T> page,
             java.util.function.Function<T, PkiOperationValue> renderer) {
-        return object("items", new PkiOperationValue.ListValue(page.values().stream().map(renderer).toList()),
-                "nextOffset", integer(page.nextOffset()), "hasMore", bool(page.hasMore()));
+        return object(TEXT_ITEMS, new PkiOperationValue.ListValue(page.values().stream().map(renderer).toList()),
+                TEXT_NEXT_OFFSET, integer(page.nextOffset()), TEXT_HAS_MORE, bool(page.hasMore()));
     }
     private static <T> PkiOperationValue scopedPage(ServerControlStore.Page<T> page,
             Permission.Scope requested, java.util.function.Function<T, Permission.Scope> scope,
             java.util.function.Function<T, PkiOperationValue> renderer) {
         List<PkiOperationValue> values = page.values().stream()
                 .filter(item -> contains(requested, scope.apply(item))).map(renderer).toList();
-        return object("items", new PkiOperationValue.ListValue(values), "nextOffset",
-                integer(page.nextOffset()), "hasMore", bool(page.hasMore()));
+        return object(TEXT_ITEMS, new PkiOperationValue.ListValue(values), TEXT_NEXT_OFFSET,
+                integer(page.nextOffset()), TEXT_HAS_MORE, bool(page.hasMore()));
     }
     private static PkiOperationValue approvalPage(ServerControlStore.Page<ApprovalService.Request> page,
             Permission.Scope requested, ServerControlOperation.ListApprovals filter) {
@@ -692,8 +950,8 @@ public final class ServerControlOperationExecutor {
                 .filter(item -> filter.requesterPrincipalId().map(item.requesterPrincipalId()::equals).orElse(true))
                 .filter(item -> filter.targetOperationId().map(item.operationId()::equals).orElse(true))
                 .map(ServerControlOperationExecutor::approval).toList();
-        return object("items", new PkiOperationValue.ListValue(values), "nextOffset",
-                integer(page.nextOffset()), "hasMore", bool(page.hasMore()));
+        return object(TEXT_ITEMS, new PkiOperationValue.ListValue(values), TEXT_NEXT_OFFSET,
+                integer(page.nextOffset()), TEXT_HAS_MORE, bool(page.hasMore()));
     }
     private static boolean contains(Permission.Scope requested, Permission.Scope actual) {
         return requested.realmId().equals(actual.realmId())

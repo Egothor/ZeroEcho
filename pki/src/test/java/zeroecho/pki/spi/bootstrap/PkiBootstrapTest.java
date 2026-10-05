@@ -181,6 +181,18 @@ public final class PkiBootstrapTest {
         }
     }
 
+    @Test void signingRuntimeClockIsExplicitAndLegacyFactoriesKeepSystemUtc() {
+        Clock fixed = Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC);
+        KeyringUnlockProvider provider = () -> password();
+        assertSame(fixed, SigningProviderRuntimeDependencies.withClock(fixed).clock());
+        assertSame(fixed, SigningProviderRuntimeDependencies.withKeyringUnlockProvider(provider, fixed).clock());
+        assertSame(provider, SigningProviderRuntimeDependencies.withKeyringUnlockProvider(provider, fixed)
+                .keyringUnlockProvider().orElseThrow());
+        assertEquals(ZoneOffset.UTC, SigningProviderRuntimeDependencies.none().clock().getZone());
+        assertEquals(ZoneOffset.UTC, SigningProviderRuntimeDependencies.withKeyringUnlockProvider(provider).clock().getZone());
+        assertThrows(NullPointerException.class, () -> SigningProviderRuntimeDependencies.withClock(null));
+    }
+
     private static Clock filesystemStoreClock(PkiStore store) throws Exception {
         java.lang.reflect.Field field = store.getClass().getDeclaredField("clock");
         field.setAccessible(true);

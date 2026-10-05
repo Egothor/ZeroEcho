@@ -141,6 +141,9 @@ public final class MldsaKeyGenBuilder implements AsymmetricKeyPairGenerator<Mlds
             Field f = cls.getField(field);
             return f.get(null);
         } catch (ReflectiveOperationException e) {
+            System.getLogger(MldsaKeyGenBuilder.class.getName()).log(System.Logger.Level.DEBUG,
+                    "Static field {0}.{1} not found — provider may not support this algorithm parameter",
+                    className, field);
             return null;
         }
     }

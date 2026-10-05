@@ -1,5 +1,10 @@
 # Kubernetes
 
+Before upgrading an existing PVC, follow the explicit
+[offline layout migration](operations.md#offline-layout-migration). Mount the writable
+`store-container` parent, with PKI state in its `store/` child and server-control
+state outside that child. The entrypoint refuses an unmigrated legacy root.
+
 On Kubernetes the PKI server runs as a single-replica StatefulSet with per-instance
 PersistentVolumeClaims, and the nginx edge runs as a horizontally scalable
 Deployment. Configuration comes from ConfigMaps, secrets from Secrets, and the
@@ -97,7 +102,7 @@ spec:
             - {name: profiles, mountPath: /etc/zeroecho/profiles, readOnly: true}
             - {name: tls, mountPath: /etc/zeroecho/tls, readOnly: true}
             - {name: health, mountPath: /etc/zeroecho/health, readOnly: true}
-            - {name: store, mountPath: /var/lib/zeroecho/store}
+            - {name: store, mountPath: /var/lib/zeroecho/store-container}
             - {name: keyring, mountPath: /var/lib/zeroecho/keyring}
             - {name: artifacts, mountPath: /var/lib/zeroecho/artifacts}
             - {name: audit, mountPath: /var/lib/zeroecho/audit}

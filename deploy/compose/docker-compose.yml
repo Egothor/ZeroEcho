@@ -68,7 +68,7 @@ services:
       ZEROECHO_PROFILE_BOOTSTRAP_CONFIG: /etc/zeroecho/profile-bootstrap.json
       ZEROECHO_PROFILE_RECONCILE: "${ZEROECHO_PROFILE_RECONCILE:-on}"
       ZEROECHO_PROFILES_DIR: /etc/zeroecho/profiles
-      ZEROECHO_STORE_DIR: /var/lib/zeroecho/store
+      ZEROECHO_STORE_DIR: /var/lib/zeroecho/store-container/store
       ZEROECHO_AUDIT_DIR: /var/lib/zeroecho/audit
       ZEROECHO_ADMIN_PORT: "8443"
     volumes:
@@ -98,7 +98,7 @@ services:
         target: /etc/zeroecho/health
         read_only: true
       # Persistent state. Store and keyring are SEPARATE volumes on purpose.
-      - store:/var/lib/zeroecho/store
+      - store:/var/lib/zeroecho/store-container
       - keyring:/var/lib/zeroecho/keyring
       - artifacts:/var/lib/zeroecho/artifacts
       - audit:/var/lib/zeroecho/audit

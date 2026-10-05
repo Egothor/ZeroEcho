@@ -75,6 +75,8 @@ import zeroecho.core.spec.VoidSpec;
  * <li>RSA PKCS#1 v1.5 with SHA-256/384/512</li>
  * <li>ECDSA with SHA-256/384/512</li>
  * <li>Ed25519 and Ed448</li>
+ * <li>ML-DSA-44, ML-DSA-65, ML-DSA-87 (FIPS 204)</li>
+ * <li>SLH-DSA SHA2 and SHAKE variants (FIPS 205)</li>
  * </ul>
  *
  * <p>
@@ -85,6 +87,9 @@ import zeroecho.core.spec.VoidSpec;
  * </p>
  */
 public final class SignatureInteropProfiles {
+    private static final String TEXT_ML_DSA = "ML-DSA";
+    private static final String TEXT_SLH_DSA = "SLH-DSA";
+
 
     private static final Map<String, SignatureInteropProfile> PROFILES = Map.ofEntries(
             Map.entry("SHA256withRSA", new SignatureInteropProfile("SHA256withRSA", "RSA", "RSA", // NOPMD
@@ -120,6 +125,36 @@ public final class SignatureInteropProfiles {
             Map.entry("Ed448", new SignatureInteropProfile("Ed448", "Ed448", "Ed448", VoidSpec.INSTANCE,
                     SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
             Map.entry("SPHINCS+", new SignatureInteropProfile("SPHINCS+", "SPHINCS+", "SPHINCS+",
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("ML-DSA-44", new SignatureInteropProfile("ML-DSA-44", TEXT_ML_DSA, TEXT_ML_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("ML-DSA-65", new SignatureInteropProfile("ML-DSA-65", TEXT_ML_DSA, TEXT_ML_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("ML-DSA-87", new SignatureInteropProfile("ML-DSA-87", TEXT_ML_DSA, TEXT_ML_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHA2-128s", new SignatureInteropProfile("SLH-DSA-SHA2-128s", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHA2-128f", new SignatureInteropProfile("SLH-DSA-SHA2-128f", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHA2-192s", new SignatureInteropProfile("SLH-DSA-SHA2-192s", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHA2-192f", new SignatureInteropProfile("SLH-DSA-SHA2-192f", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHA2-256s", new SignatureInteropProfile("SLH-DSA-SHA2-256s", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHA2-256f", new SignatureInteropProfile("SLH-DSA-SHA2-256f", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHAKE-128s", new SignatureInteropProfile("SLH-DSA-SHAKE-128s", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHAKE-128f", new SignatureInteropProfile("SLH-DSA-SHAKE-128f", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHAKE-192s", new SignatureInteropProfile("SLH-DSA-SHAKE-192s", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHAKE-192f", new SignatureInteropProfile("SLH-DSA-SHAKE-192f", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHAKE-256s", new SignatureInteropProfile("SLH-DSA-SHAKE-256s", TEXT_SLH_DSA, TEXT_SLH_DSA,
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SLH-DSA-SHAKE-256f", new SignatureInteropProfile("SLH-DSA-SHAKE-256f", TEXT_SLH_DSA, TEXT_SLH_DSA,
                     VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)));
 
     private static final Map<String, SignatureInteropProfile> CANONICAL_PROFILES = Map.ofEntries(
@@ -132,7 +167,22 @@ public final class SignatureInteropProfiles {
             canonical(BootstrapAlgorithmIdentities.ECDSA_SHA512, "SHA512withECDSA"),
             canonical(BootstrapAlgorithmIdentities.ED25519_SIGNATURE, "Ed25519"),
             canonical(BootstrapAlgorithmIdentities.ED448_SIGNATURE, "Ed448"),
-            canonical(BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, "SPHINCS+"));
+            canonical(BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, "SPHINCS+"),
+            canonical(BootstrapAlgorithmIdentities.ML_DSA_44_SIGNATURE, "ML-DSA-44"),
+            canonical(BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE, "ML-DSA-65"),
+            canonical(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE, "ML-DSA-87"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128S_SIGNATURE, "SLH-DSA-SHA2-128s"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128F_SIGNATURE, "SLH-DSA-SHA2-128f"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192S_SIGNATURE, "SLH-DSA-SHA2-192s"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192F_SIGNATURE, "SLH-DSA-SHA2-192f"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256S_SIGNATURE, "SLH-DSA-SHA2-256s"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256F_SIGNATURE, "SLH-DSA-SHA2-256f"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128S_SIGNATURE, "SLH-DSA-SHAKE-128s"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128F_SIGNATURE, "SLH-DSA-SHAKE-128f"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192S_SIGNATURE, "SLH-DSA-SHAKE-192s"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192F_SIGNATURE, "SLH-DSA-SHAKE-192f"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256S_SIGNATURE, "SLH-DSA-SHAKE-256s"),
+            canonical(BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256F_SIGNATURE, "SLH-DSA-SHAKE-256f"));
 
     private SignatureInteropProfiles() {
     }

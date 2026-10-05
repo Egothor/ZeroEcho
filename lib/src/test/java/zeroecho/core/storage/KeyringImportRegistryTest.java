@@ -70,8 +70,8 @@ class KeyringImportRegistryTest {
     void persistentImporterMatrixIsClosedUniqueAndExecutable() throws Exception {
         start("persistentImporterMatrixIsClosedUniqueAndExecutable");
         List<KeyringImportRegistry.PersistentMapping> mappings = KeyringImportRegistry.mappings();
-        assertEquals(19, count(mappings, KeyringStore.Kind.PUBLIC_KEY));
-        assertEquals(19, count(mappings, KeyringStore.Kind.PRIVATE_KEY));
+        assertEquals(22, count(mappings, KeyringStore.Kind.PUBLIC_KEY));
+        assertEquals(22, count(mappings, KeyringStore.Kind.PRIVATE_KEY));
         assertEquals(6, count(mappings, KeyringStore.Kind.SECRET_KEY));
         assertEquals(mappings.size(), mappings.stream().distinct().count());
 

@@ -37,8 +37,9 @@ import java.lang.reflect.Field;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.util.Locale;
 import java.util.Objects;
+
+import zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec.Mode;
 
 import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
@@ -46,11 +47,11 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * Key pair builder for the SPHINCS+ post-quantum signature scheme.
  *
  * <p>
- * {@code SphincsPlusKeyGenBuilder} integrates with the Bouncy Castle PQC
- * provider to generate key pairs for SPHINCS+. It maps high-level
+ * {@code SphincsPlusKeyGenBuilder} integrates with the Bouncy Castle BC
+ * provider to generate pure SLH-DSA key pairs. It maps high-level
  * {@link SphincsPlusKeyGenSpec} parameters (hash family, security level,
  * variant, and mode) to the appropriate
- * {@code org.bouncycastle.pqc.jcajce.spec.SPHINCSPlusParameterSpec} constant.
+ * {@code org.bouncycastle.jcajce.spec.SLHDSAParameterSpec} constant.
  * Reflection is used to avoid a hard dependency on all parameter variants.
  * </p>
  *
@@ -63,7 +64,9 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  *
  * <h2>Example</h2> <pre>{@code
  * SphincsPlusKeyGenSpec spec =
- *     SphincsPlusKeyGenSpec.sphincsPlusSha2_128s_robust();
+ *     SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,
+ *         SphincsPlusKeyGenSpec.Security.L1_128, SphincsPlusKeyGenSpec.Variant.SMALL,
+ *         SphincsPlusKeyGenSpec.Mode.SIMPLE);
  *
  * KeyPair kp = new SphincsPlusKeyGenBuilder().generateKeyPair(spec);
  * }</pre>
@@ -71,8 +74,9 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * @since 1.0
  */
 public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyPairGenerator<SphincsPlusKeyGenSpec> {
+    private static final String LEGACY_PROVIDER = "BCPQC";
 
-    private static final String ALG = "SPHINCSPlus";
+    private static final String ALG = "SLH-DSA";
 
     /** Creates a stateless SPHINCS+ key-pair generator. */
     public SphincsPlusKeyGenBuilder() {
@@ -80,11 +84,11 @@ public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyPairGenerato
     }
 
     /**
-     * Generates a SPHINCS+ key pair using the given specification.
+     * Generates a pure SLH-DSA key pair for the SPHINCS+ compatibility binding.
      *
      * <p>
      * The method resolves the corresponding Bouncy Castle
-     * {@code SPHINCSPlusParameterSpec} constant via reflection and initializes a
+     * {@code SLHDSAParameterSpec} constant via reflection and initializes a
      * {@link KeyPairGenerator}. If {@link SphincsPlusKeyGenSpec#providerName()} is
      * non-null, the generator is obtained from that provider.
      * </p>
@@ -93,13 +97,18 @@ public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyPairGenerato
      *             level, variant, and mode
      * @return a freshly generated SPHINCS+ {@link KeyPair}
      * @throws NullPointerException     if {@code spec} is {@code null}
+     * @throws IllegalArgumentException if ROBUST, HARAKA, BCPQC or an unsupported
+     *                                  explicit parameter constant is requested
      * @throws GeneralSecurityException if the parameter spec cannot be resolved or
      *                                  if the provider fails to generate a key pair
      */
     @Override
     public KeyPair generateKeyPair(SphincsPlusKeyGenSpec spec) throws GeneralSecurityException {
         Objects.requireNonNull(spec, "spec");
-        // Resolve BC SPHINCSPlusParameterSpec via reflection by constant name(s)
+        if (LEGACY_PROVIDER.equals(spec.providerName())) {
+            throw new IllegalArgumentException("Legacy BCPQC SPHINCS+ generation is unsupported");
+        }
+        // Resolve BC SLHDSAParameterSpec via reflection by constant name(s)
         Object bcParamSpec = resolveBcParameterSpec(spec);
 
         KeyPairGenerator kpg = (spec.providerName() == null) ? KeyPairGenerator.getInstance(ALG)
@@ -111,57 +120,55 @@ public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyPairGenerato
     }
 
     /**
-     * Resolves the Bouncy Castle parameter spec constant that corresponds to the
-     * given high-level {@link SphincsPlusKeyGenSpec}.
+     * Resolves the Bouncy Castle {@code SLHDSAParameterSpec} constant that
+     * corresponds to the given high-level {@link SphincsPlusKeyGenSpec}.
      *
      * <p>
-     * Preferred constant names follow the convention:
-     * {@code {sha2|shake|haraka}_{128|192|256}{f|s}_{robust|simple}}. Legacy names
-     * without a suffix (e.g., {@code sha2_128f}) are also tried for robust mode.
+     * SPHINCS+ was standardized as SLH-DSA (FIPS 205). The {@link Mode}
+     * ROBUST construction and {@link SphincsPlusKeyGenSpec.Hash#HARAKA} have
+     * no supported SLH-DSA mapping and are rejected, including with an override.
+     * SIMPLE selects the current SLH-DSA compatibility binding, not a conversion
+     * of legacy SPHINCS+ keys or signatures.
+     * </p>
+     *
+     * <p>
+     * If {@link SphincsPlusKeyGenSpec#explicitParamConstant()} is set, that field
+     * name is looked up directly on {@code org.bouncycastle.jcajce.spec.SLHDSAParameterSpec}.
      * </p>
      *
      * @param spec the key generation specification
-     * @return a matching {@code SPHINCSPlusParameterSpec} instance
-     * @throws GeneralSecurityException if no matching constant is found
+     * @return a matching {@code SLHDSAParameterSpec} instance
+     * @throws IllegalArgumentException if a legacy mode or unsupported constant is requested
+     * @throws GeneralSecurityException if no provider constant is found
      */
     private static Object resolveBcParameterSpec(SphincsPlusKeyGenSpec spec) throws GeneralSecurityException {
-        // explicit override by constant name
+        if (spec.mode() != Mode.SIMPLE || spec.hash() == SphincsPlusKeyGenSpec.Hash.HARAKA) {
+            throw new IllegalArgumentException("ROBUST and HARAKA are not supported by the SLH-DSA binding");
+        }
         if (spec.explicitParamConstant() != null) {
-            Object c = fetchStaticField("org.bouncycastle.pqc.jcajce.spec.SPHINCSPlusParameterSpec",
+            if (!spec.explicitParamConstant().matches("slh_dsa_(sha2|shake)_(128|192|256)[fs]")) {
+                throw new IllegalArgumentException("Unsupported SLH-DSA parameter constant");
+            }
+            Object c = fetchStaticField("org.bouncycastle.jcajce.spec.SLHDSAParameterSpec",
                     spec.explicitParamConstant());
             if (c != null) {
                 return c;
             }
             throw new GeneralSecurityException(
-                    "Unknown SPHINCSPlusParameterSpec constant: " + spec.explicitParamConstant());
+                    "Unknown SLHDSAParameterSpec constant: " + spec.explicitParamConstant());
         }
 
-        String fam = switch (spec.hash()) {
-            case SHA2 -> "sha2";
-            case SHAKE -> "shake";
-            case HARAKA -> "haraka";
-        };
+        String fam = (spec.hash() == SphincsPlusKeyGenSpec.Hash.SHA2) ? "sha2" : "shake";
         String bits = Integer.toString(spec.security().bits);
         String v = (spec.variant() == SphincsPlusKeyGenSpec.Variant.FAST) ? "f" : "s";
+        // SIMPLE identifies the current pure SLH-DSA compatibility binding.
+        String name = "slh_dsa_" + fam + "_" + bits + v;
 
-        // candidates in order
-        final String[] names;
-        if (spec.mode() == SphincsPlusKeyGenSpec.Mode.ROBUST) {
-            names = new String[] { fam + "_" + bits + v + "_robust", // new (robust-explicit)
-                    fam + "_" + bits + v // legacy (robust default)
-            };
-        } else {
-            names = new String[] { fam + "_" + bits + v + "_simple" };
+        Object c = fetchStaticField("org.bouncycastle.jcajce.spec.SLHDSAParameterSpec", name);
+        if (c != null) {
+            return c;
         }
-
-        for (String n : names) {
-            Object c = fetchStaticField("org.bouncycastle.pqc.jcajce.spec.SPHINCSPlusParameterSpec", n);
-            if (c != null) {
-                return c;
-            }
-        }
-        throw new GeneralSecurityException("Cannot resolve SPHINCSPlusParameterSpec for " + fam + "_" + bits + v + " ("
-                + spec.mode().name().toLowerCase(Locale.ROOT) + ")");
+        throw new GeneralSecurityException("Cannot resolve SLHDSAParameterSpec constant: " + name);
     }
 
     /**

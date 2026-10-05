@@ -36,17 +36,20 @@ package zeroecho.pki.spi.crypto;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.time.Clock;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
 
-/** Explicit process-local security capabilities supplied to a signing factory. */
+/** Immutable process-local capabilities and clock supplied to a signing factory. */
 public final class SigningProviderRuntimeDependencies {
     private static final SigningProviderRuntimeDependencies NONE =
-            new SigningProviderRuntimeDependencies(null);
+            new SigningProviderRuntimeDependencies(null, Clock.systemUTC());
     private final KeyringUnlockProvider keyringUnlockProvider;
+    private final Clock clock;
 
-    private SigningProviderRuntimeDependencies(KeyringUnlockProvider keyringUnlockProvider) {
+    private SigningProviderRuntimeDependencies(KeyringUnlockProvider keyringUnlockProvider, Clock clock) {
         this.keyringUnlockProvider = keyringUnlockProvider;
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     /**
@@ -65,8 +68,36 @@ public final class SigningProviderRuntimeDependencies {
      * @return dependencies containing the provider
      */
     public static SigningProviderRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
-        return new SigningProviderRuntimeDependencies(Objects.requireNonNull(provider, "provider must not be null"));
+        return withKeyringUnlockProvider(provider, Clock.systemUTC());
     }
+
+    /**
+     * Supplies the clock shared with signing submission and recovery validation.
+     * @param clock nonnull session clock
+     * @return immutable dependencies without an unlock provider
+     * @throws NullPointerException if clock is null
+     */
+    public static SigningProviderRuntimeDependencies withClock(Clock clock) {
+        return new SigningProviderRuntimeDependencies(null, clock);
+    }
+
+    /**
+     * Supplies an unlock provider and the session clock.
+     * @param provider nonnull process-local unlock provider
+     * @param clock nonnull session clock
+     * @return immutable dependencies borrowing both objects
+     * @throws NullPointerException if either argument is null
+     */
+    public static SigningProviderRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider, Clock clock) {
+        return new SigningProviderRuntimeDependencies(Objects.requireNonNull(provider, "provider"), clock);
+    }
+
+    /**
+     * Returns the clock used for signing submission and recovery validation.
+     *
+     * @return the nonnull configured clock
+     */
+    public Clock clock() { return clock; }
 
     /**
      * Returns the optional process-local keyring unlock provider.

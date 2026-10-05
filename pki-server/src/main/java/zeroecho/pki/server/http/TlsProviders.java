@@ -57,17 +57,24 @@ final class TlsProviders {
         List<PkiServerTlsProvider> providers = new ArrayList<>();
         ServiceLoader.load(PkiServerTlsProvider.class, Objects.requireNonNull(loader, "loader"))
                 .forEach(providers::add);
-        providers.sort(Comparator.comparing(PkiServerTlsProvider::id));
+        ServiceLoader.load(zeroecho.pki.server.spi.v2.PkiServerTlsProvider.class, loader)
+                .forEach(provider -> providers.add(new PkiServerTlsProvider() {
+                    @Override public String id() { return provider.id(); }
+                    @Override public SSLContext create(ProviderConfig config) throws Exception {
+                        return provider.create(config);
+                    }
+                }));
         Set<String> ids = new HashSet<>();
         if (providers.stream().anyMatch(provider -> provider.id() == null || provider.id().isBlank()
                 || !ids.add(provider.id()))) {
             throw new IllegalStateException("TLS provider identities are ambiguous");
         }
+        providers.sort(Comparator.comparing(PkiServerTlsProvider::id));
         PkiServerTlsProvider selected = providers.stream()
                 .filter(provider -> provider.id().equals(configuration.backendId()))
                 .findFirst().orElseThrow(() -> new IllegalStateException("Configured TLS provider is unavailable"));
         try {
-            return selected.create(configuration);
+            return Objects.requireNonNull(selected.create(configuration), "TLS provider returned no context");
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Exception failure) {

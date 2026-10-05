@@ -59,7 +59,7 @@ import zeroecho.core.spi.PublicKeyImporter;
  * <h2>Example</h2> <pre>{@code
  * // Assuming bytes contain an X.509-encoded SPHINCS+ public key:
  * SphincsPlusPublicKeySpec spec =
- *     new SphincsPlusPublicKeySpec("BCPQC", encodedBytes);
+ *     new SphincsPlusPublicKeySpec(encodedBytes, "BC");
  *
  * PublicKey pub =
  *     new SphincsPlusPublicKeyBuilder().importPublic(spec);
@@ -78,7 +78,7 @@ public final class SphincsPlusPublicKeyBuilder implements PublicKeyImporter<Sphi
      * Imports a SPHINCS+ public key from X.509 encoding.
      *
      * <p>
-     * The method uses {@link KeyFactory} with algorithm {@code "SPHINCSPlus"} and
+     * The method uses {@link KeyFactory} with algorithm {@code "SLH-DSA"} and
      * the provider specified in the {@code spec}. If no provider name is given, the
      * default provider resolution is used.
      * </p>
@@ -93,8 +93,8 @@ public final class SphincsPlusPublicKeyBuilder implements PublicKeyImporter<Sphi
      */
     @Override
     public PublicKey importPublic(SphincsPlusPublicKeySpec spec) throws GeneralSecurityException {
-        KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance("SPHINCSPlus")
-                : KeyFactory.getInstance("SPHINCSPlus", spec.providerName());
+        KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance("SLH-DSA")
+                : KeyFactory.getInstance("SLH-DSA", spec.providerName());
         return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
     }
 }

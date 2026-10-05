@@ -33,10 +33,11 @@
  ******************************************************************************/
 
 import type { FieldValue } from '@/api/operations';
+import type { OperationId } from '@/api/operationCatalog';
 
 export type SelectionContext = Readonly<Record<string, FieldValue>>;
 export interface RefSource {
-  readonly operationId: string;
+  readonly operationId: OperationId;
   readonly args: Record<string, FieldValue>;
   readonly resultKey: string;
   readonly idKey: string;
@@ -47,9 +48,9 @@ export interface RefSource {
   readonly inputs?: Readonly<Record<string, string>>;
   readonly filterBy?: Readonly<Record<string, string>>;
 }
-const page = (operationId: string, resultKey: string, idKey: string, label: string, labelKeys: string[], extra: Partial<RefSource> = {}): RefSource =>
+const page = (operationId: OperationId, resultKey: string, idKey: string, label: string, labelKeys: string[], extra: Partial<RefSource> = {}): RefSource =>
   ({ operationId, resultKey, idKey, label, labelKeys, args: { limit: 100 }, paging: 'cursor', ...extra });
-const control = (operationId: string, idKey: string, label: string, labelKeys: string[]): RefSource =>
+const control = (operationId: OperationId, idKey: string, label: string, labelKeys: string[]): RefSource =>
   page(operationId, 'value.items', idKey, label, labelKeys, { args: { offset: 0, limit: 100 }, paging: 'offset', pagePath: 'value' });
 const configured = (resultKey: string, idKey: string, label: string): RefSource =>
   ({ operationId: 'configuration.choices', args: { limit: 100 }, resultKey: `value.${resultKey}`, idKey, label, labelKeys: ['displayName'] });
@@ -77,6 +78,10 @@ export const REF_SOURCES: Readonly<Record<string, RefSource>> = {
   acmeDirectory: control('acme.directory.list', 'directoryId', 'ACME directory', ['alias', 'status', 'profileId']),
   acmeAccount: control('acme.account.list', 'accountId', 'ACME account', ['directoryId', 'status', 'createdAt']),
   ocspResponder: control('ocsp.responder.list', 'responderId', 'OCSP responder', ['alias', 'state']),
+  scepEndpoint: control('scep.endpoint.list', 'label', 'SCEP endpoint', ['authorityId', 'profileId']),
+  cmpEndpoint: control('cmp.endpoint.list', 'label', 'CMP endpoint', ['authorityId', 'protectionPolicy']),
+  estEndpoint: control('est.endpoint.list', 'label', 'EST endpoint', ['authorityId', 'profileId']),
+  enrollmentProfile: control('enrollment.profile.list', 'id', 'enrollment profile', ['displayName', 'state', 'certificateProfileId']),
   algorithmBinding: page('algorithm.binding.list', 'bindings', 'bindingId', 'algorithm binding', ['algorithmId', 'role', 'origin']),
   algorithmOrigin: page('algorithm.binding.list', 'bindings', 'origin', 'algorithm origin', ['origin']),
   algorithmRole: page('algorithm.binding.list', 'bindings', 'role', 'algorithm role', ['role']),

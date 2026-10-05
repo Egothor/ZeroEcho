@@ -63,7 +63,7 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
 /** Publishes frozen root and intermediate CA continuations. */
-final class CaContinuationPublisher {
+final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private static final String CREATE_ROOT = "CREATE_ROOT";
     private static final String CREATE_INTERMEDIATE = "CREATE_INTERMEDIATE";
     private static final String ROLLOVER_ROOT = "ROLLOVER_ROOT";
@@ -100,6 +100,7 @@ final class CaContinuationPublisher {
         PkiId authorityId = new PkiId(command.field(13));
         X509Certificate certificate = support.certificate(result);
         validateRoot(certificate, frozen.serial(), frozen.notBefore(), frozen.notAfter());
+        validateHybridRoot(certificate, frozen.profile());
         byte[] der = result.bytes();
         try {
             String certificateHash = support.sha256(der);
@@ -127,11 +128,44 @@ final class CaContinuationPublisher {
         RootCommand frozen = RootCommand.decode(command);
         X509Certificate certificate = support.certificate(result);
         validateRoot(certificate, frozen.serial(), frozen.notBefore(), frozen.notAfter());
+        validateHybridRoot(certificate, frozen.profile());
         byte[] der = result.bytes();
         try {
             publishRootRecords(frozen, new RootPublication(certificate, der), domain);
         } finally {
             java.util.Arrays.fill(der, (byte) 0);
+        }
+    }
+
+    private void validateHybridRoot(X509Certificate certificate, CertificateProfileRef reference) {
+        zeroecho.pki.api.profile.ImportedCertificateProfileVersion profile = store.getProfileVersion(
+                reference.profileId(), reference.profileVersion()).orElseThrow(() ->
+                        new DomainContinuationPublisher.PostconditionFailure("ROOT_PROFILE_MISSING"));
+        if (!reference.equals(profile.reference())) {
+            throw new DomainContinuationPublisher.PostconditionFailure("ROOT_PROFILE_DIFFERS");
+        }
+        boolean alternative = profile.definition().hybridMode()
+                instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature;
+        boolean hasAlternative = certificate.getExtensionValue(
+                zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO) != null
+                || certificate.getExtensionValue(
+                        zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_ALT_SIGNATURE_ALGORITHM) != null
+                || certificate.getExtensionValue(
+                        zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_ALT_SIGNATURE_VALUE) != null;
+        if (alternative != hasAlternative) {
+            throw new DomainContinuationPublisher.PostconditionFailure("ROOT_HYBRID_MODE_DIFFERS");
+        }
+        if (alternative) {
+            try {
+                byte[] spki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate,
+                        zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO);
+                if (!zeroecho.pkix.Pkix.verifyAlternativeSignature(certificate,
+                        zeroecho.pkix.Pkix.publicKeyFromSubjectPublicKeyInfo(spki))) {
+                    throw new DomainContinuationPublisher.PostconditionFailure("ROOT_ALT_SIGNATURE_INVALID");
+                }
+            } catch (java.io.IOException | IllegalArgumentException malformed) {
+                throw new DomainContinuationPublisher.PostconditionFailure("ROOT_ALT_SIGNATURE_INVALID", malformed);
+            }
         }
     }
 
@@ -221,6 +255,12 @@ final class CaContinuationPublisher {
             if (tbs.length != ManagedKeyProofCommand.positiveLength(command.field(21), 1_048_576)
                     || !zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(tbs).sha256().equals(command.field(22))) {
                 throw new DomainContinuationPublisher.PostconditionFailure("INTERMEDIATE_TBS_DIFFERS");
+            }
+            String frozenSubject = frozen.subject().value();
+            if (!frozenSubject.equals(certificate.getSubjectX500Principal().getName(javax.security.auth.x500.X500Principal.RFC2253))
+                    && !frozenSubject.equals(zeroecho.pkix.Pkix.distinguishedNameString(zeroecho.pkix.Pkix.parseDistinguishedName(
+                            certificate.getSubjectX500Principal().getEncoded())))) {
+                throw new DomainContinuationPublisher.PostconditionFailure("INTERMEDIATE_SUBJECT_DIFFERS");
             }
         } catch (java.security.cert.CertificateEncodingException malformed) {
             throw new DomainContinuationPublisher.PostconditionFailure("INTERMEDIATE_TBS_INVALID", malformed);

@@ -35,13 +35,31 @@
 import { describe, expect, it } from 'vitest';
 import { OPERATIONS, operationSpec, operationsForNav } from '@/api/operationCatalog';
 import { REF_SOURCES, refSource } from '@/api/entityRefs';
+import { OPERATION_SCHEMA } from '@generated/operationSchema.generated';
+import { buildRequest } from '@/api/operations';
 
 describe('operation catalog', () => {
-  it('contains all 107 operations (41 PKI + 10 signing + 56 control)', () => {
-    expect(OPERATIONS).toHaveLength(107);
-    expect(OPERATIONS.filter((o) => o.family === 'PKI_OPERATION')).toHaveLength(41);
-    expect(OPERATIONS.filter((o) => o.family === 'SIGNING_OPERATION')).toHaveLength(10);
-    expect(OPERATIONS.filter((o) => o.family === 'SERVER_CONTROL_OPERATION')).toHaveLength(56);
+  it('preserves the complete generated identity, field, and permission projection', () => {
+    expect(OPERATIONS.map((operation) => operation.id)).toEqual(OPERATION_SCHEMA.map((operation) => operation.operationId));
+    for (const generated of OPERATION_SCHEMA) {
+      const operation = operationSpec(generated.operationId)!;
+      expect(operation.available).toBe(generated.available);
+      expect(operation.permissionAction).toBe(generated.permissionAction);
+      expect(operation.permissionResourceType).toBe(generated.permissionResourceType);
+      expect(operation.scope).toBe(generated.scope);
+      expect(operation.authorityFrom ?? '').toBe(generated.authorityFrom);
+      expect(operation.fields.map((field) => [field.name, field.type, field.required, field.choices])).toEqual(
+        generated.fields.map((field) => [field.name, field.semanticType, field.required, field.choices]));
+    }
+    for (const id of ['backup.export', 'backup.verify', 'backup.restore', 'inventory.status']) expect(operationSpec(id)).toBeTruthy();
+    expect(operationSpec('status.list')).toBeUndefined();
+  });
+
+  it('retains unavailable identities but refuses their requests and navigation', () => {
+    const restore = operationSpec('backup.restore')!;
+    expect(restore.available).toBe(false);
+    expect(() => buildRequest(restore, { backupId: 'test', payload: 'AAAA' })).toThrow(/unavailable/);
+    expect(operationsForNav(restore.nav).map((operation) => operation.id)).not.toContain(restore.id);
   });
 
   it('has unique operation ids', () => {

@@ -94,7 +94,7 @@ public final class BuiltInCertificateProfileCatalog {
     private static final String FIELD_RESOURCE = "resource";
     private static final String ERROR_PREFIX = "Built-in certificate profile catalogue rejected: code=";
     private static final Set<String> EXPECTED_PROFILE_IDS = Set.of("server-tls", "vpn-server", "vpn-client",
-            "email-signing", "root-ca", "intermediate-ca");
+            "email-signing", "root-ca", "intermediate-ca", "hybrid-root-ca", "pqc-root-ca", "pqc-intermediate-ca");
 
     private BuiltInCertificateProfileCatalog() {
     }
@@ -273,7 +273,7 @@ public final class BuiltInCertificateProfileCatalog {
 
         private List<BuiltInCertificateProfileTemplate> finish() {
             if (templates.size() != EXPECTED_PROFILE_IDS.size() || !profileIds.equals(EXPECTED_PROFILE_IDS)
-                    || endEntityCount != 4 || rootCount != 1 || intermediateCount != 1) {
+                    || endEntityCount != 4 || rootCount != 3 || intermediateCount != 2) {
                 throw failure("BUILT_IN_PROFILE_SET_INVALID");
             }
             return List.copyOf(templates);

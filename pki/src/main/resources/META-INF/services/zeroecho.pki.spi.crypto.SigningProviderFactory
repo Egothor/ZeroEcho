@@ -31,3 +31,4 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProviderFactory
+zeroecho.pki.impl.crypto.pkcs11.Pkcs11SigningProviderFactory

@@ -70,7 +70,6 @@ import javax.net.ssl.TrustManagerFactory;
 final class PkiRemoteTls {
 
     private static final int MAXIMUM_MATERIAL_BYTES = 4 * 1_048_576;
-    private static final String PEM_CERTIFICATE_MARKER = "-----BEGIN CERTIFICATE-----";
     private static final String PEM_KEY_HEADER = "-----BEGIN PRIVATE KEY-----";
     private static final String PEM_KEY_FOOTER = "-----END PRIVATE KEY-----";
     private static final List<String> KEY_ALGORITHMS = List.of("RSA", "EC", "EdDSA", "DSA");
@@ -144,7 +143,7 @@ final class PkiRemoteTls {
         try {
             byte[] material = read(trustStore);
             KeyStore store = KeyStore.getInstance("PKCS12");
-            if (new String(material, StandardCharsets.US_ASCII).contains(PEM_CERTIFICATE_MARKER)) {
+            if (material.length > 0 && material[0] == '-') {
                 store.load(null, new char[0]);
                 int index = 0;
                 for (Certificate certificate : readCertificates(material)) {
@@ -184,11 +183,15 @@ final class PkiRemoteTls {
             throw new GeneralSecurityException("Client key must be an unencrypted PKCS#8 PEM (BEGIN PRIVATE KEY)");
         }
         int bodyStart = begin + headerBytes.length;
-        // Strip whitespace from the base64 body region.
         byte[] body = Arrays.copyOfRange(material, bodyStart, end);
-        String base64 = new String(body, StandardCharsets.US_ASCII).replaceAll("\\s", "");
+        byte[] stripped = stripAsciiWhitespace(body);
         Arrays.fill(body, (byte) 0);
-        byte[] pkcs8 = Base64.getDecoder().decode(base64);
+        byte[] pkcs8;
+        try {
+            pkcs8 = Base64.getDecoder().decode(stripped);
+        } finally {
+            Arrays.fill(stripped, (byte) 0);
+        }
         try {
             PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(pkcs8);
             GeneralSecurityException last = null;
@@ -203,6 +206,17 @@ final class PkiRemoteTls {
         } finally {
             Arrays.fill(pkcs8, (byte) 0);
         }
+    }
+
+    private static byte[] stripAsciiWhitespace(byte[] input) {
+        byte[] result = new byte[input.length];
+        int length = 0;
+        for (byte b : input) {
+            if (b != ' ' && b != '\t' && b != '\r' && b != '\n') {
+                result[length++] = b;
+            }
+        }
+        return Arrays.copyOf(result, length);
     }
 
     private static int indexOf(byte[] haystack, byte[] needle) {

@@ -49,7 +49,7 @@ import zeroecho.core.util.RandomSupport;
  * Randomness is supplied by the shared thread-safe source in
  * {@link RandomSupport}.
  *
- * @author Leo Galambos
+ * @since 1.0
  */
 public final class Password {
     /**

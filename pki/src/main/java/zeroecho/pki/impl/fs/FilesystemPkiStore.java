@@ -123,7 +123,10 @@ import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
+import zeroecho.pki.api.schedule.StatusSchedule;
+import zeroecho.pki.api.schedule.StatusScheduleState;
 import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
@@ -224,6 +227,16 @@ import zeroecho.pki.spi.store.RevocationTransitionFeed;
  * </p>
  *
  * <p>
+ * Public opens hold an external process lock in a sibling restore-control
+ * directory until close. The parent must therefore be writable. Cold restore
+ * activation requires same-filesystem atomic directory moves and directory
+ * synchronization; a live root mounted directly as a volume is unsuitable.
+ * Pending restoration is reconciled before normal recovery opens the live root.
+ * No legacy binary may start concurrently with activation. Existing root-local
+ * owners remain excluded through compatible locks retained across root moves.
+ * </p>
+ *
+ * <p>
  * Logging (JUL) never includes raw serialized bytes or sensitive payloads. Logs
  * are limited to object type, safe IDs, and file operation outcomes.
  * </p>
@@ -312,6 +325,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final ConfirmationRevocationCleanupFaultInjector confirmationCleanupFaults;
 
     private final StoreOwnership ownership;
+    private final FsRestoreCoordinator restoreCoordinator;
+    private final StoreMutationBarrier mutationBarrier = new StoreMutationBarrier();
+    private final zeroecho.pki.api.backup.BackupLimits backupLimits;
+
+    /** Optional CT journal; {@code null} when CT Mode A is not configured. */
+    private volatile zeroecho.pki.spi.ct.CtJournalStore ctJournalStore; // NOPMD AvoidUsingVolatile - Journal attachment is published independently of store operation locks.
 
     /**
      * Opens or creates a filesystem PKI store rooted at {@code root}.
@@ -341,6 +360,24 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // return.
     public FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock) {
         this(root, options, clock, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE);
+    }
+
+    /**
+     * Opens a store with explicit backup resource limits, preserving the store format.
+     * @param root private store root
+     * @param options store options
+     * @param clock authoritative clock
+     * @param backupLimits limits for file-backed backups and legacy adapters
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalStateException if opening or ownership acquisition fails
+     */
+    public FilesystemPkiStore(Path root, FsPkiStoreOptions options, Clock clock,
+            zeroecho.pki.api.backup.BackupLimits backupLimits) {
+        this(root, options, clock, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE,
+                SigningContentRetirementFaultInjector.NONE, ConfirmationRevocationCleanupFaultInjector.NONE,
+                false, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK, null,
+                SigningActiveWal.Configuration.defaults(Objects.requireNonNull(options, "options").signingMaximumGroupSize()),
+                backupLimits);
     }
 
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
@@ -396,7 +433,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         Objects.requireNonNull(options, "options").signingMaximumGroupSize()));
     }
 
-    @SuppressWarnings("PMD.CloseResource")
+
     private FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
             final SigningContentRetirementFaultInjector signingRetirementFaults,
@@ -404,6 +441,32 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             final boolean snapshotAssembly, final int maximumSigningWork,
             final SigningActiveWal.Operations signingWalOperations,
             final SigningActiveWal.Configuration signingWalConfiguration) {
+        this(root, options, clock, indexUpdateFaults, signingRetirementFaults, confirmationCleanupFaults,
+                snapshotAssembly, maximumSigningWork, signingWalOperations, signingWalConfiguration,
+                zeroecho.pki.api.backup.BackupLimits.defaults());
+    }
+
+    private FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
+            final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
+            final SigningContentRetirementFaultInjector signingRetirementFaults,
+            final ConfirmationRevocationCleanupFaultInjector confirmationCleanupFaults,
+            final boolean snapshotAssembly, final int maximumSigningWork,
+            final SigningActiveWal.Operations signingWalOperations,
+            final SigningActiveWal.Configuration signingWalConfiguration,
+            final zeroecho.pki.api.backup.BackupLimits backupLimits) {
+        this(root, options, clock, indexUpdateFaults, signingRetirementFaults, confirmationCleanupFaults,
+                snapshotAssembly, maximumSigningWork, signingWalOperations, signingWalConfiguration, backupLimits, false);
+    }
+
+    private FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
+            final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
+            final SigningContentRetirementFaultInjector signingRetirementFaults,
+            final ConfirmationRevocationCleanupFaultInjector confirmationCleanupFaults,
+            final boolean snapshotAssembly, final int maximumSigningWork,
+            final SigningActiveWal.Operations signingWalOperations,
+            final SigningActiveWal.Configuration signingWalConfiguration,
+            final zeroecho.pki.api.backup.BackupLimits backupLimits, final boolean borrowed) {
+        this.backupLimits = Objects.requireNonNull(backupLimits, "backupLimits");
         this.options = Objects.requireNonNull(options, "options");
         Objects.requireNonNull(root, "root");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -428,20 +491,29 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         this.paths = new FsPaths(root);
 
         StoreOwnership acquiredOwnership;
+        FsRestoreCoordinator coordinator = null;
         try {
+            if (!borrowed) coordinator = FsRestoreCoordinator.open(root, backupLimits, options, clock);
             preflightExistingRoot(root, snapshotAssembly,
                     recoveryConfiguration(signingWalConfiguration));
             FsOperations.ensureDir(root);
             PlatformFs.requireOwnerOnlyCapable(root);
             PlatformFs.ops().restrictToOwner(root);
             FsOperations.ensureDir(this.paths.lockFile().getParent());
-            acquiredOwnership = StoreOwnership.acquire(this.paths.lockFile());
+            if (coordinator != null) coordinator.lockRoot(root);
+            acquiredOwnership = StoreOwnership.borrowed();
         } catch (UnsupportedStoreFormatException e) {
+            closeCoordinatorAfterFailedOpen(coordinator);
             throw new IllegalStateException(
                     "Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED");
         } catch (IOException e) {
+            closeCoordinatorAfterFailedOpen(coordinator);
             throw new IllegalStateException("Filesystem store open failed: code=STORE_OPEN_FAILED", e);
+        } catch (RuntimeException | Error failure) {
+            closeCoordinatorAfterFailedOpen(coordinator);
+            throw failure;
         }
+        this.restoreCoordinator = coordinator;
 
         boolean ownershipTransferred = false;
         SegmentedTransactionalMetadataStore openedMetadata = null;
@@ -460,7 +532,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 FsOperations.ensureDir(this.paths.stagedContentRoot());
             }
             this.stagedContent = new FilesystemStagedContentStore(this.paths.stagedContentRoot(),
-                    this.signingNamespace, maximumSigningWork, null, false);
+                    this.signingNamespace, maximumSigningWork, null, false, mutationBarrier);
             if (newStore) {
                 SigningFormatSupport.forceDirectory(this.paths.stagedContentRoot());
                 SigningFormatSupport.forceDirectory(this.paths.root());
@@ -552,8 +624,26 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     }
                 }
                 acquiredOwnership.closeSilently();
+                closeCoordinatorAfterFailedOpen(coordinator);
             }
         }
+    }
+
+    private static void closeCoordinatorAfterFailedOpen(FsRestoreCoordinator coordinator) {
+        if (coordinator != null) {
+            try { coordinator.close(); } catch (IOException ignored) {
+                LOG.log(Level.WARNING, "Restore coordinator cleanup failed during initialization");
+            }
+        }
+    }
+
+    /* default */ static FilesystemPkiStore openRestoreBorrowed(Path root, FsPkiStoreOptions options,
+            Clock clock, zeroecho.pki.api.backup.BackupLimits limits) {
+        return new FilesystemPkiStore(root, options, clock,
+                FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE,
+                SigningContentRetirementFaultInjector.NONE, ConfirmationRevocationCleanupFaultInjector.NONE,
+                false, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK, null,
+                SigningActiveWal.Configuration.defaults(options.signingMaximumGroupSize()), limits, true);
     }
 
     private static void preflightExistingRoot(Path root, boolean snapshotAssembly,
@@ -785,7 +875,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public StagedContentStore stagedContent() {
-        return stagedContent;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            return stagedContent;
+        }
     }
 
     private void recoverStagedContent() throws IOException {
@@ -794,11 +886,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         // Handoff recovery establishes durable credential publication before any
         // cross-file authority check or derived projection repair.
         validateRecoveredCrlAuthority();
-        List<StoredStatus> statuses = listStoredStatuses();
-        // Reconcile the status-evidence crash window on the SAME enumeration used for staged-content
-        // recovery, so startup adds no second full scan of status objects (idempotent per object).
-        for (StoredStatus stored : statuses) {
-            recordStatusEvidence(stored.status());
+        // Prove both directions before repair/reclamation, without retaining the population.
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            visitStoredStatuses(snapshot, stored -> { });
+            visitStoredStatuses(snapshot, stored -> recordStatusEvidence(stored.status()));
         }
         try (TemporaryUniqueIndex retained = stagedContent.beginUniqueIndex();
                 TemporaryUniqueIndex retainedOwners = stagedContent.beginOwnerIndex();
@@ -807,7 +898,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 addPersistedCredentialReferences(retained, retainedOwners);
                 new CredentialMetadataAuthority(metadataStore, stagedContent).validateAll(
                         credential -> addRetained(transactionalOwners, credential.content()));
-                addTransactionalStatusOwnership(transactionalOwners, statuses);
+                try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                    visitStoredStatuses(snapshot,
+                            stored -> addRetained(transactionalOwners, stored.status().content()));
+                }
                 addSigningReferences(retained, transactionalOwners);
                 stagedContent.recoverContent(retained, retainedOwners, transactionalOwners);
             } catch (IllegalStateException | PkiException malformedDurableState) {
@@ -820,6 +914,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     /* default */ void validateRecoveredCrlAuthority() throws IOException {
+        schedules().validate(this::validateScheduleReceipt);
         new CredentialMetadataAuthority(metadataStore, stagedContent).validateAll(this::validateCredentialScopeAuthority);
         validateAuthorityMetadata();
         CrlScopeRecovery.validate(this, crlScopeReservations);
@@ -957,13 +1052,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private void addSigningReferences(TemporaryUniqueIndex retained,
             TemporaryUniqueIndex active) throws IOException {
-        for (StoredSign stored : listStoredSigns()) {
-            validateCompletedFullCrl(stored.record());
-            recordSigningEvidence(stored.record());
-            for (DurableContentReference reference : stored.record().candidates()) {
-                addRetained(retained, reference);
-                if (isLiveContentState(stored.record().state())) { addRetained(active, reference); }
-            }
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            visitSnapshotSigningWorkflows(snapshot, workflow -> {
+                validateCompletedFullCrl(workflow);
+                recordSigningEvidence(workflow);
+                for (DurableContentReference reference : workflow.candidates()) {
+                    addRetained(retained, reference);
+                    if (isLiveContentState(workflow.state())) { addRetained(active, reference); }
+                }
+            });
         }
     }
 
@@ -1039,17 +1136,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @throws IllegalStateException    if export fails
      */
     public void exportSnapshot(final Path targetRoot, final Instant at) {
-        requireStoreUsable();
-        Objects.requireNonNull(targetRoot, "targetRoot");
-        Objects.requireNonNull(at, "at");
-        try {
-            metadataStore.advanceWatermark(signingNow().toEpochMilli());
-        } catch (IOException failure) {
-            durabilityUncertain.set(true);
-            throw storeDurabilityUnconfirmed(
-                    "Snapshot watermark durability failed: code=STORE_DURABILITY_UNCONFIRMED");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(targetRoot, "targetRoot");
+            Objects.requireNonNull(at, "at");
+            try {
+                metadataStore.advanceWatermark(signingNow().toEpochMilli());
+            } catch (IOException failure) {
+                durabilityUncertain.set(true);
+                throw storeDurabilityUnconfirmed(
+                        "Snapshot watermark durability failed: code=STORE_DURABILITY_UNCONFIRMED");
+            }
+            new FsSnapshotExporter(this.options).exportSnapshot(this, targetRoot, at);
         }
-        new FsSnapshotExporter(this.options).exportSnapshot(this, targetRoot, at);
     }
 
     /* default */ Path snapshotRoot() {
@@ -1086,7 +1185,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(SIGN_STATE_NAMESPACE), CancellationSignal.NONE)) {
             Optional<MetadataSnapshot.Record> next;
             while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                visitor.accept(decodeStoredSign(snapshot, next.orElseThrow()).record());
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                    visitor.accept(decodeStoredSign(snapshot, record).record());
+                }
             }
         }
     }
@@ -1122,11 +1223,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      */
     @Override
     public void putCa(final CaRecord record) {
-        requireStoreUsable();
-        Objects.requireNonNull(record, "record");
-        validateCaCredentialReferences(record);
-        try { authorityMetadata().putCa(record, options.caHistoryPolicy()); }
-        catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(record, "record");
+            validateCaCredentialReferences(record);
+            try { authorityMetadata().putCa(record, options.caHistoryPolicy()); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        }
     }
 
     /**
@@ -1146,197 +1249,221 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      */
     @Override
     public boolean replaceCa(CaRecord expected, CaRecord replacement) {
-        requireStoreUsable();
-        Objects.requireNonNull(expected, "expected");
-        Objects.requireNonNull(replacement, "replacement");
-        if (!expected.caId().equals(replacement.caId())) {
-            throw new IllegalArgumentException("CA replacement identities differ");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(expected, "expected");
+            Objects.requireNonNull(replacement, "replacement");
+            if (!expected.caId().equals(replacement.caId())) {
+                throw new IllegalArgumentException("CA replacement identities differ");
+            }
+            validateCaCredentialReferences(replacement);
+            try { return authorityMetadata().replaceCa(expected, replacement, options.caHistoryPolicy()); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
         }
-        validateCaCredentialReferences(replacement);
-        try { return authorityMetadata().replaceCa(expected, replacement, options.caHistoryPolicy()); }
-        catch (IOException failure) { throw signingDurabilityFailure(failure); }
     }
 
     @Override
     public Optional<CaRecord> getCa(final PkiId caId) {
-        requireStoreUsable();
-        Objects.requireNonNull(caId, "caId");
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            Optional<CaRecord> record = AuthorityMetadataStore.ca(snapshot, caId);
-            if (record.isPresent()) { validateCaCredentialReferences(snapshot, record.orElseThrow()); }
-            return record;
-        } catch (IOException failure) { throw new IllegalStateException("CA metadata read failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(caId, "caId");
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                Optional<CaRecord> record = AuthorityMetadataStore.ca(snapshot, caId);
+                if (record.isPresent()) { validateCaCredentialReferences(snapshot, record.orElseThrow()); }
+                return record;
+            } catch (IOException failure) { throw new IllegalStateException("CA metadata read failed", failure); }
+        }
     }
 
     @Override
     public List<CaRecord> listCas() {
-        requireStoreUsable();
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            List<CaRecord> values = new ArrayList<>();
-            for (AuthorityMetadataCodec.Head head : AuthorityMetadataStore.list(snapshot, AuthorityMetadataCodec.CA_CURRENT, AuthorityMetadataCodec::head)) {
-                values.add(validateCaCredentialReferences(snapshot, AuthorityMetadataStore.reconstruct(snapshot, head)));
-            }
-            values.sort(Comparator.comparing(value -> value.caId().value()));
-            return List.copyOf(values);
-        } catch (IOException failure) { throw new IllegalStateException("CA metadata list failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                List<CaRecord> values = new ArrayList<>();
+                for (AuthorityMetadataCodec.Head head : AuthorityMetadataStore.list(snapshot, AuthorityMetadataCodec.CA_CURRENT, AuthorityMetadataCodec::head)) {
+                    values.add(validateCaCredentialReferences(snapshot, AuthorityMetadataStore.reconstruct(snapshot, head)));
+                }
+                values.sort(Comparator.comparing(value -> value.caId().value()));
+                return List.copyOf(values);
+            } catch (IOException failure) { throw new IllegalStateException("CA metadata list failed", failure); }
+        }
     }
 
     @Override
     public List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit) {
-        requireStoreUsable();
-        Objects.requireNonNull(afterCaId, "afterCaId");
-        if (limit <= 0 || limit > 1_000) {
-            throw new IllegalArgumentException("limit must be between 1 and 1000");
-        }
-        String after = afterCaId.map(PkiId::value).orElse("");
-        List<AuthorityMetadataCodec.Head> selected = new ArrayList<>(limit);
-        try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.CA_CURRENT), CancellationSignal.NONE)) {
-            Optional<MetadataSnapshot.Record> next;
-            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                AuthorityMetadataCodec.Head record;
-                try (MetadataSnapshot.Record stored = next.orElseThrow()) {
-                    record = AuthorityMetadataCodec.head(stored.key(), readMetadataValue(stored));
-                }
-                if (record.caId().value().compareTo(after) <= 0) {
-                    continue;
-                }
-                int position = java.util.Collections.binarySearch(selected, record,
-                        Comparator.comparing(value -> value.caId().value()));
-                selected.add(position < 0 ? -position - 1 : position, record);
-                if (selected.size() > limit) {
-                    selected.remove(limit);
-                }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(afterCaId, "afterCaId");
+            if (limit <= 0 || limit > 1_000) {
+                throw new IllegalArgumentException("limit must be between 1 and 1000");
             }
-            List<CaRecord> values = new ArrayList<>(selected.size());
-            for (AuthorityMetadataCodec.Head head : selected) {
-                values.add(validateCaCredentialReferences(snapshot, AuthorityMetadataStore.reconstruct(snapshot, head)));
+            String after = afterCaId.map(PkiId::value).orElse("");
+            List<AuthorityMetadataCodec.Head> selected = new ArrayList<>(limit);
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.CA_CURRENT), CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    AuthorityMetadataCodec.Head record;
+                    try (MetadataSnapshot.Record stored = next.orElseThrow()) {
+                        record = AuthorityMetadataCodec.head(stored.key(), readMetadataValue(stored));
+                    }
+                    if (record.caId().value().compareTo(after) <= 0) {
+                        continue;
+                    }
+                    int position = java.util.Collections.binarySearch(selected, record,
+                            Comparator.comparing(value -> value.caId().value()));
+                    selected.add(position < 0 ? -position - 1 : position, record);
+                    if (selected.size() > limit) {
+                        selected.remove(limit);
+                    }
+                }
+                List<CaRecord> values = new ArrayList<>(selected.size());
+                for (AuthorityMetadataCodec.Head head : selected) {
+                    values.add(validateCaCredentialReferences(snapshot, AuthorityMetadataStore.reconstruct(snapshot, head)));
+                }
+                return List.copyOf(values);
+            } catch (IOException exception) {
+                throw new IllegalStateException("list CA page failed", exception);
             }
-            return List.copyOf(values);
-        } catch (IOException exception) {
-            throw new IllegalStateException("list CA page failed", exception);
         }
     }
 
     @Override
     public List<CaRecord> selectAuthoritiesPage(Optional<String> after, int limit,
             java.util.function.Predicate<CaRecord> include, CancellationSignal cancellation) {
-        return selectionMetadataPage(AuthorityMetadataCodec.CA_CURRENT, after, limit,
-                (snapshot, record) -> validateCaCredentialReferences(snapshot,
-                        AuthorityMetadataStore.reconstruct(snapshot,
-                                AuthorityMetadataCodec.head(record.key(), readMetadataValue(record)))),
-                include, value -> value.caId().value(), cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            return selectionMetadataPage(AuthorityMetadataCodec.CA_CURRENT, after, limit,
+                    (snapshot, record) -> validateCaCredentialReferences(snapshot,
+                            AuthorityMetadataStore.reconstruct(snapshot,
+                                    AuthorityMetadataCodec.head(record.key(), readMetadataValue(record)))),
+                    include, value -> value.caId().value(), cancellation);
+        }
     }
 
     @Override
     public void visitAuthorityKeyReferences(java.util.function.Consumer<zeroecho.pki.api.KeyRef> visitor,
             CancellationSignal cancellation) {
-        requireStoreUsable();
-        Objects.requireNonNull(visitor, "visitor");
-        checkSelectionCancellation(cancellation);
-        try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.CA_CURRENT), cancellation)) {
-            Optional<MetadataSnapshot.Record> next;
-            while ((next = cursor.next(cancellation)).isPresent()) {
-                try (MetadataSnapshot.Record record = next.orElseThrow()) {
-                    checkSelectionCancellation(cancellation);
-                    CaRecord authority = validateCaCredentialReferences(snapshot, AuthorityMetadataStore.reconstruct(snapshot,
-                            AuthorityMetadataCodec.head(record.key(), readMetadataValue(record))));
-                    visitor.accept(authority.issuerKeyRef());
-                }
-            }
-        } catch (IOException failure) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(visitor, "visitor");
             checkSelectionCancellation(cancellation);
-            throw new IllegalStateException("Known key selection failed", failure);
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.CA_CURRENT), cancellation)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(cancellation)).isPresent()) {
+                    try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                        checkSelectionCancellation(cancellation);
+                        CaRecord authority = validateCaCredentialReferences(snapshot, AuthorityMetadataStore.reconstruct(snapshot,
+                                AuthorityMetadataCodec.head(record.key(), readMetadataValue(record))));
+                        visitor.accept(authority.issuerKeyRef());
+                    }
+                }
+            } catch (IOException failure) {
+                checkSelectionCancellation(cancellation);
+                throw new IllegalStateException("Known key selection failed", failure);
+            }
         }
     }
 
     @Override
     public List<String> listProfileIdsPage(Optional<String> after, int limit, java.util.function.Predicate<String> include, CancellationSignal cancellation) {
-        requireStoreUsable();
-        validateSelectionPage(after, limit);
-        checkSelectionCancellation(cancellation);
-        Path directory = paths.root().resolve("profiles").resolve("by-id");
-        if (!Files.isDirectory(directory)) { return List.of(); }
-        java.util.Queue<String> selected = new java.util.PriorityQueue<>(limit, Comparator.reverseOrder());
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
-            for (Path entry : entries) {
-                checkSelectionCancellation(cancellation);
-                if (!Files.isDirectory(entry)) { continue; }
-                String name = entry.getFileName().toString();
-                if (!name.startsWith("id-")) { throw new IOException("Invalid profile directory identity"); }
-                String id = new String(java.util.Base64.getUrlDecoder().decode(name.substring(3)),
-                        StandardCharsets.UTF_8);
-                if (!paths.profileDir(id).equals(entry)) { throw new IOException("Invalid profile directory identity"); }
-                // Empty directories can remain after an interrupted first import.
-                if (!Files.isDirectory(entry.resolve("versions"))) { continue; }
-                try (java.nio.file.DirectoryStream<Path> versions = Files.newDirectoryStream(entry.resolve("versions"), "*.bin")) {
-                    if (!versions.iterator().hasNext()) { continue; }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            validateSelectionPage(after, limit);
+            checkSelectionCancellation(cancellation);
+            Path directory = paths.root().resolve("profiles").resolve("by-id");
+            if (!Files.isDirectory(directory)) { return List.of(); }
+            java.util.Queue<String> selected = new java.util.PriorityQueue<>(limit, Comparator.reverseOrder());
+            try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+                for (Path entry : entries) {
+                    checkSelectionCancellation(cancellation);
+                    if (!Files.isDirectory(entry)) { continue; }
+                    String name = entry.getFileName().toString();
+                    if (!name.startsWith("id-")) { throw new IOException("Invalid profile directory identity"); }
+                    String id = new String(java.util.Base64.getUrlDecoder().decode(name.substring(3)),
+                            StandardCharsets.UTF_8);
+                    if (!paths.profileDir(id).equals(entry)) { throw new IOException("Invalid profile directory identity"); }
+                    // Empty directories can remain after an interrupted first import.
+                    if (!Files.isDirectory(entry.resolve("versions"))) { continue; }
+                    try (java.nio.file.DirectoryStream<Path> versions = Files.newDirectoryStream(entry.resolve("versions"), "*.bin")) {
+                        if (!versions.iterator().hasNext()) { continue; }
+                    }
+                    if (after.isPresent() && id.compareTo(after.orElseThrow()) <= 0) { continue; }
+                    if (include.test(id)) { selectSmallest(selected, id, limit, Comparator.naturalOrder()); }
                 }
-                if (after.isPresent() && id.compareTo(after.orElseThrow()) <= 0) { continue; }
-                if (include.test(id)) { selectSmallest(selected, id, limit, Comparator.naturalOrder()); }
-            }
-            return selected.stream().sorted().toList();
-        } catch (IOException failure) { throw new IllegalStateException("Profile selection failed", failure); }
+                return selected.stream().sorted().toList();
+            } catch (IOException failure) { throw new IllegalStateException("Profile selection failed", failure); }
+        }
     }
 
     @Override
     public List<RequestSelection> listRequestsPage(Optional<String> after, int limit, java.util.function.Predicate<RequestSelection> include, CancellationSignal cancellation) {
-        requireStoreUsable();
-        validateSelectionPage(after, limit);
-        checkSelectionCancellation(cancellation);
-        Path directory = paths.requestsById();
-        if (!Files.isDirectory(directory)) { return List.of(); }
-        Comparator<RequestSelection> order = Comparator.comparing(value -> value.requestId().value());
-        java.util.Queue<RequestSelection> selected = new java.util.PriorityQueue<>(limit, order.reversed());
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
-            for (Path entry : entries) {
-                checkSelectionCancellation(cancellation);
-                if (!Files.isRegularFile(entry)) { continue; }
-                ParsedCertificationRequest request = FsCodec.decode(FsCodec.PARSED_REQUEST,
-                        FsOperations.readAll(entry), stagedContent);
-                if (after.isPresent() && request.requestId().value().compareTo(after.orElseThrow()) <= 0) { continue; }
-                RequestSelection row = new RequestSelection(request.requestId(), request.formatId(), request.requestedProfileId());
-                if (include.test(row)) { selectSmallest(selected, row, limit, order); }
-            }
-            return selected.stream().sorted(order).toList();
-        } catch (IOException failure) { throw new IllegalStateException("Request selection failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            validateSelectionPage(after, limit);
+            checkSelectionCancellation(cancellation);
+            Path directory = paths.requestsById();
+            if (!Files.isDirectory(directory)) { return List.of(); }
+            Comparator<RequestSelection> order = Comparator.comparing(value -> value.requestId().value());
+            java.util.Queue<RequestSelection> selected = new java.util.PriorityQueue<>(limit, order.reversed());
+            try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+                for (Path entry : entries) {
+                    checkSelectionCancellation(cancellation);
+                    if (!Files.isRegularFile(entry)) { continue; }
+                    ParsedCertificationRequest request = FsCodec.decode(FsCodec.PARSED_REQUEST,
+                            FsOperations.readAll(entry), stagedContent);
+                    if (after.isPresent() && request.requestId().value().compareTo(after.orElseThrow()) <= 0) { continue; }
+                    RequestSelection row = new RequestSelection(request.requestId(), request.formatId(), request.requestedProfileId());
+                    if (include.test(row)) { selectSmallest(selected, row, limit, order); }
+                }
+                return selected.stream().sorted(order).toList();
+            } catch (IOException failure) { throw new IllegalStateException("Request selection failed", failure); }
+        }
     }
 
     @Override
     public List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<Credential> include, CancellationSignal cancellation) {
-        Objects.requireNonNull(authorityId, "authorityId");
-        return selectionMetadataPage(AuthorityMetadataCodec.CREDENTIAL_RECORD, after, limit,
-                (snapshot, record) -> {
-                    Credential decoded = AuthorityMetadataCodec.credential(record.key(), readMetadataValue(record), stagedContent);
-                    return new CredentialMetadataAuthority(metadataStore, stagedContent)
-                            .find(snapshot, decoded.credentialId()).orElseThrow();
-                },
-                value -> value.issuerRef().caId().equals(authorityId) && include.test(value),
-                value -> value.credentialId().value(), cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            Objects.requireNonNull(authorityId, "authorityId");
+            return selectionMetadataPage(AuthorityMetadataCodec.CREDENTIAL_RECORD, after, limit,
+                    (snapshot, record) -> {
+                        Credential decoded = AuthorityMetadataCodec.credential(record.key(), readMetadataValue(record), stagedContent);
+                        return new CredentialMetadataAuthority(metadataStore, stagedContent)
+                                .find(snapshot, decoded.credentialId()).orElseThrow();
+                    },
+                    value -> value.issuerRef().caId().equals(authorityId) && include.test(value),
+                    value -> value.credentialId().value(), cancellation);
+        }
     }
 
     @Override
     public List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<IssuerGeneration> include, CancellationSignal cancellation) {
-        Objects.requireNonNull(authorityId, "authorityId");
-        return selectionMetadataPage(AuthorityMetadataCodec.ISSUER_GENERATION, after, limit,
-                (snapshot, record) -> validateIssuerGeneration(
-                        AuthorityMetadataCodec.generation(record.key(), readMetadataValue(record))),
-                value -> value.authorityId().equals(authorityId) && include.test(value), value -> value.issuerId().value(), cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            Objects.requireNonNull(authorityId, "authorityId");
+            return selectionMetadataPage(AuthorityMetadataCodec.ISSUER_GENERATION, after, limit,
+                    (snapshot, record) -> validateIssuerGeneration(
+                            AuthorityMetadataCodec.generation(record.key(), readMetadataValue(record))),
+                    value -> value.authorityId().equals(authorityId) && include.test(value), value -> value.issuerId().value(), cancellation);
+        }
     }
 
     @Override
     public List<StatusObject> listStatusObjectsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<StatusObject> include, CancellationSignal cancellation) {
-        Objects.requireNonNull(authorityId, "authorityId");
-        return selectionMetadataPage(STATUS_RECORD_NAMESPACE, after, limit,
-                (snapshot, record) -> decodeStoredStatus(snapshot, record).status(),
-                value -> value.issuerCaId().equals(authorityId) && include.test(value), value -> value.statusObjectId().value(), cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            Objects.requireNonNull(authorityId, "authorityId");
+            return selectionMetadataPage(STATUS_RECORD_NAMESPACE, after, limit,
+                    (snapshot, record) -> decodeStoredStatus(snapshot, record).status(),
+                    value -> value.issuerCaId().equals(authorityId) && include.test(value), value -> value.statusObjectId().value(), cancellation);
+        }
     }
 
     @Override
     public List<PublicationRecord> listPublicationsPage(Optional<String> after, int limit, java.util.function.Predicate<PublicationRecord> include, CancellationSignal cancellation) {
-        return selectionMetadataPage(PUBLICATION_RECORD_NAMESPACE, after, limit,
-                (snapshot, record) -> decodePublicationRecord(record, snapshot), include, value -> value.publicationId().value(), cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            return selectionMetadataPage(PUBLICATION_RECORD_NAMESPACE, after, limit,
+                    (snapshot, record) -> decodePublicationRecord(record, snapshot), include, value -> value.publicationId().value(), cancellation);
+        }
     }
 
     private static void checkSelectionCancellation(CancellationSignal cancellation) {
@@ -1393,82 +1520,90 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putIssuerGeneration(IssuerGeneration generation) {
-        requireStoreUsable();
-        Objects.requireNonNull(generation, "generation");
-        Credential credential = getCredential(generation.credentialId())
-                .orElseThrow(() -> new IllegalStateException("Issuer credential reference is missing"));
-        if (!credential.credentialId().equals(generation.credentialId())) {
-            throw new IllegalStateException("Issuer credential identity mismatch");
-        }
-        if (BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
-            try {
-                X509Certificate certificate = certificateHolder(credential);
-                crlScopeReservations.claim(new CrlScopeOwner(certificateScope(certificate), generation.authorityId()));
-            } catch (IOException failure) {
-                throw signingDurabilityFailure(failure);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(generation, "generation");
+            Credential credential = getCredential(generation.credentialId())
+                    .orElseThrow(() -> new IllegalStateException("Issuer credential reference is missing"));
+            if (!credential.credentialId().equals(generation.credentialId())) {
+                throw new IllegalStateException("Issuer credential identity mismatch");
             }
+            if (BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
+                try {
+                    X509Certificate certificate = certificateHolder(credential);
+                    crlScopeReservations.claim(new CrlScopeOwner(certificateScope(certificate), generation.authorityId()));
+                } catch (IOException failure) {
+                    throw signingDurabilityFailure(failure);
+                }
+            }
+            try { authorityMetadata().create(AuthorityMetadataCodec.generationKey(generation.issuerId()), FsCodec.encode(FsCodec.ISSUER_GENERATION, generation)); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
         }
-        try { authorityMetadata().create(AuthorityMetadataCodec.generationKey(generation.issuerId()), FsCodec.encode(FsCodec.ISSUER_GENERATION, generation)); }
-        catch (IOException failure) { throw signingDurabilityFailure(failure); }
     }
 
     @Override
     public Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId) {
-        requireStoreUsable();
-        Objects.requireNonNull(issuerId, "issuerId");
-        long[] counts = ISSUER_GENERATION_READ_COUNTS.get();
-        if (counts != null) { counts[0]++; }
-        try {
-            Optional<IssuerGeneration> value = authorityMetadata().find(AuthorityMetadataCodec.generationKey(issuerId), AuthorityMetadataCodec::generation);
-            if (value.isPresent() && !value.orElseThrow().issuerId().equals(issuerId)) { throw new IOException("Issuer metadata identity differs"); }
-            return value.map(this::validateIssuerGeneration);
-        } catch (IOException failure) { throw new IllegalStateException("Issuer generation metadata read failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(issuerId, "issuerId");
+            long[] counts = ISSUER_GENERATION_READ_COUNTS.get();
+            if (counts != null) { counts[0]++; }
+            try {
+                Optional<IssuerGeneration> value = authorityMetadata().find(AuthorityMetadataCodec.generationKey(issuerId), AuthorityMetadataCodec::generation);
+                if (value.isPresent() && !value.orElseThrow().issuerId().equals(issuerId)) { throw new IOException("Issuer metadata identity differs"); }
+                return value.map(this::validateIssuerGeneration);
+            } catch (IOException failure) { throw new IllegalStateException("Issuer generation metadata read failed", failure); }
+        }
     }
 
     @Override
     public BigInteger reserveCrlNumber(PkiId issuerGenerationId) {
-        requireStoreUsable();
-        Objects.requireNonNull(issuerGenerationId, "issuerGenerationId");
-        try {
-            IssuerGeneration generation = getIssuerGeneration(issuerGenerationId)
-                    .orElseThrow(() -> new IllegalStateException("CRL issuer generation is missing"));
-            if (!generation.issuerId().equals(issuerGenerationId)) {
-                throw new IllegalStateException("CRL issuer generation identity mismatch");
-            }
-            Credential credential = getCredential(generation.credentialId())
-                    .orElseThrow(() -> new IllegalStateException("CRL issuer credential is missing"));
-            if (!credential.credentialId().equals(generation.credentialId())
-                    || !BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
-                throw new IllegalStateException("CRL issuer credential is not authoritative X.509 content");
-            }
-            CrlScopeOwner owner = new CrlScopeOwner(certificateScope(certificateHolder(credential)),
-                    generation.authorityId());
-            BigInteger number = crlScopeReservations.reserve(owner);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
             requireStoreUsable();
-            return number;
-        } catch (MetadataStoreException failure) {
-            throw translateSigningMetadataFailure(failure);
-        } catch (IOException failure) {
-            throw signingDurabilityFailure(failure);
-        } catch (IllegalStateException failure) {
-            if (failure.getCause() instanceof IOException ioFailure) {
-                throw signingDurabilityFailure(ioFailure);
+            Objects.requireNonNull(issuerGenerationId, "issuerGenerationId");
+            try {
+                IssuerGeneration generation = getIssuerGeneration(issuerGenerationId)
+                        .orElseThrow(() -> new IllegalStateException("CRL issuer generation is missing"));
+                if (!generation.issuerId().equals(issuerGenerationId)) {
+                    throw new IllegalStateException("CRL issuer generation identity mismatch");
+                }
+                Credential credential = getCredential(generation.credentialId())
+                        .orElseThrow(() -> new IllegalStateException("CRL issuer credential is missing"));
+                if (!credential.credentialId().equals(generation.credentialId())
+                        || !BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
+                    throw new IllegalStateException("CRL issuer credential is not authoritative X.509 content");
+                }
+                CrlScopeOwner owner = new CrlScopeOwner(certificateScope(certificateHolder(credential)),
+                        generation.authorityId());
+                BigInteger number = crlScopeReservations.reserve(owner);
+                requireStoreUsable();
+                return number;
+            } catch (MetadataStoreException failure) {
+                throw translateSigningMetadataFailure(failure);
+            } catch (IOException failure) {
+                throw signingDurabilityFailure(failure);
+            } catch (IllegalStateException failure) {
+                if (failure.getCause() instanceof IOException ioFailure) {
+                    throw signingDurabilityFailure(ioFailure);
+                }
+                throw failure;
             }
-            throw failure;
         }
     }
 
     @Override
     public List<IssuerGeneration> listIssuerGenerations(PkiId authorityId) {
-        requireStoreUsable();
-        Objects.requireNonNull(authorityId, "authorityId");
-        long[] counts = ISSUER_GENERATION_READ_COUNTS.get();
-        if (counts != null) { counts[1]++; }
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            return AuthorityMetadataStore.generations(snapshot, authorityId).stream()
-                    .map(this::validateIssuerGeneration)
-                    .sorted(Comparator.comparing(value -> value.issuerId().value())).toList();
-        } catch (IOException failure) { throw new IllegalStateException("Issuer metadata list failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(authorityId, "authorityId");
+            long[] counts = ISSUER_GENERATION_READ_COUNTS.get();
+            if (counts != null) { counts[1]++; }
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                return AuthorityMetadataStore.generations(snapshot, authorityId).stream()
+                        .map(this::validateIssuerGeneration)
+                        .sorted(Comparator.comparing(value -> value.issuerId().value())).toList();
+            } catch (IOException failure) { throw new IllegalStateException("Issuer metadata list failed", failure); }
+        }
     }
 
     // Test-only, calling-thread counters; setup/startup reads are excluded by
@@ -1485,86 +1620,96 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putIssuerChainPath(IssuerChainPath path) {
-        requireStoreUsable();
-        Objects.requireNonNull(path, "path");
-        validateIssuerChainPath(path);
-        try { authorityMetadata().create(AuthorityMetadataCodec.pathKey(path.pathId()), FsCodec.encode(FsCodec.ISSUER_CHAIN_PATH, path)); }
-        catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(path, "path");
+            validateIssuerChainPath(path);
+            try { authorityMetadata().create(AuthorityMetadataCodec.pathKey(path.pathId()), FsCodec.encode(FsCodec.ISSUER_CHAIN_PATH, path)); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        }
     }
 
     @Override
     public Optional<IssuerChainPath> getIssuerChainPath(PkiId pathId) {
-        requireStoreUsable();
-        Objects.requireNonNull(pathId, "pathId");
-        try {
-            Optional<IssuerChainPath> value = authorityMetadata().find(AuthorityMetadataCodec.pathKey(pathId), AuthorityMetadataCodec::path);
-            if (value.isPresent() && !value.orElseThrow().pathId().equals(pathId)) { throw new IOException("Issuer path identity differs"); }
-            return value.map(this::validateIssuerChainPath);
-        } catch (IOException failure) { throw new IllegalStateException("Issuer path metadata read failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(pathId, "pathId");
+            try {
+                Optional<IssuerChainPath> value = authorityMetadata().find(AuthorityMetadataCodec.pathKey(pathId), AuthorityMetadataCodec::path);
+                if (value.isPresent() && !value.orElseThrow().pathId().equals(pathId)) { throw new IOException("Issuer path identity differs"); }
+                return value.map(this::validateIssuerChainPath);
+            } catch (IOException failure) { throw new IllegalStateException("Issuer path metadata read failed", failure); }
+        }
     }
 
     @Override
     public List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
-        requireStoreUsable();
-        Objects.requireNonNull(issuerId, "issuerId");
-        try {
-            return authorityMetadata().list(AuthorityMetadataCodec.ISSUER_PATH, AuthorityMetadataCodec::path).stream()
-                    .map(this::validateIssuerChainPath).filter(value -> issuerId.equals(value.issuerId()))
-                    .sorted(Comparator.comparing(value -> value.pathId().value())).toList();
-        } catch (IOException failure) { throw new IllegalStateException("Issuer path metadata list failed", failure); }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(issuerId, "issuerId");
+            try {
+                return authorityMetadata().list(AuthorityMetadataCodec.ISSUER_PATH, AuthorityMetadataCodec::path).stream()
+                        .map(this::validateIssuerChainPath).filter(value -> issuerId.equals(value.issuerId()))
+                        .sorted(Comparator.comparing(value -> value.pathId().value())).toList();
+            } catch (IOException failure) { throw new IllegalStateException("Issuer path metadata list failed", failure); }
+        }
     }
 
     private AuthorityMetadataStore authorityMetadata() { return new AuthorityMetadataStore(metadataStore, this::requireKnownOutcome); }
 
     @Override
     public void putCredential(final Credential credential) {
-        requireStoreUsable();
-        Objects.requireNonNull(credential, "credential");
-        putCredentialReserved(credential, null);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(credential, "credential");
+            putCredentialReserved(credential, null);
+        }
     }
 
     @Override
     public void putCredentialFromSigning(Credential credential, PkiId operationId, String commandCommitment) {
-        requireStoreUsable();
-        Objects.requireNonNull(credential, "credential");
-        Objects.requireNonNull(operationId, "operationId");
-        Objects.requireNonNull(commandCommitment, "commandCommitment");
-        DomainContinuationStore.Record domain = getDomainContinuation(operationId)
-                .orElseThrow(() -> new IllegalStateException("Credential signing continuation is missing"));
-        SignWorkflowStore.Workflow workflow = getSignWorkflow(operationId)
-                .orElseThrow(() -> new IllegalStateException("Credential signing operation is missing"));
-        if (domain.state() != DomainContinuationStore.State.PUBLISHING
-                || !domain.commandCommitment().equals(commandCommitment)
-                || domain.kind() == DomainContinuationStore.Kind.STATUS
-                || domain.kind() == DomainContinuationStore.Kind.KEY_PROOF
-                || workflow.state() != SignWorkflowStore.State.SUCCEEDED
-                || !BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
-            throw new IllegalStateException("Credential signing publication authority differs");
-        }
-        try {
-            X509Certificate certificate = certificateHolder(credential);
-            DurableContentReference tbs = domain.signingContent().orElseThrow();
-            if (tbs.length() <= 0 || tbs.length() > 1_048_576) {
-                throw new IllegalStateException("Credential signing content exceeds its bound");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(credential, "credential");
+            Objects.requireNonNull(operationId, "operationId");
+            Objects.requireNonNull(commandCommitment, "commandCommitment");
+            DomainContinuationStore.Record domain = getDomainContinuation(operationId)
+                    .orElseThrow(() -> new IllegalStateException("Credential signing continuation is missing"));
+            SignWorkflowStore.Workflow workflow = getSignWorkflow(operationId)
+                    .orElseThrow(() -> new IllegalStateException("Credential signing operation is missing"));
+            if (domain.state() != DomainContinuationStore.State.PUBLISHING
+                    || !domain.commandCommitment().equals(commandCommitment)
+                    || domain.kind() == DomainContinuationStore.Kind.STATUS
+                    || domain.kind() == DomainContinuationStore.Kind.KEY_PROOF
+                    || workflow.state() != SignWorkflowStore.State.SUCCEEDED
+                    || !BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
+                throw new IllegalStateException("Credential signing publication authority differs");
             }
-            byte[] input;
-            try (RepeatableContent content = stagedContent.openContent(tbs); InputStream stream = content.openStream()) {
-                input = stream.readNBytes(Math.toIntExact(tbs.length()));
-                if (input.length != tbs.length() || stream.read() != -1) {
-                    throw new IllegalStateException("Credential signing content length differs");
+            try {
+                X509Certificate certificate = certificateHolder(credential);
+                DurableContentReference tbs = domain.signingContent().orElseThrow();
+                if (tbs.length() <= 0 || tbs.length() > 1_048_576) {
+                    throw new IllegalStateException("Credential signing content exceeds its bound");
                 }
+                byte[] input;
+                try (RepeatableContent content = stagedContent.openContent(tbs); InputStream stream = content.openStream()) {
+                    input = stream.readNBytes(Math.toIntExact(tbs.length()));
+                    if (input.length != tbs.length() || stream.read() != -1) {
+                        throw new IllegalStateException("Credential signing content length differs");
+                    }
+                }
+                EncodedObject signature = workflow.result().orElseThrow();
+                if (signature.encoding() != Encoding.BINARY || !MessageDigest.isEqual(certificate.getEncoded(),
+                        Pkix.assembleCertificateOrCrl(input, signature.bytes(), false))) {
+                    throw new IllegalStateException("Credential differs from the authoritative signing result");
+                }
+                requirePublicationIssuer(credential, domain);
+            } catch (IOException | java.security.cert.CertificateEncodingException failure) {
+                throw new IllegalStateException("Credential signing result validation failed", failure);
             }
-            EncodedObject signature = workflow.result().orElseThrow();
-            if (signature.encoding() != Encoding.BINARY || !MessageDigest.isEqual(certificate.getEncoded(),
-                    Pkix.assembleCertificateOrCrl(input, signature.bytes(), false))) {
-                throw new IllegalStateException("Credential differs from the authoritative signing result");
-            }
-            requirePublicationIssuer(credential, domain);
-        } catch (IOException | java.security.cert.CertificateEncodingException failure) {
-            throw new IllegalStateException("Credential signing result validation failed", failure);
+            putCredentialReserved(credential, new ScopeSerialReservation.SigningOwner(operationId,
+                    commandCommitment.substring("domain:v1:".length())));
         }
-        putCredentialReserved(credential, new ScopeSerialReservation.SigningOwner(operationId,
-                commandCommitment.substring("domain:v1:".length())));
     }
 
     private void putCredentialReserved(Credential credential, ScopeSerialReservation.IssuanceOwner signingOwner) {
@@ -1842,6 +1987,96 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException failure) {
             throw signingDurabilityFailure(failure);
         }
+        appendCtJournalEntry(credential);
+    }
+
+    // Appends a CT journal entry for the committed credential. Best-effort: a
+    // CtJournalException does not fail issuance (cert is already durable), but
+    // the warning is logged so operators can reconcile. The CT store is null when
+    // CT Mode A is not configured.
+
+    private void appendCtJournalEntry(Credential credential) {
+        zeroecho.pki.spi.ct.CtJournalStore journal = ctJournalStore;
+        if (journal == null) {
+            return;
+        }
+        try {
+            byte[] fingerprint = fingerprintFromCredentialId(credential.credentialId().value());
+            BigInteger serial = parseSerial(credential.serialOrUniqueId());
+            String authorityId = credential.issuerRef().issuerId().value();
+            long nextSeq = journal.latestSequenceNumber() + 1L;
+            byte[] previousHash = headEntryHash(journal);
+            zeroecho.pki.spi.ct.CtJournalEntry entry = zeroecho.pki.spi.ct.CtJournalEntry.create(
+                    nextSeq, clock.instant(), fingerprint, serial, authorityId, previousHash);
+            journal.append(entry);
+        } catch (zeroecho.pki.spi.ct.CtJournalException failure) {
+            LOG.warning(() -> "CT journal append deferred; credential already durable: " + failure.getMessage());
+        } catch (Exception failure) {
+            LOG.log(Level.WARNING, "CT journal append failed unexpectedly", failure);
+        }
+    }
+
+    // Returns the entryHash of the current head entry, or all-zeros for an empty journal.
+    // FsCtJournalStore exposes headEntryHash() directly; other implementations return zeros
+    // (append() will validate and reject a bad chain before persisting).
+    private static byte[] headEntryHash(zeroecho.pki.spi.ct.CtJournalStore journal)
+            throws zeroecho.pki.spi.ct.CtJournalException {
+        if (journal.latestSequenceNumber() == 0L) {
+            return new byte[zeroecho.pki.spi.ct.CtJournalEntry.HASH_BYTES];
+        }
+        if (journal instanceof zeroecho.pki.impl.fs.ct.FsCtJournalStore fsJournal) {
+            return fsJournal.headEntryHash();
+        }
+        return new byte[zeroecho.pki.spi.ct.CtJournalEntry.HASH_BYTES];
+    }
+
+    // Decodes a credential ID to a 32-byte fingerprint. If the value is 64 hex
+    // chars, decode directly. Otherwise compute SHA-256 of the UTF-8 bytes.
+    private static byte[] fingerprintFromCredentialId(String credentialId) {
+        if (credentialId != null && credentialId.length() == 64) {
+            try {
+                return HexFormat.of().parseHex(credentialId);
+            } catch (IllegalArgumentException ignored) {
+                // fall through to hash
+            }
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return digest.digest(credentialId == null ? new byte[0]
+                    : credentialId.getBytes(StandardCharsets.UTF_8));
+        } catch (java.security.NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 unavailable", unavailable);
+        }
+    }
+
+    // Parses the serial number string to BigInteger. Tries decimal first, then hex.
+    private static BigInteger parseSerial(String serialOrUniqueId) {
+        if (serialOrUniqueId == null || serialOrUniqueId.isBlank()) {
+            return BigInteger.ZERO;
+        }
+        try {
+            return new BigInteger(serialOrUniqueId);
+        } catch (NumberFormatException ignored) {
+            // fall through
+        }
+        try {
+            return new BigInteger(serialOrUniqueId, 16);
+        } catch (NumberFormatException ignored) {
+            return BigInteger.ZERO;
+        }
+    }
+
+    /**
+     * Attaches a CT journal store for Mode A (internal Merkle journal).
+     *
+     * <p>Once set, every issued end-entity credential is appended to the journal
+     * after its primary evidence record is committed. The store is not closed when
+     * this PKI store is closed — the caller retains lifecycle ownership.</p>
+     *
+     * @param store the CT journal store to attach; {@code null} detaches any existing store
+     */
+    /* package */ void setCtJournalStore(final zeroecho.pki.spi.ct.CtJournalStore store) {
+        this.ctJournalStore = store;
     }
 
     // Appends one append-ordered status-generation-evidence entry for a committed status object. The evidence
@@ -1866,37 +2101,41 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<Credential> getCredential(final PkiId credentialId) {
-        requireStoreUsable();
-        Objects.requireNonNull(credentialId, "credentialId");
-        try {
-            return new CredentialMetadataAuthority(metadataStore, stagedContent).find(credentialId);
-        } catch (IOException failure) {
-            throw new IllegalStateException("Credential read failed", failure);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(credentialId, "credentialId");
+            try {
+                return new CredentialMetadataAuthority(metadataStore, stagedContent).find(credentialId);
+            } catch (IOException failure) {
+                throw new IllegalStateException("Credential read failed", failure);
+            }
         }
     }
 
     @Override
     public Optional<Credential> getCredentialByIssuerAndSerial(PkiId issuerId, BigInteger serial) {
-        requireStoreUsable();
-        Objects.requireNonNull(issuerId, "issuerId");
-        requirePositiveSerial(serial);
-        MetadataKey key = serialIndexKey(issuerId, serial);
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
-            if (stored.isEmpty()) return Optional.empty();
-            PkiId credentialId;
-            try (MetadataSnapshot.Record record = stored.orElseThrow()) {
-                credentialId = decodeSerialIndex(record, issuerId, serial);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(issuerId, "issuerId");
+            requirePositiveSerial(serial);
+            MetadataKey key = serialIndexKey(issuerId, serial);
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+                if (stored.isEmpty()) return Optional.empty();
+                PkiId credentialId;
+                try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                    credentialId = decodeSerialIndex(record, issuerId, serial);
+                }
+                Credential credential = getCredential(credentialId)
+                        .orElseThrow(() -> new IllegalStateException("Credential serial index target is missing"));
+                if (!credential.issuerRef().issuerId().equals(issuerId)
+                        || !x509Serial(credential).filter(serial::equals).isPresent()) {
+                    throw new IllegalStateException("Credential serial index authority mismatch");
+                }
+                return Optional.of(credential);
+            } catch (IOException failure) {
+                throw new IllegalStateException("Credential serial index is invalid");
             }
-            Credential credential = getCredential(credentialId)
-                    .orElseThrow(() -> new IllegalStateException("Credential serial index target is missing"));
-            if (!credential.issuerRef().issuerId().equals(issuerId)
-                    || !x509Serial(credential).filter(serial::equals).isPresent()) {
-                throw new IllegalStateException("Credential serial index authority mismatch");
-            }
-            return Optional.of(credential);
-        } catch (IOException failure) {
-            throw new IllegalStateException("Credential serial index is invalid");
         }
     }
 
@@ -2259,226 +2498,238 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<Credential> getCredentialByIssuanceIntent(IssuanceIntent intent) {
-        requireStoreUsable();
-        Objects.requireNonNull(intent, "intent");
-        Credential[] match = {null};
-        try {
-            new CredentialMetadataAuthority(metadataStore, stagedContent).validateAll(credential -> {
-                Optional<AttributeValue> issuance = credential.attributes().get(IssuanceIntent.ID_ATTRIBUTE);
-                if (issuance.orElse(null) instanceof AttributeValue.StringValue value
-                        && intent.issuanceId().equals(value.value())) {
-                    Optional<AttributeValue> commitment = credential.attributes()
-                            .get(IssuanceIntent.COMMITMENT_ATTRIBUTE);
-                    if (!(commitment.orElse(null) instanceof AttributeValue.StringValue command)
-                            || !intent.commandCommitment().equals(command.value())) {
-                        throw new IllegalStateException("Issuance identity was reused with different input");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(intent, "intent");
+            Credential[] match = {null};
+            try {
+                new CredentialMetadataAuthority(metadataStore, stagedContent).validateAll(credential -> {
+                    Optional<AttributeValue> issuance = credential.attributes().get(IssuanceIntent.ID_ATTRIBUTE);
+                    if (issuance.orElse(null) instanceof AttributeValue.StringValue value
+                            && intent.issuanceId().equals(value.value())) {
+                        Optional<AttributeValue> commitment = credential.attributes()
+                                .get(IssuanceIntent.COMMITMENT_ATTRIBUTE);
+                        if (!(commitment.orElse(null) instanceof AttributeValue.StringValue command)
+                                || !intent.commandCommitment().equals(command.value())) {
+                            throw new IllegalStateException("Issuance identity was reused with different input");
+                        }
+                        if (match[0] != null) {
+                            throw new IllegalStateException("Duplicate issuance identity");
+                        }
+                        match[0] = credential;
                     }
-                    if (match[0] != null) {
-                        throw new IllegalStateException("Duplicate issuance identity");
-                    }
-                    match[0] = credential;
-                }
-            });
-            return Optional.ofNullable(match[0]);
-        } catch (IOException failure) {
-            throw new IllegalStateException("Issuance correlation read failed", failure);
+                });
+                return Optional.ofNullable(match[0]);
+            } catch (IOException failure) {
+                throw new IllegalStateException("Issuance correlation read failed", failure);
+            }
         }
     }
 
     @Override
     public CredentialConfirmationLifecycle initializeCredentialConfirmation(
             final CredentialConfirmationInitialization initialization) {
-        requireStoreUsable();
-        CredentialConfirmationInitialization exact = Objects.requireNonNull(initialization, "initialization");
-        PkiId credentialId = exact.credentialId();
-        CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
-        try {
-            Optional<StoredConfirmation> existing = readStoredConfirmation(credentialId);
-            CredentialConfirmationLifecycle initial = CredentialConfirmationLifecycle.initialize(exact);
-            if (existing.isPresent()) {
-                CredentialConfirmationLifecycle committed = existing.orElseThrow().lifecycle();
-                if (sameConfirmationInitialization(committed, exact)) {
-                    return committed;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            CredentialConfirmationInitialization exact = Objects.requireNonNull(initialization, "initialization");
+            PkiId credentialId = exact.credentialId();
+            CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
+            try {
+                Optional<StoredConfirmation> existing = readStoredConfirmation(credentialId);
+                CredentialConfirmationLifecycle initial = CredentialConfirmationLifecycle.initialize(exact);
+                if (existing.isPresent()) {
+                    CredentialConfirmationLifecycle committed = existing.orElseThrow().lifecycle();
+                    if (sameConfirmationInitialization(committed, exact)) {
+                        return committed;
+                    }
+                    throw new IllegalArgumentException(
+                            "Credential confirmation initialization conflicts with authoritative state");
                 }
-                throw new IllegalArgumentException(
-                        "Credential confirmation initialization conflicts with authoritative state");
-            }
-            requireConfirmationCredentialAvailable(credentialId);
-            Credential credential = getCredential(credentialId).orElseThrow(() ->
-                    new IllegalStateException("Credential confirmation target is unavailable"));
-            CredentialConfirmationReview review = confirmationReview(initial, credential);
-            byte[] encoded = CredentialConfirmationLifecycleCodec.encode(initial);
-            byte[] encodedReview = CredentialConfirmationReviewCodec.encode(review);
-            try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
-                transaction.create(confirmationRecordKey(credentialId), byteContent(encoded),
-                        CancellationSignal.NONE);
-                if (initial.state() == CredentialConfirmationLifecycle.State.PENDING) {
-                    transaction.create(confirmationReviewKey(review, false), byteContent(encodedReview),
+                requireConfirmationCredentialAvailable(credentialId);
+                Credential credential = getCredential(credentialId).orElseThrow(() ->
+                        new IllegalStateException("Credential confirmation target is unavailable"));
+                CredentialConfirmationReview review = confirmationReview(initial, credential);
+                byte[] encoded = CredentialConfirmationLifecycleCodec.encode(initial);
+                byte[] encodedReview = CredentialConfirmationReviewCodec.encode(review);
+                try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+                    transaction.create(confirmationRecordKey(credentialId), byteContent(encoded),
                             CancellationSignal.NONE);
-                    transaction.create(confirmationReviewKey(review, true), byteContent(encodedReview),
-                            CancellationSignal.NONE);
+                    if (initial.state() == CredentialConfirmationLifecycle.State.PENDING) {
+                        transaction.create(confirmationReviewKey(review, false), byteContent(encodedReview),
+                                CancellationSignal.NONE);
+                        transaction.create(confirmationReviewKey(review, true), byteContent(encodedReview),
+                                CancellationSignal.NONE);
+                    }
+                    MetadataCommitResult result = requireKnownOutcome(transaction.commit());
+                    if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
+                        throw new IllegalStateException("Credential confirmation initialization conflicted");
+                    }
+                    return initial;
+                } catch (IOException failure) {
+                    throw confirmationPersistenceFailure(failure);
                 }
-                MetadataCommitResult result = requireKnownOutcome(transaction.commit());
-                if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
-                    throw new IllegalStateException("Credential confirmation initialization conflicted");
-                }
-                return initial;
-            } catch (IOException failure) {
-                throw confirmationPersistenceFailure(failure);
+            } finally {
+                releaseCredentialStateLock(credentialId, lock);
             }
-        } finally {
-            releaseCredentialStateLock(credentialId, lock);
         }
     }
 
     @Override
     public Optional<CredentialConfirmationLifecycle> getCredentialConfirmation(final PkiId credentialId) {
-        requireStoreUsable();
-        PkiId exact = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
-        return readStoredConfirmation(exact).map(StoredConfirmation::lifecycle);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            PkiId exact = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
+            return readStoredConfirmation(exact).map(StoredConfirmation::lifecycle);
+        }
     }
 
     @Override
     public Optional<CredentialConfirmationChallenge> getCredentialConfirmationChallenge(
             final PkiId credentialId) {
-        requireStoreUsable();
-        PkiId exact = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
-        Optional<StoredConfirmationChallenge> stored = readStoredConfirmationChallenge(exact);
-        try {
-            return hasRevocationHistory(exact) ? Optional.empty()
-                    : stored.map(StoredConfirmationChallenge::challenge);
-        } catch (IOException failure) {
-            throw confirmationPersistenceFailure(failure);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            PkiId exact = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
+            Optional<StoredConfirmationChallenge> stored = readStoredConfirmationChallenge(exact);
+            try {
+                return hasRevocationHistory(exact) ? Optional.empty()
+                        : stored.map(StoredConfirmationChallenge::challenge);
+            } catch (IOException failure) {
+                throw confirmationPersistenceFailure(failure);
+            }
         }
     }
 
     @Override
     public CredentialConfirmationChallenge issueCredentialConfirmationChallenge(
             final CredentialConfirmationChallengeIssuance issuance) {
-        requireStoreUsable();
-        CredentialConfirmationChallengeIssuance exact = Objects.requireNonNull(issuance, "issuance");
-        PkiId credentialId = exact.credentialId();
-        CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
-        try {
-            Instant storeNow = Objects.requireNonNull(clock.instant(), "store clock instant");
-            Instant issuedAt = requireConfirmationWholeSecond(storeNow);
-            Instant expiresAt = confirmationChallengeExpiry(issuedAt, exact.timeToLive().getSeconds());
-            CredentialConfirmationLifecycle lifecycle = readStoredConfirmation(credentialId)
-                    .map(StoredConfirmation::lifecycle)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Credential confirmation lifecycle is not initialized"));
-            requirePendingChallengeIssuanceBindings(exact, lifecycle);
-            requireConfirmationCredentialAvailable(credentialId, storeNow);
-            Optional<StoredConfirmationChallenge> existing = readStoredConfirmationChallenge(credentialId);
-            if (existing.isPresent()) {
-                StoredConfirmationChallenge committed = existing.orElseThrow();
-                if (!sameChallengeLifecycleBindings(committed.challenge(), lifecycle)) {
-                    throw new IllegalStateException(
-                            "Credential confirmation challenge lifecycle is inconsistent");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            CredentialConfirmationChallengeIssuance exact = Objects.requireNonNull(issuance, "issuance");
+            PkiId credentialId = exact.credentialId();
+            CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
+            try {
+                Instant storeNow = Objects.requireNonNull(clock.instant(), "store clock instant");
+                Instant issuedAt = requireConfirmationWholeSecond(storeNow);
+                Instant expiresAt = confirmationChallengeExpiry(issuedAt, exact.timeToLive().getSeconds());
+                CredentialConfirmationLifecycle lifecycle = readStoredConfirmation(credentialId)
+                        .map(StoredConfirmation::lifecycle)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Credential confirmation lifecycle is not initialized"));
+                requirePendingChallengeIssuanceBindings(exact, lifecycle);
+                requireConfirmationCredentialAvailable(credentialId, storeNow);
+                Optional<StoredConfirmationChallenge> existing = readStoredConfirmationChallenge(credentialId);
+                if (existing.isPresent()) {
+                    StoredConfirmationChallenge committed = existing.orElseThrow();
+                    if (!sameChallengeLifecycleBindings(committed.challenge(), lifecycle)) {
+                        throw new IllegalStateException(
+                                "Credential confirmation challenge lifecycle is inconsistent");
+                    }
+                    if (!sameChallengeIssuanceBindings(committed.challenge(), exact)) {
+                        throw new IllegalArgumentException(
+                                "Credential confirmation challenge conflicts with authoritative state");
+                    }
+                    if (committed.challenge().isLiveAt(issuedAt)) {
+                        return committed.challenge();
+                    }
+                    if (issuedAt.isBefore(committed.challenge().issuedAt())) {
+                        throw new IllegalStateException(
+                                "Credential confirmation store clock regressed before challenge issuance");
+                    }
+                    CredentialConfirmationChallenge replacement = createConfirmationChallenge(
+                            exact, lifecycle, issuedAt, expiresAt);
+                    return persistConfirmationChallenge(replacement, Optional.of(committed));
                 }
-                if (!sameChallengeIssuanceBindings(committed.challenge(), exact)) {
-                    throw new IllegalArgumentException(
-                            "Credential confirmation challenge conflicts with authoritative state");
-                }
-                if (committed.challenge().isLiveAt(issuedAt)) {
-                    return committed.challenge();
-                }
-                if (issuedAt.isBefore(committed.challenge().issuedAt())) {
-                    throw new IllegalStateException(
-                            "Credential confirmation store clock regressed before challenge issuance");
-                }
-                CredentialConfirmationChallenge replacement = createConfirmationChallenge(
+                CredentialConfirmationChallenge created = createConfirmationChallenge(
                         exact, lifecycle, issuedAt, expiresAt);
-                return persistConfirmationChallenge(replacement, Optional.of(committed));
+                return persistConfirmationChallenge(created, Optional.empty());
+            } finally {
+                releaseCredentialStateLock(credentialId, lock);
             }
-            CredentialConfirmationChallenge created = createConfirmationChallenge(
-                    exact, lifecycle, issuedAt, expiresAt);
-            return persistConfirmationChallenge(created, Optional.empty());
-        } finally {
-            releaseCredentialStateLock(credentialId, lock);
         }
     }
 
     @Override
     public CredentialConfirmationLifecycle completeCredentialConfirmation(
             final CredentialConfirmationProofCas proofCas) {
-        requireStoreUsable();
-        CredentialConfirmationProofCas exact = Objects.requireNonNull(proofCas, "proofCas");
-        PkiId credentialId = exact.credentialId();
-        CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
-        try {
-            StoredConfirmation stored = readStoredConfirmation(credentialId)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Credential confirmation lifecycle is not initialized"));
-            CredentialConfirmationLifecycle current = stored.lifecycle();
-            if (current.state() == CredentialConfirmationLifecycle.State.CONFIRMED) {
-                if (isExactTerminalConfirmationRetry(current, exact)) {
-                    return current;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            CredentialConfirmationProofCas exact = Objects.requireNonNull(proofCas, "proofCas");
+            PkiId credentialId = exact.credentialId();
+            CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
+            try {
+                StoredConfirmation stored = readStoredConfirmation(credentialId)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Credential confirmation lifecycle is not initialized"));
+                CredentialConfirmationLifecycle current = stored.lifecycle();
+                if (current.state() == CredentialConfirmationLifecycle.State.CONFIRMED) {
+                    if (isExactTerminalConfirmationRetry(current, exact)) {
+                        return current;
+                    }
+                    throw new IllegalArgumentException("Credential confirmation CAS conflicts with terminal state");
                 }
-                throw new IllegalArgumentException("Credential confirmation CAS conflicts with terminal state");
-            }
-            if (current.state() != CredentialConfirmationLifecycle.State.PENDING) {
-                throw new IllegalStateException("Credential confirmation is not required");
-            }
-            if (current.revision() != exact.expectedLifecycleRevision()
-                    || !current.recordCommitment().equals(exact.expectedLifecycleRecordCommitment())) {
-                throw new IllegalArgumentException("Credential confirmation CAS expectation does not match");
-            }
-            StoredConfirmationChallenge storedChallenge = readStoredConfirmationChallenge(credentialId)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Credential confirmation challenge is not initialized"));
-            CredentialConfirmationChallenge challenge = storedChallenge.challenge();
-            if (!sameChallengeLifecycleBindings(challenge, current)) {
-                throw new IllegalStateException(
-                        "Credential confirmation challenge lifecycle is inconsistent");
-            }
-            if (!challenge.recordCommitment().equals(exact.expectedChallengeRecordCommitment())) {
-                throw new IllegalArgumentException("Credential confirmation challenge CAS conflicts");
-            }
-            Credential credential = getCredential(credentialId).orElseThrow(() ->
-                    new IllegalStateException("Credential confirmation target is unavailable"));
-            CredentialConfirmationReview expectedReview = confirmationReview(current, credential);
-            StoredConfirmationReview authorityReview = readStoredConfirmationReview(expectedReview, false)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Credential confirmation review projection is missing"));
-            StoredConfirmationReview profileReview = readStoredConfirmationReview(expectedReview, true)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Credential confirmation profile review projection is missing"));
-            if (!authorityReview.review().equals(expectedReview)
-                    || !profileReview.review().equals(expectedReview)) {
-                throw new IllegalStateException("Credential confirmation review projection is inconsistent");
-            }
-            Instant storeNow = Objects.requireNonNull(clock.instant(), "store clock instant");
-            Instant storeNowWholeSecond = requireConfirmationWholeSecond(storeNow);
-            if (storeNowWholeSecond.isBefore(challenge.issuedAt())) {
-                throw new IllegalStateException(
-                        "Credential confirmation store clock regressed before challenge issuance");
-            }
-            if (!challenge.isLiveAt(storeNowWholeSecond)) {
-                throw new IllegalStateException("Credential confirmation challenge is expired");
-            }
-            requireConfirmationCredentialAvailable(credentialId, storeNow);
-            CredentialConfirmationLifecycle replacement = current.deriveConfirmed(exact, storeNow);
-            try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
-                transaction.replace(confirmationRecordKey(credentialId), stored.recordRevision(),
-                        byteContent(CredentialConfirmationLifecycleCodec.encode(replacement)),
-                        CancellationSignal.NONE);
-                transaction.delete(confirmationReviewKey(expectedReview, false),
-                        authorityReview.recordRevision());
-                transaction.delete(confirmationReviewKey(expectedReview, true),
-                        profileReview.recordRevision());
-                transaction.delete(confirmationChallengeKey(credentialId),
-                        storedChallenge.recordRevision());
-                MetadataCommitResult result = requireKnownOutcome(transaction.commit());
-                if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
-                    throw new IllegalArgumentException("Credential confirmation CAS conflicted");
+                if (current.state() != CredentialConfirmationLifecycle.State.PENDING) {
+                    throw new IllegalStateException("Credential confirmation is not required");
                 }
-                return replacement;
-            } catch (IOException failure) {
-                throw confirmationPersistenceFailure(failure);
+                if (current.revision() != exact.expectedLifecycleRevision()
+                        || !current.recordCommitment().equals(exact.expectedLifecycleRecordCommitment())) {
+                    throw new IllegalArgumentException("Credential confirmation CAS expectation does not match");
+                }
+                StoredConfirmationChallenge storedChallenge = readStoredConfirmationChallenge(credentialId)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Credential confirmation challenge is not initialized"));
+                CredentialConfirmationChallenge challenge = storedChallenge.challenge();
+                if (!sameChallengeLifecycleBindings(challenge, current)) {
+                    throw new IllegalStateException(
+                            "Credential confirmation challenge lifecycle is inconsistent");
+                }
+                if (!challenge.recordCommitment().equals(exact.expectedChallengeRecordCommitment())) {
+                    throw new IllegalArgumentException("Credential confirmation challenge CAS conflicts");
+                }
+                Credential credential = getCredential(credentialId).orElseThrow(() ->
+                        new IllegalStateException("Credential confirmation target is unavailable"));
+                CredentialConfirmationReview expectedReview = confirmationReview(current, credential);
+                StoredConfirmationReview authorityReview = readStoredConfirmationReview(expectedReview, false)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Credential confirmation review projection is missing"));
+                StoredConfirmationReview profileReview = readStoredConfirmationReview(expectedReview, true)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Credential confirmation profile review projection is missing"));
+                if (!authorityReview.review().equals(expectedReview)
+                        || !profileReview.review().equals(expectedReview)) {
+                    throw new IllegalStateException("Credential confirmation review projection is inconsistent");
+                }
+                Instant storeNow = Objects.requireNonNull(clock.instant(), "store clock instant");
+                Instant storeNowWholeSecond = requireConfirmationWholeSecond(storeNow);
+                if (storeNowWholeSecond.isBefore(challenge.issuedAt())) {
+                    throw new IllegalStateException(
+                            "Credential confirmation store clock regressed before challenge issuance");
+                }
+                if (!challenge.isLiveAt(storeNowWholeSecond)) {
+                    throw new IllegalStateException("Credential confirmation challenge is expired");
+                }
+                requireConfirmationCredentialAvailable(credentialId, storeNow);
+                CredentialConfirmationLifecycle replacement = current.deriveConfirmed(exact, storeNow);
+                try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+                    transaction.replace(confirmationRecordKey(credentialId), stored.recordRevision(),
+                            byteContent(CredentialConfirmationLifecycleCodec.encode(replacement)),
+                            CancellationSignal.NONE);
+                    transaction.delete(confirmationReviewKey(expectedReview, false),
+                            authorityReview.recordRevision());
+                    transaction.delete(confirmationReviewKey(expectedReview, true),
+                            profileReview.recordRevision());
+                    transaction.delete(confirmationChallengeKey(credentialId),
+                            storedChallenge.recordRevision());
+                    MetadataCommitResult result = requireKnownOutcome(transaction.commit());
+                    if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
+                        throw new IllegalArgumentException("Credential confirmation CAS conflicted");
+                    }
+                    return replacement;
+                } catch (IOException failure) {
+                    throw confirmationPersistenceFailure(failure);
+                }
+            } finally {
+                releaseCredentialStateLock(credentialId, lock);
             }
-        } finally {
-            releaseCredentialStateLock(credentialId, lock);
         }
     }
 
@@ -2490,89 +2741,91 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             final Instant cutoffInclusive,
             final Optional<CredentialConfirmationReviewCursor> afterExclusive,
             final int limit) {
-        requireStoreUsable();
-        CredentialConfirmationReviewScope scope = confirmationReviewScope(authorityId, profileId);
-        requireConfirmationReviewCutoff(cutoffInclusive);
-        Objects.requireNonNull(afterExclusive, "afterExclusive");
-        if (limit < 1 || limit > 4096) {
-            throw new IllegalArgumentException("Confirmation review page limit must be from 1 through 4096");
-        }
-        CredentialConfirmationReviewCursorCodec.State resume = afterExclusive
-                .map(CredentialConfirmationReviewCursorCodec::decode).orElse(null);
-        byte[] scopeBinding = confirmationReviewScopeBinding(scope);
-        List<ConfirmationIndexRepair> repairs = new ArrayList<>(
-                MAX_LIST_REPAIR_DELETES);
-        CredentialConfirmationReviewPage page;
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            if (resume != null && (!resume.storeId().equals(snapshot.storeId())
-                    || !resume.cutoff().equals(cutoffInclusive)
-                    || !MessageDigest.isEqual(resume.scopeBinding(), scopeBinding))) {
-                throw new IllegalArgumentException(
-                        "Confirmation review cursor belongs to another store, cutoff, or scope");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            CredentialConfirmationReviewScope scope = confirmationReviewScope(authorityId, profileId);
+            requireConfirmationReviewCutoff(cutoffInclusive);
+            Objects.requireNonNull(afterExclusive, "afterExclusive");
+            if (limit < 1 || limit > 4096) {
+                throw new IllegalArgumentException("Confirmation review page limit must be from 1 through 4096");
             }
-            Optional<String> lower = resume == null ? Optional.empty()
-                    : Optional.of(confirmationReviewKey(scope, resume.reviewAt(), resume.credentialId()).key());
-            String prefix = confirmationReviewPrefix(scope);
-            MetadataSnapshot.KeyRange scopedRange = MetadataSnapshot.KeyRange.prefix(
-                    CONFIRMATION_REVIEW_NS, prefix);
-            MetadataSnapshot.KeyRange range = new MetadataSnapshot.KeyRange(
-                    CONFIRMATION_REVIEW_NS, lower.isPresent() ? lower : scopedRange.lowerInclusive(),
-                    scopedRange.upperExclusive());
-            List<CredentialConfirmationReview> reviews = new ArrayList<>(limit);
-            Set<PkiId> revokedStaleCredentials = new HashSet<>(
-                    MAX_LIST_REPAIRS);
-            CredentialConfirmationReview lastExamined = null;
-            boolean rangeEnd = false;
-            int examined = 0;
-            try (MetadataCursor cursor = snapshot.scan(range, CancellationSignal.NONE)) {
-                boolean skipResume = resume != null;
-                while (examined < limit
-                        && revokedStaleCredentials.size()
-                                < MAX_LIST_REPAIRS) {
-                    Optional<MetadataSnapshot.Record> candidate = cursor.next(CancellationSignal.NONE);
-                    if (candidate.isEmpty()) {
-                        rangeEnd = true;
-                        break;
-                    }
-                    try (MetadataSnapshot.Record record = candidate.orElseThrow()) {
-                        if (skipResume && record.key().key().equals(lower.orElseThrow())) {
-                            skipResume = false;
-                            continue;
-                        }
-                        skipResume = false;
-                        CredentialConfirmationReview review = decodeConfirmationReview(record);
-                        if (!isConfirmationReviewKey(record.key(), review)) {
-                            throw new IOException(
-                                    "Credential confirmation review projection is inconsistent");
-                        }
-                        if (review.confirmationReviewAt().isAfter(cutoffInclusive)) {
+            CredentialConfirmationReviewCursorCodec.State resume = afterExclusive
+                    .map(CredentialConfirmationReviewCursorCodec::decode).orElse(null);
+            byte[] scopeBinding = confirmationReviewScopeBinding(scope);
+            List<ConfirmationIndexRepair> repairs = new ArrayList<>(
+                    MAX_LIST_REPAIR_DELETES);
+            CredentialConfirmationReviewPage page;
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                if (resume != null && (!resume.storeId().equals(snapshot.storeId())
+                        || !resume.cutoff().equals(cutoffInclusive)
+                        || !MessageDigest.isEqual(resume.scopeBinding(), scopeBinding))) {
+                    throw new IllegalArgumentException(
+                            "Confirmation review cursor belongs to another store, cutoff, or scope");
+                }
+                Optional<String> lower = resume == null ? Optional.empty()
+                        : Optional.of(confirmationReviewKey(scope, resume.reviewAt(), resume.credentialId()).key());
+                String prefix = confirmationReviewPrefix(scope);
+                MetadataSnapshot.KeyRange scopedRange = MetadataSnapshot.KeyRange.prefix(
+                        CONFIRMATION_REVIEW_NS, prefix);
+                MetadataSnapshot.KeyRange range = new MetadataSnapshot.KeyRange(
+                        CONFIRMATION_REVIEW_NS, lower.isPresent() ? lower : scopedRange.lowerInclusive(),
+                        scopedRange.upperExclusive());
+                List<CredentialConfirmationReview> reviews = new ArrayList<>(limit);
+                Set<PkiId> revokedStaleCredentials = new HashSet<>(
+                        MAX_LIST_REPAIRS);
+                CredentialConfirmationReview lastExamined = null;
+                boolean rangeEnd = false;
+                int examined = 0;
+                try (MetadataCursor cursor = snapshot.scan(range, CancellationSignal.NONE)) {
+                    boolean skipResume = resume != null;
+                    while (examined < limit
+                            && revokedStaleCredentials.size()
+                                    < MAX_LIST_REPAIRS) {
+                        Optional<MetadataSnapshot.Record> candidate = cursor.next(CancellationSignal.NONE);
+                        if (candidate.isEmpty()) {
                             rangeEnd = true;
                             break;
                         }
-                        examined++;
-                        lastExamined = review;
-                        if (inspectConfirmationReview(snapshot, record.key(), review,
-                                revokedStaleCredentials, repairs)) {
-                            reviews.add(review);
+                        try (MetadataSnapshot.Record record = candidate.orElseThrow()) {
+                            if (skipResume && record.key().key().equals(lower.orElseThrow())) {
+                                skipResume = false;
+                                continue;
+                            }
+                            skipResume = false;
+                            CredentialConfirmationReview review = decodeConfirmationReview(record);
+                            if (!isConfirmationReviewKey(record.key(), review)) {
+                                throw new IOException(
+                                        "Credential confirmation review projection is inconsistent");
+                            }
+                            if (review.confirmationReviewAt().isAfter(cutoffInclusive)) {
+                                rangeEnd = true;
+                                break;
+                            }
+                            examined++;
+                            lastExamined = review;
+                            if (inspectConfirmationReview(snapshot, record.key(), review,
+                                    revokedStaleCredentials, repairs)) {
+                                reviews.add(review);
+                            }
                         }
                     }
                 }
+                Optional<CredentialConfirmationReviewCursor> nextCursor = Optional.empty();
+                if (!rangeEnd && lastExamined != null) {
+                    nextCursor = Optional.of(CredentialConfirmationReviewCursorCodec.encode(
+                            snapshot.storeId(), scopeBinding, cutoffInclusive,
+                            lastExamined.confirmationReviewAt(), lastExamined.credentialId()));
+                }
+                page = new CredentialConfirmationReviewPage(reviews, nextCursor);
+            } catch (IOException failure) {
+                throw confirmationPersistenceFailure(failure);
             }
-            Optional<CredentialConfirmationReviewCursor> nextCursor = Optional.empty();
-            if (!rangeEnd && lastExamined != null) {
-                nextCursor = Optional.of(CredentialConfirmationReviewCursorCodec.encode(
-                        snapshot.storeId(), scopeBinding, cutoffInclusive,
-                        lastExamined.confirmationReviewAt(), lastExamined.credentialId()));
+            try {
+                commitOpportunisticConfirmationRepairs(repairs);
+                return page;
+            } catch (IOException failure) {
+                throw confirmationPersistenceFailure(failure);
             }
-            page = new CredentialConfirmationReviewPage(reviews, nextCursor);
-        } catch (IOException failure) {
-            throw confirmationPersistenceFailure(failure);
-        }
-        try {
-            commitOpportunisticConfirmationRepairs(repairs);
-            return page;
-        } catch (IOException failure) {
-            throw confirmationPersistenceFailure(failure);
         }
     }
 
@@ -3250,74 +3503,78 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putRequest(final ParsedCertificationRequest request) {
-        requireStoreUsable();
-        Objects.requireNonNull(request, "request");
-        PkiId id = request.requestId();
-        writeOnce(this.paths.requestPath(id), FsCodec.encode(FsCodec.PARSED_REQUEST, request), "REQUEST",
-                FsUtil.safeId(id));
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(request, "request");
+            PkiId id = request.requestId();
+            writeOnce(this.paths.requestPath(id), FsCodec.encode(FsCodec.PARSED_REQUEST, request), "REQUEST",
+                    FsUtil.safeId(id));
+        }
     }
 
     @Override
     public RevocationRecord revokeOverduePendingCredentialConfirmation(
             final RevocationCommand.RevokePermanently command) {
-        requireStoreUsable();
-        RevocationCommand.RevokePermanently exact = Objects.requireNonNull(command, "command");
-        if (exact.reason() != RevocationReason.UNSPECIFIED) {
-            throw new IllegalArgumentException(
-                    "Overdue pending confirmation revocation reason must be UNSPECIFIED");
-        }
-        PkiId credentialId = exact.credentialId();
-        CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
-        try {
-            Credential credential = getCredential(credentialId).orElseThrow(() ->
-                    new PkiException(
-                            "Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND",
-                            PkiFailureReason.REVOCATION_CREDENTIAL_NOT_FOUND));
-            CredentialConfirmationLifecycle lifecycle = readStoredConfirmation(credentialId)
-                    .map(StoredConfirmation::lifecycle)
-                    .orElseThrow(FilesystemPkiStore::confirmationRevocationConflict);
-            Optional<RevocationRecord> current;
-            try {
-                current = revocations.current(credentialId);
-            } catch (IOException failure) {
-                throw corruptRevocationState();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            RevocationCommand.RevokePermanently exact = Objects.requireNonNull(command, "command");
+            if (exact.reason() != RevocationReason.UNSPECIFIED) {
+                throw new IllegalArgumentException(
+                        "Overdue pending confirmation revocation reason must be UNSPECIFIED");
             }
-            if (current.filter(record -> record.transition().state()
-                    == RevocationState.PERMANENTLY_REVOKED).isPresent()) {
-                RevocationRecord committed = current.orElseThrow();
-                if (committed.transition().permanentReason().orElse(null) != RevocationReason.UNSPECIFIED
-                        || !sameAttributes(committed.transition().attributes(), exact.attributes())) {
+            PkiId credentialId = exact.credentialId();
+            CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
+            try {
+                Credential credential = getCredential(credentialId).orElseThrow(() ->
+                        new PkiException(
+                                "Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND",
+                                PkiFailureReason.REVOCATION_CREDENTIAL_NOT_FOUND));
+                CredentialConfirmationLifecycle lifecycle = readStoredConfirmation(credentialId)
+                        .map(StoredConfirmation::lifecycle)
+                        .orElseThrow(FilesystemPkiStore::confirmationRevocationConflict);
+                Optional<RevocationRecord> current;
+                try {
+                    current = revocations.current(credentialId);
+                } catch (IOException failure) {
+                    throw corruptRevocationState();
+                }
+                if (current.filter(record -> record.transition().state()
+                        == RevocationState.PERMANENTLY_REVOKED).isPresent()) {
+                    RevocationRecord committed = current.orElseThrow();
+                    if (committed.transition().permanentReason().orElse(null) != RevocationReason.UNSPECIFIED
+                            || !sameAttributes(committed.transition().attributes(), exact.attributes())) {
+                        throw confirmationRevocationConflict();
+                    }
+                    finishPendingConfirmationRevocationCleanup(lifecycle, credential);
+                    return committed;
+                }
+                Instant transitionTime = Objects.requireNonNull(clock.instant(), "store clock instant");
+                if (lifecycle.state() != CredentialConfirmationLifecycle.State.PENDING
+                        || lifecycle.initialPolicy() == ConfirmationDisclosurePolicy.PUBLIC
+                        || !transitionTime.isAfter(lifecycle.confirmationReviewAt())) {
                     throw confirmationRevocationConflict();
+                }
+                RevocationTransition transition = nextRevocationTransition(
+                        current, exact, transitionTime);
+                RevocationRecord committed;
+                try {
+                    RevocationTransitionFrameCodec.CompleteRecord appended =
+                            revocations.append(credentialId, transition);
+                    committed = new RevocationRecord(credentialId, appended.data().transition());
+                } catch (FilesystemRevocationLog.OutcomeUnknownException uncertain) {
+                    throw new PkiException(
+                            "Confirmation revocation requires recovery: code=CONFIRMATION_REVOCATION_RECOVERY_REQUIRED",
+                            PkiFailureReason.CONFIRMATION_REVOCATION_RECOVERY_REQUIRED);
+                } catch (IOException failure) {
+                    throw new PkiException(
+                            "Revocation persistence failed: code=REVOCATION_PERSIST_FAILED",
+                            PkiFailureReason.REVOCATION_PERSIST_FAILED);
                 }
                 finishPendingConfirmationRevocationCleanup(lifecycle, credential);
                 return committed;
+            } finally {
+                releaseCredentialStateLock(credentialId, lock);
             }
-            Instant transitionTime = Objects.requireNonNull(clock.instant(), "store clock instant");
-            if (lifecycle.state() != CredentialConfirmationLifecycle.State.PENDING
-                    || lifecycle.initialPolicy() == ConfirmationDisclosurePolicy.PUBLIC
-                    || !transitionTime.isAfter(lifecycle.confirmationReviewAt())) {
-                throw confirmationRevocationConflict();
-            }
-            RevocationTransition transition = nextRevocationTransition(
-                    current, exact, transitionTime);
-            RevocationRecord committed;
-            try {
-                RevocationTransitionFrameCodec.CompleteRecord appended =
-                        revocations.append(credentialId, transition);
-                committed = new RevocationRecord(credentialId, appended.data().transition());
-            } catch (FilesystemRevocationLog.OutcomeUnknownException uncertain) {
-                throw new PkiException(
-                        "Confirmation revocation requires recovery: code=CONFIRMATION_REVOCATION_RECOVERY_REQUIRED",
-                        PkiFailureReason.CONFIRMATION_REVOCATION_RECOVERY_REQUIRED);
-            } catch (IOException failure) {
-                throw new PkiException(
-                        "Revocation persistence failed: code=REVOCATION_PERSIST_FAILED",
-                        PkiFailureReason.REVOCATION_PERSIST_FAILED);
-            }
-            finishPendingConfirmationRevocationCleanup(lifecycle, credential);
-            return committed;
-        } finally {
-            releaseCredentialStateLock(credentialId, lock);
         }
     }
 
@@ -3394,9 +3651,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<ParsedCertificationRequest> getRequest(final PkiId requestId) {
-        requireStoreUsable();
-        Objects.requireNonNull(requestId, "requestId");
-        return readOptional(this.paths.requestPath(requestId), FsCodec.PARSED_REQUEST);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(requestId, "requestId");
+            return readOptional(this.paths.requestPath(requestId), FsCodec.PARSED_REQUEST);
+        }
     }
 
     @Override
@@ -3404,37 +3663,39 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @SuppressWarnings("PMD.PreserveStackTrace")
     public List<ParsedCertificationRequest> searchRequests(
             final zeroecho.pki.api.request.RequestQuery query, final int maxResults) {
-        requireStoreUsable();
-        Objects.requireNonNull(query, "query");
-        if (maxResults <= 0) {
-            throw new IllegalArgumentException("maxResults must be positive");
-        }
-        Path byId = this.paths.requestsById();
-        if (!Files.isDirectory(byId)) {
-            return List.of();
-        }
-        // Lazily iterate the request namespace, stopping as soon as the result cap is reached, and
-        // never materialising the full path set. The creation-time window is checked from the
-        // immutable request file's stored-at instant before the file is read, so a time-scoped search
-        // does not deserialise out-of-window requests. Results are unordered; the bound is maxResults.
-        List<ParsedCertificationRequest> out = new ArrayList<>();
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(byId)) {
-            for (Path file : entries) {
-                if (out.size() >= maxResults) {
-                    break;
-                }
-                if (!Files.isRegularFile(file) || !withinCreatedRange(file, query)) {
-                    continue;
-                }
-                ParsedCertificationRequest request = FsCodec.decode(FsCodec.PARSED_REQUEST,
-                        FsOperations.readAll(file), stagedContent);
-                if (matchesRequestContent(request, query)) {
-                    out.add(request);
-                }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(query, "query");
+            if (maxResults <= 0) {
+                throw new IllegalArgumentException("maxResults must be positive");
             }
-            return List.copyOf(out);
-        } catch (IOException | SecurityException failure) {
-            throw new IllegalStateException("request search failed");
+            Path byId = this.paths.requestsById();
+            if (!Files.isDirectory(byId)) {
+                return List.of();
+            }
+            // Lazily iterate the request namespace, stopping as soon as the result cap is reached, and
+            // never materialising the full path set. The creation-time window is checked from the
+            // immutable request file's stored-at instant before the file is read, so a time-scoped search
+            // does not deserialise out-of-window requests. Results are unordered; the bound is maxResults.
+            List<ParsedCertificationRequest> out = new ArrayList<>();
+            try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(byId)) {
+                for (Path file : entries) {
+                    if (out.size() >= maxResults) {
+                        break;
+                    }
+                    if (!Files.isRegularFile(file) || !withinCreatedRange(file, query)) {
+                        continue;
+                    }
+                    ParsedCertificationRequest request = FsCodec.decode(FsCodec.PARSED_REQUEST,
+                            FsOperations.readAll(file), stagedContent);
+                    if (matchesRequestContent(request, query)) {
+                        out.add(request);
+                    }
+                }
+                return List.copyOf(out);
+            } catch (IOException | SecurityException failure) {
+                throw new IllegalStateException("request search failed");
+            }
         }
     }
 
@@ -3468,139 +3729,159 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Store failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public RevocationRecord transitionRevocation(final RevocationCommand command, final Instant transitionTime) {
-        requireStoreUsable();
-        Objects.requireNonNull(command, "command");
-        Objects.requireNonNull(transitionTime, "transitionTime");
-        PkiId credentialId = command.credentialId();
-        CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
-        try {
-            Optional<Credential> credential;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(command, "command");
+            Objects.requireNonNull(transitionTime, "transitionTime");
+            PkiId credentialId = command.credentialId();
+            CredentialStateLockEntry lock = acquireCredentialStateLock(credentialId);
             try {
-                credential = getCredential(credentialId);
-            } catch (RuntimeException failure) {
-                throw corruptRevocationState();
+                Optional<Credential> credential;
+                try {
+                    credential = getCredential(credentialId);
+                } catch (RuntimeException failure) {
+                    throw corruptRevocationState();
+                }
+                if (credential.isEmpty()) {
+                    throw new PkiException("Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND",
+                                PkiFailureReason.REVOCATION_CREDENTIAL_NOT_FOUND);
+                }
+                Optional<RevocationRecord> current;
+                try {
+                    current = revocations.current(credentialId);
+                } catch (RuntimeException | IOException failure) {
+                    throw corruptRevocationState();
+                }
+                RevocationTransition transition = nextRevocationTransition(
+                        current, command, transitionTime);
+                try {
+                    RevocationTransitionFrameCodec.CompleteRecord committed =
+                            revocations.append(credentialId, transition);
+                    return new RevocationRecord(credentialId, committed.data().transition());
+                } catch (FilesystemRevocationLog.OutcomeUnknownException uncertain) {
+                    throw new PkiException(
+                            "Revocation append outcome requires recovery: code=REVOCATION_RECOVERY_REQUIRED",
+                            PkiFailureReason.REVOCATION_RECOVERY_REQUIRED);
+                } catch (IOException failure) {
+                    throw new PkiException("Revocation persistence failed: code=REVOCATION_PERSIST_FAILED",
+                            PkiFailureReason.REVOCATION_PERSIST_FAILED);
+                }
+            } finally {
+                releaseCredentialStateLock(credentialId, lock);
             }
-            if (credential.isEmpty()) {
-                throw new PkiException("Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND",
-                            PkiFailureReason.REVOCATION_CREDENTIAL_NOT_FOUND);
-            }
-            Optional<RevocationRecord> current;
-            try {
-                current = revocations.current(credentialId);
-            } catch (RuntimeException | IOException failure) {
-                throw corruptRevocationState();
-            }
-            RevocationTransition transition = nextRevocationTransition(
-                    current, command, transitionTime);
-            try {
-                RevocationTransitionFrameCodec.CompleteRecord committed =
-                        revocations.append(credentialId, transition);
-                return new RevocationRecord(credentialId, committed.data().transition());
-            } catch (FilesystemRevocationLog.OutcomeUnknownException uncertain) {
-                throw new PkiException(
-                        "Revocation append outcome requires recovery: code=REVOCATION_RECOVERY_REQUIRED",
-                        PkiFailureReason.REVOCATION_RECOVERY_REQUIRED);
-            } catch (IOException failure) {
-                throw new PkiException("Revocation persistence failed: code=REVOCATION_PERSIST_FAILED",
-                        PkiFailureReason.REVOCATION_PERSIST_FAILED);
-            }
-        } finally {
-            releaseCredentialStateLock(credentialId, lock);
         }
     }
 
     @Override
     public Optional<RevocationRecord> getRevocation(final PkiId credentialId) {
-        requireStoreUsable();
-        Objects.requireNonNull(credentialId, "credentialId");
-        try {
-            return revocations.current(credentialId);
-        } catch (IOException failure) {
-            throw corruptRevocationState();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(credentialId, "credentialId");
+            try {
+                return revocations.current(credentialId);
+            } catch (IOException failure) {
+                throw corruptRevocationState();
+            }
         }
     }
 
     @Override
     public RevocationHistory openRevocationHistory(final PkiId credentialId) {
-        requireStoreUsable();
-        Objects.requireNonNull(credentialId, "credentialId");
-        try {
-            return revocations.history(credentialId);
-        } catch (IOException failure) {
-            throw corruptRevocationState();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(credentialId, "credentialId");
+            try {
+                return revocations.history(credentialId);
+            } catch (IOException failure) {
+                throw corruptRevocationState();
+            }
         }
     }
 
     @Override
     public RevocationTransitionFeed openRevocationTransitionFeed(
             final Optional<RevocationTransitionFeed.Position> afterExclusive) {
-        requireStoreUsable();
-        Objects.requireNonNull(afterExclusive, "afterExclusive");
-        try {
-            return revocations.feed(afterExclusive);
-        } catch (IOException failure) {
-            throw corruptRevocationState();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(afterExclusive, "afterExclusive");
+            try {
+                return revocations.feed(afterExclusive);
+            } catch (IOException failure) {
+                throw corruptRevocationState();
+            }
         }
     }
 
     @Override
     public void requireRevocationPrefix(RevocationTransitionFeed.HighWatermark prefix, long boundary,
             CancellationSignal cancellation) throws IOException {
-        requireStoreUsable();
-        revocations.requirePrefix(prefix, boundary, cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            revocations.requirePrefix(prefix, boundary, cancellation);
+        }
     }
 
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openIssuanceEvidenceFeed(final long afterSequenceExclusive) {
-        requireStoreUsable();
-        try {
-            return new EvidenceFeedAdapter(issuanceEvidenceLog.openReader(afterSequenceExclusive));
-        } catch (IOException failure) {
-            throw new IllegalStateException("Issuance evidence feed cannot be opened");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try {
+                return new EvidenceFeedAdapter(issuanceEvidenceLog.openReader(afterSequenceExclusive));
+            } catch (IOException failure) {
+                throw new IllegalStateException("Issuance evidence feed cannot be opened");
+            }
         }
     }
 
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openStatusEvidenceFeed(final long afterSequenceExclusive) {
-        requireStoreUsable();
-        try {
-            return new EvidenceFeedAdapter(statusEvidenceLog.openReader(afterSequenceExclusive));
-        } catch (IOException failure) {
-            throw new IllegalStateException("Status evidence feed cannot be opened");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try {
+                return new EvidenceFeedAdapter(statusEvidenceLog.openReader(afterSequenceExclusive));
+            } catch (IOException failure) {
+                throw new IllegalStateException("Status evidence feed cannot be opened");
+            }
         }
     }
 
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openPublicationEvidenceFeed(final long afterSequenceExclusive) {
-        requireStoreUsable();
-        try {
-            return new EvidenceFeedAdapter(publicationEvidenceLog.openReader(afterSequenceExclusive));
-        } catch (IOException failure) {
-            throw new IllegalStateException("Publication evidence feed cannot be opened");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try {
+                return new EvidenceFeedAdapter(publicationEvidenceLog.openReader(afterSequenceExclusive));
+            } catch (IOException failure) {
+                throw new IllegalStateException("Publication evidence feed cannot be opened");
+            }
         }
     }
 
 
     @Override
     public boolean supportsSigningEvidenceFeed() {
-        requireStoreUsable();
-        return signingEvidenceLog != null;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return signingEvidenceLog != null;
+        }
     }
 
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace") // Feed failures expose only a fixed safe diagnostic.
     public AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
-        requireStoreUsable();
-        if (signingEvidenceLog == null) {
-            throw new UnsupportedOperationException("Signing evidence feed is not enabled");
-        }
-        try {
-            return new EvidenceFeedAdapter(signingEvidenceLog.openReader(afterSequenceExclusive));
-        } catch (IOException failure) {
-            throw new IllegalStateException("Signing evidence feed cannot be opened");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            if (signingEvidenceLog == null) {
+                throw new UnsupportedOperationException("Signing evidence feed is not enabled");
+            }
+            try {
+                return new EvidenceFeedAdapter(signingEvidenceLog.openReader(afterSequenceExclusive));
+            } catch (IOException failure) {
+                throw new IllegalStateException("Signing evidence feed cannot be opened");
+            }
         }
     }
 
@@ -3629,186 +3910,234 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Snapshot failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public RevocationSnapshot openRevocationSnapshot() {
-        requireStoreUsable();
-        try {
-            return revocations.snapshot();
-        } catch (IOException failure) {
-            throw corruptRevocationState();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try {
+                return revocations.snapshot();
+            } catch (IOException failure) {
+                throw corruptRevocationState();
+            }
         }
     }
 
     @Override
     public RevocationView openRevocationView() {
-        requireStoreUsable();
-        try {
-            return revocations.view();
-        } catch (IOException failure) {
-            throw corruptRevocationState();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try {
+                return revocations.view();
+            } catch (IOException failure) {
+                throw corruptRevocationState();
+            }
         }
     }
 
     @Override
     public void putStatusObject(final StatusObject object) {
-        requireStoreUsable();
-        Objects.requireNonNull(object, "object");
-        byte[] encoded = validateStatusObject(object);
-        DurableContentReference reference = object.content();
-        try (FilesystemStagedContentStore.TransactionalReservation reservation =
-                stagedContent.reserveTransactionalPublication(reference)) {
-            validateStatusContent(reference);
-            MetadataCommitResult result = createStatusMetadata(object, encoded);
-            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
-                recordStatusEvidence(object);
-                return;
+        putStatusObject(object, Optional.empty());
+    }
+
+    @Override
+    public void putStatusObjectFromSigning(StatusObject object, PkiId operationId, String commandCommitment) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            SignLockEntry lock = acquireSignLock(operationId);
+            try {
+                SignWorkflowStore.Workflow workflow = readSignWorkflow(operationId).orElseThrow();
+                DomainContinuationStore.Record domain = getDomainContinuation(operationId).orElseThrow();
+                requireMatchingOuter(workflow, domain);
+                if (domain.kind() != DomainContinuationStore.Kind.STATUS || domain.state() != DomainContinuationStore.State.PUBLISHING
+                        || workflow.state() != SignWorkflowStore.State.SUCCEEDED || !domain.commandCommitment().equals(commandCommitment)) {
+                    throw new IllegalStateException("Status signing publication authority differs");
+                }
+                zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.requireSigningEffect(this, object, domain, workflow.result().orElseThrow());
+                Optional<StatusObject> existing = getStatusObject(object.statusObjectId());
+                if (existing.isPresent()) {
+                    if (!Arrays.equals(validateStatusObject(existing.orElseThrow()), validateStatusObject(object))) throw new IllegalStateException("Status replay differs");
+                    try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                        Optional<StatusScheduleState.Execution> receipt = schedules().receipt(snapshot, operationId);
+                        if (receipt.isEmpty() || receipt.orElseThrow().statusObjectId().equals(Optional.of(object.statusObjectId()))) return;
+                    }
+                }
+                putStatusObject(object, Optional.of(operationId));
+            } catch (IOException failure) { throw new IllegalStateException("Status signing result validation failed", failure); }
+            finally { releaseSignLock(operationId, lock); }
+        }
+    }
+
+    private void putStatusObject(StatusObject object, Optional<PkiId> signingOperation) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(object, "object");
+            byte[] encoded = validateStatusObject(object);
+            DurableContentReference reference = object.content();
+            try (FilesystemStagedContentStore.TransactionalReservation reservation =
+                    stagedContent.reserveTransactionalPublication(reference)) {
+                validateStatusContent(reference);
+                MetadataCommitResult result = createStatusMetadata(object, encoded, signingOperation);
+                if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
+                    recordStatusEvidence(object);
+                    return;
+                }
+                if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                    reservation.preserveUntilRecovery();
+                    durabilityUncertain.set(true);
+                    throw storeDurabilityUnconfirmed("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
+                }
+                throw new IllegalStateException("Status object already exists");
+            } catch (IOException exception) {
+                throw new IllegalStateException("Status object content is invalid", exception);
             }
-            if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
-                reservation.preserveUntilRecovery();
-                durabilityUncertain.set(true);
-                throw storeDurabilityUnconfirmed("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
-            }
-            throw new IllegalStateException("Status object already exists");
-        } catch (IOException exception) {
-            throw new IllegalStateException("Status object content is invalid", exception);
         }
     }
 
     @Override
     public Optional<StatusObject> getStatusObject(final PkiId statusObjectId) {
-        requireStoreUsable();
-        Objects.requireNonNull(statusObjectId, "statusObjectId");
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            Optional<MetadataSnapshot.Record> record = snapshot.get(statusRecordKey(statusObjectId));
-            if (record.isEmpty()) {
-                Optional<MetadataSnapshot.Record> owner = snapshot.get(statusOwnerKey(statusObjectId));
-                if (owner.isPresent()) {
-                    try (MetadataSnapshot.Record ignored = owner.orElseThrow()) {
-                        throw new IllegalStateException("Status owner exists without its record");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(statusObjectId, "statusObjectId");
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                Optional<MetadataSnapshot.Record> record = snapshot.get(statusRecordKey(statusObjectId));
+                if (record.isEmpty()) {
+                    Optional<MetadataSnapshot.Record> owner = snapshot.get(statusOwnerKey(statusObjectId));
+                    if (owner.isPresent()) {
+                        try (MetadataSnapshot.Record ignored = owner.orElseThrow()) {
+                            throw new IllegalStateException("Status owner exists without its record");
+                        }
                     }
+                    return Optional.empty();
                 }
-                return Optional.empty();
+                return Optional.of(decodeStoredStatus(snapshot, record.orElseThrow()).status());
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to read authoritative status object", exception);
             }
-            return Optional.of(decodeStoredStatus(snapshot, record.orElseThrow()).status());
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to read authoritative status object", exception);
         }
     }
 
     @Override
     public List<StatusObject> listStatusObjects(final PkiId issuerCaId) {
-        requireStoreUsable();
-        Objects.requireNonNull(issuerCaId, "issuerCaId");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(issuerCaId, "issuerCaId");
 
-        List<StatusObject> out = new ArrayList<>();
-        for (StoredStatus stored : listStoredStatuses()) {
-            StatusObject o = stored.status();
-            if (issuerCaId.equals(o.issuerCaId())) {
-                out.add(o);
+            List<StatusObject> out = new ArrayList<>();
+            for (StoredStatus stored : listStoredStatuses()) {
+                StatusObject o = stored.status();
+                if (issuerCaId.equals(o.issuerCaId())) {
+                    out.add(o);
+                }
             }
+            return out;
         }
-        return out;
     }
 
     @Override
     public PublicationRecord createPublicationRecord(final PublicationRecord record) {
-        requireStoreUsable();
-        Objects.requireNonNull(record, "record");
-        validatePublicationRecord(record);
-        Optional<PublicationRecord> existing = getPublicationRecord(record.publicationId());
-        if (existing.isPresent()) {
-            if (publicationRecordsEqual(existing.orElseThrow(), record)) {
-                return existing.orElseThrow();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(record, "record");
+            validatePublicationRecord(record);
+            Optional<PublicationRecord> existing = getPublicationRecord(record.publicationId());
+            if (existing.isPresent()) {
+                if (publicationRecordsEqual(existing.orElseThrow(), record)) {
+                    return existing.orElseThrow();
+                }
+                throw new IllegalArgumentException("Publication identity conflicts with an existing operation");
+            }
+            try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+                transaction.create(publicationRecordKey(record.publicationId()),
+                        byteContent(PublicationRecordCodec.encode(record)), CancellationSignal.NONE);
+                PublicationCommitFaultPoint fault = takePublicationCommitFault();
+                if (fault == PublicationCommitFaultPoint.CREATE_BEFORE_COMMIT) {
+                    throw new IOException("Injected publication create failure");
+                }
+                MetadataCommitResult result = transaction.commit();
+                if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
+                    acknowledgeKnownOutcome(result);
+                    return record;
+                }
+                if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                    throw publicationPersistenceUnknown();
+                }
+                acknowledgeKnownOutcome(result);
+            } catch (IOException exception) {
+                throw new IllegalStateException("Publication metadata persistence failed");
+            }
+            Optional<PublicationRecord> raced = getPublicationRecord(record.publicationId());
+            if (raced.isPresent() && publicationRecordsEqual(raced.orElseThrow(), record)) {
+                return raced.orElseThrow();
             }
             throw new IllegalArgumentException("Publication identity conflicts with an existing operation");
         }
-        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
-            transaction.create(publicationRecordKey(record.publicationId()),
-                    byteContent(PublicationRecordCodec.encode(record)), CancellationSignal.NONE);
-            PublicationCommitFaultPoint fault = takePublicationCommitFault();
-            if (fault == PublicationCommitFaultPoint.CREATE_BEFORE_COMMIT) {
-                throw new IOException("Injected publication create failure");
-            }
-            MetadataCommitResult result = transaction.commit();
-            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
-                acknowledgeKnownOutcome(result);
-                return record;
-            }
-            if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
-                throw publicationPersistenceUnknown();
-            }
-            acknowledgeKnownOutcome(result);
-        } catch (IOException exception) {
-            throw new IllegalStateException("Publication metadata persistence failed");
-        }
-        Optional<PublicationRecord> raced = getPublicationRecord(record.publicationId());
-        if (raced.isPresent() && publicationRecordsEqual(raced.orElseThrow(), record)) {
-            return raced.orElseThrow();
-        }
-        throw new IllegalArgumentException("Publication identity conflicts with an existing operation");
     }
 
     @Override
     public Optional<PublicationRecord> getPublicationRecord(final PkiId publicationId) {
-        requireStoreUsable();
-        Objects.requireNonNull(publicationId, "publicationId");
-        MetadataKey key = publicationRecordKey(publicationId);
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
-            if (stored.isEmpty()) {
-                return Optional.empty();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(publicationId, "publicationId");
+            MetadataKey key = publicationRecordKey(publicationId);
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+                if (stored.isEmpty()) {
+                    return Optional.empty();
+                }
+                try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                    return Optional.of(decodePublicationRecord(record, snapshot));
+                }
+            } catch (IOException exception) {
+                throw new IllegalStateException("Publication metadata is invalid");
             }
-            try (MetadataSnapshot.Record record = stored.orElseThrow()) {
-                return Optional.of(decodePublicationRecord(record, snapshot));
-            }
-        } catch (IOException exception) {
-            throw new IllegalStateException("Publication metadata is invalid");
         }
     }
 
     @Override
     public boolean replacePublicationRecord(final PublicationRecord expected,
             final PublicationRecord replacement) {
-        requireStoreUsable();
-        Objects.requireNonNull(expected, "expected");
-        Objects.requireNonNull(replacement, "replacement");
-        validatePublicationReplacement(expected, replacement);
-        MetadataKey key = publicationRecordKey(expected.publicationId());
-        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
-            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
-            if (stored.isEmpty()) {
-                return false;
-            }
-            long revision;
-            try (MetadataSnapshot.Record record = stored.orElseThrow()) {
-                if (!publicationRecordsEqual(decodePublicationRecord(record, snapshot), expected)) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(expected, "expected");
+            Objects.requireNonNull(replacement, "replacement");
+            validatePublicationReplacement(expected, replacement);
+            MetadataKey key = publicationRecordKey(expected.publicationId());
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+                Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+                if (stored.isEmpty()) {
                     return false;
                 }
-                revision = record.recordRevision();
-            }
-            boolean committed;
-            try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
-                transaction.replace(key, revision, byteContent(PublicationRecordCodec.encode(replacement)),
-                        CancellationSignal.NONE);
-                PublicationCommitFaultPoint fault = takePublicationCommitFault();
-                if (fault == PublicationCommitFaultPoint.REPLACE_BEFORE_COMMIT) {
-                    throw new IOException("Injected publication replacement failure");
+                long revision;
+                try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                    if (!publicationRecordsEqual(decodePublicationRecord(record, snapshot), expected)) {
+                        return false;
+                    }
+                    revision = record.recordRevision();
                 }
-                MetadataCommitResult result = transaction.commit();
-                if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED
-                        && fault == PublicationCommitFaultPoint.REPLACE_COMMIT_AS_UNKNOWN) {
-                    throw publicationPersistenceUnknown();
+                boolean committed;
+                try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+                    transaction.replace(key, revision, byteContent(PublicationRecordCodec.encode(replacement)),
+                            CancellationSignal.NONE);
+                    PublicationCommitFaultPoint fault = takePublicationCommitFault();
+                    if (fault == PublicationCommitFaultPoint.REPLACE_BEFORE_COMMIT) {
+                        throw new IOException("Injected publication replacement failure");
+                    }
+                    MetadataCommitResult result = transaction.commit();
+                    if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED
+                            && fault == PublicationCommitFaultPoint.REPLACE_COMMIT_AS_UNKNOWN) {
+                        throw publicationPersistenceUnknown();
+                    }
+                    if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                        throw publicationPersistenceUnknown();
+                    }
+                    acknowledgeKnownOutcome(result);
+                    committed = result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
                 }
-                if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
-                    throw publicationPersistenceUnknown();
+                if (committed && isTerminalPublication(replacement.status())) {
+                    recordPublicationEvidence(replacement);
                 }
-                acknowledgeKnownOutcome(result);
-                committed = result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
+                return committed;
+            } catch (IOException exception) {
+                throw new IllegalStateException("Publication metadata persistence failed");
             }
-            if (committed && isTerminalPublication(replacement.status())) {
-                recordPublicationEvidence(replacement);
-            }
-            return committed;
-        } catch (IOException exception) {
-            throw new IllegalStateException("Publication metadata persistence failed");
         }
     }
 
@@ -3842,18 +4171,20 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public PublicationCursor openPublicationRecords() {
-        requireStoreUsable();
-        MetadataSnapshot snapshot = null;
-        try {
-            snapshot = metadataStore.snapshot();
-            MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(PUBLICATION_RECORD_NAMESPACE),
-                    CancellationSignal.NONE);
-            return new PublicationMetadataCursor(snapshot, cursor);
-        } catch (IOException | RuntimeException failure) {
-            if (snapshot != null) {
-                snapshot.close();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            MetadataSnapshot snapshot = null;
+            try {
+                snapshot = metadataStore.snapshot();
+                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(PUBLICATION_RECORD_NAMESPACE),
+                        CancellationSignal.NONE);
+                return new PublicationMetadataCursor(snapshot, cursor);
+            } catch (IOException | RuntimeException failure) {
+                if (snapshot != null) {
+                    snapshot.close();
+                }
+                throw new IllegalStateException("Publication metadata cursor cannot be opened");
             }
-            throw new IllegalStateException("Publication metadata cursor cannot be opened");
         }
     }
 
@@ -3868,40 +4199,42 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // redacted.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public ImportedCertificateProfileVersion importProfileVersion(final ImportedCertificateProfileVersion version) {
-        requireStoreUsable();
-        Objects.requireNonNull(version, "version");
-        String profileId = version.reference().profileId();
-        ProfileLockEntry lock = acquireProfileLock(profileId);
-        try {
-            ValidatedImportedProfile.validate(version, profileId, version.reference().profileVersion());
-            Path target = paths.profileVersion(profileId, version.reference().profileVersion());
-            if (Files.exists(target)) {
-                ImportedCertificateProfileVersion existing = decodeProfileVersion(target, profileId,
-                        version.reference().profileVersion());
-                if (!existing.reference().equals(version.reference())) {
-                    throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CONFLICT);
-                }
-                return existing;
-            }
-            requireConsistentProfileKind(version);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(version, "version");
+            String profileId = version.reference().profileId();
+            ProfileLockEntry lock = acquireProfileLock(profileId);
             try {
-                FsOperations.writeNewAtomicStrict(target, FsCodec.encode(FsCodec.PROFILE_VERSION, version));
-                return version;
-            } catch (FileAlreadyExistsException conflict) {
-                ImportedCertificateProfileVersion existing = decodeProfileVersion(target, profileId,
-                        version.reference().profileVersion());
-                if (!existing.reference().equals(version.reference())) {
-                    throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CONFLICT);
+                ValidatedImportedProfile.validate(version, profileId, version.reference().profileVersion());
+                Path target = paths.profileVersion(profileId, version.reference().profileVersion());
+                if (Files.exists(target)) {
+                    ImportedCertificateProfileVersion existing = decodeProfileVersion(target, profileId,
+                            version.reference().profileVersion());
+                    if (!existing.reference().equals(version.reference())) {
+                        throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CONFLICT);
+                    }
+                    return existing;
                 }
-                return existing;
-            } catch (FsOperations.DurabilityUncertainException failure) {
-                durabilityUncertain.set(true);
-                throw new ProfileLifecycleFailure(Code.PROFILE_DURABILITY_UNCONFIRMED);
-            } catch (IOException failure) {
-                throw new ProfileLifecycleFailure(Code.PROFILE_IMPORT_FAILED);
+                requireConsistentProfileKind(version);
+                try {
+                    FsOperations.writeNewAtomicStrict(target, FsCodec.encode(FsCodec.PROFILE_VERSION, version));
+                    return version;
+                } catch (FileAlreadyExistsException conflict) {
+                    ImportedCertificateProfileVersion existing = decodeProfileVersion(target, profileId,
+                            version.reference().profileVersion());
+                    if (!existing.reference().equals(version.reference())) {
+                        throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CONFLICT);
+                    }
+                    return existing;
+                } catch (FsOperations.DurabilityUncertainException failure) {
+                    durabilityUncertain.set(true);
+                    throw new ProfileLifecycleFailure(Code.PROFILE_DURABILITY_UNCONFIRMED);
+                } catch (IOException failure) {
+                    throw new ProfileLifecycleFailure(Code.PROFILE_IMPORT_FAILED);
+                }
+            } finally {
+                releaseProfileLock(profileId, lock);
             }
-        } finally {
-            releaseProfileLock(profileId, lock);
         }
     }
 
@@ -3916,33 +4249,37 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<ImportedCertificateProfileVersion> getProfileVersion(final String profileId,
             final long profileVersion) {
-        requireStoreUsable();
-        requireProfileIdentity(profileId, profileVersion);
-        Path path = paths.profileVersion(profileId, profileVersion);
-        return Files.exists(path) ? Optional.of(decodeProfileVersion(path, profileId, profileVersion))
-                : Optional.empty();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requireProfileIdentity(profileId, profileVersion);
+            Path path = paths.profileVersion(profileId, profileVersion);
+            return Files.exists(path) ? Optional.of(decodeProfileVersion(path, profileId, profileVersion))
+                    : Optional.empty();
+        }
     }
 
     @Override
     // Filesystem failures are normalized to the stable store failure code.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public List<ImportedCertificateProfileVersion> listProfileVersions(final String profileId) {
-        requireStoreUsable();
-        requireProfileIdentity(profileId, 1L);
-        Path directory = paths.profileVersionsDir(profileId);
-        if (!Files.isDirectory(directory)) {
-            return List.of();
-        }
-        try (Stream<Path> files = Files.list(directory)) {
-            List<ImportedCertificateProfileVersion> versions = new ArrayList<>();
-            for (Path file : files.filter(Files::isRegularFile)
-                    .sorted(Comparator.comparingLong(FilesystemPkiStore::profileVersionFromPath)).toList()) {
-                long version = profileVersionFromPath(file);
-                versions.add(decodeProfileVersion(file, profileId, version));
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requireProfileIdentity(profileId, 1L);
+            Path directory = paths.profileVersionsDir(profileId);
+            if (!Files.isDirectory(directory)) {
+                return List.of();
             }
-            return List.copyOf(versions);
-        } catch (IOException | SecurityException failure) {
-            throw new ProfileLifecycleFailure(Code.PROFILE_STORE_FAILURE);
+            try (Stream<Path> files = Files.list(directory)) {
+                List<ImportedCertificateProfileVersion> versions = new ArrayList<>();
+                for (Path file : files.filter(Files::isRegularFile)
+                        .sorted(Comparator.comparingLong(FilesystemPkiStore::profileVersionFromPath)).toList()) {
+                    long version = profileVersionFromPath(file);
+                    versions.add(decodeProfileVersion(file, profileId, version));
+                }
+                return List.copyOf(versions);
+            } catch (IOException | SecurityException failure) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_STORE_FAILURE);
+            }
         }
     }
 
@@ -3951,63 +4288,73 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // redacted.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public CertificateProfileRef activateProfile(final String profileId, final long profileVersion) {
-        requireStoreUsable();
-        requireProfileIdentity(profileId, profileVersion);
-        ProfileLockEntry lock = acquireProfileLock(profileId);
-        try {
-            ImportedCertificateProfileVersion version = getProfileVersion(profileId, profileVersion)
-                    .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
-            CertificateProfileRef reference = version.reference();
-            Optional<CertificateProfileRef> current = readActiveProfileRef(profileId);
-            if (current.filter(reference::equals).isPresent()) {
-                return reference;
-            }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requireProfileIdentity(profileId, profileVersion);
+            ProfileLockEntry lock = acquireProfileLock(profileId);
             try {
-                FsOperations.writeAtomicStrict(paths.profileActive(profileId),
-                        FsCodec.encode(FsCodec.ACTIVE_PROFILE_REF, reference));
-                return reference;
-            } catch (FsOperations.DurabilityUncertainException failure) {
-                durabilityUncertain.set(true);
-                throw new ProfileLifecycleFailure(Code.PROFILE_DURABILITY_UNCONFIRMED);
-            } catch (IOException failure) {
-                throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVATION_FAILED);
+                ImportedCertificateProfileVersion version = getProfileVersion(profileId, profileVersion)
+                        .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
+                CertificateProfileRef reference = version.reference();
+                Optional<CertificateProfileRef> current = readActiveProfileRef(profileId);
+                if (current.filter(reference::equals).isPresent()) {
+                    return reference;
+                }
+                try {
+                    FsOperations.writeAtomicStrict(paths.profileActive(profileId),
+                            FsCodec.encode(FsCodec.ACTIVE_PROFILE_REF, reference));
+                    return reference;
+                } catch (FsOperations.DurabilityUncertainException failure) {
+                    durabilityUncertain.set(true);
+                    throw new ProfileLifecycleFailure(Code.PROFILE_DURABILITY_UNCONFIRMED);
+                } catch (IOException failure) {
+                    throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVATION_FAILED);
+                }
+            } finally {
+                releaseProfileLock(profileId, lock);
             }
-        } finally {
-            releaseProfileLock(profileId, lock);
         }
     }
 
     @Override
     public Optional<CertificateProfileRef> getActiveProfileRef(final String profileId) {
-        requireStoreUsable();
-        requireProfileIdentity(profileId, 1L);
-        return readValidatedActiveProfile(profileId).map(validated -> validated.version().reference());
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requireProfileIdentity(profileId, 1L);
+            return readValidatedActiveProfile(profileId).map(validated -> validated.version().reference());
+        }
     }
 
     @Override
     public ActiveCertificateProfile requireActiveProfile(final String profileId) {
-        requireStoreUsable();
-        requireProfileIdentity(profileId, 1L);
-        ValidatedImportedProfile validated = readValidatedActiveProfile(profileId)
-                .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_NOT_ACTIVE));
-        ImportedCertificateProfileVersion version = validated.version();
-        return new ActiveCertificateProfile(version.reference(), version.definition());
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requireProfileIdentity(profileId, 1L);
+            ValidatedImportedProfile validated = readValidatedActiveProfile(profileId)
+                    .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_NOT_ACTIVE));
+            ImportedCertificateProfileVersion version = validated.version();
+            return new ActiveCertificateProfile(version.reference(), version.definition());
+        }
     }
 
     @Override
     public void putPolicyTrace(final PolicyTrace trace) {
-        requireStoreUsable();
-        Objects.requireNonNull(trace, "trace");
-        PkiId id = trace.decisionId();
-        writeOnce(this.paths.policyTracePath(id), FsCodec.encode(FsCodec.POLICY_TRACE, trace), "POLICY_TRACE",
-                FsUtil.safeId(id));
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(trace, "trace");
+            PkiId id = trace.decisionId();
+            writeOnce(this.paths.policyTracePath(id), FsCodec.encode(FsCodec.POLICY_TRACE, trace), "POLICY_TRACE",
+                    FsUtil.safeId(id));
+        }
     }
 
     @Override
     public Optional<PolicyTrace> getPolicyTrace(final PkiId decisionId) {
-        requireStoreUsable();
-        Objects.requireNonNull(decisionId, "decisionId");
-        return readOptional(this.paths.policyTracePath(decisionId), FsCodec.POLICY_TRACE);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(decisionId, "decisionId");
+            return readOptional(this.paths.policyTracePath(decisionId), FsCodec.POLICY_TRACE);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -4016,48 +4363,182 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putWorkflowState(final WorkflowStateRecord record) {
-        requireStoreUsable();
-        Objects.requireNonNull(record, "record");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(record, "record");
 
-        PkiId opId = record.opId();
-        Path current = this.paths.workflowCurrent(opId);
+            PkiId opId = record.opId();
+            Path current = this.paths.workflowCurrent(opId);
 
-        // Never log payload; writeWithHistory logs only type + safe identifiers.
-        writeWithHistory(this.paths.workflowHistoryDir(opId), current, FsCodec.encode(FsCodec.WORKFLOW_STATE, record),
-                this.options.workflowHistoryPolicy(), "WORKFLOW", FsUtil.safeId(opId));
+            // Never log payload; writeWithHistory logs only type + safe identifiers.
+            writeWithHistory(this.paths.workflowHistoryDir(opId), current, FsCodec.encode(FsCodec.WORKFLOW_STATE, record),
+                    this.options.workflowHistoryPolicy(), "WORKFLOW", FsUtil.safeId(opId));
+        }
     }
 
     @Override
     public Optional<WorkflowStateRecord> getWorkflowState(final PkiId opId) {
-        requireStoreUsable();
-        Objects.requireNonNull(opId, "opId");
-        return readOptional(this.paths.workflowCurrent(opId), FsCodec.WORKFLOW_STATE);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(opId, "opId");
+            return readOptional(this.paths.workflowCurrent(opId), FsCodec.WORKFLOW_STATE);
+        }
     }
 
     @Override
     public void deleteWorkflowState(final PkiId opId) {
-        requireStoreUsable();
-        Objects.requireNonNull(opId, "opId");
-        Path current = this.paths.workflowCurrent(opId);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(opId, "opId");
+            Path current = this.paths.workflowCurrent(opId);
 
-        try {
-            Files.deleteIfExists(current);
-        } catch (IOException e) {
-            throw new IllegalStateException("failed to delete workflow state opId=" + FsUtil.safeId(opId), e);
+            try {
+                Files.deleteIfExists(current);
+            } catch (IOException e) {
+                throw new IllegalStateException("failed to delete workflow state opId=" + FsUtil.safeId(opId), e);
+            }
         }
     }
 
     @Override
     public List<WorkflowStateRecord> listWorkflowStates() {
-        requireStoreUsable();
-        // List by operation directory (workflows/by-op/<opId>/current.bin)
-        return listCurrentRecords(this.paths.workflowRoot(), FsCodec.WORKFLOW_STATE);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            // List by operation directory (workflows/by-op/<opId>/current.bin)
+            return listCurrentRecords(this.paths.workflowRoot(), FsCodec.WORKFLOW_STATE);
+        }
+    }
+
+    @Override
+    public Optional<StatusSchedule> getStatusSchedule(PkiId caId, StatusObjectType statusType) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().get(caId, statusType).map(StatusScheduleState::configuration); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule read failed", failure); }
+        }
+    }
+
+    @Override
+    public List<StatusSchedule> listActiveStatusSchedulesPage(Optional<String> after, int limit,
+            CancellationSignal cancellation) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().page(after, limit, false, cancellation).stream()
+                    .map(StatusScheduleState::configuration).toList(); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule listing failed", failure); }
+        }
+    }
+
+    @Override
+    public StatusSchedule putStatusSchedule(StatusSchedule schedule) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().put(schedule, Optional.empty(), signingNow()); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule update failed", failure); }
+        }
+    }
+
+    @Override
+    public boolean replaceStatusSchedule(StatusSchedule expected, StatusSchedule replacement) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            if (!expected.caId().equals(replacement.caId()) || expected.statusType() != replacement.statusType()) {
+                throw new IllegalArgumentException("Schedule identity cannot change");
+            }
+            try { return schedules().put(replacement, Optional.of(expected), signingNow()) != null; }
+            catch (IOException failure) { throw new IllegalStateException("Schedule replacement failed", failure); }
+        }
+    }
+
+    private FsStatusSchedules schedules() { return new FsStatusSchedules(metadataStore, this::requireKnownOutcome, this::requireFailedSchedule); }
+
+    private void validateScheduleReceipt(StatusScheduleState.Execution execution) {
+        SignWorkflowStore.Workflow workflow = readSignWorkflow(execution.signingOperationId().orElseThrow()).orElseThrow();
+        FsStatusSchedules.validateBinding(execution, workflow.envelope());
+        DomainContinuationStore.Record domain = getDomainContinuation(workflow.operationId()).orElseThrow();
+        requireMatchingOuter(workflow, domain);
+        if (execution.phase() == StatusScheduleState.Phase.FAILED) requireFailedSchedule(execution);
+        if (execution.statusObjectId().isPresent()) {
+            StatusObject status = getStatusObject(execution.statusObjectId().orElseThrow()).orElseThrow();
+            zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.requirePublicationMetadata(status, domain);
+            if (domain.state() == DomainContinuationStore.State.COMPLETED) {
+                zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.requireCompleted(status, domain);
+            } else if (domain.state() == DomainContinuationStore.State.PUBLISHING) {
+                try {
+                    zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.requireSigningEffect(this, status, domain, workflow.result().orElseThrow());
+                } catch (IOException failure) { throw new IllegalStateException("Scheduled effect validation failed", failure); }
+            }
+            if (domain.state() != DomainContinuationStore.State.PUBLISHING && domain.state() != DomainContinuationStore.State.COMPLETED) {
+                throw new IllegalStateException("Scheduled effect lacks publication authority");
+            }
+        } else if (domain.state() == DomainContinuationStore.State.COMPLETED) {
+            throw new IllegalStateException("Scheduled completion lacks effect marker");
+        }
+    }
+
+    private void requireFailedSchedule(StatusScheduleState.Execution execution) {
+        if (execution.statusObjectId().isPresent()) throw new IllegalStateException("Committed schedule cannot be reset");
+        PkiId id = execution.signingOperationId().orElseThrow();
+        SignWorkflowStore.Workflow workflow = readSignWorkflow(id).orElseThrow();
+        DomainContinuationStore.Record domain = getDomainContinuation(id).orElseThrow();
+        FsStatusSchedules.validateBinding(execution, workflow.envelope());
+        requireMatchingOuter(workflow, domain);
+        if (isActiveSignState(workflow.state()) || domain.kind() != DomainContinuationStore.Kind.STATUS
+                || domain.state() != DomainContinuationStore.State.FAILED && domain.state() != DomainContinuationStore.State.EXPIRED) {
+            throw new IllegalStateException("Scheduled failure is not terminal without an effect");
+        }
+    }
+
+    @Override public boolean supportsStatusScheduling() { return true; }
+
+    @Override public Optional<StatusScheduleState> getStatusScheduleState(PkiId caId, StatusObjectType type) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().get(caId, type); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule read failed", failure); }
+        }
+    }
+
+    @Override public List<StatusScheduleState> listStatusScheduleWork(Optional<String> after, int limit,
+            CancellationSignal cancellation) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().page(after, limit, true, cancellation); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule listing failed", failure); }
+        }
+    }
+
+    @Override public Optional<StatusScheduleState.Execution> claimStatusSchedule(StatusScheduleState expected) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().claim(expected, signingNow()); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule claim failed", failure); }
+        }
+    }
+
+    @Override public boolean advanceStatusSchedule(StatusScheduleState.Execution expected) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().advance(expected, getStatusObject(expected.statusObjectId().orElseThrow())
+                    .orElseThrow().nextUpdate().orElseThrow()); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule advancement failed", failure); }
+        }
+    }
+
+    @Override public boolean failStatusSchedule(StatusScheduleState.Execution expected, String detailCode) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            try { return schedules().fail(expected, detailCode); }
+            catch (IOException failure) { throw new IllegalStateException("Schedule failure recording failed", failure); }
+        }
     }
 
     @Override
     public Instant signingNow() {
-        requireStoreUsable();
-        return advanceSigningTime();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return advanceSigningTime();
+        }
     }
 
     // Monotonic signing time shared by every signer. The watermark is an atomic maximum
@@ -4074,20 +4555,26 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public String signingNamespace() {
-        requireStoreUsable();
-        return signingNamespace;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return signingNamespace;
+        }
     }
 
     @Override
     public Duration signingPermittedSkew() {
-        requireStoreUsable();
-        return options.signingIdPermittedSkew();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return options.signingIdPermittedSkew();
+        }
     }
 
     @Override
     public Duration signingHorizon() {
-        requireStoreUsable();
-        return options.signingOperationHorizon();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return options.signingOperationHorizon();
+        }
     }
 
     private static boolean isActiveSignState(SignWorkflowStore.State state) {
@@ -4098,28 +4585,47 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public SignWorkflowStore.AcceptanceResult acceptSign(
             SignWorkflowStore.AcceptanceCommand command) {
-        requireStoreUsable();
-        SignWorkflowStore.AcceptanceCommand exact = Objects.requireNonNull(command, "command");
-        PkiId operationId = exact.operationId();
-        List<DurableContentReference> candidates = acceptanceCandidates(exact).stream()
-                .sorted(Comparator.comparing(DurableContentReference::contentId)).toList();
-        List<SignLockEntry> locks = new ArrayList<>(candidates.size());
-        try {
-            for (DurableContentReference candidate : candidates) { locks.add(acquireSignCandidateLock(candidate.contentId())); }
-            return acceptSignWithCandidateCustody(exact, operationId, exact.candidate());
-        } finally {
-            for (int index = locks.size() - 1; index >= 0; index--) {
-                releaseSignCandidateLock(candidates.get(index).contentId(), locks.get(index));
+        return acceptSign(command, Optional.empty());
+    }
+
+    @Override public SignWorkflowStore.AcceptanceResult acceptScheduledSign(
+            SignWorkflowStore.AcceptanceCommand command, StatusScheduleState.Execution claim) {
+        return acceptSign(command, Optional.of(Objects.requireNonNull(claim, "claim")));
+    }
+
+    private SignWorkflowStore.AcceptanceResult acceptSign(SignWorkflowStore.AcceptanceCommand command,
+            Optional<StatusScheduleState.Execution> scheduledClaim) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            SignWorkflowStore.AcceptanceCommand exact = Objects.requireNonNull(command, "command");
+            PkiId operationId = exact.operationId();
+            List<DurableContentReference> candidates = acceptanceCandidates(exact).stream()
+                    .sorted(Comparator.comparing(DurableContentReference::contentId)).toList();
+            List<SignLockEntry> locks = new ArrayList<>(candidates.size());
+            try {
+                for (DurableContentReference candidate : candidates) { locks.add(acquireSignCandidateLock(candidate.contentId())); }
+                SignWorkflowStore.AcceptanceResult result = acceptSignWithCandidateCustody(exact, operationId, exact.candidate(), scheduledClaim);
+                if (scheduledClaim.isPresent() && result == SignWorkflowStore.AcceptanceResult.ATTACHED_EXISTING) {
+                    try {
+                        if (!schedules().attached(scheduledClaim.orElseThrow(), exact)) return SignWorkflowStore.AcceptanceResult.CONFLICT;
+                    } catch (IOException failure) { throw new IllegalStateException("Schedule receipt read failed", failure); }
+                }
+                return result;
+            } finally {
+                for (int index = locks.size() - 1; index >= 0; index--) {
+                    releaseSignCandidateLock(candidates.get(index).contentId(), locks.get(index));
+                }
             }
         }
     }
 
     private SignWorkflowStore.AcceptanceResult acceptSignWithCandidateCustody(
             SignWorkflowStore.AcceptanceCommand exact, PkiId operationId,
-            DurableContentReference candidate) {
+            DurableContentReference candidate, Optional<StatusScheduleState.Execution> scheduledClaim) {
         try {
             validateAcceptanceCommand(exact);
             validateAcceptanceOuter(exact);
+            scheduledClaim.ifPresent(claim -> FsStatusSchedules.validateBinding(claim, SignWorkflowStore.AcceptanceEnvelope.from(exact)));
             notifySignAcceptanceValidated();
         } catch (IllegalArgumentException | IllegalStateException failure) {
             reclaimDefinitelyUnboundCandidates(exact);
@@ -4167,7 +4673,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                             SignWorkflowStore.AcceptanceEnvelope.from(exact));
                 }
                 Optional<SignAcceptanceCrlScope> claims = SignAcceptanceCrlScope.derive(this, exact, ignoredContent);
-                MetadataCommitResult committed = createSignAcceptance(exact, admission, claims);
+                MetadataCommitResult committed = createSignAcceptance(exact, admission, claims, scheduledClaim);
                 if (committed.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
                     return SignWorkflowStore.AcceptanceResult.ACCEPTED;
                 }
@@ -4218,18 +4724,20 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public SignWorkflowStore.AcceptanceResolution resolveAcceptance(PkiId operationId,
             SignWorkflowStore.AcceptanceCommitment commitment) {
-        requireStoreUsable();
-        PkiId exactId = Objects.requireNonNull(operationId, "operationId");
-        SignWorkflowStore.AcceptanceCommitment exactCommitment = Objects.requireNonNull(
-                commitment, "commitment");
-        Optional<StoredSign> existing = readStoredSign(exactId);
-        if (existing.isEmpty()) {
-            return SignWorkflowStore.AcceptanceResolution.NOT_ACCEPTED;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            PkiId exactId = Objects.requireNonNull(operationId, "operationId");
+            SignWorkflowStore.AcceptanceCommitment exactCommitment = Objects.requireNonNull(
+                    commitment, "commitment");
+            Optional<StoredSign> existing = readStoredSign(exactId);
+            if (existing.isEmpty()) {
+                return SignWorkflowStore.AcceptanceResolution.NOT_ACCEPTED;
+            }
+            return existing.orElseThrow().record().envelope().acceptanceCommitment()
+                    .matches(exactCommitment)
+                            ? SignWorkflowStore.AcceptanceResolution.MATCHED
+                            : SignWorkflowStore.AcceptanceResolution.CONFLICT;
         }
-        return existing.orElseThrow().record().envelope().acceptanceCommitment()
-                .matches(exactCommitment)
-                        ? SignWorkflowStore.AcceptanceResolution.MATCHED
-                        : SignWorkflowStore.AcceptanceResolution.CONFLICT;
     }
 
     private static List<DurableContentReference> acceptanceCandidates(SignWorkflowStore.AcceptanceCommand command) {
@@ -4313,13 +4821,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private MetadataCommitResult createSignAcceptance(
             SignWorkflowStore.AcceptanceCommand command,
             SigningLedgerStoreEngine.SigningAdmission admission,
-            Optional<SignAcceptanceCrlScope> claims) throws MetadataStoreException {
+            Optional<SignAcceptanceCrlScope> claims,
+            Optional<StatusScheduleState.Execution> scheduledClaim) throws MetadataStoreException {
         SignWorkflowStore.AcceptanceEnvelope envelope =
                 SignWorkflowStore.AcceptanceEnvelope.from(command);
         SignWorkflowStore.MutableState state = SignWorkflowStore.MutableState.intent(
                 command.operationId(), command.mode(), command.proofStep().isPresent()
                         ? SignWorkflowStore.Stage.CA_PROOF : SignWorkflowStore.Stage.SINGLE);
         try (MetadataTransaction transaction = metadataStore.beginTransaction(admission)) {
+            if (scheduledClaim.isPresent()) schedules().stageAcceptance(transaction, scheduledClaim.orElseThrow(), command);
             if (claims.isPresent()) {
                 crlScopeReservations.stageAcceptance(transaction, claims.orElseThrow());
             }
@@ -4401,81 +4911,87 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<DomainContinuationStore.Record> getDomainContinuation(PkiId operationId) {
-        requireStoreUsable();
-        Objects.requireNonNull(operationId, "operationId");
-        try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                MetadataSnapshot.Record stored = snapshot.get(domainContinuationKey(operationId)).orElse(null)) {
-            if (stored == null) return Optional.empty();
-            return Optional.of(decodeDomainContinuation(operationId, stored));
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to read domain continuation", exception);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(operationId, "operationId");
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    MetadataSnapshot.Record stored = snapshot.get(domainContinuationKey(operationId)).orElse(null)) {
+                if (stored == null) return Optional.empty();
+                return Optional.of(decodeDomainContinuation(operationId, stored));
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to read domain continuation", exception);
+            }
         }
     }
 
     @Override
     public Optional<DomainContinuationStore.Record> getDomainContinuation(
             DomainContinuationStore.Kind kind, String correlationId) {
-        requireStoreUsable();
-        Objects.requireNonNull(kind, "kind");
-        Objects.requireNonNull(correlationId, "correlationId");
-        PkiId operationId;
-        try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                MetadataSnapshot.Record stored = snapshot.get(domainCorrelationKey(kind, correlationId))
-                        .orElse(null)) {
-            if (stored == null) return Optional.empty();
-            byte[] encoded = readMetadataValue(stored);
-            String value = new String(encoded, StandardCharsets.UTF_8);
-            if (!Arrays.equals(encoded, value.getBytes(StandardCharsets.UTF_8))
-                    || !value.startsWith("v1\n")) {
-                throw new IllegalStateException("Domain correlation record is invalid");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(correlationId, "correlationId");
+            PkiId operationId;
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    MetadataSnapshot.Record stored = snapshot.get(domainCorrelationKey(kind, correlationId))
+                            .orElse(null)) {
+                if (stored == null) return Optional.empty();
+                byte[] encoded = readMetadataValue(stored);
+                String value = new String(encoded, StandardCharsets.UTF_8);
+                if (!Arrays.equals(encoded, value.getBytes(StandardCharsets.UTF_8))
+                        || !value.startsWith("v1\n")) {
+                    throw new IllegalStateException("Domain correlation record is invalid");
+                }
+                operationId = new PkiId(value.substring(3));
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to read domain correlation", exception);
             }
-            operationId = new PkiId(value.substring(3));
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to read domain correlation", exception);
+            DomainContinuationStore.Record continuation = getDomainContinuation(operationId)
+                    .orElseThrow(() -> new IllegalStateException("Domain correlation target is missing"));
+            if (continuation.kind() != kind
+                    || continuation.correlationId().filter(correlationId::equals).isEmpty()) {
+                throw new IllegalStateException("Domain correlation authority differs");
+            }
+            return Optional.of(continuation);
         }
-        DomainContinuationStore.Record continuation = getDomainContinuation(operationId)
-                .orElseThrow(() -> new IllegalStateException("Domain correlation target is missing"));
-        if (continuation.kind() != kind
-                || continuation.correlationId().filter(correlationId::equals).isEmpty()) {
-            throw new IllegalStateException("Domain correlation authority differs");
-        }
-        return Optional.of(continuation);
     }
 
     @Override
     public Optional<DomainContinuationStore.Record> transitionDomainContinuation(PkiId operationId,
             long expectedRevision, DomainContinuationStore.State target,
             Optional<EncodedObject> result, Optional<String> detailCode) {
-        requireStoreUsable();
-        Objects.requireNonNull(operationId, "operationId");
-        Objects.requireNonNull(target, "target");
-        Objects.requireNonNull(result, "result");
-        Objects.requireNonNull(detailCode, "detailCode");
-        SignLockEntry lock = acquireSignLock(operationId);
-        try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                MetadataSnapshot.Record stored = snapshot.get(domainContinuationKey(operationId)).orElse(null)) {
-            if (stored == null) return Optional.empty();
-            DomainContinuationStore.Record current = decodeDomainContinuation(operationId, stored);
-            if (current.revision() != expectedRevision || !validDomainTransition(current.state(), target)) {
-                return Optional.empty();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(operationId, "operationId");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(result, "result");
+            Objects.requireNonNull(detailCode, "detailCode");
+            SignLockEntry lock = acquireSignLock(operationId);
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    MetadataSnapshot.Record stored = snapshot.get(domainContinuationKey(operationId)).orElse(null)) {
+                if (stored == null) return Optional.empty();
+                DomainContinuationStore.Record current = decodeDomainContinuation(operationId, stored);
+                if (current.revision() != expectedRevision || !validDomainTransition(current.state(), target)) {
+                    return Optional.empty();
+                }
+                DomainContinuationStore.Record replacement = new DomainContinuationStore.Record(
+                        current.operationId(), current.version(), current.kind(), current.correlationId(), target,
+                        current.revision() + 1L, current.createdAt(), current.deadline(), current.command(),
+                        current.commandCommitment(), liveDomainSigningContent(current, target), result, detailCode);
+                try (MetadataTransaction transaction =
+                        metadataStore.beginSigningProgressTransaction()) {
+                    transaction.replace(domainContinuationKey(operationId), stored.recordRevision(),
+                            byteContent(FsCodec.encode(FsCodec.DOMAIN_CONTINUATION, replacement)),
+                            CancellationSignal.NONE);
+                    MetadataCommitResult committed = requireKnownOutcome(transaction.commit());
+                    return committed.outcome() == MetadataCommitResult.Outcome.COMMITTED
+                            ? Optional.of(replacement) : Optional.empty();
+                }
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to transition domain continuation", exception);
+            } finally {
+                releaseSignLock(operationId, lock);
             }
-            DomainContinuationStore.Record replacement = new DomainContinuationStore.Record(
-                    current.operationId(), current.version(), current.kind(), current.correlationId(), target,
-                    current.revision() + 1L, current.createdAt(), current.deadline(), current.command(),
-                    current.commandCommitment(), liveDomainSigningContent(current, target), result, detailCode);
-            try (MetadataTransaction transaction =
-                    metadataStore.beginSigningProgressTransaction()) {
-                transaction.replace(domainContinuationKey(operationId), stored.recordRevision(),
-                        byteContent(FsCodec.encode(FsCodec.DOMAIN_CONTINUATION, replacement)),
-                        CancellationSignal.NONE);
-                MetadataCommitResult committed = requireKnownOutcome(transaction.commit());
-                return committed.outcome() == MetadataCommitResult.Outcome.COMMITTED
-                        ? Optional.of(replacement) : Optional.empty();
-            }
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to transition domain continuation", exception);
-        } finally {
-            releaseSignLock(operationId, lock);
         }
     }
 
@@ -4511,154 +5027,164 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Workflow> getSignWorkflow(PkiId submissionId) {
-        requireStoreUsable();
-        Objects.requireNonNull(submissionId, "submissionId");
-        Optional<SignExpiry> expiry = Optional.empty();
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> stored = readStoredSign(submissionId);
-            if (stored.isEmpty()) {
-                result = Optional.empty();
-            } else {
-                expiry = expireIfDeadlineReached(stored.orElseThrow());
-                result = expiry.map(SignExpiry::record)
-                        .or(() -> Optional.of(stored.orElseThrow().record()));
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(submissionId, "submissionId");
+            Optional<SignExpiry> expiry = Optional.empty();
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> stored = readStoredSign(submissionId);
+                if (stored.isEmpty()) {
+                    result = Optional.empty();
+                } else {
+                    expiry = expireIfDeadlineReached(stored.orElseThrow());
+                    result = expiry.map(SignExpiry::record)
+                            .or(() -> Optional.of(stored.orElseThrow().record()));
+                }
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            return result;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        return result;
     }
 
     @Override
     public List<SignWorkflowStore.Workflow> listSignWorkflows() {
-        requireStoreUsable();
-        return listStoredSigns().stream().map(StoredSign::record).toList();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return listStoredSigns().stream().map(StoredSign::record).toList();
+        }
     }
 
     @Override
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public List<SignWorkflowStore.Workflow> selectDueSignWorkflows(Instant cutoffInclusive,
             int maximumRecords) {
-        requireStoreUsable();
-        Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
-        if (maximumRecords < 1 || maximumRecords > 4096) {
-            throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
-        }
-        List<SignWorkflowStore.Workflow> records = new ArrayList<>(maximumRecords);
-        try {
-            List<String> dueOperations = metadataStore.selectSigningDue(
-                    cutoffInclusive, maximumRecords);
-            for (String operationId : dueOperations) {
-                readSignWorkflow(new PkiId(operationId)).ifPresent(records::add);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
+            if (maximumRecords < 1 || maximumRecords > 4096) {
+                throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
             }
-        } catch (IOException failure) {
-            throw new IllegalStateException(
-                    "Failed to select authoritative signing records", failure);
+            List<SignWorkflowStore.Workflow> records = new ArrayList<>(maximumRecords);
+            try {
+                List<String> dueOperations = metadataStore.selectSigningDue(
+                        cutoffInclusive, maximumRecords);
+                for (String operationId : dueOperations) {
+                    readSignWorkflow(new PkiId(operationId)).ifPresent(records::add);
+                }
+            } catch (IOException failure) {
+                throw new IllegalStateException(
+                        "Failed to select authoritative signing records", failure);
+            }
+            return List.copyOf(records);
         }
-        return List.copyOf(records);
     }
 
     @Override
     public SignWorkflowStore.Page pageSignWorkflows(Optional<String> exclusiveCursor, int maximumRecords,
             CancellationSignal cancellation) {
-        return pageSignWorkflows(exclusiveCursor, Optional.empty(), maximumRecords, cancellation);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            return pageSignWorkflows(exclusiveCursor, Optional.empty(), maximumRecords, cancellation);
+        }
     }
 
     @Override
     public SignWorkflowStore.Page pageSignWorkflows(Optional<String> exclusiveCursor,
             Optional<String> inclusiveHighWatermark, int maximumRecords, CancellationSignal cancellation) {
-        requireStoreUsable();
-        Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
-        Objects.requireNonNull(inclusiveHighWatermark, "inclusiveHighWatermark");
-        Objects.requireNonNull(cancellation, "cancellation");
-        if (maximumRecords < 1 || maximumRecords > 4096) {
-            throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
-        }
-        Optional<String> lower = exclusiveCursor;
-        MetadataSnapshot.KeyRange range = new MetadataSnapshot.KeyRange(SIGN_STATE_NAMESPACE, lower,
-                Optional.empty());
-        List<SignWorkflowStore.Workflow> records = new ArrayList<>(maximumRecords);
-        List<SignWorkflowStore.PageCandidate> candidates = new ArrayList<>(maximumRecords);
-        int examined = 0;
-        int failures = 0;
-        Optional<String> nextCursor = exclusiveCursor;
-        if (cancellation.isCancelled()) {
-            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates);
-        }
-        try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                MetadataCursor cursor = snapshot.scan(range, cancellation)) {
-            Optional<String> highWatermark = snapshot.greatestKey(SIGN_STATE_NAMESPACE)
-                    .map(MetadataKey::key);
-            while (examined < maximumRecords) {
-                Optional<MetadataSnapshot.Record> next;
-                try {
-                    next = cursor.next(cancellation);
-                } catch (InterruptedIOException cancelled) {
-                    if (cancellation.isCancelled()) {
-                        return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates,
-                                highWatermark);
-                    }
-                    throw cancelled;
-                }
-                if (next.isEmpty()) {
-                    return new SignWorkflowStore.Page(records, nextCursor, examined, failures, true, candidates,
-                            highWatermark);
-                }
-                try (MetadataSnapshot.Record candidate = next.orElseThrow()) {
-                    String candidateCursor = candidate.key().key();
-                    if (inclusiveHighWatermark.filter(watermark -> candidateCursor.compareTo(watermark) > 0)
-                            .isPresent()) {
-                        return new SignWorkflowStore.Page(records, nextCursor, examined, failures, true, candidates,
-                                highWatermark);
-                    }
-                    if (exclusiveCursor.filter(candidateCursor::equals).isPresent()) {
-                        continue;
-                    }
-                    if (cancellation.isCancelled()) {
-                        return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates,
-                                highWatermark);
-                    }
-                    examined++;
-                    nextCursor = Optional.of(candidateCursor);
-                    try {
-                        SignWorkflowStore.Workflow decoded = decodeStoredSign(snapshot, candidate).record();
-                        records.add(decoded);
-                        candidates.add(new SignWorkflowStore.PageCandidate(candidateCursor, Optional.of(decoded)));
-                    } catch (RuntimeException | IOException malformedCandidate) {
-                        failures++;
-                        candidates.add(new SignWorkflowStore.PageCandidate(candidateCursor, Optional.empty()));
-                    }
-                }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
+            Objects.requireNonNull(inclusiveHighWatermark, "inclusiveHighWatermark");
+            Objects.requireNonNull(cancellation, "cancellation");
+            if (maximumRecords < 1 || maximumRecords > 4096) {
+                throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
             }
-            boolean endReached;
-            try {
-                Optional<MetadataSnapshot.Record> afterPage = cursor.next(cancellation);
-                if (afterPage.isEmpty()) {
-                    endReached = true;
-                } else {
-                    try (MetadataSnapshot.Record candidate = afterPage.orElseThrow()) {
-                        endReached = inclusiveHighWatermark
-                                .filter(watermark -> candidate.key().key().compareTo(watermark) > 0).isPresent();
-                    }
-                }
-            } catch (InterruptedIOException cancelled) {
-                if (!cancellation.isCancelled()) {
-                    throw cancelled;
-                }
-                endReached = false;
-            }
-            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, endReached, candidates,
-                    highWatermark);
-        } catch (InterruptedIOException exception) {
+            Optional<String> lower = exclusiveCursor;
+            MetadataSnapshot.KeyRange range = new MetadataSnapshot.KeyRange(SIGN_STATE_NAMESPACE, lower,
+                    Optional.empty());
+            List<SignWorkflowStore.Workflow> records = new ArrayList<>(maximumRecords);
+            List<SignWorkflowStore.PageCandidate> candidates = new ArrayList<>(maximumRecords);
+            int examined = 0;
+            int failures = 0;
+            Optional<String> nextCursor = exclusiveCursor;
             if (cancellation.isCancelled()) {
                 return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates);
             }
-            throw new IllegalStateException("Failed to page authoritative signing records", exception);
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to page authoritative signing records", exception);
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    MetadataCursor cursor = snapshot.scan(range, cancellation)) {
+                Optional<String> highWatermark = snapshot.greatestKey(SIGN_STATE_NAMESPACE)
+                        .map(MetadataKey::key);
+                while (examined < maximumRecords) {
+                    Optional<MetadataSnapshot.Record> next;
+                    try {
+                        next = cursor.next(cancellation);
+                    } catch (InterruptedIOException cancelled) {
+                        if (cancellation.isCancelled()) {
+                            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates,
+                                    highWatermark);
+                        }
+                        throw cancelled;
+                    }
+                    if (next.isEmpty()) {
+                        return new SignWorkflowStore.Page(records, nextCursor, examined, failures, true, candidates,
+                                highWatermark);
+                    }
+                    try (MetadataSnapshot.Record candidate = next.orElseThrow()) {
+                        String candidateCursor = candidate.key().key();
+                        if (inclusiveHighWatermark.filter(watermark -> candidateCursor.compareTo(watermark) > 0)
+                                .isPresent()) {
+                            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, true, candidates,
+                                    highWatermark);
+                        }
+                        if (exclusiveCursor.filter(candidateCursor::equals).isPresent()) {
+                            continue;
+                        }
+                        if (cancellation.isCancelled()) {
+                            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates,
+                                    highWatermark);
+                        }
+                        examined++;
+                        nextCursor = Optional.of(candidateCursor);
+                        try {
+                            SignWorkflowStore.Workflow decoded = decodeStoredSign(snapshot, candidate).record();
+                            records.add(decoded);
+                            candidates.add(new SignWorkflowStore.PageCandidate(candidateCursor, Optional.of(decoded)));
+                        } catch (RuntimeException | IOException malformedCandidate) {
+                            failures++;
+                            candidates.add(new SignWorkflowStore.PageCandidate(candidateCursor, Optional.empty()));
+                        }
+                    }
+                }
+                boolean endReached;
+                try {
+                    Optional<MetadataSnapshot.Record> afterPage = cursor.next(cancellation);
+                    if (afterPage.isEmpty()) {
+                        endReached = true;
+                    } else {
+                        try (MetadataSnapshot.Record candidate = afterPage.orElseThrow()) {
+                            endReached = inclusiveHighWatermark
+                                    .filter(watermark -> candidate.key().key().compareTo(watermark) > 0).isPresent();
+                        }
+                    }
+                } catch (InterruptedIOException cancelled) {
+                    if (!cancellation.isCancelled()) {
+                        throw cancelled;
+                    }
+                    endReached = false;
+                }
+                return new SignWorkflowStore.Page(records, nextCursor, examined, failures, endReached, candidates,
+                        highWatermark);
+            } catch (InterruptedIOException exception) {
+                if (cancellation.isCancelled()) {
+                    return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false, candidates);
+                }
+                throw new IllegalStateException("Failed to page authoritative signing records", exception);
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to page authoritative signing records", exception);
+            }
         }
     }
 
@@ -4666,78 +5192,82 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public SignWorkflowStore.DuePage pageDueSignWorkflows(Instant cutoffInclusive,
             Optional<String> exclusiveCursor, Optional<String> inclusiveHighWatermark,
             int maximumRecords, CancellationSignal cancellation) {
-        requireStoreUsable();
-        Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
-        Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
-        Objects.requireNonNull(inclusiveHighWatermark, "inclusiveHighWatermark");
-        Objects.requireNonNull(cancellation, "cancellation");
-        if (maximumRecords < 1 || maximumRecords > 4096) {
-            throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
-        }
-        if (cancellation.isCancelled()) {
-            return new SignWorkflowStore.DuePage(List.of(), Optional.empty(), 0,
-                    false, inclusiveHighWatermark);
-        }
-        try {
-            SegmentedTransactionalMetadataStore.SigningDuePage page =
-                    metadataStore.pageSigningDue(cutoffInclusive, exclusiveCursor,
-                            inclusiveHighWatermark, maximumRecords);
-            List<SignWorkflowStore.DueCandidate> candidates =
-                    new ArrayList<>(page.candidates().size());
-            int failures = 0;
-            for (SegmentedTransactionalMetadataStore.SigningDueCandidate candidate
-                    : page.candidates()) {
-                if (cancellation.isCancelled()) {
-                    Optional<String> cursor = candidates.isEmpty() ? Optional.empty()
-                            : Optional.of(candidates.getLast().operationId().value());
-                    return new SignWorkflowStore.DuePage(candidates, cursor, failures,
-                            false, page.highWatermark());
-                }
-                SignWorkflowStore.DueCandidate mapped = new SignWorkflowStore.DueCandidate(
-                        new PkiId(candidate.operationId()), candidate.scheduling(),
-                        candidate.malformed());
-                candidates.add(mapped);
-                if (mapped.malformed()) {
-                    failures++;
-                }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
+            Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
+            Objects.requireNonNull(inclusiveHighWatermark, "inclusiveHighWatermark");
+            Objects.requireNonNull(cancellation, "cancellation");
+            if (maximumRecords < 1 || maximumRecords > 4096) {
+                throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
             }
-            Optional<String> cursor = candidates.isEmpty() ? Optional.empty()
-                    : Optional.of(candidates.getLast().operationId().value());
-            return new SignWorkflowStore.DuePage(candidates, cursor, failures,
-                    page.endReached(), page.highWatermark());
-        } catch (IOException failure) {
-            throw new IllegalStateException(
-                    "Failed to page authoritative signing records", failure);
+            if (cancellation.isCancelled()) {
+                return new SignWorkflowStore.DuePage(List.of(), Optional.empty(), 0,
+                        false, inclusiveHighWatermark);
+            }
+            try {
+                SegmentedTransactionalMetadataStore.SigningDuePage page =
+                        metadataStore.pageSigningDue(cutoffInclusive, exclusiveCursor,
+                                inclusiveHighWatermark, maximumRecords);
+                List<SignWorkflowStore.DueCandidate> candidates =
+                        new ArrayList<>(page.candidates().size());
+                int failures = 0;
+                for (SegmentedTransactionalMetadataStore.SigningDueCandidate candidate
+                        : page.candidates()) {
+                    if (cancellation.isCancelled()) {
+                        Optional<String> cursor = candidates.isEmpty() ? Optional.empty()
+                                : Optional.of(candidates.getLast().operationId().value());
+                        return new SignWorkflowStore.DuePage(candidates, cursor, failures,
+                                false, page.highWatermark());
+                    }
+                    SignWorkflowStore.DueCandidate mapped = new SignWorkflowStore.DueCandidate(
+                            new PkiId(candidate.operationId()), candidate.scheduling(),
+                            candidate.malformed());
+                    candidates.add(mapped);
+                    if (mapped.malformed()) {
+                        failures++;
+                    }
+                }
+                Optional<String> cursor = candidates.isEmpty() ? Optional.empty()
+                        : Optional.of(candidates.getLast().operationId().value());
+                return new SignWorkflowStore.DuePage(candidates, cursor, failures,
+                        page.endReached(), page.highWatermark());
+            } catch (IOException failure) {
+                throw new IllegalStateException(
+                        "Failed to page authoritative signing records", failure);
+            }
         }
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> deferSignReconciliation(PkiId submissionId, long expectedRevision,
             long fence, SignWorkflowStore.ReconciliationFailureClass failureClass) {
-        requireStoreUsable();
-        Objects.requireNonNull(failureClass, "failureClass");
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> optional = readStoredSign(submissionId);
-            if (optional.isEmpty()) {
-                return Optional.empty();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(failureClass, "failureClass");
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> optional = readStoredSign(submissionId);
+                if (optional.isEmpty()) {
+                    return Optional.empty();
+                }
+                StoredSign stored = optional.orElseThrow();
+                SignWorkflowStore.Workflow current = stored.record();
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) {
+                    result = Optional.empty();
+                } else {
+                    result = deferCurrentSignWorkflow(stored, current, expectedRevision,
+                            fence, failureClass);
+                }
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-            StoredSign stored = optional.orElseThrow();
-            SignWorkflowStore.Workflow current = stored.record();
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) {
-                result = Optional.empty();
-            } else {
-                result = deferCurrentSignWorkflow(stored, current, expectedRevision,
-                        fence, failureClass);
-            }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            return result;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        return result;
     }
 
     private Optional<SignWorkflowStore.Workflow> deferCurrentSignWorkflow(StoredSign stored,
@@ -4842,28 +5372,36 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private List<StoredStatus> listStoredStatuses(MetadataSnapshot snapshot) throws IOException {
         List<StoredStatus> statuses = new ArrayList<>();
-        Set<String> recordIdentities = new HashSet<>();
+        visitStoredStatuses(snapshot, statuses::add);
+        return List.copyOf(statuses);
+    }
+
+    private void visitStoredStatuses(MetadataSnapshot snapshot,
+            AuthorityMetadataStore.Visitor<StoredStatus> visitor) throws IOException {
         try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(STATUS_RECORD_NAMESPACE),
                 CancellationSignal.NONE)) {
             Optional<MetadataSnapshot.Record> next;
             while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                StoredStatus stored = decodeStoredStatus(snapshot, next.orElseThrow());
-                statuses.add(stored);
-                recordIdentities.add(stored.status().statusObjectId().value());
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                    visitor.accept(decodeStoredStatus(snapshot, record));
+                }
             }
         }
         try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(STATUS_OWNER_NAMESPACE),
                 CancellationSignal.NONE)) {
             Optional<MetadataSnapshot.Record> next;
             while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                try (MetadataSnapshot.Record owner = next.orElseThrow()) {
-                    if (!recordIdentities.contains(owner.key().key())) {
-                        throw new IllegalStateException("Status owner exists without its record");
-                    }
+                try (MetadataSnapshot.Record owner = next.orElseThrow();
+                        MetadataSnapshot.Record record = snapshot.get(
+                                statusRecordKey(new PkiId(owner.key().key()))).orElse(null)) {
+                    if (record == null) throw new IllegalStateException("Status owner exists without its record");
                 }
             }
         }
-        return List.copyOf(statuses);
+    }
+
+    /* default */ Optional<SignWorkflowStore.Workflow> recoverySigningWorkflow(PkiId id) {
+        return readSignWorkflow(id); // Recovery must not expire a workflow while validating its reservation.
     }
 
     private StoredStatus decodeStoredStatus(MetadataSnapshot snapshot, MetadataSnapshot.Record storedRecord)
@@ -4922,12 +5460,18 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private MetadataCommitResult createStatusMetadata(StatusObject status, byte[] encoded) throws IOException {
+    private MetadataCommitResult createStatusMetadata(StatusObject status, byte[] encoded, Optional<PkiId> signingOperation) throws IOException {
         PkiId statusId = status.statusObjectId();
-        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
-            transaction.create(statusRecordKey(statusId), byteContent(encoded), CancellationSignal.NONE);
-            transaction.create(statusOwnerKey(statusId),
-                    byteContent(encodeStatusOwner(statusId, status.content())), CancellationSignal.NONE);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot(); MetadataTransaction transaction = metadataStore.beginTransaction();
+                MetadataSnapshot.Record existing = snapshot.get(statusRecordKey(statusId)).orElse(null)) {
+            if (signingOperation.isPresent() && existing != null) {
+                if (!Arrays.equals(encoded, readMetadataValue(existing))) throw new IllegalStateException("Status replay differs");
+            } else {
+                transaction.create(statusRecordKey(statusId), byteContent(encoded), CancellationSignal.NONE);
+                transaction.create(statusOwnerKey(statusId),
+                        byteContent(encodeStatusOwner(statusId, status.content())), CancellationSignal.NONE);
+            }
+            if (signingOperation.isPresent()) schedules().stageEffect(transaction, signingOperation.orElseThrow(), status);
             if (STATUS_COMMIT_FAULT.get() == StatusCommitFaultPoint.BEFORE_COMMIT) {
                 throw new IOException("Injected status commit failure");
             }
@@ -4996,68 +5540,74 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> claimSignStep(PkiId submissionId, long expectedRevision,
             Duration lease) {
-        requireStoreUsable();
-        requirePositive(lease, "lease");
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> optional = readStoredSign(submissionId);
-            if (optional.isEmpty()) {
-                return Optional.empty();
-            }
-            StoredSign stored = optional.get();
-            SignWorkflowStore.Workflow current = stored.record();
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) {
-                result = Optional.empty();
-            } else {
-                Instant now = signingNow();
-                boolean claimable = current.state() == SignWorkflowStore.State.INTENT
-                        || current.state() == SignWorkflowStore.State.DISPATCHED
-                        || current.state() == SignWorkflowStore.State.CANCELLING;
-                boolean leaseAvailable = current.leaseUntil().isEmpty() || !current.leaseUntil().get().isAfter(now);
-                boolean retryEligible = current.nextEligibleAt().isEmpty()
-                        || !current.nextEligibleAt().orElseThrow().isAfter(now);
-                if (current.revision() != expectedRevision || !claimable || !leaseAvailable || !retryEligible) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requirePositive(lease, "lease");
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> optional = readStoredSign(submissionId);
+                if (optional.isEmpty()) {
                     return Optional.empty();
                 }
-                SignWorkflowStore.State claimedState = current.state() == SignWorkflowStore.State.INTENT
-                        ? SignWorkflowStore.State.DISPATCHED : current.state();
-                Optional<String> detail = claimedState == SignWorkflowStore.State.DISPATCHED
-                        ? Optional.of("DISPATCHED") : current.detailCode();
-                Instant leaseUntil = signLeaseUntil(current, now, lease);
-                SignWorkflowStore.Workflow claimed = current.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY
-                        ? caStageRecord(current, claimedState, SignWorkflowStore.Stage.CA_CERTIFICATE, current.proofOutcome(),
-                                current.revision() + 1L, current.fence() + 1L, Optional.of(leaseUntil),
-                                Optional.of(current.operationId()), detail, Optional.empty(), Optional.empty())
-                        : copySignRecordWithDownstream(current, claimedState,
-                                current.revision() + 1L, current.fence() + 1L, Optional.of(leaseUntil),
-                                Optional.of(current.providerOperationId()), detail, current.result(), current.providerUpdatedAt(),
-                                0, Optional.empty(), Optional.empty(), claimedInitialAttempt(current));
-                result = replaceSignMetadata(stored, claimed, false) ? Optional.of(claimed) : Optional.empty();
+                StoredSign stored = optional.get();
+                SignWorkflowStore.Workflow current = stored.record();
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) {
+                    result = Optional.empty();
+                } else {
+                    Instant now = signingNow();
+                    boolean claimable = current.state() == SignWorkflowStore.State.INTENT
+                            || current.state() == SignWorkflowStore.State.DISPATCHED
+                            || current.state() == SignWorkflowStore.State.CANCELLING;
+                    boolean leaseAvailable = current.leaseUntil().isEmpty() || !current.leaseUntil().get().isAfter(now);
+                    boolean retryEligible = current.nextEligibleAt().isEmpty()
+                            || !current.nextEligibleAt().orElseThrow().isAfter(now);
+                    if (current.revision() != expectedRevision || !claimable || !leaseAvailable || !retryEligible) {
+                        return Optional.empty();
+                    }
+                    SignWorkflowStore.State claimedState = current.state() == SignWorkflowStore.State.INTENT
+                            ? SignWorkflowStore.State.DISPATCHED : current.state();
+                    Optional<String> detail = claimedState == SignWorkflowStore.State.DISPATCHED
+                            ? Optional.of("DISPATCHED") : current.detailCode();
+                    Instant leaseUntil = signLeaseUntil(current, now, lease);
+                    SignWorkflowStore.Workflow claimed = current.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY
+                            ? caStageRecord(current, claimedState, SignWorkflowStore.Stage.CA_CERTIFICATE, current.proofOutcome(),
+                                    current.revision() + 1L, current.fence() + 1L, Optional.of(leaseUntil),
+                                    Optional.of(current.operationId()), detail, Optional.empty(), Optional.empty())
+                            : copySignRecordWithDownstream(current, claimedState,
+                                    current.revision() + 1L, current.fence() + 1L, Optional.of(leaseUntil),
+                                    Optional.of(current.providerOperationId()), detail, current.result(), current.providerUpdatedAt(),
+                                    0, Optional.empty(), Optional.empty(), claimedInitialAttempt(current));
+                    result = replaceSignMetadata(stored, claimed, false) ? Optional.of(claimed) : Optional.empty();
+                }
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            return result;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        return result;
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> checkpointPendingSignDispatch(PkiId submissionId,
             long expectedRevision, long fence) {
-        return checkpointInitialSignAttempt(submissionId, expectedRevision, fence,
-                SignWorkflowStore.InitialAttemptPhase.DISPATCH_OWED,
-                SignWorkflowStore.InitialAttemptPhase.OBSERVATION_OWED);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            return checkpointInitialSignAttempt(submissionId, expectedRevision, fence,
+                    SignWorkflowStore.InitialAttemptPhase.DISPATCH_OWED,
+                    SignWorkflowStore.InitialAttemptPhase.OBSERVATION_OWED);
+        }
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> completeSignObservation(PkiId submissionId,
             long expectedRevision, long fence) {
-        return checkpointInitialSignAttempt(submissionId, expectedRevision, fence,
-                SignWorkflowStore.InitialAttemptPhase.OBSERVATION_CONSUMED,
-                SignWorkflowStore.InitialAttemptPhase.COMPLETED);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            return checkpointInitialSignAttempt(submissionId, expectedRevision, fence,
+                    SignWorkflowStore.InitialAttemptPhase.OBSERVATION_CONSUMED,
+                    SignWorkflowStore.InitialAttemptPhase.COMPLETED);
+        }
     }
 
     private Optional<SignWorkflowStore.Workflow> checkpointInitialSignAttempt(PkiId submissionId,
@@ -5104,237 +5654,247 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> renewSignStep(PkiId submissionId, long expectedRevision, long fence,
             Duration lease) {
-        requireStoreUsable();
-        requirePositive(lease, "lease");
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> optional = readStoredSign(submissionId);
-            if (optional.isEmpty()) {
-                return Optional.empty();
-            }
-            StoredSign stored = optional.get();
-            SignWorkflowStore.Workflow current = stored.record();
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) {
-                result = Optional.empty();
-            } else {
-                Instant now = signingNow();
-                if (current.revision() != expectedRevision || current.fence() != fence
-                        || current.leaseUntil().isEmpty()
-                        || !current.leaseUntil().orElseThrow().isAfter(now)
-                        || current.state() != SignWorkflowStore.State.DISPATCHED
-                                && current.state() != SignWorkflowStore.State.CANCELLING) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            requirePositive(lease, "lease");
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> optional = readStoredSign(submissionId);
+                if (optional.isEmpty()) {
                     return Optional.empty();
                 }
-                SignWorkflowStore.Workflow renewed = copySignRecord(current, current.state(),
-                        current.revision() + 1L, fence, Optional.of(signLeaseUntil(current, now, lease)),
-                        current.detailCode(),
-                        current.result(), current.providerUpdatedAt(), current.failureCount(), current.nextEligibleAt(),
-                        current.reconciliationFailureClass());
-                result = replaceSignMetadata(stored, renewed, false) ? Optional.of(renewed) : Optional.empty();
+                StoredSign stored = optional.get();
+                SignWorkflowStore.Workflow current = stored.record();
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) {
+                    result = Optional.empty();
+                } else {
+                    Instant now = signingNow();
+                    if (current.revision() != expectedRevision || current.fence() != fence
+                            || current.leaseUntil().isEmpty()
+                            || !current.leaseUntil().orElseThrow().isAfter(now)
+                            || current.state() != SignWorkflowStore.State.DISPATCHED
+                                    && current.state() != SignWorkflowStore.State.CANCELLING) {
+                        return Optional.empty();
+                    }
+                    SignWorkflowStore.Workflow renewed = copySignRecord(current, current.state(),
+                            current.revision() + 1L, fence, Optional.of(signLeaseUntil(current, now, lease)),
+                            current.detailCode(),
+                            current.result(), current.providerUpdatedAt(), current.failureCount(), current.nextEligibleAt(),
+                            current.reconciliationFailureClass());
+                    result = replaceSignMetadata(stored, renewed, false) ? Optional.of(renewed) : Optional.empty();
+                }
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            return result;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        return result;
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> requestSignCancellation(PkiId submissionId,
             long expectedRevision, long fence) {
-        requireStoreUsable();
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> optional = readStoredSign(submissionId);
-            if (optional.isEmpty()) {
-                return Optional.empty();
-            }
-            StoredSign stored = optional.orElseThrow();
-            SignWorkflowStore.Workflow current = stored.record();
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) {
-                result = Optional.empty();
-            } else {
-                if (current.revision() != expectedRevision || current.fence() != fence) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> optional = readStoredSign(submissionId);
+                if (optional.isEmpty()) {
                     return Optional.empty();
                 }
-                if (current.state() == SignWorkflowStore.State.INTENT
-                        || current.state() == SignWorkflowStore.State.DISPATCHED
-                        && (current.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
-                            || current.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY)) {
-                    SignWorkflowStore.Workflow cancelled = copySignRecord(current,
-                            SignWorkflowStore.State.CANCELLED, current.revision() + 1L, fence,
-                            Optional.empty(), Optional.of("CANCELLED"), Optional.empty(),
-                            Optional.of(signingNow()), 0, Optional.empty(), Optional.empty());
-                    result = commitSignTransitionAtAdmission(stored, cancelled).record();
-                } else if (current.state() == SignWorkflowStore.State.DISPATCHED) {
-                    SignWorkflowStore.Workflow cancelling = copySignRecord(current,
-                            SignWorkflowStore.State.CANCELLING, current.revision() + 1L, fence,
-                            Optional.empty(), Optional.of("CANCEL_REQUESTED"), Optional.empty(),
-                            Optional.empty(), 0, Optional.empty(), Optional.empty());
-                    result = commitSignTransitionAtAdmission(stored, cancelling).record();
-                } else if (current.state() == SignWorkflowStore.State.CANCELLING) {
-                    result = Optional.of(current);
-                } else {
+                StoredSign stored = optional.orElseThrow();
+                SignWorkflowStore.Workflow current = stored.record();
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) {
                     result = Optional.empty();
+                } else {
+                    if (current.revision() != expectedRevision || current.fence() != fence) {
+                        return Optional.empty();
+                    }
+                    if (current.state() == SignWorkflowStore.State.INTENT
+                            || current.state() == SignWorkflowStore.State.DISPATCHED
+                            && (current.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                                || current.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY)) {
+                        SignWorkflowStore.Workflow cancelled = copySignRecord(current,
+                                SignWorkflowStore.State.CANCELLED, current.revision() + 1L, fence,
+                                Optional.empty(), Optional.of("CANCELLED"), Optional.empty(),
+                                Optional.of(signingNow()), 0, Optional.empty(), Optional.empty());
+                        result = commitSignTransitionAtAdmission(stored, cancelled).record();
+                    } else if (current.state() == SignWorkflowStore.State.DISPATCHED) {
+                        SignWorkflowStore.Workflow cancelling = copySignRecord(current,
+                                SignWorkflowStore.State.CANCELLING, current.revision() + 1L, fence,
+                                Optional.empty(), Optional.of("CANCEL_REQUESTED"), Optional.empty(),
+                                Optional.empty(), 0, Optional.empty(), Optional.empty());
+                        result = commitSignTransitionAtAdmission(stored, cancelling).record();
+                    } else if (current.state() == SignWorkflowStore.State.CANCELLING) {
+                        result = Optional.of(current);
+                    } else {
+                        result = Optional.empty();
+                    }
                 }
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            if (expiry.isEmpty()) { result.ifPresent(this::recordSigningEvidence); }
+            return result;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        if (expiry.isEmpty()) { result.ifPresent(this::recordSigningEvidence); }
-        return result;
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> transitionSign(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.State target, Optional<String> detailCode, Optional<EncodedObject> result,
             Optional<Instant> providerUpdatedAt) {
-        requireStoreUsable();
-        Objects.requireNonNull(target, "target");
-        Objects.requireNonNull(detailCode, "detailCode");
-        Objects.requireNonNull(result, "result");
-        Objects.requireNonNull(providerUpdatedAt, "providerUpdatedAt");
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> transition;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> optional = readStoredSign(submissionId);
-            if (optional.isEmpty()) {
-                return Optional.empty();
-            }
-            StoredSign stored = optional.get();
-            SignWorkflowStore.Workflow current = stored.record();
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) {
-                transition = target == SignWorkflowStore.State.EXPIRED
-                        ? expiry.map(SignExpiry::record) : Optional.empty();
-            } else {
-                if (current.revision() != expectedRevision || current.fence() != fence
-                        || !validSignTransition(current.state(), target)) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(detailCode, "detailCode");
+            Objects.requireNonNull(result, "result");
+            Objects.requireNonNull(providerUpdatedAt, "providerUpdatedAt");
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> transition;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> optional = readStoredSign(submissionId);
+                if (optional.isEmpty()) {
                     return Optional.empty();
                 }
-                if (target == SignWorkflowStore.State.EXPIRED) {
-                    expiry = expireSign(stored);
-                    transition = expiry.map(SignExpiry::record);
+                StoredSign stored = optional.get();
+                SignWorkflowStore.Workflow current = stored.record();
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) {
+                    transition = target == SignWorkflowStore.State.EXPIRED
+                            ? expiry.map(SignExpiry::record) : Optional.empty();
                 } else {
-                    if (target == SignWorkflowStore.State.SUCCEEDED
-                            && current.stage() != SignWorkflowStore.Stage.SINGLE
-                            && current.stage() != SignWorkflowStore.Stage.CA_CERTIFICATE) {
-                        throw new IllegalArgumentException("Proof cannot complete parent signing");
+                    if (current.revision() != expectedRevision || current.fence() != fence
+                            || !validSignTransition(current.state(), target)) {
+                        return Optional.empty();
                     }
-                    if (target == SignWorkflowStore.State.SUCCEEDED && result.isEmpty()
-                            || target != SignWorkflowStore.State.SUCCEEDED && result.isPresent()) {
-                        throw new IllegalArgumentException("Signing result does not match target state");
+                    if (target == SignWorkflowStore.State.EXPIRED) {
+                        expiry = expireSign(stored);
+                        transition = expiry.map(SignExpiry::record);
+                    } else {
+                        if (target == SignWorkflowStore.State.SUCCEEDED
+                                && current.stage() != SignWorkflowStore.Stage.SINGLE
+                                && current.stage() != SignWorkflowStore.Stage.CA_CERTIFICATE) {
+                            throw new IllegalArgumentException("Proof cannot complete parent signing");
+                        }
+                        if (target == SignWorkflowStore.State.SUCCEEDED && result.isEmpty()
+                                || target != SignWorkflowStore.State.SUCCEEDED && result.isPresent()) {
+                            throw new IllegalArgumentException("Signing result does not match target state");
+                        }
+                        if (target == SignWorkflowStore.State.SUCCEEDED
+                                && (providerUpdatedAt.isEmpty()
+                                        || !providerUpdatedAt.get().isBefore(current.deadline()))) {
+                            throw new IllegalArgumentException(
+                                    "Successful signing completion timestamp is not trustworthy");
+                        }
+                        if (target == SignWorkflowStore.State.CANCELLED
+                                && (providerUpdatedAt.isEmpty()
+                                        || !providerUpdatedAt.get().isBefore(current.deadline()))) {
+                            throw new IllegalArgumentException(
+                                    "Cancelled signing completion timestamp is not trustworthy");
+                        }
+                        SignWorkflowStore.Workflow transitioned = copySignRecord(current, target,
+                                current.revision() + 1L, fence, Optional.empty(), detailCode, result,
+                                providerUpdatedAt, 0, Optional.empty(), Optional.empty());
+                        SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, transitioned);
+                        transition = committed.record();
+                        expiry = committed.expiry();
                     }
-                    if (target == SignWorkflowStore.State.SUCCEEDED
-                            && (providerUpdatedAt.isEmpty()
-                                    || !providerUpdatedAt.get().isBefore(current.deadline()))) {
-                        throw new IllegalArgumentException(
-                                "Successful signing completion timestamp is not trustworthy");
-                    }
-                    if (target == SignWorkflowStore.State.CANCELLED
-                            && (providerUpdatedAt.isEmpty()
-                                    || !providerUpdatedAt.get().isBefore(current.deadline()))) {
-                        throw new IllegalArgumentException(
-                                "Cancelled signing completion timestamp is not trustworthy");
-                    }
-                    SignWorkflowStore.Workflow transitioned = copySignRecord(current, target,
-                            current.revision() + 1L, fence, Optional.empty(), detailCode, result,
-                            providerUpdatedAt, 0, Optional.empty(), Optional.empty());
-                    SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, transitioned);
-                    transition = committed.record();
-                    expiry = committed.expiry();
                 }
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            if (expiry.isEmpty()) { transition.ifPresent(this::recordSigningEvidence); }
+            return transition;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        if (expiry.isEmpty()) { transition.ifPresent(this::recordSigningEvidence); }
-        return transition;
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> checkpointCaProof(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.CaSubjectProofOutcome outcome, Optional<EncodedObject> signature) {
-        requireStoreUsable();
-        Objects.requireNonNull(outcome, "outcome");
-        Objects.requireNonNull(signature, "signature");
-        boolean succeeded = outcome.disposition() == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.SUCCEEDED;
-        requireProofSignature(succeeded, signature);
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> found = readStoredSign(submissionId);
-            if (found.isEmpty()) { return Optional.empty(); }
-            StoredSign stored = found.orElseThrow();
-            SignWorkflowStore.Workflow current = stored.record();
-            if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()
-                    || current.stage() != SignWorkflowStore.Stage.CA_PROOF
-                    || current.state() != SignWorkflowStore.State.DISPATCHED && current.state() != SignWorkflowStore.State.CANCELLING) {
-                return Optional.empty();
-            }
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isEmpty()
-                    && (succeeded || outcome.disposition() == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.CANCELLED)
-                    && outcome.providerUpdatedAt().filter(time -> !time.isBefore(current.deadline())).isPresent()) {
-                expiry = expireSign(stored);
-            }
-            if (expiry.isPresent()) {
-                result = expiry.map(SignExpiry::record);
-            } else {
-                SignWorkflowStore.Workflow changed = checkpointedProof(current, succeeded, outcome, signature, fence);
-                SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, changed);
-                result = committed.record();
-                expiry = committed.expiry();
-            }
-        } finally { releaseSignLock(submissionId, lock); }
-        expiry.ifPresent(this::finishSignExpiry);
-        if (expiry.isEmpty()) { result.ifPresent(this::recordSigningEvidence); }
-        return result;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Objects.requireNonNull(outcome, "outcome");
+            Objects.requireNonNull(signature, "signature");
+            boolean succeeded = outcome.disposition() == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.SUCCEEDED;
+            requireProofSignature(succeeded, signature);
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> found = readStoredSign(submissionId);
+                if (found.isEmpty()) { return Optional.empty(); }
+                StoredSign stored = found.orElseThrow();
+                SignWorkflowStore.Workflow current = stored.record();
+                if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()
+                        || current.stage() != SignWorkflowStore.Stage.CA_PROOF
+                        || current.state() != SignWorkflowStore.State.DISPATCHED && current.state() != SignWorkflowStore.State.CANCELLING) {
+                    return Optional.empty();
+                }
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isEmpty()
+                        && (succeeded || outcome.disposition() == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.CANCELLED)
+                        && outcome.providerUpdatedAt().filter(time -> !time.isBefore(current.deadline())).isPresent()) {
+                    expiry = expireSign(stored);
+                }
+                if (expiry.isPresent()) {
+                    result = expiry.map(SignExpiry::record);
+                } else {
+                    SignWorkflowStore.Workflow changed = checkpointedProof(current, succeeded, outcome, signature, fence);
+                    SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, changed);
+                    result = committed.record();
+                    expiry = committed.expiry();
+                }
+            } finally { releaseSignLock(submissionId, lock); }
+            expiry.ifPresent(this::finishSignExpiry);
+            if (expiry.isEmpty()) { result.ifPresent(this::recordSigningEvidence); }
+            return result;
+        }
     }
 
     @Override
     public Optional<SignWorkflowStore.Workflow> completeCaProofVerification(PkiId submissionId, long expectedRevision, long fence) {
-        requireStoreUsable();
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> found = readStoredSign(submissionId);
-            if (found.isEmpty()) { return Optional.empty(); }
-            StoredSign stored = found.orElseThrow();
-            SignWorkflowStore.Workflow current = stored.record();
-            if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()
-                    || current.state() != SignWorkflowStore.State.DISPATCHED
-                    || current.stage() != SignWorkflowStore.Stage.CA_PROOF_VERIFYING || current.result().isEmpty()
-                    || current.proofOutcome().filter(value -> value.disposition()
-                            == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.SUCCEEDED).isEmpty()) {
-                return Optional.empty();
-            }
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) { result = expiry.map(SignExpiry::record); }
-            else {
-                SignWorkflowStore.MutableState old = current.mutableState();
-                SignWorkflowStore.MutableState ready = new SignWorkflowStore.MutableState(current.operationId(), current.state(),
-                        current.revision() + 1L, fence, Optional.empty(), Optional.empty(), Optional.of("DISPATCHED"),
-                        Optional.empty(), Optional.empty(), 0, Optional.empty(), Optional.empty(), old.initialAttemptPhase(),
-                        SignWorkflowStore.Stage.CA_CERTIFICATE_READY, current.proofOutcome());
-                SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, new SignWorkflowStore.Workflow(current.envelope(), ready));
-                result = committed.record();
-                expiry = committed.expiry();
-            }
-        } finally { releaseSignLock(submissionId, lock); }
-        expiry.ifPresent(this::finishSignExpiry);
-        return result;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> found = readStoredSign(submissionId);
+                if (found.isEmpty()) { return Optional.empty(); }
+                StoredSign stored = found.orElseThrow();
+                SignWorkflowStore.Workflow current = stored.record();
+                if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()
+                        || current.state() != SignWorkflowStore.State.DISPATCHED
+                        || current.stage() != SignWorkflowStore.Stage.CA_PROOF_VERIFYING || current.result().isEmpty()
+                        || current.proofOutcome().filter(value -> value.disposition()
+                                == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.SUCCEEDED).isEmpty()) {
+                    return Optional.empty();
+                }
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) { result = expiry.map(SignExpiry::record); }
+                else {
+                    SignWorkflowStore.MutableState old = current.mutableState();
+                    SignWorkflowStore.MutableState ready = new SignWorkflowStore.MutableState(current.operationId(), current.state(),
+                            current.revision() + 1L, fence, Optional.empty(), Optional.empty(), Optional.of("DISPATCHED"),
+                            Optional.empty(), Optional.empty(), 0, Optional.empty(), Optional.empty(), old.initialAttemptPhase(),
+                            SignWorkflowStore.Stage.CA_CERTIFICATE_READY, current.proofOutcome());
+                    SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, new SignWorkflowStore.Workflow(current.envelope(), ready));
+                    result = committed.record();
+                    expiry = committed.expiry();
+                }
+            } finally { releaseSignLock(submissionId, lock); }
+            expiry.ifPresent(this::finishSignExpiry);
+            return result;
+        }
     }
 
     // Explicit collaborators or atomic persisted coordinates remain visible at this boundary.
@@ -5350,188 +5910,539 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Workflow> retireSign(PkiId submissionId, long expectedRevision, long fence) {
-        requireStoreUsable();
-        Optional<SignExpiry> expiry;
-        Optional<SignWorkflowStore.Workflow> result;
-        SignLockEntry lock = acquireSignLock(submissionId);
-        try {
-            Optional<StoredSign> optional = readStoredSign(submissionId);
-            if (optional.isEmpty()) {
-                return Optional.empty();
-            }
-            StoredSign stored = optional.get();
-            SignWorkflowStore.Workflow current = stored.record();
-            if (current.state() == SignWorkflowStore.State.EXPIRED) {
-                requireOuterTerminal(current);
-                return Optional.of(current);
-            }
-            expiry = expireIfDeadlineReached(stored);
-            if (expiry.isPresent()) {
-                result = expiry.map(SignExpiry::record);
-            } else {
-                if (current.revision() != expectedRevision || current.fence() != fence) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Optional<SignExpiry> expiry;
+            Optional<SignWorkflowStore.Workflow> result;
+            SignLockEntry lock = acquireSignLock(submissionId);
+            try {
+                Optional<StoredSign> optional = readStoredSign(submissionId);
+                if (optional.isEmpty()) {
                     return Optional.empty();
                 }
-                if (!outerTerminal(current)) {
-                    return Optional.empty();
+                StoredSign stored = optional.get();
+                SignWorkflowStore.Workflow current = stored.record();
+                if (current.state() == SignWorkflowStore.State.EXPIRED) {
+                    requireOuterTerminal(current);
+                    return Optional.of(current);
                 }
-                if (!isRetirableSignState(current.state())) {
-                    return Optional.empty();
-                }
-                Optional<String> retirementDetail = switch (current.state()) {
-                    case SUCCEEDED -> Optional.of("SIGNED");
-                    case FAILED -> Optional.of(current.detailCode()
-                            .filter(FilesystemPkiStore::isRetainedFailureDetail)
-                            .orElse("FAILED"));
-                    case CANCELLED -> Optional.of("CANCELLED");
-                    default -> throw new IllegalStateException("Signing state is not retirable");
-                };
-                SignWorkflowStore.Workflow retired = copySignRecord(current,
-                        SignWorkflowStore.State.RETIRED, current.revision() + 1L, fence,
-                        Optional.empty(), retirementDetail, current.result(),
-                        current.providerUpdatedAt(), 0, Optional.empty(), Optional.empty());
-                if (!replaceSignMetadata(stored, retired, true)) {
-                    return Optional.empty();
-                }
-                try {
-                    for (DurableContentReference reference : current.candidates()) {
-                    if (reference.lifecycle() == DurableContentReference.Lifecycle.OPERATION) {
-                        signingRetirementFaults.beforeRetirement(reference);
-                        stagedContent.retireSigningContent(reference);
+                expiry = expireIfDeadlineReached(stored);
+                if (expiry.isPresent()) {
+                    result = expiry.map(SignExpiry::record);
+                } else {
+                    if (current.revision() != expectedRevision || current.fence() != fence) {
+                        return Optional.empty();
                     }
+                    if (!outerTerminal(current)) {
+                        return Optional.empty();
                     }
-                } catch (IOException exception) {
-                    LOG.log(Level.WARNING, "Signing content retirement cleanup failed");
-                    throw new PkiException(
-                            "Signing content cleanup failed: code=SIGNING_CONTENT_CLEANUP_FAILED");
+                    if (!isRetirableSignState(current.state())) {
+                        return Optional.empty();
+                    }
+                    Optional<String> retirementDetail = switch (current.state()) {
+                        case SUCCEEDED -> Optional.of("SIGNED");
+                        case FAILED -> Optional.of(current.detailCode()
+                                .filter(FilesystemPkiStore::isRetainedFailureDetail)
+                                .orElse("FAILED"));
+                        case CANCELLED -> Optional.of("CANCELLED");
+                        default -> throw new IllegalStateException("Signing state is not retirable");
+                    };
+                    SignWorkflowStore.Workflow retired = copySignRecord(current,
+                            SignWorkflowStore.State.RETIRED, current.revision() + 1L, fence,
+                            Optional.empty(), retirementDetail, current.result(),
+                            current.providerUpdatedAt(), 0, Optional.empty(), Optional.empty());
+                    if (!replaceSignMetadata(stored, retired, true)) {
+                        return Optional.empty();
+                    }
+                    try {
+                        for (DurableContentReference reference : current.candidates()) {
+                        if (reference.lifecycle() == DurableContentReference.Lifecycle.OPERATION) {
+                            signingRetirementFaults.beforeRetirement(reference);
+                            stagedContent.retireSigningContent(reference);
+                        }
+                        }
+                    } catch (IOException exception) {
+                        LOG.log(Level.WARNING, "Signing content retirement cleanup failed");
+                        throw new PkiException(
+                                "Signing content cleanup failed: code=SIGNING_CONTENT_CLEANUP_FAILED");
+                    }
+                    result = Optional.of(retired);
                 }
-                result = Optional.of(retired);
+            } finally {
+                releaseSignLock(submissionId, lock);
             }
-        } finally {
-            releaseSignLock(submissionId, lock);
+            expiry.ifPresent(this::finishSignExpiry);
+            if (expiry.isEmpty()) { result.ifPresent(this::recordSigningEvidence); }
+            return result;
         }
-        expiry.ifPresent(this::finishSignExpiry);
-        if (expiry.isEmpty()) { result.ifPresent(this::recordSigningEvidence); }
-        return result;
     }
 
     @Override
     public int purgeExpiredSignRecords() {
-        requireStoreUsable();
-        Instant cutoff = signingNow();
-        List<PkiId> ids = listStoredSigns().stream()
-                .filter(stored -> isContentFreeSignState(stored.record().state()))
-                .filter(stored -> !stored.record().createdAt().plus(options.signingOperationHorizon())
-                        .isAfter(cutoff))
-                .limit(SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS / 3)
-                .map(stored -> stored.record().submissionId())
-                .sorted(Comparator.comparing(PkiId::value)).toList();
-        if (ids.isEmpty()) return 0;
-        List<SignLockEntry> locks = new ArrayList<>(ids.size());
-        try {
-            for (PkiId id : ids) locks.add(acquireSignLock(id));
-            List<SigningTransactionPayloadCodec.Mutation> deletes = new ArrayList<>(ids.size() * 3);
-            List<DurableContentReference> retiredCandidates = new ArrayList<>(ids.size());
-            int purgedRecords = 0;
-            for (PkiId id : ids) {
-                Optional<StoredSign> current = readStoredSign(id);
-                if (current.isEmpty()) continue;
-                StoredSign stored = current.orElseThrow();
-                if (isContentFreeSignState(stored.record().state())
-                        && !stored.record().createdAt().plus(options.signingOperationHorizon()).isAfter(cutoff)) {
-                    int mutationStart = deletes.size();
-                    int candidateStart = retiredCandidates.size();
-                    deletes.add(new SigningTransactionPayloadCodec.Mutation(
-                            SigningTransactionPayloadCodec.MutationKind.DELETE,
-                            signingStateKey(id), stored.recordRevision(), null));
-                    deletes.add(new SigningTransactionPayloadCodec.Mutation(
-                            SigningTransactionPayloadCodec.MutationKind.DELETE,
-                            signingEnvelopeKey(id), stored.envelopeRevision(), null));
-                    deletes.add(new SigningTransactionPayloadCodec.Mutation(
-                            SigningTransactionPayloadCodec.MutationKind.DELETE,
-                            signingCandidateBindingKey(stored.reference().contentId()),
-                            stored.bindingRevision(), null));
-                    retiredCandidates.add(stored.reference());
-                    if (stored.proofCandidate().isPresent()) {
-                        BoundSignCandidate proof = stored.proofCandidate().orElseThrow();
-                        deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
-                                signingCandidateBindingKey(proof.reference().contentId()), proof.bindingRevision(), null));
-                        retiredCandidates.add(proof.reference());
-                    }
-                    try (MetadataSnapshot snapshot = metadataStore.snapshot();
-                            MetadataSnapshot.Record domain = snapshot.get(domainContinuationKey(id)).orElse(null)) {
-                        if (domain != null) {
-                            DomainContinuationStore.Record continuation = decodeDomainContinuation(id, domain);
-                            deletes.add(new SigningTransactionPayloadCodec.Mutation(
-                                    SigningTransactionPayloadCodec.MutationKind.DELETE,
-                                    domainContinuationKey(id), domain.recordRevision(), null));
-                            if (continuation.correlationId().isPresent()) {
-                                MetadataKey correlationKey = domainCorrelationKey(continuation.kind(),
-                                        continuation.correlationId().orElseThrow());
-                                try (MetadataSnapshot.Record correlation = snapshot.get(correlationKey).orElse(null)) {
-                                    if (correlation != null) {
-                                        deletes.add(new SigningTransactionPayloadCodec.Mutation(
-                                                SigningTransactionPayloadCodec.MutationKind.DELETE,
-                                                correlationKey, correlation.recordRevision(), null));
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            Instant cutoff = signingNow();
+            List<PkiId> ids = listStoredSigns().stream()
+                    .filter(stored -> isContentFreeSignState(stored.record().state()))
+                    .filter(stored -> !stored.record().createdAt().plus(options.signingOperationHorizon())
+                            .isAfter(cutoff))
+                    .filter(stored -> !isPinnedScheduleReceipt(stored.record().operationId()))
+                    .limit(SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS / 3)
+                    .map(stored -> stored.record().submissionId())
+                    .sorted(Comparator.comparing(PkiId::value)).toList();
+            if (ids.isEmpty()) return 0;
+            List<SignLockEntry> locks = new ArrayList<>(ids.size());
+            try {
+                for (PkiId id : ids) locks.add(acquireSignLock(id));
+                List<SigningTransactionPayloadCodec.Mutation> deletes = new ArrayList<>(ids.size() * 3);
+                List<DurableContentReference> retiredCandidates = new ArrayList<>(ids.size());
+                int purgedRecords = 0;
+                for (PkiId id : ids) {
+                    Optional<StoredSign> current = readStoredSign(id);
+                    if (current.isEmpty()) continue;
+                    StoredSign stored = current.orElseThrow();
+                    if (isContentFreeSignState(stored.record().state())
+                            && !stored.record().createdAt().plus(options.signingOperationHorizon()).isAfter(cutoff)) {
+                        int mutationStart = deletes.size();
+                        int candidateStart = retiredCandidates.size();
+                        deletes.add(new SigningTransactionPayloadCodec.Mutation(
+                                SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                signingStateKey(id), stored.recordRevision(), null));
+                        deletes.add(new SigningTransactionPayloadCodec.Mutation(
+                                SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                signingEnvelopeKey(id), stored.envelopeRevision(), null));
+                        deletes.add(new SigningTransactionPayloadCodec.Mutation(
+                                SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                signingCandidateBindingKey(stored.reference().contentId()),
+                                stored.bindingRevision(), null));
+                        retiredCandidates.add(stored.reference());
+                        if (stored.proofCandidate().isPresent()) {
+                            BoundSignCandidate proof = stored.proofCandidate().orElseThrow();
+                            deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                    signingCandidateBindingKey(proof.reference().contentId()), proof.bindingRevision(), null));
+                            retiredCandidates.add(proof.reference());
+                        }
+                        try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                                MetadataSnapshot.Record domain = snapshot.get(domainContinuationKey(id)).orElse(null);
+                                MetadataSnapshot.Record scheduleReceipt = snapshot.get(FsStatusSchedules.receiptKey(id)).orElse(null)) {
+                            if (scheduleReceipt != null) {
+                                StatusScheduleState.Execution execution = schedules().receipt(snapshot, id).orElseThrow();
+                                if (schedules().pinned(snapshot, execution)) {
+                                    deletes.subList(mutationStart, deletes.size()).clear();
+                                    retiredCandidates.subList(candidateStart, retiredCandidates.size()).clear();
+                                    continue;
+                                }
+                                deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                        scheduleReceipt.key(), scheduleReceipt.recordRevision(), null));
+                            }
+                            if (domain != null) {
+                                DomainContinuationStore.Record continuation = decodeDomainContinuation(id, domain);
+                                deletes.add(new SigningTransactionPayloadCodec.Mutation(
+                                        SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                        domainContinuationKey(id), domain.recordRevision(), null));
+                                if (continuation.correlationId().isPresent()) {
+                                    MetadataKey correlationKey = domainCorrelationKey(continuation.kind(),
+                                            continuation.correlationId().orElseThrow());
+                                    try (MetadataSnapshot.Record correlation = snapshot.get(correlationKey).orElse(null)) {
+                                        if (correlation != null) {
+                                            deletes.add(new SigningTransactionPayloadCodec.Mutation(
+                                                    SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                                    correlationKey, correlation.recordRevision(), null));
+                                        }
                                     }
                                 }
                             }
                         }
+                        if (deletes.size() > SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS) {
+                            deletes.subList(mutationStart, deletes.size()).clear();
+                            retiredCandidates.subList(candidateStart, retiredCandidates.size()).clear();
+                            break;
+                        }
+                        purgedRecords++;
                     }
-                    if (deletes.size() > SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS) {
-                        deletes.subList(mutationStart, deletes.size()).clear();
-                        retiredCandidates.subList(candidateStart, retiredCandidates.size()).clear();
-                        break;
-                    }
-                    purgedRecords++;
+                }
+                return commitPurgedSigns(deletes, retiredCandidates, purgedRecords);
+            } catch (IOException failure) {
+                durabilityUncertain.set(true);
+                throw storeDurabilityUnconfirmed("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
+            } finally {
+                for (int index = locks.size() - 1; index >= 0; index--) {
+                    releaseSignLock(ids.get(index), locks.get(index));
                 }
             }
-            if (deletes.isEmpty()) return 0;
-            MetadataCommitResult result = metadataStore.directCommit(deletes);
-            if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) return 0;
-            for (DurableContentReference candidate : retiredCandidates) {
-                stagedContent.purgeSigningContent(candidate);
+        }
+    }
+
+    private int commitPurgedSigns(List<SigningTransactionPayloadCodec.Mutation> deletes,
+            List<DurableContentReference> retiredCandidates, int purgedRecords) throws IOException {
+        if (deletes.isEmpty()) return 0;
+        MetadataCommitResult result = metadataStore.directCommit(deletes);
+        if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) return 0;
+        for (DurableContentReference candidate : retiredCandidates) {
+            stagedContent.purgeSigningContent(candidate);
+        }
+        return purgedRecords;
+    }
+
+
+    private boolean isPinnedScheduleReceipt(PkiId operationId) {
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<StatusScheduleState.Execution> receipt = schedules().receipt(snapshot, operationId);
+            return receipt.isPresent() && schedules().pinned(snapshot, receipt.orElseThrow());
+        } catch (IOException failure) { throw new IllegalStateException("Schedule cleanup authority unavailable", failure); }
+    }
+
+    @Override
+    public boolean supportsBackup() { return true; }
+
+    /**
+     * Creates a versioned logical backup through the bounded legacy adapter.
+     * @param request backup request
+     * @return complete legacy payload only when it fits the configured adapter limit
+     * @throws NullPointerException if request is null
+     * @throws IllegalStateException if creation fails or the array limit is exceeded
+     */
+    @Override
+    public zeroecho.pki.api.backup.BackupArtifact createBackup(zeroecho.pki.api.backup.BackupRequest request) {
+        try (zeroecho.pki.api.backup.BackupSource source = createBackupSource(request)) {
+            if (source.contentLength() > backupLimits.legacyBytes()) {
+                throw new IllegalStateException("BACKUP_LEGACY_LIMIT");
             }
-            return purgedRecords;
+            byte[] bytes = new byte[Math.toIntExact(source.contentLength())];
+            try (InputStream input = source.openStream()) {
+                int offset = 0;
+                while (offset < bytes.length) {
+                    int count = input.read(bytes, offset, bytes.length - offset);
+                    if (count <= 0) throw new IOException("BACKUP_TRUNCATED");
+                    offset += count;
+                }
+                if (input.read() != -1) throw new IOException("BACKUP_LENGTH");
+            }
+            return new zeroecho.pki.api.backup.BackupArtifact(source.backupId(),
+                    new EncodedObject(Encoding.BINARY, bytes));
         } catch (IOException failure) {
-            durabilityUncertain.set(true);
-            throw storeDurabilityUnconfirmed("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
-        } finally {
-            for (int index = locks.size() - 1; index >= 0; index--) {
-                releaseSignLock(ids.get(index), locks.get(index));
+            throw new IllegalStateException("BACKUP_CREATE_FAILED", failure);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public zeroecho.pki.api.backup.BackupSource createBackupSource(
+            zeroecho.pki.api.backup.BackupRequest request) throws IOException {
+        Objects.requireNonNull(request, "request");
+        Path frozen = null;
+        zeroecho.pki.api.backup.BackupSource result = null;
+        try {
+            Path work;
+            Instant captured;
+            try (StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
+                requireStoreUsable();
+                work = backupWorkDirectory();
+                frozen = Files.createTempDirectory(work, ".snapshot-");
+                captured = clock.instant();
+                freezeBackup(frozen);
             }
+            PkiId id = new PkiId("backup-" + java.util.UUID.randomUUID().toString().replace("-", ""));
+            result = FsBackupArchive.write(frozen, work, id, captured, backupLimits);
+            FsBackupFiles.deleteTree(frozen);
+            return result;
+        } catch (IOException | RuntimeException failure) {
+            if (result != null) {
+                try { result.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            }
+            if (frozen != null) {
+                try { FsBackupFiles.deleteTree(frozen); } catch (IOException cleanup) {
+                    throw new IOException("BACKUP_CLEANUP_FAILED", cleanup);
+                }
+            }
+            if (failure instanceof IOException io) throw new IOException("BACKUP_CREATE_FAILED", io);
+            throw failure;
+        }
+    }
+
+    private Path backupWorkDirectory() throws IOException {
+        Path work = paths.root().resolve(".backup-work");
+        Files.createDirectories(work);
+        return work;
+    }
+
+    private void freezeBackup(Path target) throws IOException {
+        freezeBackup(target, true);
+    }
+
+    private void freezeBackup(Path target, boolean advanceTime) throws IOException {
+        FsBackupFiles.Budget budget = new FsBackupFiles.Budget(backupLimits);
+        FsBackupFiles.copy(paths.versionFile(), target.resolve("VERSION"), budget);
+        FsBackupFiles.copy(paths.signingNamespaceFile(), target.resolve("SIGNING_NAMESPACE"), budget);
+        if (advanceTime) metadataStore.advanceWatermark(signingNow().toEpochMilli());
+        Path metadata = target.resolve("metadata");
+        Files.createDirectory(metadata);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            metadataStore.exportBackupSnapshotTo(snapshot, metadata, Math.min(backupLimits.entryBytes(),
+                    backupLimits.expandedBytes() - 1024));
+        }
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(metadata)) {
+            for (Path entry : entries) budget.add(Files.size(entry));
+        }
+        long revocationBytes = revocations.head().boundary();
+        budget.add(revocationBytes);
+        revocations.copyAuthoritativePrefix(target.resolve("revocations/transitions.log"));
+        try (TemporaryUniqueIndex selected = stagedContent.beginUniqueIndex();
+                TemporaryUniqueIndex requiredPayload = stagedContent.beginUniqueIndex();
+                MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            new CredentialMetadataAuthority(metadataStore, stagedContent).validateAll(
+                    credential -> {
+                        addRetained(selected, credential.content());
+                        addRetained(requiredPayload, credential.content());
+                    });
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(STATUS_RECORD_NAMESPACE),
+                    CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                        DurableContentReference content = decodeStoredStatus(snapshot, record).status().content();
+                        addRetained(selected, content);
+                        addRetained(requiredPayload, content);
+                    }
+                }
+            }
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(SIGN_STATE_NAMESPACE),
+                    CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                        SignWorkflowStore.Workflow workflow = decodeStoredSign(snapshot, record).record();
+                        for (DurableContentReference content : workflow.candidates()) {
+                            addRetained(selected, content);
+                            if (isLiveContentState(workflow.state())) addRetained(requiredPayload, content);
+                        }
+                    }
+                }
+            }
+            stagedContent.copyBackupContent(target.resolve("staged-content"), budget, selected, requiredPayload);
+        }
+        for (String tree : List.of("requests", "policy", "profiles", "workflows")) {
+            Path liveTree = paths.root().resolve(tree);
+            if (!Files.exists(liveTree)) continue;
+            try (Stream<Path> pathsToCopy = Files.walk(liveTree, 5)) {
+                java.util.Iterator<Path> iterator = pathsToCopy.iterator();
+                while (iterator.hasNext()) {
+                    Path file = iterator.next();
+                    if (Files.isDirectory(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                    String relative = paths.root().relativize(file).toString().replace(java.io.File.separatorChar, '/');
+                    if (!FsBackupFiles.domain(relative)) continue;
+                    FsBackupFiles.validatePath(relative, backupLimits);
+                    if (Files.size(file) > backupLimits.recordBytes()) throw new IOException("BACKUP_RECORD_LIMIT");
+                    FsBackupFiles.copy(file, target.resolve(relative), budget);
+                }
+            }
+        }
+        FsBackupFiles.forceTree(target);
+        FsBackupFiles.forceDirectory(paths.root());
+        FsBackupFiles.observe(FsBackupFiles.Phase.FROZEN, target);
+    }
+
+    /**
+     * Verifies a bounded legacy archive using the same verifier as streaming input.
+     * @param artifact caller-owned legacy artifact
+     * @return integrity and recovery report; never an authenticity claim
+     * @throws NullPointerException if artifact is null
+     */
+    @Override
+    public zeroecho.pki.api.backup.BackupVerificationReport verifyBackup(
+            zeroecho.pki.api.backup.BackupArtifact artifact) {
+        Objects.requireNonNull(artifact, "artifact");
+        if (artifact.payload().byteLength() > backupLimits.legacyBytes()) {
+            return backupInvalid("BACKUP_LEGACY_LIMIT");
+        }
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+                zeroecho.pki.api.backup.BackupSink sink = zeroecho.pki.api.backup.BackupSink.create(
+                        backupWorkDirectory(), artifact.backupId(), backupLimits)) {
+            requireStoreUsable();
+            sink.outputStream().write(artifact.payload().bytes());
+            try (zeroecho.pki.api.backup.BackupSource source = sink.complete()) {
+                return verifyBackupSource(source);
+            }
+        } catch (IOException failure) {
+            return backupInvalid(backupIssue(failure));
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public zeroecho.pki.api.backup.BackupVerificationReport verifyBackupSource(
+            zeroecho.pki.api.backup.BackupSource source) {
+        Objects.requireNonNull(source, "source");
+        try (zeroecho.pki.api.backup.BackupPreparation prepared = prepareBackup(source)) {
+            return new zeroecho.pki.api.backup.BackupVerificationReport(true, List.of());
+        } catch (IOException | RuntimeException failure) {
+            return backupInvalid(backupIssue(failure));
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public zeroecho.pki.api.backup.BackupPreparation prepareBackup(
+            zeroecho.pki.api.backup.BackupSource source) throws IOException {
+        Objects.requireNonNull(source, "source");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return FsBackupEngine.prepare(backupWorkDirectory(), source, backupLimits, options, clock);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source)
+            throws IOException {
+        Objects.requireNonNull(source, "source");
+        zeroecho.pki.api.backup.BackupPreparation candidate;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            if (restoreCoordinator == null) throw new UnsupportedOperationException("RESTORE_BORROWED_STORE");
+            candidate = FsBackupEngine.prepare(restoreCoordinator.work(), source, backupLimits, options, clock);
+        }
+        try (zeroecho.pki.api.backup.BackupPreparation prepared = candidate;
+                StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
+            requireStoreUsable();
+            Path work = restoreCoordinator.work();
+            Path baseline = Files.createTempDirectory(work, ".baseline-");
+            try {
+                freezeBackup(baseline, false);
+                return restoreCoordinator.stage(prepared, baseline);
+            } finally { FsBackupFiles.deleteTree(baseline); }
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws IOException {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return restoreCoordinator == null ? Optional.empty() : restoreCoordinator.status();
+        }
+    }
+
+    private static String backupIssue(Exception failure) {
+        String message = failure.getMessage();
+        return message != null && message.matches("BACKUP_[A-Z_]+") ? message : "BACKUP_INVALID";
+    }
+
+    private static zeroecho.pki.api.backup.BackupVerificationReport backupInvalid(String code) {
+        return new zeroecho.pki.api.backup.BackupVerificationReport(false, List.of(code));
+    }
+
+    private void validateBackupDomainFile(String tree, Path file) throws IOException {
+        String relative = paths.root().relativize(file).toString().replace(java.io.File.separatorChar, '/');
+        if (!FsBackupFiles.domain(relative)) throw new IOException("BACKUP_INVENTORY");
+        if (Files.size(file) > backupLimits.recordBytes()) throw new IOException("BACKUP_RECORD_LIMIT");
+        byte[] bytes = Files.readAllBytes(file); // bounded legacy codec buffer, never a whole archive
+        if ("requests".equals(tree)) {
+            ParsedCertificationRequest request = FsCodec.decode(FsCodec.PARSED_REQUEST, bytes, stagedContent);
+            if (!file.equals(paths.requestPath(request.requestId()))) throw new IOException("BACKUP_RECORD_ID");
+        } else if ("policy".equals(tree)) {
+            PolicyTrace trace = FsCodec.decode(FsCodec.POLICY_TRACE, bytes, stagedContent);
+            if (!file.equals(paths.policyTracePath(trace.decisionId()))) throw new IOException("BACKUP_RECORD_ID");
+        } else if ("workflows".equals(tree)) {
+            WorkflowStateRecord state = FsCodec.decode(FsCodec.WORKFLOW_STATE, bytes, stagedContent);
+            if (!file.getParent().equals(paths.workflowDir(state.opId()))
+                    && !file.getParent().equals(paths.workflowHistoryDir(state.opId()))) {
+                throw new IOException("BACKUP_RECORD_ID");
+            }
+        } else if ("active.bin".equals(file.getFileName().toString())) {
+            CertificateProfileRef reference = FsCodec.decode(FsCodec.ACTIVE_PROFILE_REF, bytes, stagedContent);
+            if (!file.equals(paths.profileActive(reference.profileId()))) throw new IOException("BACKUP_RECORD_ID");
+            requireActiveProfile(reference.profileId());
+        } else {
+            ImportedCertificateProfileVersion version = FsCodec.decode(FsCodec.PROFILE_VERSION, bytes, stagedContent);
+            CertificateProfileRef reference = version.reference();
+            if (!file.equals(paths.profileVersion(reference.profileId(), reference.profileVersion()))) {
+                throw new IOException("BACKUP_RECORD_ID");
+            }
+            getProfileVersion(reference.profileId(), reference.profileVersion()).orElseThrow();
+        }
+    }
+
+    /* default */ void validateBackupDomainFiles() throws IOException {
+        for (String tree : List.of("requests", "policy", "profiles", "workflows")) {
+            Path directory = paths.root().resolve(tree);
+            if (!Files.exists(directory)) continue;
+            try (Stream<Path> walker = Files.walk(directory, 5)) {
+                java.util.Iterator<Path> iterator = walker.iterator();
+                while (iterator.hasNext()) {
+                    Path file = iterator.next();
+                    if (Files.isDirectory(file)) continue;
+                    validateBackupDomainFile(tree, file);
+                }
+            }
+        }
+    }
+
+    /**
+     * Stages a bounded legacy archive for cold activation on the next store open.
+     * A staged report has {@code success=false} and {@code RESTORE_RESTART_REQUIRED}.
+     *
+     * @param request restore request
+     * @return staging or failure report; activation is reported by {@link #latestRestoreStatus()}
+     * @throws NullPointerException if {@code request} is {@code null}
+     * @throws IllegalStateException if the store is closing
+     */
+    @Override
+    public zeroecho.pki.api.backup.RestoreReport restoreBackup(zeroecho.pki.api.backup.RestoreRequest request) {
+        Objects.requireNonNull(request, "request");
+        requireStoreUsable();
+        PkiId failureId = new PkiId(java.util.UUID.randomUUID().toString());
+        if (request.artifact().payload().byteLength() > backupLimits.legacyBytes()) {
+            return new zeroecho.pki.api.backup.RestoreReport(failureId, false, List.of(), List.of("BACKUP_LEGACY_LIMIT"));
+        }
+        try (zeroecho.pki.api.backup.BackupSink sink = zeroecho.pki.api.backup.BackupSink.create(
+                backupWorkDirectory(), request.artifact().backupId(), backupLimits)) {
+            sink.outputStream().write(request.artifact().payload().bytes());
+            try (zeroecho.pki.api.backup.BackupSource source = sink.complete()) {
+                zeroecho.pki.api.backup.RestoreStatus status = stageRestore(source);
+                return new zeroecho.pki.api.backup.RestoreReport(status.restoreId(), false, status.issues(), List.of());
+            }
+        } catch (IOException failure) {
+            if ("RESTORE_OUTCOME_UNCERTAIN".equals(failure.getMessage()) && restoreCoordinator != null) {
+                zeroecho.pki.api.backup.RestoreStatus status = restoreCoordinator.status().orElseThrow();
+                return new zeroecho.pki.api.backup.RestoreReport(status.restoreId(), false, status.issues(), List.of());
+            }
+            return new zeroecho.pki.api.backup.RestoreReport(failureId, false, List.of(), List.of("RESTORE_STAGING_REJECTED"));
         }
     }
 
     @Override
     public void close() throws IOException {
-        if (!closing.compareAndSet(false, true)) return;
-        IOException failure = null;
-        try {
-            revocations.close();
-        } catch (IOException exception) {
-            failure = exception;
-        }
-        try {
-            metadataStore.close();
-        } catch (IOException exception) {
-            if (failure == null) {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.stop()) {
+            if (!closing.compareAndSet(false, true)) return;
+            IOException failure = null;
+            try {
+                revocations.close();
+            } catch (IOException exception) {
                 failure = exception;
-            } else {
-                failure.addSuppressed(exception);
             }
-        }
-        try {
-            ownership.close();
-        } catch (IOException exception) {
-            if (failure == null) {
-                failure = exception;
-            } else {
-                failure.addSuppressed(exception);
+            try {
+                metadataStore.close();
+            } catch (IOException exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else {
+                    failure.addSuppressed(exception);
+                }
             }
-        }
-        if (failure != null) {
-            throw failure;
+            try {
+                ownership.close();
+                if (restoreCoordinator != null) restoreCoordinator.close();
+            } catch (IOException exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else {
+                    failure.addSuppressed(exception);
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
         }
     }
 
@@ -5557,12 +6468,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @return cumulative bounded writer counters, monotone across WAL rotation
      */
     public LocalSigningWriterMetrics localSigningWriterMetrics() {
-        requireStoreUsable();
-        SigningActiveWal.Snapshot snapshot = metadataStore.cumulativeWriterSnapshot();
-        return new LocalSigningWriterMetrics(snapshot.groupsCommitted(), snapshot.requestsCommitted(),
-                snapshot.forces(), snapshot.bytesAppended(), snapshot.maximumBatchSize(),
-                snapshot.batchWaitNanos(), snapshot.maximumBatchWaitNanos(), snapshot.forceNanos(),
-                snapshot.maximumForceNanos());
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            SigningActiveWal.Snapshot snapshot = metadataStore.cumulativeWriterSnapshot();
+            return new LocalSigningWriterMetrics(snapshot.groupsCommitted(), snapshot.requestsCommitted(),
+                    snapshot.forces(), snapshot.bytesAppended(), snapshot.maximumBatchSize(),
+                    snapshot.batchWaitNanos(), snapshot.maximumBatchWaitNanos(), snapshot.forceNanos(),
+                    snapshot.maximumForceNanos());
+        }
     }
 
     /**
@@ -5594,14 +6507,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @return current, lifetime-high-water, and configured maximum byte counts
      */
     public LocalSigningIndexCapacityMetrics localSigningIndexCapacityMetrics() {
-        requireStoreUsable();
-        SigningLedgerStoreEngine.CapacitySnapshot snapshot = metadataStore.capacitySnapshot();
-        return new LocalSigningIndexCapacityMetrics(
-                snapshot.steady().reservedBytes(), snapshot.steady().highWaterReservedBytes(),
-                snapshot.steady().maximumBytes(), snapshot.transientBudget().reservedBytes(),
-                snapshot.transientBudget().highWaterReservedBytes(),
-                snapshot.transientBudget().maximumBytes(), snapshot.combinedReservedBytes(),
-                snapshot.combinedHighWaterBytes(), snapshot.combinedMaximumBytes());
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            SigningLedgerStoreEngine.CapacitySnapshot snapshot = metadataStore.capacitySnapshot();
+            return new LocalSigningIndexCapacityMetrics(
+                    snapshot.steady().reservedBytes(), snapshot.steady().highWaterReservedBytes(),
+                    snapshot.steady().maximumBytes(), snapshot.transientBudget().reservedBytes(),
+                    snapshot.transientBudget().highWaterReservedBytes(),
+                    snapshot.transientBudget().maximumBytes(), snapshot.combinedReservedBytes(),
+                    snapshot.combinedHighWaterBytes(), snapshot.combinedMaximumBytes());
+        }
     }
 
     /**
@@ -5886,6 +6801,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 return Optional.empty();
             }
             return Optional.of(decodeStoredSign(snapshot, storedState.orElseThrow()));
+        } catch (java.nio.channels.ClosedByInterruptException ex) {
+            // ClosedByInterruptException already sets the interrupt flag; preserve it for the
+            // caller's interruption-detection path (MetadataStoreException CANCELLED traversal).
+            throw new IllegalStateException("Failed to read authoritative signing record",
+                    new MetadataStoreException(MetadataCommitResult.FailureCategory.CANCELLED,
+                            "Signing record read interrupted by thread interrupt", ex));
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to read authoritative signing record", ex);
         }
@@ -7098,7 +8019,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * {@link FilesystemPkiStore}.
      * </p>
      */
-    private static final class StoreOwnership implements AutoCloseable {
+    /* default */ static final class StoreOwnership implements AutoCloseable {
         private final FileChannel channel;
         private final FileLock lock;
         private final ReentrantLock closeLock = new ReentrantLock();
@@ -7112,7 +8033,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         // Raw lock exceptions are deliberately replaced by the stable redacted
         // contention code.
         @SuppressWarnings("PMD.PreserveStackTrace")
-        private static StoreOwnership acquire(Path lockFile) throws IOException {
+        /* default */ static StoreOwnership acquire(Path lockFile) throws IOException {
             FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             FileLock lock = null;
             try {
@@ -7140,7 +8061,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
         }
 
-        private void closeSilently() {
+        /* default */ static StoreOwnership borrowed() { return new StoreOwnership(null, null); }
+
+        /* default */ void closeSilently() {
             try {
                 close();
             } catch (IOException ignored) {
@@ -7152,7 +8075,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         public void close() throws IOException {
             closeLock.lock();
             try {
-                if (closed) {
+                if (closed || channel == null) {
                     return;
                 }
                 boolean releaseFailed = false;

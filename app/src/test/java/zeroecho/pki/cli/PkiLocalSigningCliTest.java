@@ -233,6 +233,8 @@ class PkiLocalSigningCliTest {
                         zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11"))).encoded();
         Files.write(directory.resolve("request.der"), csr);
         Path configuration = directory.resolve("local.json");
+        String storePath = directory.resolve("store").toString().replace("\\", "/");
+        String keyringPath = keyring.toString().replace("\\", "/");
         Files.writeString(configuration, """
                 {"version":1,"mode":"local","operatorId":"cli-root",
                 "store":{"provider":"fs","properties":{"root":"%s"}},
@@ -242,7 +244,7 @@ class PkiLocalSigningCliTest {
                 "operationHorizon":"P90D","keyRefPrefix":"zeroecho-lib:","requireComponentSuffix":"true"}},
                 "signatureAlgorithm":"%s","signingTtlSeconds":300,"claimLeaseMillis":10000,
                 "providerCallTimeoutMillis":5000,"unlockEnvironmentVariable":"%s"}}
-                """.formatted(directory.resolve("store"), keyring, BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm(), ENVIRONMENT));
+                """.formatted(storePath, keyringPath, BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm(), ENVIRONMENT));
         return configuration;
     }
 

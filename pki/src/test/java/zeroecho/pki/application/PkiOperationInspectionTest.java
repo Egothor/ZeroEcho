@@ -446,25 +446,39 @@ final class PkiOperationInspectionTest {
     }
 
     @Test
-    void preservesPolicyClassificationForMessageTokensAndOtherTypedReasons(@TempDir Path temporary) throws Exception {
+    void preservesPolicyClassificationForMessageTokensWithNoTypedReason(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
-        List<PkiException> failures = List.of(
-                new PkiException("STORE_DURABILITY_UNCONFIRMED RECOVERY_REQUIRED"),
-                new PkiException("STORE_DURABILITY_UNCONFIRMED", PkiFailureReason.REVOCATION_RECOVERY_REQUIRED));
         try (PkiSession session = DefaultPkiSession.open(configuration(temporary),
                 IntermediateCreationFixture.CLOCK, bootstrap)) {
-            for (PkiException failure : failures) {
-                bootstrap.observe("getCa", MISSING);
-                bootstrap.failure = failure;
-                try {
-                    assertEquals(new PkiOperationOutcome.Failed("ca.inspect", PkiOperationFailure.POLICY_REJECTION,
-                            "PKI_POLICY_REJECTED"), session.operations().execute(new PkiOperation.InspectAuthority(MISSING),
-                                    CancellationSignal.NONE));
-                    assertEquals(List.of("getCa"), bootstrap.calls);
-                } finally {
-                    bootstrap.failure = null;
-                    bootstrap.stopObserving();
-                }
+            bootstrap.observe("getCa", MISSING);
+            bootstrap.failure = new PkiException("STORE_DURABILITY_UNCONFIRMED RECOVERY_REQUIRED");
+            try {
+                assertEquals(new PkiOperationOutcome.Failed("ca.inspect", PkiOperationFailure.POLICY_REJECTION,
+                        "PKI_POLICY_REJECTED"), session.operations().execute(new PkiOperation.InspectAuthority(MISSING),
+                                CancellationSignal.NONE));
+                assertEquals(List.of("getCa"), bootstrap.calls);
+            } finally {
+                bootstrap.failure = null;
+                bootstrap.stopObserving();
+            }
+        }
+    }
+
+    @Test
+    void mapsTypedPkiExceptionReasonByItsClassification(@TempDir Path temporary) throws Exception {
+        ObservedBootstrap bootstrap = new ObservedBootstrap();
+        try (PkiSession session = DefaultPkiSession.open(configuration(temporary),
+                IntermediateCreationFixture.CLOCK, bootstrap)) {
+            bootstrap.observe("getCa", MISSING);
+            bootstrap.failure = new PkiException("internal", PkiFailureReason.REVOCATION_RECOVERY_REQUIRED);
+            try {
+                assertEquals(new PkiOperationOutcome.Failed("ca.inspect", PkiOperationFailure.RECOVERY_REQUIRED,
+                        "RECOVERY_REQUIRED"), session.operations().execute(new PkiOperation.InspectAuthority(MISSING),
+                                CancellationSignal.NONE));
+                assertEquals(List.of("getCa"), bootstrap.calls);
+            } finally {
+                bootstrap.failure = null;
+                bootstrap.stopObserving();
             }
         }
     }
@@ -524,14 +538,18 @@ final class PkiOperationInspectionTest {
 
     private static Map<String, PkiOperationValue> credentialFields(Credential credential,
             CertificateProfileRef profile) {
-        return Map.of("credentialId", text(credential.credentialId().value()),
-                "formatId", text(credential.formatId().value()),
-                "authorityId", text(credential.issuerRef().caId().value()),
-                "issuerId", text(credential.issuerRef().issuerId().value()),
-                "publicKeyId", text(credential.publicKeyId().value()),
-                "profileId", text(profile.profileId()), "profileVersion", integer(profile.profileVersion()),
-                "status", text("ISSUED"), "notBefore", text(credential.validity().notBefore().toString()),
-                "notAfter", text(credential.validity().notAfter().toString()));
+        return Map.ofEntries(Map.entry("credentialId", text(credential.credentialId().value())),
+                Map.entry("formatId", text(credential.formatId().value())),
+                Map.entry("authorityId", text(credential.issuerRef().caId().value())),
+                Map.entry("issuerId", text(credential.issuerRef().issuerId().value())),
+                Map.entry("publicKeyId", text(credential.publicKeyId().value())),
+                Map.entry("subjectRef", text(credential.subjectRef().value())),
+                Map.entry("serialOrUniqueId", text(credential.serialOrUniqueId())),
+                Map.entry("profileId", text(profile.profileId())),
+                Map.entry("profileVersion", integer(profile.profileVersion())),
+                Map.entry("status", text("ISSUED")),
+                Map.entry("notBefore", text(credential.validity().notBefore().toString())),
+                Map.entry("notAfter", text(credential.validity().notAfter().toString())));
     }
 
     private static Map<String, PkiOperationValue> statusFields(StatusObject status) {

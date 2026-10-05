@@ -207,8 +207,9 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 evaluation.evaluationTime().truncatedTo(ChronoUnit.SECONDS), Optional.of(parent.getNotAfter().toInstant()), serial, authority)
                 .withFrozenPublication(generation.issuerId(), path.pathId(), path.pathCommitment(), input.keyRef());
         AlgorithmIdentifier algorithm = algorithm(parent, approved);
+        X500Principal exactSubject = BcX509ProfileSupport.subject(subject);
         byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(parent.getSubjectX500Principal())
-                .subject(BcX509ProfileSupport.subject(subject)).publicKeyInfo(proof.publicKeyInfo().bytes())
+                .subject(exactSubject).publicKeyInfo(proof.publicKeyInfo().bytes())
                 .validity(approved.validity().notBefore(), approved.validity().notAfter())
                 .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
                 .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
@@ -218,7 +219,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         List<String> fields = List.of(input.formatId().value(), ca.caId().value(),
                 child.value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
                 profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
-                HexFormat.of().formatHex(profile.reference().canonicalSha256()), approved.subjectRef().value(),
+                HexFormat.of().formatHex(profile.reference().canonicalSha256()), exactSubject.getName(X500Principal.RFC2253),
                 approved.validity().notBefore().toString(), approved.validity().notAfter().toString(), serial.toString(),
                 generation.signingKeyRef().value(), issuer.content().contentId(), issuer.content().sha256(),
                 hash(proof.publicKeyInfo().bytes()), "", "",
@@ -326,7 +327,14 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.INTERMEDIATE_CA, formatId);
         ManagedKeyProofPreparation.ProofPlan proof = proofs.plan(new ManagedKeyProofRequest.CaSubject(
                 ca.caId(), Optional.of(subject.caId()), profileId, input.keyRef()), cancellation);
-        X500Principal subjectPrincipal = new X500Principal(subject.subjectRef().value());
+        Credential currentSubject = IssuerAuthorities.currentCredential(store, subject);
+        byte[] currentDer = CredentialContent.materializeForBc(store, currentSubject.content());
+        if (!hash(currentDer).equals(currentSubject.content().sha256())
+                || !subject.subjectRef().equals(currentSubject.subjectRef())) { throw reject("SUBJECT_CONTENT_DIFFERS"); }
+        new StreamingDerReader().validate(currentDer, CredentialContent.MAXIMUM_CERTIFICATE_BYTES);
+        X509Certificate currentCertificate = Pkix.parseCertificate(currentDer);
+        requirePathMetadata(currentCertificate, currentSubject);
+        X500Principal subjectPrincipal = currentCertificate.getSubjectX500Principal();
         List<SubjectRdn> subjectRdns = CaCertificateProfileValidator.validateTrustedSubject(subjectPrincipal, profile.definition());
         X509Certificate parent = path(path, issuer, subjectPrincipal, evaluation.evaluationTime(), cancellation);
         BigInteger serial = CertificateSerialAllocator.allocate();
@@ -419,10 +427,15 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
 
     private static void requirePathMetadata(X509Certificate current, Credential credential) {
         if (current.getBasicConstraints() < 0
-                || !current.getSubjectX500Principal().equals(new X500Principal(credential.subjectRef().value()))
+                || !matchesSubject(current.getSubjectX500Principal(), credential.subjectRef().value())
                 || !current.getNotBefore().toInstant().equals(credential.validity().notBefore())
                 || !current.getNotAfter().toInstant().equals(credential.validity().notAfter())
                 || !current.getSerialNumber().toString().equals(credential.serialOrUniqueId())) { throw reject("PATH_METADATA_DIFFERS"); }
+    }
+
+    private static boolean matchesSubject(X500Principal subject, String frozen) {
+        return frozen.equals(subject.getName(X500Principal.RFC2253))
+                || frozen.equals(Pkix.distinguishedNameString(Pkix.parseDistinguishedName(subject.getEncoded())));
     }
 
     private static void requireParentUsable(X509Certificate parent, Instant now) {

@@ -43,24 +43,32 @@ import zeroecho.pki.spi.ProviderConfig;
  *
  * <p>Implementations may load a private key only inside JSSE key-manager
  * construction. They must not return key stores, keys, passwords, aliases, or
- * provider exception details. Providers are discovered deterministically but are
- * activated only by an exact configured {@link #id()}.</p>
+ * provider exception details. Providers are discovered deterministically but
+ * are activated only by an exact configured {@link #id()}.
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; the same provider instance may be
+ * called from multiple threads during server startup.
+ *
+ * @since 1.0
  */
-@SuppressWarnings("PMD")
+@SuppressWarnings("PMD.SignatureDeclareThrowsException") // SPI boundary: provider-specific failures are opaque
 public interface PkiServerTlsProvider {
     /**
      * Returns the stable explicit provider identity.
      *
-     * @return provider identity used in configuration
+     * @return provider identity used in configuration; never {@code null}
      */
     String id();
 
     /**
      * Creates one fully initialized mutual-TLS context.
      *
-     * @param configuration opaque provider configuration that must be validated strictly
-     * @return initialized JSSE context containing server identity and client trust
-     * @throws Exception when material is unavailable or invalid
+     * @param configuration opaque provider configuration that must be validated
+     *                      strictly; never {@code null}
+     * @return initialized JSSE context containing server identity and client
+     *         trust; never {@code null}
+     * @throws Exception when material is unavailable, expired, or invalid
      */
     SSLContext create(ProviderConfig configuration) throws Exception;
 }

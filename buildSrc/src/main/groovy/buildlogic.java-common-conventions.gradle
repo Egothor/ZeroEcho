@@ -75,7 +75,7 @@ dependencies {
         // Define dependency versions as constraints
         implementation 'org.apache.commons:commons-text:1.15.0'
         implementation 'commons-cli:commons-cli:1.11.0'
-        implementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
+        implementation 'org.bouncycastle:bcpkix-jdk18on:1.86'
         implementation 'org.egothor:conflux:[1.0,2.0)'
         implementation 'org.apache.commons:commons-imaging:1.0.0-alpha6'
     }
@@ -153,24 +153,13 @@ tasks.withType(JavaExec).configureEach {
 // the `lib` module. Any other module referencing org.bouncycastle in its main sources
 // fails the build. This makes the confinement machine-enforced, not just a convention.
 if (project.name != 'lib') {
-    def verifyBouncyCastleConfinement = tasks.register('verifyBouncyCastleConfinement') {
+    def verifyBouncyCastleConfinement = tasks.register('verifyBouncyCastleConfinement',
+            zeroecho.buildlogic.VerifyBouncyCastleConfinement) {
         group = 'verification'
-        description = 'Fails if this non-lib module references org.bouncycastle in src/main/java.'
-        def mainSources = fileTree('src/main/java') { include '**/*.java' }
-        inputs.files(mainSources).withPropertyName('mainSources').optional(true)
-        def marker = layout.buildDirectory.file('verification/bouncycastle-confinement.ok')
-        outputs.file(marker)
-        doLast {
-            def offenders = mainSources.files.findAll { it.text.contains('org.bouncycastle') }
-            if (!offenders.isEmpty()) {
-                throw new GradleException(
-                    "BouncyCastle must be confined to :lib, but ${project.name} references org.bouncycastle in:\n  "
-                        + offenders.collect { it.absolutePath }.join('\n  '))
-            }
-            def out = marker.get().asFile
-            out.parentFile.mkdirs()
-            out.text = "ok\n"
-        }
+        description = 'Fails if this non-lib module references org.bouncycastle in Java code.'
+        moduleName = project.name
+        mainSources.from(fileTree('src/main/java') { include '**/*.java' })
+        marker = layout.buildDirectory.file('verification/bouncycastle-confinement.ok')
     }
     tasks.named('check').configure { dependsOn verifyBouncyCastleConfinement }
 }
@@ -180,6 +169,7 @@ javadoc {
 
     options.addStringOption('Xdoclint:all', '-quiet')
     options.addStringOption('Xmaxwarns', '10000')
+    options.addBooleanOption('Werror', true)
     options.addBooleanOption('html5', true)
     options.tags('apiNote:a:API Note:')
     options.tags('implSpec:a:Implementation Requirements:')
@@ -201,7 +191,7 @@ javadoc {
     
     options.bottom = '<div style="text-align: right; padding: 5px;">Copyright &copy; ' + currentYear +
                      ' Egothor - Version ' + version +
-                     ' - <a href="https://gitea.egothor.org/Egothor/ZeroEcho/raw/branch/main/LICENSE">License</a>' +
+                     ' - <a href="https://gitea.egothor.org/Egothor/ZeroEcho/raw/branch/main/LICENSE-source.txt">Source license</a>' +
                      '</div>'
                      	
     source = sourceSets.main.allJava

@@ -37,6 +37,11 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoCatalog;
@@ -89,6 +94,9 @@ import zeroecho.core.context.SignatureContext;
  * @since 1.0
  */
 public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs a new ECDSA algorithm instance and registers its capabilities:
      * <ul>
@@ -138,4 +146,18 @@ public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder());
         registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("ECDSA-P256", "ECDSA P-256 (128-bit)", SecurityLevel.classical(128), EcdsaCurveSpec.P256),
+            new ParameterSetDescriptor.Concrete<>("ECDSA-P384", "ECDSA P-384 (192-bit)", SecurityLevel.classical(192), EcdsaCurveSpec.P384),
+            new ParameterSetDescriptor.Concrete<>("ECDSA-P521", "ECDSA P-521 (256-bit)", SecurityLevel.classical(256), EcdsaCurveSpec.P512)
+        );
+    }
+
 }

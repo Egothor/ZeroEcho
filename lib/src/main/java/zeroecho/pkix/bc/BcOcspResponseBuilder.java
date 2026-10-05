@@ -62,6 +62,7 @@ import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 
 import zeroecho.pkix.ocsp.CertId;
 import zeroecho.pkix.ocsp.CertStatus;
+import zeroecho.pkix.crl.CrlReason;
 import zeroecho.pkix.ocsp.OcspResponseBuilder;
 import zeroecho.pkix.ocsp.ResponderId;
 import zeroecho.pkix.sign.ContentSigner;
@@ -125,7 +126,7 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
                     output.write(data.getEncoded(ASN1Encoding.DER));
                 }
                 signature = Objects.requireNonNull(signer.signature(), "signature");
-            } catch (IOException | RuntimeException failure) {
+            } catch (IOException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Preserve the builder failure contract across the provider signer boundary.
                 throw new IllegalStateException("Cannot sign OCSP response data", failure);
             }
             return BcOcspEncoding.assemble(data, BcAlgorithmIdentifiers.toBc(signer.algorithm()), signature, certificates);
@@ -139,9 +140,9 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
         Objects.requireNonNull(producedAt, "producedAt");
         ASN1EncodableVector entries = new ASN1EncodableVector(responses.size());
         for (SingleResponse response : responses) {
-            entries.add(new org.bouncycastle.asn1.ocsp.SingleResponse(toCertificateId(response.certId()),
-                    toStatus(response.status()), new DERGeneralizedTime(Date.from(response.thisUpdate())),
-                    response.nextUpdate() == null ? null : new DERGeneralizedTime(Date.from(response.nextUpdate())),
+            entries.add(new org.bouncycastle.asn1.ocsp.SingleResponse(toCertificateId(response.certId()), // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
+                    toStatus(response.status()), new DERGeneralizedTime(Date.from(response.thisUpdate())), // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
+                    response.nextUpdate() == null ? null : new DERGeneralizedTime(Date.from(response.nextUpdate())), // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
                     (Extensions) null));
         }
         Extensions extensions = null;
@@ -174,7 +175,7 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
             // Preserve the signed builder's existing unspecified-reason encoding.
             case CertStatus.Revoked revoked -> new org.bouncycastle.asn1.ocsp.CertStatus(new RevokedInfo(
                     new ASN1GeneralizedTime(Date.from(revoked.revocationTime())),
-                    CRLReason.lookup(revoked.reason().map(reason -> reason.code()).orElse(0))));
+                    CRLReason.lookup(revoked.reason().map(CrlReason::code).orElse(0))));
         };
     }
 }

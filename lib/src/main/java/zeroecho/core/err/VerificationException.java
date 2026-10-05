@@ -35,7 +35,6 @@ package zeroecho.core.err;
 
 import java.security.SignatureException;
 
-import zeroecho.core.util.Strings;
 
 /**
  * Exception thrown when a cryptographic signature or digest verification fails.
@@ -127,11 +126,13 @@ public class VerificationException extends Exception {
      */
     @Override
     public String toString() {
+        // Lengths only — not raw bytes — to avoid signature material in audit logs.
+        int aLen = a != null ? a.length : -1;
         return expected != null
-                ? "VerificationException: invalid signature, expected=" + Strings.toShortString(expected)
-                        + " but calculated " + Strings.toShortString(a)
-                : getCause() == null ? "VerificationException: invalid signature " + Strings.toShortString(a)
-                        : "VerificationException: " + getCause().getMessage() + " with " + Strings.toShortString(a);
+                ? "VerificationException: invalid signature, expected.length=" + expected.length
+                        + " but calculated.length=" + aLen
+                : getCause() == null ? "VerificationException: invalid signature length=" + aLen
+                        : "VerificationException: " + getCause().getMessage() + " length=" + aLen;
     }
 
 }

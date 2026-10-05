@@ -49,6 +49,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.jce.spec.ElGamalParameterSpec;
 
 import zeroecho.core.AlgorithmFamily;
@@ -96,8 +101,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * {@link ElgamalParamSpec#ffdhe2048()}.</li>
  * <li>{@link ElgamalPublicKeySpec} - X.509-encoded public key import.</li>
  * <li>{@link ElgamalPrivateKeySpec} - PKCS#8-encoded private key import.</li>
- * <li>{@code ElgamalKeyGenSpec} is supported but disabled by default because
- * parameter generation is slow; prefer reusing standardized
+ * <li>{@code ElgamalKeyGenSpec} has no registered generator because random
+ * parameter generation is slow; generator lookup rejects it with
+ * {@link IllegalArgumentException}. Use standardized
  * {@link ElgamalParamSpec} instances.</li>
  * </ul>
  *
@@ -126,6 +132,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  */
 public final class ElgamalAlgorithm extends AbstractCryptoAlgorithm {
     private static final String EL_GAMAL = "ElGamal";
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
 
     /**
      * Constructs a new ElGamal algorithm instance bound to the {@code "ElGamal"}
@@ -217,4 +226,17 @@ public final class ElgamalAlgorithm extends AbstractCryptoAlgorithm {
             throw new NoSuchProviderException("Bouncy Castle provider (BC) not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("ElGamal-2048", "ElGamal FFDHE2048 (112-bit)",
+                SecurityLevel.classical(112), ElgamalParamSpec.ffdhe2048())
+        );
+    }
+
 }

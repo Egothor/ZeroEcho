@@ -52,7 +52,6 @@ import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSensitivity;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
-import zeroecho.pki.api.attr.AttributeValue.BytesValue;
 import zeroecho.pki.api.audit.AccessAction;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.AccessDecision;
@@ -335,23 +334,15 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
             return value;
         }
 
-        if (value instanceof AttributeValue.StringValue) {
-            return new AttributeValue.StringValue("[REDACTED]");
-        }
-        if (value instanceof AttributeValue.BooleanValue) {
-            return new AttributeValue.BooleanValue(false);
-        }
-        if (value instanceof AttributeValue.IntegerValue) {
-            return new AttributeValue.IntegerValue(0L);
-        }
-        if (value instanceof AttributeValue.InstantValue) {
-            return new AttributeValue.InstantValue(Instant.EPOCH);
-        }
-        if (value instanceof BytesValue) {
-            return new BytesValue(new byte[0]);
-        }
-
-        return new AttributeValue.StringValue("[REDACTED]");
+        // AttributeValue is sealed; the switch is exhaustive — no default needed.
+        return switch (value) {
+            case AttributeValue.StringValue  ignored -> new AttributeValue.StringValue("[REDACTED]");
+            case AttributeValue.BooleanValue ignored -> new AttributeValue.BooleanValue(false);
+            case AttributeValue.IntegerValue ignored -> new AttributeValue.IntegerValue(0L);
+            case AttributeValue.InstantValue ignored -> new AttributeValue.InstantValue(Instant.EPOCH);
+            // BytesValue requires a non-empty array; use a single zero byte as sentinel.
+            case AttributeValue.BytesValue   ignored -> new AttributeValue.BytesValue(new byte[]{0});
+        };
     }
 
     /**

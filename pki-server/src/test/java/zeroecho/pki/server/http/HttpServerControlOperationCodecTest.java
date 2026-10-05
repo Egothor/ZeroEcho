@@ -271,6 +271,55 @@ class HttpServerControlOperationCodecTest {
                         "\"response\":\"AQ\",\"nonce\":\"forbidden\"")));
     }
 
+    @Test
+    void decodesApprovalObjectWithPreviouslyOmittedCaState() {
+        String json = """
+                {"version":1,"arguments":{"approvalId":"approval-a","targetOperation":"ca.transition",
+                "targetAuthorityId":"ca-a","targetArguments":{"caId":"ca-a","state":"DISABLED","reason":"fixture"}}}
+                """;
+        HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RequestApproval.NAME, json);
+        assertInstanceOf(ServerControlOperation.RequestApproval.class,
+                ((AdministrativeOperation.Control) decoded.operation()).operation());
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.RequestApproval.NAME,
+                json.replace("\"targetArguments\":{", "\"targetArguments\":{\"unknown\":true,")));
+        assertEquals(zeroecho.pki.server.schema.OperationParameterSchema.FieldType.OBJECT,
+                zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
+                        .require(ServerControlOperation.RequestApproval.NAME).parameters().fields().stream()
+                        .filter(field -> field.name().equals("targetArguments")).findFirst().orElseThrow().type());
+    }
+
+    @Test
+    void decodesOcspRequesterPolicyObjectWithoutFlatteningAuthorityScope() {
+        String json = """
+                {"version":1,"arguments":{
+                "responderId":"responder-a","alias":"responder-a","authorityId":"ca-a","issuerId":"issuer-a",
+                "signingMode":"ISSUER_SIGNED","responderCredentialId":"credential-a","signingKeyRef":"key-a",
+                "chainPathId":"chain-a","signatureAlgorithm":"SHA256withRSA","signatureBindingCommitment":"%s",
+                "responderIdForm":"BY_NAME","responseValidityMillis":60000,"noncePolicy":"OPTIONAL_ECHO",
+                "maximumNonceBytes":32,"acceptedHashes":["SHA256"],"maximumRequestBytes":65536,
+                "maximumEntries":10,"cacheLifetimeMillis":1000,"requestAuthenticationMode":"AUTHORIZED_SIGNED_REQUIRED",
+                "requesterTrustPolicy":{
+                "trustSelectors":[{"type":"CONFIGURED_TRUST_ANCHORS","identities":["anchor-a"]}],
+                "principalMappings":[{"mappingId":"mapping-a","principalId":"requester-a",
+                "type":"SHA256_CERTIFICATE_COMMITMENT","commitment":"%s"}],
+                "signatureBindings":[{"bindingId":"binding-a","commitment":"%s"}],
+                "revocationPolicy":"VALIDITY_AND_TRUST_ONLY","maximumSignerCertificates":4,
+                "maximumSignerChainBytes":65536}}}
+                """.formatted("a".repeat(64), "b".repeat(64), "c".repeat(64));
+        HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterOcspResponder.NAME, json);
+        assertInstanceOf(ServerControlOperation.RegisterOcspResponder.class,
+                ((AdministrativeOperation.Control) decoded.operation()).operation());
+        assertEquals(java.util.Optional.of(new zeroecho.pki.api.PkiId("ca-a")), decoded.resource().scope().authorityId());
+        assertEquals("realm", zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
+                .require(ServerControlOperation.RegisterOcspResponder.NAME).presentation().transport().scope());
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.RegisterOcspResponder.NAME,
+                json.replace("\"requesterTrustPolicy\":{", "\"requesterTrustPolicy\":{\"unknown\":true,")));
+        assertEquals(zeroecho.pki.server.schema.OperationParameterSchema.FieldType.OBJECT,
+                zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
+                        .require(ServerControlOperation.RegisterOcspResponder.NAME).parameters().fields().stream()
+                        .filter(field -> field.name().equals("requesterTrustPolicy")).findFirst().orElseThrow().type());
+    }
+
     private static String completionJson(String response) {
         return "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
                 + "\"credentialId\":\"credential-a\",\"expectedLifecycleRevision\":1,"

@@ -128,11 +128,10 @@ public final class DhKeyGenBuilder implements AsymmetricKeyPairGenerator<DhSpec>
      */
     @Override
     public KeyPair generateKeyPair(DhSpec spec) throws GeneralSecurityException {
-        // Simplest path: AlgorithmParameterGenerator to get params, then init KPG.
-        AlgorithmParameterGenerator apg = AlgorithmParameterGenerator.getInstance("DiffieHellman");
-        apg.init(spec.sizeBits());
         DHParameterSpec dh = spec.params();
         if (dh == null) {
+            AlgorithmParameterGenerator apg = AlgorithmParameterGenerator.getInstance("DiffieHellman");
+            apg.init(spec.sizeBits());
             AlgorithmParameters params = apg.generateParameters();
             dh = params.getParameterSpec(DHParameterSpec.class);
         }

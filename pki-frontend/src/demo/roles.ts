@@ -72,6 +72,7 @@ function operatorAllows(op: OperationSpec): boolean {
 
 /** Whether the given persona can discover/invoke the operation. */
 export function roleCanInvoke(role: DemoRole, op: OperationSpec): boolean {
+  if (!op.available) return false;
   switch (role) {
     case 'ADMINISTRATOR':
       return true;

@@ -12,6 +12,19 @@ configures the listeners, see the [configuration reference](configuration-refere
 for the authorization rules that every request is subject to, see the
 [security model](security-model.md).
 
+Generate the complete machine-readable references from the repository root:
+
+```bash
+./gradlew :api-spec:generateOpenApi :pki-server:generateSchema
+```
+
+Outputs are `api-spec/build/openapi/zeroecho-admin-api.yaml` and
+`pki-server/build/generated/schema/operationSchema.json` plus
+`operationSchema.generated.ts`. They project `OperationDescriptorCatalog`;
+never hand-edit generated outputs. The OpenAPI supplement supplies prose, not
+independent operation identities. Complete outputs retain unavailable operations
+with availability metadata; live discovery omits them.
+
 !!! info "Transport is always mutual TLS"
     The administrative listener requires a client certificate on every
     connection. There are no cookies, sessions, tokens, or login endpoints — the
@@ -45,8 +58,8 @@ Content-Type: application/json
 ```
 
 The `{operationId}` is a stable dotted identifier (for example
-`certificate.issue` or `authority.create`); it must match the pattern
-`[a-z][a-z0-9.]{2,127}`. Discover the exact identifiers your principal may use
+`credential.issue` or `ca.create`); identifiers are bounded to 128 characters
+and may include interior hyphens, as in `profile.list-all`. Discover the exact identifiers your principal may use
 with [`GET /admin/v1/operations`](#discovery).
 
 ### Request envelope
@@ -83,7 +96,7 @@ Every response — success or failure — is the same shape:
 {
   "version": 1,
   "requestId": "V5v9k2v0t1n3...",
-  "operation": "certificate.issue",
+  "operation": "credential.issue",
   "status": "SUCCEEDED",
   "result": { },
   "failure": null
@@ -166,7 +179,7 @@ Location: /admin/v1/signing-operations/{id}
 {
   "version": 1,
   "requestId": "…",
-  "operation": "certificate.issue",
+  "operation": "credential.issue",
   "status": "PENDING",
   "result": { "operationId": "sig-000987" },
   "failure": null
@@ -199,7 +212,7 @@ HTTP/1.1 409 Conflict
 {
   "version": 1,
   "requestId": "…",
-  "operation": "authority.create",
+  "operation": "ca.create",
   "status": "APPROVAL_REQUIRED",
   "result": { "operationCommitment": "9f2c…" },
   "failure": { "classification": "APPROVAL_REQUIRED", "code": "APPROVAL_REQUIRED", "…": "…" }
@@ -208,7 +221,8 @@ HTTP/1.1 409 Conflict
 
 The `operationCommitment` is a deterministic digest that binds the exact
 operation, its arguments, and its scope. Use it to raise an approval request
-(`approval.request`), have the required approvers decide it (`approval.decide`),
+(`security.approval.request`), have eligible approvers decide it
+(`security.approval.approve` or `security.approval.reject`),
 and then re-submit the **identical** operation with the resulting `approvalId` in
 the envelope. The server re-verifies that the approval binds precisely the
 operation being executed before it runs. See
@@ -231,7 +245,7 @@ discover:
     "count": 2,
     "operations": [
       {
-        "operation": "certificate.issue",
+        "operation": "credential.issue",
         "family": "PKI_OPERATION",
         "mutating": true,
         "resourceType": "CERTIFICATE",
@@ -293,6 +307,7 @@ whether the realm has finished starting and is accepting operations.
 | `/admin/v1/operations/{id}` | `GET` | Inspect one operation descriptor |
 | `/admin/v1/operations/{id}` | `POST` | Execute one operation |
 | `/admin/v1/signing-operations/{id}` | `GET` | Poll a pending signing hand-off |
+| `/admin/v1/schema` | `GET` | Machine-readable operation parameter schema (any authenticated principal) |
 
 ## Authentication
 

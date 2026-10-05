@@ -47,6 +47,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.pqc.jcajce.spec.SNTRUPrimeParameterSpec;
 
@@ -116,6 +121,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @see VoidSpec
  */
 public final class SntruPrimeAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates a new algorithm wrapper for SNTRU Prime and registers its KEM and
      * agreement capabilities, together with key builders for generation and import.
@@ -221,4 +229,21 @@ public final class SntruPrimeAlgorithm extends AbstractCryptoAlgorithm {
             throw new NoSuchProviderException("BCPQC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("SNTRUP653",  "SNTRU Prime 653 (128-bit)",  SecurityLevel.classical(128), SntruPrimeKeyGenSpec.of(SntruPrimeKeyGenSpec.Variant.SNTRUP653)),
+            new ParameterSetDescriptor.Concrete<>("SNTRUP761",  "SNTRU Prime 761 (128-bit)",  SecurityLevel.classical(128), SntruPrimeKeyGenSpec.of(SntruPrimeKeyGenSpec.Variant.SNTRUP761)),
+            new ParameterSetDescriptor.Concrete<>("SNTRUP857",  "SNTRU Prime 857 (192-bit)",  SecurityLevel.classical(192), SntruPrimeKeyGenSpec.of(SntruPrimeKeyGenSpec.Variant.SNTRUP857)),
+            new ParameterSetDescriptor.Concrete<>("SNTRUP953",  "SNTRU Prime 953 (192-bit)",  SecurityLevel.classical(192), SntruPrimeKeyGenSpec.of(SntruPrimeKeyGenSpec.Variant.SNTRUP953)),
+            new ParameterSetDescriptor.Concrete<>("SNTRUP1013", "SNTRU Prime 1013 (192-bit)", SecurityLevel.classical(192), SntruPrimeKeyGenSpec.of(SntruPrimeKeyGenSpec.Variant.SNTRUP1013)),
+            new ParameterSetDescriptor.Concrete<>("SNTRUP1277", "SNTRU Prime 1277 (256-bit)", SecurityLevel.classical(256), SntruPrimeKeyGenSpec.of(SntruPrimeKeyGenSpec.Variant.SNTRUP1277))
+        );
+    }
+
 }

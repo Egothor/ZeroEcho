@@ -97,6 +97,7 @@ public final class HybridKexExporter implements Destroyable, AutoCloseable {
      * @param outLenBytes output length in bytes (1..8160)
      * @return derived bytes
      * @throws IllegalArgumentException if outLenBytes is out of range
+     * @since 1.0
      */
     public byte[] export(String label, byte[] info, int outLenBytes) {
         lifecycleLock.lock();
@@ -133,16 +134,35 @@ public final class HybridKexExporter implements Destroyable, AutoCloseable {
     }
 
     /**
+     * Derives {@code outLenBytes} bytes for a specific purpose using only the label.
+     *
+     * <p>
+     * Equivalent to {@link #export(String, byte[], int) export(label, null, outLenBytes)}.
+     * Use the three-argument form to additionally bind a transcript or context value.
+     * </p>
+     *
+     * @param label       ASCII/UTF-8 label identifying the purpose (must not be null)
+     * @param outLenBytes output length in bytes (1..8160)
+     * @return derived bytes
+     * @throws IllegalArgumentException if outLenBytes is out of range
+     * @throws IllegalStateException    if the exporter has been destroyed
+     * @since 1.0
+     */
+    public byte[] export(String label, int outLenBytes) {
+        return export(label, null, outLenBytes);
+    }
+
+    /**
      * Returns a defensive copy of the exporter root secret.
      *
      * <p>
-     * This is intended for diagnostics/testing only. Applications should prefer
-     * {@link #export(String, byte[], int)}.
+     * Intended for unit testing of key lifecycle behaviour only. Not part of the
+     * public API; applications should use {@link #export(String, byte[], int)}.
      * </p>
      *
      * @return copy of root secret
      */
-    public byte[] rootSecretCopy() {
+    /* package */ byte[] rootSecretCopy() {
         lifecycleLock.lock();
         try {
             requireActive();

@@ -47,21 +47,42 @@ both up; the artifacts and audit volumes matter for republication and retention.
 | `artifacts` | Lower | Reconstructible by republishing from the store. |
 
 !!! warning "Take a consistent snapshot, not a live copy"
-    The store commits with atomic rename and directory `fsync`, so a crash-consistent
-    snapshot is safe to restore. A file-by-file copy of a **running** server can
+    Atomic rename and directory `fsync` support crash recovery, not permission to
+    roll back durable safety authority. A file-by-file copy of a **running** server can
     capture a torn intermediate state. Prefer one of these:
 
     - Stop the server, copy the volumes, then restart — the simplest consistent
       backup.
     - Use a filesystem or block-storage snapshot that is atomic across the volume.
 
-Because the store enforces a single writer, never restore into a volume that a
-running server already holds open. Restore into a stopped instance, then start it.
+Never overwrite a live volume. Supported local restore verifies and stages a
+logical archive, then activates only on cold reopen after no-regression checks.
+`STAGED` is not activation success; require `ACTIVATED`. Preserve external safety
+authority and rollback roots. See the [restore procedure](../admin/backup-restore.md#local-staged-restoration).
 
-To restore, place the backed-up contents into fresh volumes with the correct
-ownership (uid `10001`) and permissions (`0700` for store and keyring), mount them
-at the same in-container paths, and start the server. Since the configuration uses
-in-container paths, no configuration change is needed to point at restored storage.
+!!! warning "The keyring password must match the backup"
+    The keyring is encrypted with PBKDF2 using the `ZEROECHO_KEYRING_PASSWORD`
+    environment variable. Restore the same password value that was in use when the
+    keyring was backed up. If the password is lost, the CA private keys cannot be
+    recovered even from a complete keyring backup. Treat the keyring backup and
+    its unlock password as a unit: store them under separate access control but
+    ensure both are retained together.
+
+## Offline layout migration
+
+The writable durable mount is `/var/lib/zeroecho/store-container`; its `store/`
+child is the replaceable PKI root. Server-control authority lives separately at
+`server-control/server-control.log`. Do not mount directly on the replaceable
+child: cold activation needs sibling stage/rollback roots and
+`.store.restore-control` on the same filesystem.
+
+For an old layout, stop every server and bootstrap process and preserve a complete
+offline copy first. Place the former PKI root under `store/`, move its existing
+`server-control.log` to `server-control/server-control.log`, and preserve other
+external authority under separately configured stable paths. Update server and
+bootstrap configurations together, retaining ownership and permissions. The
+entrypoint rejects a legacy `VERSION` at the mount root; it never automatically
+migrates or initializes over it. Moving the layout does not permit rewinding state.
 
 ## Upgrades
 
@@ -96,24 +117,21 @@ volumes carry the state forward.
     with its default rolling strategy.
 
 !!! note "Certificate profiles on upgrade"
-    On start-up the entrypoint reconciles profiles by identity — it registers new
-    profile identifiers but does not overwrite existing ones. Plan profile changes
-    as new versions registered through the console or
-    [command line](../admin/command-line.md), not as edits picked up on restart.
+    The bootstrap skips a profile when its active version already has identical
+    content (SHA-256 of the canonical document matches); changed content is always
+    re-registered and activated. To change a profile during an upgrade, update the
+    document in the profiles source — the changed content will be picked up on
+    restart. Alternatively, register a new version through the console or
+    [command line](../admin/command-line.md) after the server is running.
     See [Configuration](configuration.md#changing-a-certificate-profile).
 
 ## Disaster recovery
 
-To rebuild the platform from backups:
-
-1. Provision fresh POSIX volumes for the store, keyring, artifacts, and audit with
-   the correct ownership and permissions.
-2. Restore the store and keyring backups into them. The artifacts volume can be
-   left empty and repopulated by republishing from the store.
-3. Restore the read-only configuration and TLS material, and set the password
-   environment variables.
-4. Start a single server instance. Confirm `/health/ready` returns `200`.
-5. Republish artifacts if the artifacts volume was not restored.
+Loss of the current safety baseline cannot be repaired by blindly unpacking an
+older backup and starting a new server. Preserve surviving state and assess
+issuance, revocation, signing counters and external effects before resuming.
+See [disaster recovery](../admin/backup-restore.md#disaster-recovery) for the
+boundary between supported cold activation and deployment-specific recovery.
 
 Keep the keyring backup and its unlock password under separate control from the
 store backup, so that a single compromised backup does not yield both the state and
@@ -154,3 +172,13 @@ following the signing operation to completion if issuance is asynchronous. It re
 its parameters (the base URL, an administrator client identity, a CA identifier, and
 an active profile identifier) from `deploy/.env`. See
 [Configuration](configuration.md) for those variables.
+
+## Stateful key operations
+
+The local LMS/XMSS signing authority is a separately managed durable resource,
+excluded from PKI/keyring backups, volume snapshots and restore activation.
+Keep its original location and surviving history; never copy or reconstruct it.
+Its loss retires enrolled signing keys. Built-in PKI signing providers do not
+currently accept this explicit capability. See
+[durable stateful signing](../developer/stateful-signing.md) before enabling it
+in an application.

@@ -90,7 +90,9 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         RemoteSigningTransport.RemoteCapabilities capabilities = transport.capabilities();
         inputCapabilities = capabilities.effectiveInputs();
         configurationCommitment = capabilities.effectiveCommitment();
-        supportedAlgorithms = Set.copyOf(capabilities.supportedAlgorithms());
+        supportedAlgorithms = capabilities.supportedAlgorithms().stream()
+                .filter(algorithm -> !zeroecho.core.alg.common.sig.StatefulSigningGuard.isStateful(algorithm))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     @Override
@@ -130,9 +132,18 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         }
     }
 
+    /**
+     * Dispatches a stateless signing request using the configured transport.
+     * @param request validated signing request
+     * @param control call deadline and cancellation
+     * @return remote operation observation
+     * @throws zeroecho.core.err.UnsupportedRoleException if the algorithm is
+     *         LMS/XMSS; rejection occurs before reading content or calling the transport
+     */
     @Override
     public OperationObservation dispatch(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
+        zeroecho.core.alg.common.sig.StatefulSigningGuard.requireStateless(request.algorithmId(), null);
         Objects.requireNonNull(control, "control").requireActive(now());
         requireExactDomain(request.namespace());
         if (!configurationCommitment.matches(request.configurationCommitment())) {

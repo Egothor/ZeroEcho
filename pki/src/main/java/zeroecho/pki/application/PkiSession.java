@@ -36,6 +36,7 @@ package zeroecho.pki.application;
 import java.time.Clock;
 import java.util.Optional;
 
+import zeroecho.pki.api.BackupService;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.ProfileService;
@@ -201,6 +202,14 @@ public interface PkiSession extends AutoCloseable {
     }
 
     /**
+     * Returns the borrowed durable status-scheduling coordinator when signing and store support are configured.
+     * @return scheduling service, or empty when unavailable
+     */
+    default Optional<zeroecho.pki.api.schedule.StatusScheduleCoordinator> statusSchedules() {
+        return Optional.empty();
+    }
+
+    /**
      * Returns OCSP response generation over the configured signing reactor.
      *
      * @return borrowed session service, or empty when signing is unconfigured
@@ -303,6 +312,16 @@ public interface PkiSession extends AutoCloseable {
      * @return session-owned read-only repository
      */
     PkiRepository repository();
+
+    /**
+     * Returns the backup service when the underlying store supports backup operations.
+     *
+     * <p>Sessions backed by stores that do not support backup return {@link Optional#empty()}.
+     * Callers must check before invoking any backup or restore operation.</p>
+     *
+     * @return backup service, or empty when the backing store does not support backup
+     */
+    default Optional<BackupService> backup() { return Optional.empty(); }
 
     /**
      * Closes services and backend resources in reverse construction order.

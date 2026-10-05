@@ -34,6 +34,7 @@
 package zeroecho.core.storage;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -43,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -194,11 +196,85 @@ class KeyringAtomicPersistenceTest {
     }
 
     @Test
+    void windowsAtomicMoveTransientAccessDeniedIsRetriedSuccessfully() throws Exception {
+        start("windowsAtomicMoveTransientAccessDeniedIsRetriedSuccessfully");
+        // Fails 3 times (within the 5-attempt budget), then succeeds — put() must complete.
+        Path path = initialized("retry-succeeds.zek");
+        TransientAccessDeniedFileOperations operations = new TransientAccessDeniedFileOperations(
+                Target.MAIN_IMAGE, 3);
+        try (KeyringPassword password = password();
+                KeyringStore store = KeyringStore.open(path, password, KeyringProtection.standard(),
+                        deterministicRandom(50), operations)) {
+            assertDoesNotThrow(() -> put(store, "B", ENTRY_B));
+            assertTrue(store.contains("B"));
+            assertEquals(3, operations.denialsIssued());
+            assertEquals(List.of(10L, 10L, 10L), operations.pauses);
+        }
+        assertReopened(path, true);
+        ok();
+    }
+
+    @Test
+    void windowsAtomicMoveBudgetExhaustedThrowsKeyringIoFailed() throws Exception {
+        start("windowsAtomicMoveBudgetExhaustedThrowsKeyringIoFailed");
+        // Fails on every attempt (always AccessDeniedException) — put() must throw KEYRING_IO_FAILED.
+        Path path = initialized("retry-exhausted.zek");
+        TransientAccessDeniedFileOperations operations = new TransientAccessDeniedFileOperations(
+                Target.MAIN_IMAGE, Integer.MAX_VALUE);
+        try (KeyringPassword password = password();
+                KeyringStore store = KeyringStore.open(path, password, KeyringProtection.standard(),
+                        deterministicRandom(50), operations)) {
+            KeyringException failure = assertThrows(KeyringException.class, () -> put(store, "B", ENTRY_B));
+            assertSafe(failure, KeyringException.Code.KEYRING_IO_FAILED);
+            assertFalse(store.contains("B"));
+            assertEquals(5, operations.denialsIssued());
+            assertEquals(List.of(10L, 10L, 10L, 10L), operations.pauses);
+        }
+        assertReopened(path, false);
+        ok();
+    }
+
+    @Test
     void cleanupFailuresPreservePrimaryAndEncryptedResiduals() throws Exception {
         start("cleanupFailuresPreservePrimaryAndEncryptedResiduals");
         assertCleanupFailure(Target.MAIN_IMAGE, "cleanup-main.zek");
         assertCleanupFailure(Target.NONCE_RESERVATION, "cleanup-sidecar.zek");
         ok();
+    }
+
+    @Test
+    void retryPolicyIsDeterministicForBothDestinationsAndAllFailureCategories() throws Exception {
+        for (Target target : List.of(Target.MAIN_IMAGE, Target.NONCE_RESERVATION)) {
+            for (String scenario : List.of("success", "exhausted", "non-windows", "other-io", "interrupted")) {
+                Path path = initialized(target + "-" + scenario + ".zek");
+                TransientAccessDeniedFileOperations operations = new TransientAccessDeniedFileOperations(
+                        target, scenario.equals("success") ? 3 : Integer.MAX_VALUE);
+                operations.windows = !scenario.equals("non-windows");
+                operations.otherFailure = scenario.equals("other-io");
+                operations.interrupted = scenario.equals("interrupted");
+                try (KeyringPassword password = password();
+                        KeyringStore store = KeyringStore.open(path, password, KeyringProtection.standard(),
+                                deterministicRandom(50), operations)) {
+                    if (scenario.equals("success")) {
+                        put(store, "B", ENTRY_B);
+                    } else {
+                        KeyringException failure = assertThrows(KeyringException.class,
+                                () -> put(store, "B", ENTRY_B));
+                        assertSafe(failure, KeyringException.Code.KEYRING_IO_FAILED);
+                        assertFalse(store.contains("B"));
+                    }
+                    int expectedDenials = scenario.equals("success") ? 3 : scenario.equals("exhausted") ? 5 : 1;
+                    int expectedPauses = scenario.equals("success") ? 3 : scenario.equals("exhausted") ? 4
+                            : scenario.equals("interrupted") ? 1 : 0;
+                    assertEquals(expectedDenials, operations.denialsIssued());
+                    assertEquals(java.util.Collections.nCopies(expectedPauses, 10L), operations.pauses);
+                    assertEquals(scenario.equals("interrupted"), Thread.currentThread().isInterrupted());
+                } finally {
+                    Thread.interrupted();
+                }
+                assertReopened(path, scenario.equals("success"));
+            }
+        }
     }
 
     private void assertCleanupFailure(Target target, String file) throws Exception {
@@ -344,6 +420,61 @@ class KeyringAtomicPersistenceTest {
 
     private static void ok() {
         System.out.println("...ok");
+    }
+
+    /** Throws {@link AccessDeniedException} on {@code atomicReplace} for the first {@code maxDenials} calls,
+     *  then delegates to the real NIO implementation. Models Windows Defender / indexer transient lock. */
+    private static final class TransientAccessDeniedFileOperations implements KeyringFileOperations {
+        private final Target target;
+        private final int maxDenials;
+        private int denials;
+        private final List<Long> pauses = new ArrayList<>();
+        private boolean windows = true;
+        private boolean interrupted;
+        private boolean otherFailure;
+
+        private TransientAccessDeniedFileOperations(Target target, int maxDenials) {
+            this.target = target;
+            this.maxDenials = maxDenials;
+        }
+
+        @Override public KeyringAtomicMoveRetryPolicy atomicMoveRetryPolicy() {
+            return KeyringAtomicMoveRetryPolicy.forPlatform(windows, delay -> {
+                pauses.add(delay);
+                if (interrupted) {
+                    throw new InterruptedException("controlled pause interruption");
+                }
+            });
+        }
+
+        @Override public Path createTemporary(Target t, Path parent, String prefix, String suffix) throws IOException {
+            return NIO.createTemporary(t, parent, prefix, suffix);
+        }
+        @Override public void writeTemporary(Target t, Path temporary, byte[] image) throws IOException {
+            NIO.writeTemporary(t, temporary, image);
+        }
+        @Override public void forceTemporary(Target t, Path temporary) throws IOException {
+            NIO.forceTemporary(t, temporary);
+        }
+        @Override public void atomicReplace(Target t, Path temporary, Path destination) throws IOException {
+            if (t == target && denials < maxDenials) {
+                denials++;
+                if (otherFailure) {
+                    throw new IOException("controlled unrelated I/O failure");
+                }
+                throw new AccessDeniedException(temporary.toString(), destination.toString(),
+                        "transient AV lock (test stub)");
+            }
+            NIO.atomicReplace(t, temporary, destination);
+        }
+        @Override public void forceDirectory(Target t, Path parent) throws IOException {
+            NIO.forceDirectory(t, parent);
+        }
+        @Override public void deleteTemporary(Target t, Path temporary) throws IOException {
+            NIO.deleteTemporary(t, temporary);
+        }
+
+        int denialsIssued() { return denials; }
     }
 
     private enum FailureStage {

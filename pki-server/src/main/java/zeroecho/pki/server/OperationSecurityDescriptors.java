@@ -44,11 +44,22 @@ import java.util.Objects;
 
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSigningOperation;
+import zeroecho.pki.api.publication.PublicationTarget;
 
 /** Immutable security descriptors keyed by existing typed-operation identities. */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.AvoidDuplicateLiterals" })
 public final class OperationSecurityDescriptors {
+    /**
+     * Tests current operation availability without changing its security descriptor.
+     * @param operationId stable operation identity
+     * @return false for remote restoration until its transport workflow is available
+     */
+    public static boolean available(String operationId) {
+        return zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
+                .find(Objects.requireNonNull(operationId, "operationId"))
+                .map(zeroecho.pki.server.schema.OperationDescriptorCatalog.Entry::available).orElse(true);
+    }
     /** Internally fixed execution family; callers cannot select it. */
     public enum Family {
         /** Operation belongs to the core PKI application family. */ PKI_OPERATION,
@@ -95,6 +106,16 @@ public final class OperationSecurityDescriptors {
     public record Descriptor(String operationId, Family family, Permission.Action action, Permission.ResourceType resourceType,
             boolean mutating, Permission.DataView dataView, ApprovalCategory approvalCategory,
             Eligibility eligibility) {
+        /**
+         * Returns whether this operation may be advertised for execution.
+         * Restore remains registered for authorization and approval of legacy requests,
+         * but is unavailable until safe cold activation is supported.
+         * @return whether the operation is available
+         */
+        public boolean available() {
+            return OperationSecurityDescriptors.available(operationId);
+        }
+
         /** Validates one finite descriptor. */
         public Descriptor {
             Permission.requireBounded(operationId, 256, "operation ID");
@@ -129,7 +150,16 @@ public final class OperationSecurityDescriptors {
 
     /** Creates the closed current gateway descriptor registry. */
     public OperationSecurityDescriptors() {
-        this(List.of(
+        this(zeroecho.pki.server.schema.OperationDescriptorCatalog.current().securityDescriptors());
+    }
+
+    /**
+     * Returns the typed, immutable security definitions used to assemble the catalog.
+     * This factory does not initialize a registry or consult catalog projections.
+     * @return all current operation security definitions
+     */
+    public static List<Descriptor> definitions() {
+        return List.of(
                 read(PkiOperation.ListProfiles.NAME, Permission.Action.PROFILE_READ, Permission.ResourceType.PROFILE),
                 read(PkiOperation.ListRequests.NAME, Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.REQUEST),
                 read(PkiOperation.SearchCredentials.NAME, Permission.Action.CERTIFICATE_SEARCH, Permission.ResourceType.CERTIFICATE),
@@ -264,7 +294,71 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.SearchAudit.NAME, Permission.Action.AUDIT_EXPORT,
                         Permission.ResourceType.AUDIT, false, false),
                 control(ServerControlOperation.VerifyAuditIntegrity.NAME, Permission.Action.AUDIT_INTEGRITY_VERIFY,
-                        Permission.ResourceType.AUDIT, false, false)));
+                        Permission.ResourceType.AUDIT, false, false),
+                control(ServerControlOperation.ExportBackup.NAME, Permission.Action.BACKUP_EXPORT,
+                        Permission.ResourceType.BACKUP, true, false),
+                control(ServerControlOperation.VerifyBackup.NAME, Permission.Action.BACKUP_VERIFY,
+                        Permission.ResourceType.BACKUP, false, false),
+                control(ServerControlOperation.ExecuteRestore.NAME, Permission.Action.RESTORE_EXECUTE,
+                        Permission.ResourceType.RESTORE, true, true),
+                control(ServerControlOperation.RegisterEstEndpoint.NAME, Permission.Action.EST_ENDPOINT_ADMINISTER,
+                        Permission.ResourceType.EST_ENDPOINT, true, true),
+                control(ServerControlOperation.DeregisterEstEndpoint.NAME, Permission.Action.EST_ENDPOINT_ADMINISTER,
+                        Permission.ResourceType.EST_ENDPOINT, true, false),
+                control(ServerControlOperation.InspectEstEndpoint.NAME, Permission.Action.EST_ENDPOINT_READ,
+                        Permission.ResourceType.EST_ENDPOINT, false, false),
+                control(ServerControlOperation.ListEstEndpoints.NAME, Permission.Action.EST_ENDPOINT_READ,
+                        Permission.ResourceType.EST_ENDPOINT, false, false),
+                control(ServerControlOperation.RegisterScepEndpoint.NAME, Permission.Action.SCEP_ENDPOINT_ADMINISTER,
+                        Permission.ResourceType.SCEP_ENDPOINT, true, true),
+                control(ServerControlOperation.DeregisterScepEndpoint.NAME, Permission.Action.SCEP_ENDPOINT_ADMINISTER,
+                        Permission.ResourceType.SCEP_ENDPOINT, true, false),
+                control(ServerControlOperation.InspectScepEndpoint.NAME, Permission.Action.SCEP_ENDPOINT_READ,
+                        Permission.ResourceType.SCEP_ENDPOINT, false, false),
+                control(ServerControlOperation.ListScepEndpoints.NAME, Permission.Action.SCEP_ENDPOINT_READ,
+                        Permission.ResourceType.SCEP_ENDPOINT, false, false),
+                control(ServerControlOperation.RegisterCmpEndpoint.NAME, Permission.Action.CMP_ENDPOINT_ADMINISTER,
+                        Permission.ResourceType.CMP_ENDPOINT, true, true),
+                control(ServerControlOperation.DeregisterCmpEndpoint.NAME, Permission.Action.CMP_ENDPOINT_ADMINISTER,
+                        Permission.ResourceType.CMP_ENDPOINT, true, false),
+                control(ServerControlOperation.InspectCmpEndpoint.NAME, Permission.Action.CMP_ENDPOINT_READ,
+                        Permission.ResourceType.CMP_ENDPOINT, false, false),
+                control(ServerControlOperation.ListCmpEndpoints.NAME, Permission.Action.CMP_ENDPOINT_READ,
+                        Permission.ResourceType.CMP_ENDPOINT, false, false),
+                control(ServerControlOperation.RegisterEnrollmentProfile.NAME,
+                        Permission.Action.ENROLLMENT_PROFILE_ADMINISTER,
+                        Permission.ResourceType.ENROLLMENT_PROFILE, true, true),
+                control(ServerControlOperation.UpdateEnrollmentProfile.NAME,
+                        Permission.Action.ENROLLMENT_PROFILE_ADMINISTER,
+                        Permission.ResourceType.ENROLLMENT_PROFILE, true, false),
+                control(ServerControlOperation.InspectEnrollmentProfile.NAME,
+                        Permission.Action.ENROLLMENT_PROFILE_READ,
+                        Permission.ResourceType.ENROLLMENT_PROFILE, false, false),
+                control(ServerControlOperation.ListEnrollmentProfiles.NAME,
+                        Permission.Action.ENROLLMENT_PROFILE_READ,
+                        Permission.ResourceType.ENROLLMENT_PROFILE, false, false),
+                control(ServerControlOperation.ActivateEnrollmentProfile.NAME,
+                        Permission.Action.ENROLLMENT_PROFILE_ADMINISTER,
+                        Permission.ResourceType.ENROLLMENT_PROFILE, true, false),
+                control(ServerControlOperation.SuspendEnrollmentProfile.NAME,
+                        Permission.Action.ENROLLMENT_PROFILE_ADMINISTER,
+                        Permission.ResourceType.ENROLLMENT_PROFILE, true, false),
+                mutate(PkiOperation.SetStatusSchedule.NAME, Permission.Action.STATUS_SCHEDULE_MANAGE,
+                        Permission.ResourceType.STATUS_SCHEDULE, false),
+                read(PkiOperation.InspectStatusSchedule.NAME, Permission.Action.STATUS_SCHEDULE_MANAGE,
+                        Permission.ResourceType.STATUS_SCHEDULE),
+                read(PkiOperation.ListStatusSchedules.NAME, Permission.Action.STATUS_SCHEDULE_MANAGE,
+                        Permission.ResourceType.STATUS_SCHEDULE),
+                read(PkiOperation.QueryAuthorityMetrics.NAME, Permission.Action.AUTHORITY_READ,
+                        Permission.ResourceType.AUTHORITY),
+                read(PkiOperation.QueryCertificateMetrics.NAME, Permission.Action.CERTIFICATE_SEARCH,
+                        Permission.ResourceType.CERTIFICATE),
+                read(PkiOperation.QueryRevocationMetrics.NAME, Permission.Action.REVOCATION_HISTORY_READ,
+                        Permission.ResourceType.REVOCATION),
+                read(PkiOperation.QueryPublicationMetrics.NAME, Permission.Action.PUBLICATION_READ,
+                        Permission.ResourceType.PUBLICATION),
+                read(PkiOperation.QueryServerMetrics.NAME, Permission.Action.SERVER_HEALTH_READ,
+                        Permission.ResourceType.SERVER_CONFIGURATION));
     }
 
     /**
@@ -482,6 +576,22 @@ public final class OperationSecurityDescriptors {
                     && resource.scope().authorityId().isPresent();
             case PkiOperation.ListAlgorithmBindings ignored -> resource.scope().authorityId().isEmpty();
             case PkiOperation.InspectAlgorithmBinding ignored -> resource.scope().authorityId().isEmpty();
+            case PkiOperation.SetStatusSchedule value -> resource.scope().authorityId().filter(value.caId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.InspectStatusSchedule value -> resource.scope().authorityId().filter(value.caId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.ListStatusSchedules ignored -> resource.scope().authorityId().isEmpty()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.QueryAuthorityMetrics value -> resource.scope().authorityId().filter(value.caId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.QueryCertificateMetrics value -> resource.scope().authorityId().filter(value.caId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.QueryRevocationMetrics value -> resource.scope().authorityId().filter(value.caId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.QueryPublicationMetrics value -> resource.scope().authorityId().filter(value.caId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.QueryServerMetrics ignored -> resource.scope().authorityId().isEmpty()
+                    && resource.objectId().isEmpty();
         };
         if (!valid) throw new SecurityException("Operation security scope does not match typed arguments");
     }
@@ -495,7 +605,10 @@ public final class OperationSecurityDescriptors {
         return switch (operation) {
             case PkiOperation.ListProfiles value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.ListRequests value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
-            case PkiOperation.SearchCredentials value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
+            case PkiOperation.SearchCredentials value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""))
+                    + ";subject=" + atom(value.subjectFilter().orElse("")) + ";serial=" + atom(value.serialFilter().orElse(""))
+                    + ";fingerprint=" + atom(value.fingerprintFilter().orElse("")) + ";status=" + atom(value.statusFilter().orElse(""))
+                    + ";profile=" + atom(value.profileIdFilter().orElse(""));
             case PkiOperation.ListIssuerGenerations value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.ListAuthorities value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.InspectAuthority value -> "ca=" + atom(value.caId().value());
@@ -560,6 +673,23 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.ListAlgorithmBindings value -> "origin=" + atom(value.origin().orElse("")) + ";role="
                     + atom(value.role().orElse("")) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.InspectAlgorithmBinding value -> "binding=" + atom(value.bindingId());
+            case PkiOperation.SetStatusSchedule value -> "ca=" + atom(value.caId().value())
+                    + ";type=" + value.statusType().name()
+                    + ";format=" + atom(value.formatId().value())
+                    + ";interval=" + atom(value.interval().toString())
+                    + ";grace=" + value.graceSeconds()
+                    + ";enabled=" + value.enabled()
+                    + ";targetType=" + atom(value.publicationTarget().map(t -> t.type().name()).orElse(""))
+                    + ";targetId=" + atom(value.publicationTarget().map(PublicationTarget::targetId).orElse(""));
+            case PkiOperation.InspectStatusSchedule value -> "ca=" + atom(value.caId().value())
+                    + ";type=" + value.statusType().name();
+            case PkiOperation.ListStatusSchedules value -> "limit=" + value.limit()
+                    + ";after=" + atom(value.after().orElse(""));
+            case PkiOperation.QueryAuthorityMetrics value -> "ca=" + atom(value.caId().value());
+            case PkiOperation.QueryCertificateMetrics value -> "ca=" + atom(value.caId().value());
+            case PkiOperation.QueryRevocationMetrics value -> "ca=" + atom(value.caId().value());
+            case PkiOperation.QueryPublicationMetrics value -> "ca=" + atom(value.caId().value());
+            case PkiOperation.QueryServerMetrics ignored -> "server";
         };
     }
 
@@ -815,6 +945,41 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.SearchAudit value -> auditQueryCommitment(value.query());
             case ServerControlOperation.VerifyAuditIntegrity value -> "head=" + atom(value.expectedHead()
                     .map(head -> head.sequence() + ":" + head.recordHash()).orElse(""));
+            case ServerControlOperation.ExportBackup value -> "label=" + atom(value.label());
+            case ServerControlOperation.VerifyBackup value -> "backupId=" + atom(value.artifact().backupId().value());
+            case ServerControlOperation.ExecuteRestore value -> "backupId=" + atom(value.request().artifact().backupId().value());
+            case ServerControlOperation.RegisterEstEndpoint value -> "label=" + atom(value.endpoint().label())
+                    + ";authority=" + atom(value.endpoint().authorityId())
+                    + ";profile=" + atom(value.endpoint().profileId());
+            case ServerControlOperation.DeregisterEstEndpoint value -> "label=" + atom(value.label());
+            case ServerControlOperation.InspectEstEndpoint value -> "label=" + atom(value.label());
+            case ServerControlOperation.ListEstEndpoints value -> "offset=" + value.offset()
+                    + ";limit=" + value.limit();
+            case ServerControlOperation.RegisterScepEndpoint value -> "label=" + atom(value.endpoint().label())
+                    + ";authority=" + atom(value.endpoint().authorityId())
+                    + ";profile=" + atom(value.endpoint().profileId());
+            case ServerControlOperation.DeregisterScepEndpoint value -> "label=" + atom(value.label());
+            case ServerControlOperation.InspectScepEndpoint value -> "label=" + atom(value.label());
+            case ServerControlOperation.ListScepEndpoints value -> "offset=" + value.offset()
+                    + ";limit=" + value.limit();
+            case ServerControlOperation.RegisterCmpEndpoint value -> "label=" + atom(value.endpoint().label())
+                    + ";authority=" + atom(value.endpoint().authorityId())
+                    + ";profile=" + atom(value.endpoint().profileId())
+                    + ";policy=" + value.endpoint().protectionPolicy().name();
+            case ServerControlOperation.DeregisterCmpEndpoint value -> "label=" + atom(value.label());
+            case ServerControlOperation.InspectCmpEndpoint value -> "label=" + atom(value.label());
+            case ServerControlOperation.ListCmpEndpoints value -> "offset=" + value.offset()
+                    + ";limit=" + value.limit();
+            case ServerControlOperation.RegisterEnrollmentProfile value -> "id=" + atom(value.profile().id())
+                    + ";certificateProfileId=" + atom(value.profile().certificateProfileId());
+            case ServerControlOperation.UpdateEnrollmentProfile value -> "id=" + atom(value.profile().id())
+                    + ";certificateProfileId=" + atom(value.profile().certificateProfileId())
+                    + ";state=" + value.profile().state().name();
+            case ServerControlOperation.InspectEnrollmentProfile value -> "id=" + atom(value.id());
+            case ServerControlOperation.ListEnrollmentProfiles value -> "offset=" + value.offset()
+                    + ";limit=" + value.limit();
+            case ServerControlOperation.ActivateEnrollmentProfile value -> "id=" + atom(value.id());
+            case ServerControlOperation.SuspendEnrollmentProfile value -> "id=" + atom(value.id());
         };
     }
 

@@ -68,7 +68,7 @@ import zeroecho.pki.application.PkiResourceScopeResolver;
         "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.NcssCount", "PMD.ConfusingTernary", "PMD.ExceptionAsFlowControl",
         "PMD.CouplingBetweenObjects" })
-public final class ServerOperationGateway {
+public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
     private static final String PROFILE_ID = "profileId";
 
     /**
@@ -355,6 +355,15 @@ public final class ServerOperationGateway {
     public void installAudit(zeroecho.pki.api.audit.AuditService search,
             zeroecho.pki.api.audit.AuditIntegrityService integrity) {
         controlExecutor.installAudit(search, integrity);
+    }
+
+    /**
+     * Installs the backup capability when the configured store supports it.
+     *
+     * @param backupService backup service backed by the store
+     */
+    public void installBackup(zeroecho.pki.api.BackupService backupService) {
+        controlExecutor.installBackup(backupService);
     }
     /**
      * Admits and synchronously executes one operation.
@@ -720,6 +729,7 @@ public final class ServerOperationGateway {
     private boolean discoverable(OperationSecurityDescriptors.Descriptor descriptor,
             SecurityPrincipal principal, List<Permission.Grant> grants,
             java.util.Set<String> breakGlassIds) {
+        if (!descriptor.available()) return false;
         for (Permission.Grant grant : grants) {
             if (grant.action() != descriptor.action() || grant.resourceType() != descriptor.resourceType()) {
                 continue;
@@ -1270,6 +1280,38 @@ public final class ServerOperationGateway {
         if (outcome instanceof ServerControlOperationOutcome.OneTimeSensitive) return "SUCCEEDED";
         PkiOperationOutcome ordinary = ((ServerControlOperationOutcome.Ordinary) outcome).outcome();
         return classification(ordinary);
+    }
+
+    /**
+     * Installs the EST service so that EST admin operations can reach it.
+     * @param service service instance installed for subsequent control operations
+     */
+    public void installEst(zeroecho.pki.server.est.EstService service) {
+        controlExecutor.installEst(service);
+    }
+
+    /**
+     * Installs the SCEP service so that SCEP admin operations can reach it.
+     * @param service service instance installed for subsequent control operations
+     */
+    public void installScep(zeroecho.pki.server.scep.ScepService service) {
+        controlExecutor.installScep(service);
+    }
+
+    /**
+     * Installs the CMP service so that CMP admin operations can reach it.
+     * @param service service instance installed for subsequent control operations
+     */
+    public void installCmp(zeroecho.pki.server.cmp.CmpService service) {
+        controlExecutor.installCmp(service);
+    }
+
+    /**
+     * Installs the enrollment profile service so that enrollment profile admin operations can reach it.
+     * @param service service instance installed for subsequent control operations
+     */
+    public void installEnrollmentProfiles(zeroecho.pki.server.enrollment.EnrollmentProfileService service) {
+        controlExecutor.installEnrollmentProfiles(service);
     }
 
     private zeroecho.pki.application.PkiSelectionExecutor selectionExecutor() {

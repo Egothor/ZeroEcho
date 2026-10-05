@@ -37,6 +37,11 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -70,6 +75,9 @@ import zeroecho.core.spec.VoidSpec;
  */
 public final class MldsaAlgorithm extends AbstractCryptoAlgorithm {
 
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
+
     /**
      * Creates a new ML-DSA algorithm instance and registers its capabilities.
      *
@@ -102,4 +110,18 @@ public final class MldsaAlgorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(MldsaPublicKeySpec.class, new MldsaPublicKeyBuilder());
         registerPrivateKeyImporter(MldsaPrivateKeySpec.class, new MldsaPrivateKeyBuilder());
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("ML-DSA-44", "ML-DSA-44 (NIST Level 2)", SecurityLevel.nist(2, 128), MldsaKeyGenSpec.of("BC", MldsaKeyGenSpec.ParameterSet.ML_DSA_44, MldsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("ML-DSA-65", "ML-DSA-65 (NIST Level 3)", SecurityLevel.nist(3, 192), MldsaKeyGenSpec.of("BC", MldsaKeyGenSpec.ParameterSet.ML_DSA_65, MldsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("ML-DSA-87", "ML-DSA-87 (NIST Level 5)", SecurityLevel.nist(5, 256), MldsaKeyGenSpec.of("BC", MldsaKeyGenSpec.ParameterSet.ML_DSA_87, MldsaKeyGenSpec.PreHash.NONE))
+        );
+    }
+
 }

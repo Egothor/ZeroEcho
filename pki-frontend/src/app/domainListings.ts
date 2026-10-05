@@ -33,6 +33,7 @@
  ******************************************************************************/
 
 import { operationSpec, operationsForNav } from '@/api/operationCatalog';
+import type { OperationId } from '@/api/operationCatalog';
 import type { OperationSpec } from '@/api/operationSchema';
 
 /**
@@ -48,7 +49,7 @@ export interface DomainListing {
   /** Tab / section label. */
   readonly title: string;
   /** List operation whose result populates the table. */
-  readonly listOperationId: string;
+  readonly listOperationId: OperationId;
   /** Arguments for the list operation. */
   readonly args: Record<string, unknown>;
   /** Key under `result` holding the row array. */
@@ -65,7 +66,7 @@ export interface DomainListing {
    * like authorities — have the server assign it), so it cannot be derived
    * reliably. Row/inspect actions ARE derived (ref-based) and need no config.
    */
-  readonly createOperationIds?: readonly string[];
+  readonly createOperationIds?: readonly OperationId[];
 }
 
 export const DOMAIN_LISTINGS: Record<string, readonly DomainListing[]> = {
@@ -101,6 +102,18 @@ export const DOMAIN_LISTINGS: Record<string, readonly DomainListing[]> = {
   ],
   ocsp: [
     { title: 'Responders', listOperationId: 'ocsp.responder.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'responderId', idArg: 'responderId', entity: 'OCSP responder', createOperationIds: ['ocsp.responder.register'] },
+  ],
+  scep: [
+    { title: 'Endpoints', listOperationId: 'scep.endpoint.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'label', idArg: 'label', entity: 'SCEP endpoint', createOperationIds: ['scep.endpoint.register'] },
+  ],
+  cmp: [
+    { title: 'Endpoints', listOperationId: 'cmp.endpoint.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'label', idArg: 'label', entity: 'CMP endpoint', createOperationIds: ['cmp.endpoint.register'] },
+  ],
+  est: [
+    { title: 'Endpoints', listOperationId: 'est.endpoint.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'label', idArg: 'label', entity: 'EST endpoint', createOperationIds: ['est.endpoint.register'] },
+  ],
+  enrollment: [
+    { title: 'Profiles', listOperationId: 'enrollment.profile.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'id', idArg: 'id', entity: 'enrollment profile', createOperationIds: ['enrollment.profile.register'] },
   ],
   configuration: [
     { title: 'Algorithm bindings', listOperationId: 'algorithm.binding.list', args: { limit: 200 }, resultKey: 'bindings', idKey: 'bindingId', idArg: 'bindingId', entity: 'algorithm binding' },
@@ -143,7 +156,7 @@ export function domainListings(navId: string): readonly DomainListing[] | undefi
  * parameterised listings whose id has no realm-wide picker (e.g. status objects).
  */
 export function rowActionOps(navId: string, listing: DomainListing): OperationSpec[] {
-  const creates = new Set(listing.createOperationIds ?? []);
+  const creates = new Set<string>(listing.createOperationIds ?? []);
   return operationsForNav(navId).filter(
     (op) =>
       op.id !== listing.listOperationId &&

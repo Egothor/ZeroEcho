@@ -34,6 +34,9 @@
 package zeroecho.pki.server.acme;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,9 +45,10 @@ import java.util.ServiceLoader;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.core.io.CancellationSignal;
 
 /** Deterministic explicitly enabled ACME ServiceLoader composition. */
-@SuppressWarnings("PMD.ControlStatementBraces")
+
 public final class AcmeProviders {
     private AcmeProviders() { }
 
@@ -59,8 +63,37 @@ public final class AcmeProviders {
      */
     public static Map<String, AcmeChallengeProvider> challenges(List<ProviderConfig> enabled,
             ClassLoader loader) {
-        return resolve(enabled, ServiceLoader.load(AcmeChallengeProvider.class, loader).stream()
-                .map(ServiceLoader.Provider::get).toList(), AcmeChallengeProvider::id);
+        List<AcmeChallengeProvider> providers = new ArrayList<>();
+        ServiceLoader.load(AcmeChallengeProvider.class, Objects.requireNonNull(loader, "loader"))
+                .forEach(providers::add);
+        ServiceLoader.load(zeroecho.pki.server.spi.v2.AcmeChallengeProvider.class, loader)
+                .forEach(provider -> providers.add(new AcmeChallengeProvider() {
+                    @Override public String id() { return provider.id(); }
+                    @Override public Set<AcmeState.ChallengeType> challengeTypes() {
+                        return provider.challengeTypes().stream()
+                                .map(type -> AcmeState.ChallengeType.valueOf(type.name()))
+                                .collect(Collectors.toUnmodifiableSet());
+                    }
+                    @Override public Result validate(Context context, ProviderConfig configuration,
+                            CancellationSignal cancellation) {
+                        zeroecho.pki.server.spi.v2.AcmeChallengeProvider.Context adapted =
+                                new zeroecho.pki.server.spi.v2.AcmeChallengeProvider.Context(
+                                        context.directoryId(), context.authorizationId(),
+                                        new zeroecho.pki.server.spi.v2.AcmeChallengeProvider.Identifier(
+                                                zeroecho.pki.server.spi.v2.AcmeChallengeProvider.IdentifierType
+                                                        .valueOf(context.identifier().type().name()),
+                                                context.identifier().value(), context.identifier().wildcard()),
+                                        zeroecho.pki.server.spi.v2.AcmeChallengeProvider.ChallengeType
+                                                .valueOf(context.challengeType().name()),
+                                        context.token(), context.expectedKeyAuthorization(), context.attempt(),
+                                        context.validationTime(), context.deadline());
+                        zeroecho.pki.server.spi.v2.AcmeChallengeProvider.Result result =
+                                provider.validate(adapted, configuration, cancellation);
+                        return new Result(result.valid(), result.classification(), result.observedAt(),
+                                result.expiresAt());
+                    }
+                }));
+        return resolve(enabled, providers, AcmeChallengeProvider::id);
     }
 
     /**
@@ -74,17 +107,33 @@ public final class AcmeProviders {
      */
     public static Map<String, AcmeExternalAccountBindingProvider> eab(List<ProviderConfig> enabled,
             ClassLoader loader) {
-        return resolve(enabled, ServiceLoader.load(AcmeExternalAccountBindingProvider.class, loader).stream()
-                .map(ServiceLoader.Provider::get).toList(), AcmeExternalAccountBindingProvider::id);
+        List<AcmeExternalAccountBindingProvider> providers = new ArrayList<>();
+        ServiceLoader.load(AcmeExternalAccountBindingProvider.class, Objects.requireNonNull(loader, "loader"))
+                .forEach(providers::add);
+        ServiceLoader.load(zeroecho.pki.server.spi.v2.AcmeExternalAccountBindingProvider.class, loader)
+                .forEach(provider -> providers.add(new AcmeExternalAccountBindingProvider() {
+                    @Override public String id() { return provider.id(); }
+                    @Override public Binding verify(Request request, ProviderConfig configuration) {
+                        zeroecho.pki.server.spi.v2.AcmeExternalAccountBindingProvider.Binding binding = provider.verify(
+                                new zeroecho.pki.server.spi.v2.AcmeExternalAccountBindingProvider.Request(
+                                        request.directoryId(), request.authorityId(), request.profileId(),
+                                        request.accountKeyThumbprint(), request.nestedJws(), request.now()), configuration);
+                        return new Binding(binding.keyId(), binding.policyCommitment(), binding.dnsNamespaces(),
+                                binding.expiresAt(), binding.consumed());
+                    }
+                }));
+        return resolve(enabled, providers, AcmeExternalAccountBindingProvider::id);
     }
 
     private static <T> Map<String, T> resolve(List<ProviderConfig> enabled, List<T> discovered,
             java.util.function.Function<T, String> identity) {
         Objects.requireNonNull(loaderMarker(enabled), "enabled");
         Map<String, T> available = new LinkedHashMap<>();
-        for (T provider : discovered.stream().sorted(java.util.Comparator.comparing(identity)).toList()) {
+        for (T provider : discovered) {
             String id = identity.apply(provider);
-            if (available.putIfAbsent(id, provider) != null) throw new IllegalStateException("Duplicate ACME provider identity");
+            if (id == null || id.isBlank() || available.putIfAbsent(id, provider) != null) {
+                throw new IllegalStateException("Invalid or duplicate ACME provider identity");
+            }
         }
         Map<String, T> result = new LinkedHashMap<>();
         for (ProviderConfig configuration : enabled.stream().sorted(java.util.Comparator.comparing(ProviderConfig::backendId)).toList()) {

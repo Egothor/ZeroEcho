@@ -114,7 +114,7 @@
  * # KEM + ChaCha AEAD with header
  * ZeroEcho -E --encrypt in.bin -o out.enc \
  *   --keyring keyring.txt --pub alice-pub \
- *   --kem Kyber-768 --chacha --chacha-nonce 00112233445566778899AABB \
+ *   --kem ML-KEM --chacha --chacha-nonce 00112233445566778899AABB \
  *   --aad 01020304 --header
  *
  * # Generate a key into the keyring

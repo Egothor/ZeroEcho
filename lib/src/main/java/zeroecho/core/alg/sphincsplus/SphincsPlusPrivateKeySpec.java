@@ -58,7 +58,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * array.</li>
  * <li>Marshalling and unmarshalling methods convert between this object and a
  * {@link PairSeq} representation using Base64 encoding.</li>
- * <li>The {@code providerName} defaults to {@code "BCPQC"} (Bouncy Castle PQC
+ * <li>The {@code providerName} defaults to {@code "BC"} (Bouncy Castle
  * provider) if not explicitly supplied.</li>
  * </ul>
  *
@@ -83,19 +83,20 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * @since 1.0
  */
 public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
+    private static final String LEGACY_PROVIDER = "BCPQC";
     private final byte[] encodedPkcs8;
     private final ReentrantLock lifecycleLock = new ReentrantLock();
-    private final String providerName; // e.g. "BCPQC"
+    private final String providerName; // e.g. "BC"
     private boolean destroyed;
 
     /**
-     * Constructs a new specification with the default provider {@code "BCPQC"}.
+     * Constructs a new specification with the default provider {@code "BC"}.
      *
      * @param encodedPkcs8 PKCS#8-encoded SPHINCS+ private key bytes
      * @throws IllegalArgumentException if {@code encodedPkcs8} is {@code null}
      */
     public SphincsPlusPrivateKeySpec(byte[] encodedPkcs8) {
-        this(encodedPkcs8, "BCPQC");
+        this(encodedPkcs8, "BC");
     }
 
     /**
@@ -103,15 +104,19 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec, Destro
      *
      * @param encodedPkcs8 PKCS#8-encoded SPHINCS+ private key bytes
      * @param providerName JCA provider to use for import; if {@code null}, defaults
-     *                     to {@code "BCPQC"}
+     *                     to {@code "BC"}
      * @throws IllegalArgumentException if {@code encodedPkcs8} is {@code null}
+     *                                  or the provider is legacy {@code "BCPQC"}
      */
     public SphincsPlusPrivateKeySpec(byte[] encodedPkcs8, String providerName) {
         if (encodedPkcs8 == null) {
             throw new IllegalArgumentException("encodedPkcs8 must not be null");
         }
+        if (LEGACY_PROVIDER.equals(providerName)) {
+            throw new IllegalArgumentException("Legacy BCPQC SPHINCS+ imports are unsupported; use SLH-DSA keys with BC");
+        }
         this.encodedPkcs8 = encodedPkcs8.clone();
-        this.providerName = (providerName == null ? "BCPQC" : providerName);
+        this.providerName = (providerName == null ? "BC" : providerName);
     }
 
     /**
@@ -159,16 +164,17 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec, Destro
      *
      * <p>
      * Expects keys {@code "pkcs8.b64"} (required, Base64 string) and
-     * {@code "provider"} (optional, defaults to {@code "BCPQC"}).
+     * {@code "provider"} (optional, defaults to {@code "BC"}).
      * </p>
      *
      * @param p serialized input
      * @return a reconstructed private key spec
-     * @throws IllegalArgumentException if the encoded key is missing
+     * @throws IllegalArgumentException if the encoded key is missing, malformed
+     *                                  Base64, or the provider is legacy {@code "BCPQC"}
      */
     public static SphincsPlusPrivateKeySpec unmarshal(PairSeq p) {
         byte[] out = null;
-        String prov = "BCPQC";
+        String prov = "BC";
         try {
             PairSeq.Cursor c = p.cursor();
             while (c.next()) {

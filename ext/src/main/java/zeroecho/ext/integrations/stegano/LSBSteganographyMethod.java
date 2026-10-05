@@ -46,14 +46,20 @@ import java.util.logging.Logger;
 import javax.imageio.ImageIO;
 
 /**
- * Least Significant Bit steganography implementation operating in the spatial
- * domain.
+ * <strong>Experimental.</strong> This class is part of the {@code zeroecho.ext}
+ * module, which carries no API stability guarantees and may change or be removed
+ * in any future release.
+ *
+ * <p>Least Significant Bit steganography implementation operating in the spatial
+ * domain.</p>
  *
  * <p>
  * This class embeds and extracts message bits from image pixels by manipulating
- * the least significant bit of each grayscale value. The implementation uses
- * stream-based I/O to support large inputs without loading everything into
- * memory at once.
+ * the least significant bit of each grayscale value. Stream parameters do not
+ * imply bounded-memory image processing: the decoded image, bounded message,
+ * and encoded output are buffered in memory. Memory use is O(P + M + E), where
+ * P is the decoded pixel count, M the message size, and E the encoded output
+ * size; temporary output copies can coexist with those buffers.
  * </p>
  *
  * <h2>Algorithm and characteristics</h2>

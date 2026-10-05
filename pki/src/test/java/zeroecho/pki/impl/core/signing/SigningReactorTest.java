@@ -44,6 +44,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -392,6 +393,7 @@ final class SigningReactorTest {
             assertEquals(1, provider.exactDispatches.get());
             assertTrue(reactor.retainedIdentifierCount() <= 4);
             provider.releaseExact.countDown();
+            reactor.wake();
 
             awaitState(store, catchAll.command().operationId(), SignWorkflowStore.State.RETIRED);
             awaitCounter(provider.exactDispatches, 2);
@@ -866,8 +868,9 @@ final class SigningReactorTest {
     @Test
     void waitCancellationInterruptionAndShutdownDoNotCancelDurableIntent(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 8, clock)) {
-            for (String outcome : List.of("signal", "interrupt", "shutdown")) {
+        for (String outcome : List.of("signal", "interrupt", "shutdown")) {
+            Path iterRoot = Files.createTempDirectory(root, outcome + "-");
+            try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(iterRoot, 8, clock)) {
                 BoundedProvider provider = new BoundedProvider(store);
                 try (SigningReactor reactor = boundedReactor(store, provider, Duration.ofMillis(5))) {
                     DefaultSigningService service = boundedService(store, provider, reactor);

@@ -36,7 +36,6 @@ package zeroecho.pki.impl.fs;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -45,6 +44,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import zeroecho.pki.spi.store.MetadataCommitResult;
@@ -52,7 +52,7 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreException;
 
 /** Atomic current-record index reconstructed from committed mutation descriptors. */
-@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidLiteralsInIfCondition", "PMD.ConfusingTernary" })
+@SuppressWarnings("PMD.CyclomaticComplexity")
 final class MetadataStateIndex {
     private static final long INITIAL_STORE_REVISION = 0L;
     private static final long MINIMUM_VALUE_POSITION = 0L;
@@ -60,10 +60,18 @@ final class MetadataStateIndex {
     private final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
     private final Lock readLock = stateLock.readLock();
     private final Lock writeLock = stateLock.writeLock();
-    private NavigableMap<MetadataKey, CurrentRecord> current = new TreeMap<>();
+
+    /*
+     * Pin tracking uses a per-generation AtomicInteger rather than an IdentityHashMap so
+     * that snapshot() needs only a read lock (shared with other snapshot() callers) and
+     * releaseSnapshot() needs no lock at all. The write lock is still required exclusively
+     * by publish() to swap currentGeneration.
+     *
+     * Invariant: currentGeneration is non-null after construction.
+     */
+    private Generation currentGeneration = new Generation(new TreeMap<>());
     private Object stateToken = new StateToken();
     private long storeRevision = INITIAL_STORE_REVISION;
-    private final Map<NavigableMap<MetadataKey, CurrentRecord>, Integer> snapshotPins = new IdentityHashMap<>();
     private long snapshotCopyCount;
 
     /* default */ static RecoveryBuilder recoveryBuilder() {
@@ -83,47 +91,38 @@ final class MetadataStateIndex {
         Objects.requireNonNull(key, "key");
         readLock.lock();
         try {
-            return Optional.ofNullable(current.get(key));
+            return Optional.ofNullable(currentGeneration.records.get(key));
         } finally {
             readLock.unlock();
         }
     }
 
+    /*
+     * snapshot() acquires the read lock (shared: N callers run concurrently) and atomically
+     * increments the generation's pin counter. publish() holds the write lock exclusively, so
+     * snapshot() and publish() never overlap. releaseSnapshot() decrements the AtomicInteger
+     * without any lock — the decrement is always safe because the generation object outlives
+     * every SnapshotView that references it.
+     */
     /* default */ SnapshotView snapshot() {
-        writeLock.lock();
+        readLock.lock();
         try {
-            NavigableMap<MetadataKey, CurrentRecord> generation = current;
-            snapshotPins.merge(generation, 1, Math::addExact);
-            return new SnapshotView(java.util.Collections.unmodifiableNavigableMap(generation),
-                    () -> releaseSnapshot(generation));
+            Generation gen = currentGeneration;
+            gen.pinCount.incrementAndGet();
+            return new SnapshotView(
+                    java.util.Collections.unmodifiableNavigableMap(gen.records),
+                    gen.pinCount::decrementAndGet);
         } finally {
-            writeLock.unlock();
+            readLock.unlock();
         }
     }
 
     /* default */ List<CurrentRecord> records() {
         readLock.lock();
         try {
-            return List.copyOf(current.values());
+            return List.copyOf(currentGeneration.records.values());
         } finally {
             readLock.unlock();
-        }
-    }
-
-    private void releaseSnapshot(NavigableMap<MetadataKey, CurrentRecord> generation) {
-        writeLock.lock();
-        try {
-            Integer pins = snapshotPins.get(generation);
-            if (pins == null || pins <= 0) {
-                throw new IllegalStateException("Metadata snapshot pin accounting is inconsistent");
-            }
-            if (pins == 1) {
-                snapshotPins.remove(generation);
-            } else {
-                snapshotPins.put(generation, pins - 1);
-            }
-        } finally {
-            writeLock.unlock();
         }
     }
 
@@ -156,8 +155,9 @@ final class MetadataStateIndex {
         try {
             requireNextRevision(committedStoreRevision);
             rejectDuplicateKeys(validated);
+            NavigableMap<MetadataKey, CurrentRecord> records = currentGeneration.records;
             for (ValidatedMutation mutation : validated) {
-                validateAgainstCurrent(current, mutation);
+                validateAgainstCurrent(records, mutation);
             }
             return new PreparedUpdate(
                     stateToken,
@@ -179,16 +179,17 @@ final class MetadataStateIndex {
             if (!stateToken.equals(update.baseToken()) || storeRevision != update.baseRevision()) {
                 throw integrity("Prepared metadata state no longer has its exact base revision");
             }
-            boolean currentGenerationPinned = snapshotPins.containsKey(current);
-            NavigableMap<MetadataKey, CurrentRecord> target = !currentGenerationPinned
-                    ? current : new TreeMap<>(current);
-            if (currentGenerationPinned) {
+            Generation current = currentGeneration;
+            boolean pinned = current.pinCount.get() > 0;
+            NavigableMap<MetadataKey, CurrentRecord> target = pinned
+                    ? new TreeMap<>(current.records) : current.records;
+            if (pinned) {
                 snapshotCopyCount++;
             }
             for (ValidatedMutation mutation : update.mutations()) {
                 apply(target, update.targetRevision(), mutation);
             }
-            current = target;
+            currentGeneration = new Generation(target);
             storeRevision = update.targetRevision();
             stateToken = new StateToken();
         } finally {
@@ -445,7 +446,7 @@ final class MetadataStateIndex {
             requireUnfinished();
             finished = true;
             MetadataStateIndex result = new MetadataStateIndex();
-            result.current = records;
+            result.currentGeneration = new Generation(records);
             result.storeRevision = revision;
             result.stateToken = new StateToken();
             return result;
@@ -490,6 +491,21 @@ final class MetadataStateIndex {
                     delta.put(mutation.key(), Optional.empty());
                 }
             }
+        }
+    }
+
+    /** One version of the current index together with its live snapshot reference count. */
+    private static final class Generation {
+        /* default */ final NavigableMap<MetadataKey, CurrentRecord> records;
+        /*
+         * Incremented under the read lock by snapshot(); decremented lock-free by
+         * releaseSnapshot(). publish() reads this under the write lock to decide whether
+         * to copy the map before mutation.
+         */
+        /* default */ final AtomicInteger pinCount = new AtomicInteger(0);
+
+        /* default */ Generation(NavigableMap<MetadataKey, CurrentRecord> records) {
+            this.records = records;
         }
     }
 

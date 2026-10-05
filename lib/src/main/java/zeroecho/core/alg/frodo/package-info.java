@@ -65,7 +65,7 @@
  * <li><b>FrodoKemContext:</b> runtime context implementing encapsulate and
  * decapsulate operations using BouncyCastle’s Frodo engine.</li>
  * <li><b>FrodoKeyGenSpec:</b> immutable specification of the Frodo variant
- * (640, 976, 1344; AES or SHAKE-based), with convenience factories.</li>
+ * (976, 1344; AES or SHAKE-based), with convenience factories.</li>
  * <li><b>FrodoPublicKeySpec</b> / <b>FrodoPrivateKeySpec:</b> wrappers over
  * X.509 and PKCS#8 encodings with defensive copying and
  * {@link zeroecho.core.marshal.PairSeq} marshalling utilities.</li>

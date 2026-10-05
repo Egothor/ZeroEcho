@@ -47,8 +47,13 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
-import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
-import org.bouncycastle.pqc.jcajce.spec.FrodoParameterSpec;
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
+import org.bouncycastle.jcajce.spec.FrodoKEMParameterSpec;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -101,7 +106,7 @@ import zeroecho.core.spi.PublicKeyImporter;
  * <h2>Key Management</h2>
  * <ul>
  * <li>Key generation is parameterized by {@link FrodoKeyGenSpec}, which selects
- * a concrete variant such as {@code FRODO_640_AES} or
+ * a concrete variant such as {@code FRODO_976_AES} or
  * {@code FRODO_1344_SHAKE}.</li>
  * <li>Public keys may be imported from {@link FrodoPublicKeySpec} using an
  * X.509 encoding.</li>
@@ -113,8 +118,8 @@ import zeroecho.core.spi.PublicKeyImporter;
  *
  * <h2>Provider requirements</h2>
  * <p>
- * FrodoKEM operations are delegated to the BouncyCastle PQC provider
- * ({@code BCPQC}). The static method {@link #ensureProvider()} verifies that
+ * FrodoKEM operations are delegated to the BouncyCastle provider
+ * ({@code BC}). The static method {@link #ensureProvider()} verifies that
  * the provider is installed; otherwise, a
  * {@link java.security.NoSuchProviderException} is thrown.
  * </p>
@@ -142,6 +147,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs and registers the Frodo post-quantum algorithm.
      *
@@ -169,14 +177,14 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
      *
      * <p>
      * The default algorithm identifier is {@code "Frodo"} with display name
-     * {@code "FrodoKEM"}, bound to the {@code BCPQC} provider.
+     * {@code "FrodoKEM"}, bound to the {@code BC} provider.
      * </p>
      *
      * @throws java.lang.IllegalStateException if registration of capabilities or
      *                                         builders fails
      */
     public FrodoAlgorithm() {
-        super("Frodo", "FrodoKEM", BouncyCastlePQCProvider.PROVIDER_NAME);
+        super("Frodo", "FrodoKEM", BouncyCastleProvider.PROVIDER_NAME);
 
         capability(AlgorithmFamily.KEM, KeyUsage.ENCAPSULATE, KemContext.class, PublicKey.class, VoidSpec.class,
                 (PublicKey k, VoidSpec s) -> new FrodoKemContext(this, k), () -> VoidSpec.INSTANCE);
@@ -208,14 +216,14 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
             @Override
             public KeyPair generateKeyPair(FrodoKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
-                KeyPairGenerator kpg = KeyPairGenerator.getInstance("Frodo", providerName());
-                FrodoParameterSpec params = switch (spec.variant()) {
-                    case FRODO_640_AES -> FrodoParameterSpec.frodokem640aes;
-                    case FRODO_640_SHAKE -> FrodoParameterSpec.frodokem640shake;
-                    case FRODO_976_AES -> FrodoParameterSpec.frodokem976aes;
-                    case FRODO_976_SHAKE -> FrodoParameterSpec.frodokem976shake;
-                    case FRODO_1344_AES -> FrodoParameterSpec.frodokem1344aes;
-                    case FRODO_1344_SHAKE -> FrodoParameterSpec.frodokem1344shake;
+                KeyPairGenerator kpg = KeyPairGenerator.getInstance("FrodoKEM", providerName());
+                FrodoKEMParameterSpec params = switch (spec.variant()) {
+                    case FRODO_640_AES, FRODO_640_SHAKE ->
+                        throw new GeneralSecurityException("FrodoKEM-640 removed in BC 1.86; use FRODO_976 or FRODO_1344");
+                    case FRODO_976_AES -> FrodoKEMParameterSpec.frodokem976aes;
+                    case FRODO_976_SHAKE -> FrodoKEMParameterSpec.frodokem976shake;
+                    case FRODO_1344_AES -> FrodoKEMParameterSpec.frodokem1344aes;
+                    case FRODO_1344_SHAKE -> FrodoKEMParameterSpec.frodokem1344shake;
                 };
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
@@ -227,7 +235,7 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
             @Override
             public PublicKey importPublic(FrodoPublicKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
-                KeyFactory kf = KeyFactory.getInstance("Frodo", providerName());
+                KeyFactory kf = KeyFactory.getInstance("FrodoKEM", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
         });
@@ -237,7 +245,7 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
             @Override
             public PrivateKey importPrivate(FrodoPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
-                KeyFactory kf = KeyFactory.getInstance("Frodo", providerName());
+                KeyFactory kf = KeyFactory.getInstance("FrodoKEM", providerName());
                 byte[] encoded = spec.pkcs8();
                 try {
                     return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
@@ -249,9 +257,24 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
     }
 
     private static void ensureProvider() throws NoSuchProviderException {
-        Provider p = Security.getProvider(BouncyCastlePQCProvider.PROVIDER_NAME);
+        Provider p = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
         if (p == null) {
-            throw new NoSuchProviderException("BCPQC provider not registered");
+            throw new NoSuchProviderException("BC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("FrodoKEM-976-AES",    "FrodoKEM-976-AES (192-bit)",    SecurityLevel.classical(192), FrodoKeyGenSpec.of(FrodoKeyGenSpec.Variant.FRODO_976_AES)),
+            new ParameterSetDescriptor.Concrete<>("FrodoKEM-976-SHAKE",  "FrodoKEM-976-SHAKE (192-bit)",  SecurityLevel.classical(192), FrodoKeyGenSpec.of(FrodoKeyGenSpec.Variant.FRODO_976_SHAKE)),
+            new ParameterSetDescriptor.Concrete<>("FrodoKEM-1344-AES",   "FrodoKEM-1344-AES (256-bit)",   SecurityLevel.classical(256), FrodoKeyGenSpec.of(FrodoKeyGenSpec.Variant.FRODO_1344_AES)),
+            new ParameterSetDescriptor.Concrete<>("FrodoKEM-1344-SHAKE", "FrodoKEM-1344-SHAKE (256-bit)", SecurityLevel.classical(256), FrodoKeyGenSpec.of(FrodoKeyGenSpec.Variant.FRODO_1344_SHAKE))
+        );
+    }
+
 }

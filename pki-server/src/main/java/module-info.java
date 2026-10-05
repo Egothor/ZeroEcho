@@ -33,14 +33,27 @@
  ******************************************************************************/
 /**
  * ZeroEcho PKI server: browser/ACME HTTPS front-end over the PKI domain.
- * Runnable application module; exposes no API to other production modules.
+ * Runnable application module with explicit provider extension contracts.
  */
 module zeroecho.pki.server {
     requires transitive zeroecho.pki;
     requires zeroecho.lib;
     requires tools.jackson.core;
+    requires java.logging;
     requires java.naming;
+    requires java.net.http;
     requires jdk.httpserver;
+    requires jdk.jfr;
+    requires java.management;
+
+    // CT log client SPI.
+    exports zeroecho.pki.server.ct;
+    exports zeroecho.pki.server.spi.v2;
+
+    uses zeroecho.pki.server.spi.v2.AcmeChallengeProvider;
+    uses zeroecho.pki.server.spi.v2.AcmeExternalAccountBindingProvider;
+    uses zeroecho.pki.server.spi.v2.PkiServerClientTrustProvider;
+    uses zeroecho.pki.server.spi.v2.PkiServerTlsProvider;
 
     // ACME and TLS/trust extension points selected via ServiceLoader.
     uses zeroecho.pki.server.spi.AcmeChallengeProvider;

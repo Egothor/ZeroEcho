@@ -38,11 +38,7 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.HexFormat;
-import java.util.Map;
-import java.util.Set;
 import javax.security.auth.x500.X500Principal;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiId;
@@ -56,7 +52,8 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 
 /**
  * Startup proof of permanent claims against retained acceptance commands.
- * Streams claims once and retains only O(W) workflow expectations. Terminal
+ * Streams claims and stores workflow expectations in temporary disk indexes.
+ * Heap retains one bounded workflow at a time. Terminal
  * commands are checked without reopening deleted signing content or applying
  * current preparation policy. Orphan claims remain consumed authority. Each
  * scope owner must have its valid counter and vice versa; this pair proof uses
@@ -69,41 +66,136 @@ final class CrlScopeRecovery {
     private CrlScopeRecovery() { }
 
     /* default */ static void validate(FilesystemPkiStore store, CrlScopeReservationStore reservations) throws IOException {
-        Map<PkiId, SignWorkflowStore.Workflow> pending = new HashMap<>();
-        Set<ChildScope> children = new HashSet<>();
-        for (SignWorkflowStore.Workflow workflow : store.listSignWorkflows()) {
-            if (workflow.envelope().outer().isEmpty()) { continue; }
-            SignWorkflowStore.OuterCommand outer = workflow.envelope().outer().orElseThrow();
-            if (outer.kind() == DomainContinuationStore.Kind.STATUS
-                    || outer.kind() == DomainContinuationStore.Kind.KEY_PROOF) { continue; }
-            DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command());
-            if (outer.kind() == DomainContinuationStore.Kind.CA && !"x509".equals(command.field(0))) { continue; }
-            DomainContinuationStore.Record domain = store.getDomainContinuation(workflow.operationId())
-                    .orElseThrow(() -> invalid("Accepted certificate continuation is missing"));
-            require(domain.kind() == outer.kind() && domain.commandCommitment().equals(outer.commandCommitment()),
-                    "Accepted certificate continuation differs from its envelope");
-            pending.put(workflow.operationId(), workflow);
-            if (outer.kind() == DomainContinuationStore.Kind.CA && !root(command)) {
-                children.add(new ChildScope(new PkiId(command.field(2)), name(command.field(10)), command.field(17)));
-            }
-        }
-        reservations.validateAuthority(owner -> children.remove(new ChildScope(owner.authorityId(),
-                owner.scope().canonicalIssuerName(), sha256(owner.scope().subjectPublicKeyInfoDer()))),
-                (owner, reservation) -> {
-                    if (reservation.issuanceOwner() instanceof ScopeSerialReservation.SigningOwner signing) {
-                        SignWorkflowStore.Workflow workflow = pending.get(signing.operationId());
-                        if (workflow != null) {
-                            validateCommand(store, workflow, owner, reservation, signing);
-                            pending.remove(signing.operationId());
-                        } else if (store.getSignWorkflow(signing.operationId()).isPresent()) {
-                            throw invalid("Serial reservation has no matching retained certificate command");
-                        } else if (store.getDomainContinuation(signing.operationId()).isPresent()) {
-                            throw invalid("Retained certificate continuation has no signing envelope");
-                        }
+        try (zeroecho.pki.spi.store.TemporaryUniqueIndex pending = store.stagedContent().beginUniqueIndex();
+                zeroecho.pki.spi.store.TemporaryUniqueIndex children = store.stagedContent().beginUniqueIndex();
+                zeroecho.pki.spi.store.MetadataSnapshot snapshot = store.metadataStore().snapshot()) {
+            long[] pendingCount = { 0L };
+            long[] childCount = { 0L };
+            store.visitSnapshotSigningWorkflows(snapshot, workflow -> {
+                if (workflow.envelope().outer().isEmpty()) { return; }
+                SignWorkflowStore.OuterCommand outer = workflow.envelope().outer().orElseThrow();
+                if (outer.kind() == DomainContinuationStore.Kind.STATUS
+                        || outer.kind() == DomainContinuationStore.Kind.KEY_PROOF) { return; }
+                DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command());
+                if (outer.kind() == DomainContinuationStore.Kind.CA && !"x509".equals(command.field(0))) { return; }
+                DomainContinuationStore.Record domain = store.getDomainContinuation(workflow.operationId())
+                        .orElseThrow(() -> invalid("Accepted certificate continuation is missing"));
+                require(domain.kind() == outer.kind() && domain.commandCommitment().equals(outer.commandCommitment()),
+                        "Accepted certificate continuation differs from its envelope");
+                if (pending.add(operationKey(workflow.operationId()))) { pendingCount[0]++; }
+                if (outer.kind() == DomainContinuationStore.Kind.CA && !root(command)
+                        && children.add(childKey(command.field(2), retainedSubject(store, workflow, domain, command), command.field(17)))) {
+                    childCount[0]++;
+                }
+            });
+            reservations.validateAuthority(owner -> {
+                if (children.remove(childKey(owner.authorityId().value(), owner.scope().canonicalIssuerName(),
+                        sha256(owner.scope().subjectPublicKeyInfoDer())))) { childCount[0]--; }
+            }, (owner, reservation) -> {
+                if (reservation.issuanceOwner() instanceof ScopeSerialReservation.SigningOwner signing) {
+                    byte[] key = operationKey(signing.operationId());
+                    if (pending.contains(key)) {
+                        SignWorkflowStore.Workflow workflow = store.recoverySigningWorkflow(signing.operationId())
+                                .orElseThrow(() -> invalid("Accepted signing workflow is missing"));
+                        validateCommand(store, workflow, owner, reservation, signing);
+                        pendingCount[0] -= pending.remove(key) ? 1 : 0;
+                    } else if (store.recoverySigningWorkflow(signing.operationId()).isPresent()) {
+                        throw invalid("Serial reservation has no matching retained certificate command");
+                    } else if (store.getDomainContinuation(signing.operationId()).isPresent()) {
+                        throw invalid("Retained certificate continuation has no signing envelope");
                     }
-                });
-        require(pending.isEmpty(), "Accepted certificate serial reservation is missing");
-        require(children.isEmpty(), "Accepted intermediate subject scope owner is missing");
+                }
+            });
+            require(pendingCount[0] == 0, "Accepted certificate serial reservation is missing");
+            require(childCount[0] == 0, "Accepted intermediate subject scope owner is missing");
+        }
+    }
+
+    private static byte[] operationKey(PkiId operationId) {
+        return operationId.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    // Older CREATE commands froze the BC display string instead of RFC 2253.
+    // Recover the name from committed DER, never by trying two unrelated scope owners.
+    private static String retainedSubject(FilesystemPkiStore store, SignWorkflowStore.Workflow workflow,
+            DomainContinuationStore.Record domain, DomainCommandEncoding.Decoded command) throws IOException {
+        if (domain.result().isEmpty() && domain.signingContent().isEmpty()) {
+            // Failed/expired legacy commands without retained DER cannot be reinterpreted.
+            return name(command.field(10));
+        }
+        try {
+            RetainedCertificate retained = retainedCertificate(store, workflow, domain, command);
+            java.security.cert.X509Certificate certificate = retained.certificate();
+            byte[] tbs = retained.tbs();
+            require(tbs.length == Long.parseLong(command.field(21))
+                    && tbs.length == workflow.envelope().candidate().length()
+                    && sha256(tbs).equals(command.field(22))
+                    && sha256(tbs).equals(workflow.envelope().candidate().sha256())
+                    && sha256(zeroecho.pkix.Pkix.subjectPublicKeyInfo(certificate)).equals(command.field(17))
+                    && certificate.getSerialNumber().equals(new BigInteger(command.field(13)))
+                    && certificate.getNotBefore().toInstant().equals(java.time.Instant.parse(command.field(11)))
+                    && certificate.getNotAfter().toInstant().equals(java.time.Instant.parse(command.field(12))),
+                    "Retained intermediate candidate commitment differs");
+            X500Principal subject = certificate.getSubjectX500Principal();
+            String legacy = zeroecho.pkix.Pkix.distinguishedNameString(
+                    zeroecho.pkix.Pkix.parseDistinguishedName(subject.getEncoded()));
+            require(command.field(10).equals(subject.getName(X500Principal.RFC2253)) || command.field(10).equals(legacy),
+                    "Retained intermediate subject differs from its accepted command");
+            return subject.getName(X500Principal.CANONICAL);
+        } catch (java.security.GeneralSecurityException | IllegalArgumentException malformed) {
+            throw invalid("Retained intermediate candidate is invalid"); // NOPMD PreserveStackTrace - Retained provider/command parse details are redacted at this recovery boundary.
+        }
+    }
+
+    /** Certificate and exact accepted TBS bytes retained for legacy subject reconciliation. */
+    private record RetainedCertificate(java.security.cert.X509Certificate certificate, byte[] tbs) { }
+
+    private static RetainedCertificate retainedCertificate(FilesystemPkiStore store,
+            SignWorkflowStore.Workflow workflow, DomainContinuationStore.Record domain,
+            DomainCommandEncoding.Decoded command) throws IOException, java.security.GeneralSecurityException {
+        java.security.cert.X509Certificate certificate;
+        byte[] tbs;
+        if (domain.result().isPresent()) {
+            zeroecho.pki.api.EncodedObject result = domain.result().orElseThrow();
+            require(result.encoding() == zeroecho.pki.api.Encoding.DER && result.byteLength() <= 1_048_576,
+                    "Retained intermediate certificate is invalid");
+            certificate = zeroecho.pkix.Pkix.parseCertificate(result.bytes());
+            tbs = certificate.getTBSCertificate();
+            require(domain.state() == DomainContinuationStore.State.COMPLETED
+                    && (workflow.state() == SignWorkflowStore.State.SUCCEEDED || workflow.state() == SignWorkflowStore.State.RETIRED)
+                    && workflow.detailCode().filter("SIGNED"::equals).isPresent()
+                    && workflow.result().filter(value -> value.encoding() == zeroecho.pki.api.Encoding.BINARY).isPresent()
+                    && java.util.Arrays.equals(result.bytes(), zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs,
+                            workflow.result().orElseThrow().bytes(), false)),
+                    "Retained intermediate signature differs from its accepted workflow");
+            IssuerGeneration generation = store.getIssuerGeneration(new PkiId(command.field(3)))
+                    .orElseThrow(() -> invalid("Retained intermediate issuer is missing"));
+            Credential issuer = store.getCredential(generation.credentialId())
+                    .orElseThrow(() -> invalid("Retained intermediate issuer credential is missing"));
+            java.security.cert.X509Certificate issuerCertificate = store.certificateHolder(issuer);
+            require(certificate.getIssuerX500Principal().equals(issuerCertificate.getSubjectX500Principal()),
+                    "Retained intermediate issuer differs");
+        } else {
+            try (RepeatableContent content = store.stagedContent().openContent(workflow.envelope().candidate());
+                    java.io.InputStream input = content.openStream()) {
+                tbs = input.readNBytes(1_048_577);
+            }
+            require(tbs.length <= 1_048_576, "Retained intermediate candidate exceeds its bound");
+            certificate = zeroecho.pkix.Pkix.parseCertificate(
+                    zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, new byte[]{0}, false));
+        }
+        return new RetainedCertificate(certificate, tbs);
+    }
+
+
+    private static byte[] childKey(String authority, String canonicalName, String keyCommitment) {
+        MessageDigest digest = FsBackupFiles.digest();
+        for (String field : new String[] { authority, canonicalName, keyCommitment }) {
+            byte[] encoded = field.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            digest.update(java.nio.ByteBuffer.allocate(Integer.BYTES).putInt(encoded.length).array());
+            digest.update(encoded);
+        }
+        return digest.digest();
     }
 
     private static void validateCommand(FilesystemPkiStore store, SignWorkflowStore.Workflow workflow,
@@ -159,8 +251,6 @@ final class CrlScopeRecovery {
     }
 
     private static IllegalStateException invalid(String message) { return new IllegalStateException(message); }
-
-    private record ChildScope(PkiId authority, String name, String keyCommitment) { }
 
     private static void validateRootCommand(FilesystemPkiStore store, SignWorkflowStore.Workflow workflow,
             CrlScopeOwner owner, ScopeSerialReservation reservation, DomainCommandEncoding.Decoded command,

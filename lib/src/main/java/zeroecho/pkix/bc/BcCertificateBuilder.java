@@ -163,6 +163,15 @@ final class BcCertificateBuilder implements CertificateBuilder {
     @Override
     public byte[] buildTbs(AlgorithmIdentifier signatureAlgorithm) {
         Objects.requireNonNull(signatureAlgorithm, "signatureAlgorithm");
+        return buildBody(signatureAlgorithm, false);
+    }
+
+    @Override
+    public byte[] buildAlternativeSignatureTbs() {
+        return buildBody(null, true);
+    }
+
+    private byte[] buildBody(AlgorithmIdentifier signatureAlgorithm, boolean alternative) {
         Objects.requireNonNull(serialNumber, "serialNumber");
         Objects.requireNonNull(subject, "subject");
         Objects.requireNonNull(issuer, "issuer");
@@ -181,22 +190,41 @@ final class BcCertificateBuilder implements CertificateBuilder {
         generator.setStartDate(new Time(Date.from(notBefore)));
         generator.setEndDate(new Time(Date.from(notAfter)));
         generator.setSubjectPublicKeyInfo(spki);
-        generator.setSignature(BcAlgorithmIdentifiers.toBc(signatureAlgorithm));
+        generator.setSignature(alternative ? null : BcAlgorithmIdentifiers.toBc(signatureAlgorithm));
         ExtensionsGenerator selectedExtensions = new ExtensionsGenerator();
         if (addSubjectKeyIdentifier) {
             selectedExtensions.addExtension(BcExtensions.subjectKeyIdentifier(spki));
         }
         for (Extension extension : extensions) {
-            selectedExtensions.addExtension(extension);
+            if (!alternative || !extension.getExtnId().equals(Extension.altSignatureValue)) {
+                selectedExtensions.addExtension(extension);
+            }
+        }
+        if (alternative) {
+            validateAlternativeExtensions(selectedExtensions);
         }
         if (!selectedExtensions.isEmpty()) {
             generator.setExtensions(selectedExtensions.generate());
         }
         try {
-            return generator.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
+            return alternative ? generator.generatePreTBSCertificate().getEncoded(ASN1Encoding.DER)
+                    : generator.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
         } catch (IOException failure) {
             throw new IllegalStateException("Cannot encode certificate body", failure);
         }
+    }
+
+    private static void validateAlternativeExtensions(ExtensionsGenerator selectedExtensions) {
+        org.bouncycastle.asn1.x509.Extensions selected = selectedExtensions.generate();
+        Extension alternativeKey = selected.getExtension(Extension.subjectAltPublicKeyInfo);
+        Extension alternativeAlgorithm = selected.getExtension(Extension.altSignatureAlgorithm);
+        if (alternativeKey == null || alternativeAlgorithm == null) {
+            throw new IllegalArgumentException("Alternative public key and algorithm extensions are required");
+        }
+        if (SubjectPublicKeyInfo.getInstance(alternativeKey.getParsedValue()).getPublicKeyData().getPadBits() != 0) {
+            throw new IllegalArgumentException("Alternative public key must have zero unused bits");
+        }
+        org.bouncycastle.asn1.x509.AlgorithmIdentifier.getInstance(alternativeAlgorithm.getParsedValue());
     }
 
     @Override
@@ -207,8 +235,8 @@ final class BcCertificateBuilder implements CertificateBuilder {
         Objects.requireNonNull(notBefore, "notBefore");
         Objects.requireNonNull(notAfter, "notAfter");
         Objects.requireNonNull(signer, "signer");
-        org.bouncycastle.asn1.x509.SubjectPublicKeyInfo spki = publicKeyInfoDer != null
-                ? org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(publicKeyInfoDer)
+        SubjectPublicKeyInfo spki = publicKeyInfoDer != null
+                ? SubjectPublicKeyInfo.getInstance(publicKeyInfoDer)
                 : BcExtensions.spki(Objects.requireNonNull(publicKey, "publicKey"));
         X509v3CertificateBuilder builder = new X509v3CertificateBuilder(BcExtensions.toX500Name(issuer),
                 serialNumber, Date.from(notBefore), Date.from(notAfter), BcExtensions.toX500Name(subject),

@@ -34,6 +34,15 @@
 
 package zeroecho.pki.impl.core.continuation;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.security.MessageDigest;
+import java.security.DigestOutputStream;
+import java.security.NoSuchAlgorithmException;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.pki.impl.framework.x509.StreamingDerWriter;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -162,7 +171,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
             throw new IllegalStateException("Full CRL algorithm encoding is invalid");
         }
         try { new StreamingDerReader().validate(algorithm, 16_384); }
-        catch (java.io.IOException invalid) { throw new IllegalStateException("Full CRL algorithm is invalid", invalid); }
+        catch (IOException invalid) { throw new IllegalStateException("Full CRL algorithm is invalid", invalid); }
     }
 
     private static void validateCommitmentsAndCounts(DomainCommandEncoding.Decoded command) {
@@ -264,6 +273,60 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
         PkiId id = resultId(domain.result().orElseThrow());
         if (!id.equals(status.statusObjectId())) { throw new IllegalStateException("Completed full CRL identity differs"); }
         FullCrlContinuationPublisher.requirePublished(status, domain, status.content());
+    }
+
+    /**
+     * Checks canonical publication metadata against its retained command, including before acknowledgement.
+     * @param status authoritative status metadata
+     * @param domain retained publishing or completed continuation
+     */
+    public static void requirePublicationMetadata(StatusObject status, DomainContinuationStore.Record domain) {
+        FullCrlContinuationPublisher.requirePublished(status, domain, status.content());
+    }
+
+    /**
+     * Checks a proposed publication against the exact accepted TBS and signature in bounded memory.
+     * @param store content authority
+     * @param status proposed canonical CRL
+     * @param domain publishing continuation
+     * @param signature authoritative provider result
+     * @throws IOException if content cannot be read
+     */
+    public static void requireSigningEffect(PkiStore store, StatusObject status,
+            DomainContinuationStore.Record domain, EncodedObject signature) throws IOException {
+        FullCrlContinuationPublisher.requirePublished(status, domain, status.content());
+        DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(domain.command());
+        validate(command);
+        DurableContentReference tbs = domain.signingContent().orElseThrow();
+        requireTbs(command, tbs);
+        byte[] signed = signature.bytes();
+        try {
+            if (signature.encoding() != Encoding.BINARY || signed.length == 0 || signed.length > 1_048_576) {
+                throw new IllegalStateException("Invalid CRL signing result");
+            }
+            byte[] algorithm = HexFormat.of().parseHex(command.field(9));
+            long signatureLength = Math.addExact(1L, signed.length);
+            long bodyLength = Math.addExact(Math.addExact(tbs.length(), algorithm.length),
+                    StreamingDerWriter.encodedLength(signatureLength));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (OutputStream output = new DigestOutputStream(OutputStream.nullOutputStream(), digest);
+                    RepeatableContent content = store.stagedContent().openContent(tbs);
+                    InputStream input = content.openStream()) {
+                StreamingDerWriter.writeTagAndLength(output, 0x30, bodyLength);
+                if (StreamingDerWriter.copy(input, output, CancellationSignal.NONE) != tbs.length()) {
+                    throw new IllegalStateException("CRL TBS length differs");
+                }
+                output.write(algorithm);
+                StreamingDerWriter.writeTagAndLength(output, 0x03, signatureLength);
+                output.write(0); output.write(signed);
+            }
+            if (status.content().length() != StreamingDerWriter.encodedLength(bodyLength)
+                    || !status.content().sha256().equals(HexFormat.of().formatHex(digest.digest()))) {
+                throw new IllegalStateException("CRL differs from its accepted signing result");
+            }
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        } finally { Arrays.fill(signed, (byte) 0); }
     }
 
     private static long nonnegative(String value) {

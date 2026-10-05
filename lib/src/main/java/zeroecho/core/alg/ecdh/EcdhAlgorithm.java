@@ -34,6 +34,12 @@
 package zeroecho.core.alg.ecdh;
 
 import java.security.PrivateKey;
+import java.security.interfaces.ECKey;
+
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -111,6 +117,9 @@ import zeroecho.core.context.MessageAgreementContext;
  * @since 1.0
  */
 public final class EcdhAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs a new ECDH algorithm definition.
      *
@@ -152,8 +161,11 @@ public final class EcdhAlgorithm extends AbstractCryptoAlgorithm {
         // AGREEMENT (our private key + peer public provided via context)
         capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, AgreementContext.class, PrivateKey.class,
                 EcdsaCurveSpec.class,
-                (PrivateKey k, EcdsaCurveSpec s) -> new GenericJcaAgreementContext(this, k, "ECDH", null),
-                () -> EcdsaCurveSpec.P256); // XXX spec is not used at all ?!?!
+                (PrivateKey k, EcdsaCurveSpec s) -> {
+                    requireMatchingCurve(k, s);
+                    return new GenericJcaAgreementContext(this, k, "ECDH", null);
+                },
+                () -> EcdsaCurveSpec.P256);
         capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, MessageAgreementContext.class, KeyPairKey.class,
                 EcdsaCurveSpec.class, (KeyPairKey k, EcdsaCurveSpec s) -> new GenericJcaMessageAgreementContext(this, k,
                         "ECDH", null, "EC", null),
@@ -164,4 +176,33 @@ public final class EcdhAlgorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder());
         registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }
+
+    private static void requireMatchingCurve(PrivateKey key, EcdsaCurveSpec requested) {
+        if (!(key instanceof ECKey ecKey)) { return; }
+        int actualFieldSize = ecKey.getParams().getCurve().getField().getFieldSize();
+        int expectedFieldSize = switch (requested) {
+            case P256 -> 256;
+            case P384 -> 384;
+            case P512 -> 521;
+        };
+        if (actualFieldSize != expectedFieldSize) {
+            throw new IllegalArgumentException(
+                    "ECDH key field size " + actualFieldSize + " does not match requested curve "
+                    + requested.curveName() + " (expected field size " + expectedFieldSize + ")");
+        }
+    }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("ECDH-P256", "ECDH P-256 (128-bit)", SecurityLevel.classical(128), EcdhCurveSpec.P256),
+            new ParameterSetDescriptor.Concrete<>("ECDH-P384", "ECDH P-384 (192-bit)", SecurityLevel.classical(192), EcdhCurveSpec.P384),
+            new ParameterSetDescriptor.Concrete<>("ECDH-P521", "ECDH P-521 (256-bit)", SecurityLevel.classical(256), EcdhCurveSpec.P512)
+        );
+    }
+
 }

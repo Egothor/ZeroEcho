@@ -73,6 +73,13 @@ import zeroecho.pki.server.SecurityPrincipal;
 import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.server.acme.AcmeService;
 import zeroecho.pki.server.acme.AcmeState;
+import zeroecho.pki.server.cmp.CmpEndpoint;
+import zeroecho.pki.server.cmp.CmpProtectionPolicy;
+import zeroecho.pki.server.enrollment.EnrollmentProfile;
+import zeroecho.pki.server.enrollment.EnrollmentProfileState;
+import zeroecho.pki.server.est.EstEndpoint;
+import zeroecho.pki.server.est.KeygenPolicy;
+import zeroecho.pki.server.scep.ScepEndpoint;
 
 /** Closed strict HTTP decoding for operations exposed by the existing gateway. */
 @SuppressWarnings("PMD")
@@ -256,8 +263,11 @@ final class HttpOperationCodec {
                 yield new PkiOperation.ListRequests(fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.SearchCredentials.NAME -> {
-                fields.allowed(Set.of("limit", "after"));
-                yield new PkiOperation.SearchCredentials(authority.orElseThrow(), fields.integer("limit"), fields.optionalText("after"));
+                fields.allowed(Set.of("limit", "after", "subjectFilter", "serialFilter", "fingerprintFilter", "statusFilter", "profileIdFilter"));
+                yield new PkiOperation.SearchCredentials(authority.orElseThrow(), fields.integer("limit"), fields.optionalText("after"),
+                        fields.optionalText("subjectFilter"), fields.optionalText("serialFilter"),
+                        fields.optionalText("fingerprintFilter"), fields.optionalText("statusFilter"),
+                        fields.optionalText("profileIdFilter"));
             }
             case PkiOperation.ListIssuerGenerations.NAME -> {
                 fields.allowed(Set.of("limit", "after"));
@@ -420,6 +430,49 @@ final class HttpOperationCodec {
                 fields.allowed(Set.of("bindingId", "expectedCommitment"));
                 yield new PkiOperation.ValidateAlgorithmBindings(fields.optionalText("bindingId"),
                         fields.optionalText("expectedCommitment"));
+            }
+            case PkiOperation.SetStatusSchedule.NAME -> {
+                fields.allowed(Set.of("caId", "statusType", "formatId", "interval", "graceSeconds", "enabled", "targetType", "targetId"));
+                Optional<zeroecho.pki.api.publication.PublicationTarget> publicationTarget = fields.optionalText("targetType")
+                        .map(t -> new zeroecho.pki.api.publication.PublicationTarget(
+                                zeroecho.pki.api.publication.PublicationTargetType.valueOf(t),
+                                fields.text("targetId")));
+                yield new PkiOperation.SetStatusSchedule(fields.pkiId("caId"),
+                        StatusObjectType.valueOf(fields.text("statusType")),
+                        new FormatId(fields.text("formatId")),
+                        Duration.parse(fields.text("interval")),
+                        (long) fields.integer("graceSeconds"),
+                        fields.bool("enabled"),
+                        publicationTarget);
+            }
+            case PkiOperation.InspectStatusSchedule.NAME -> {
+                fields.exact("caId", "statusType");
+                yield new PkiOperation.InspectStatusSchedule(fields.pkiId("caId"),
+                        StatusObjectType.valueOf(fields.text("statusType")));
+            }
+            case PkiOperation.ListStatusSchedules.NAME -> {
+                fields.allowed(Set.of("limit", "after"));
+                yield new PkiOperation.ListStatusSchedules(fields.integer("limit"), fields.optionalText("after"));
+            }
+            case PkiOperation.QueryAuthorityMetrics.NAME -> {
+                fields.exact("caId");
+                yield new PkiOperation.QueryAuthorityMetrics(fields.pkiId("caId"));
+            }
+            case PkiOperation.QueryCertificateMetrics.NAME -> {
+                fields.exact("caId");
+                yield new PkiOperation.QueryCertificateMetrics(fields.pkiId("caId"));
+            }
+            case PkiOperation.QueryRevocationMetrics.NAME -> {
+                fields.exact("caId");
+                yield new PkiOperation.QueryRevocationMetrics(fields.pkiId("caId"));
+            }
+            case PkiOperation.QueryPublicationMetrics.NAME -> {
+                fields.exact("caId");
+                yield new PkiOperation.QueryPublicationMetrics(fields.pkiId("caId"));
+            }
+            case PkiOperation.QueryServerMetrics.NAME -> {
+                fields.allowed(Set.of());
+                yield new PkiOperation.QueryServerMetrics();
             }
             default -> throw new SecurityException("Operation is not exposed");
         };
@@ -744,6 +797,163 @@ final class HttpOperationCodec {
                                 : Optional.empty();
                 yield new ServerControlOperation.VerifyAuditIntegrity(head);
             }
+            case ServerControlOperation.ExportBackup.NAME -> {
+                fields.allowed(Set.of("label", "attributes"));
+                yield new ServerControlOperation.ExportBackup(
+                        fields.text("label"),
+                        new zeroecho.pki.api.attr.AttributeSet() {
+                            @Override public java.util.Set<zeroecho.pki.api.attr.AttributeId> ids() { return Set.of(); }
+                            @Override public java.util.Optional<zeroecho.pki.api.attr.AttributeValue> get(zeroecho.pki.api.attr.AttributeId id) { return java.util.Optional.empty(); }
+                            @Override public java.util.List<zeroecho.pki.api.attr.AttributeValue> getAll(zeroecho.pki.api.attr.AttributeId id) { return List.of(); }
+                        });
+            }
+            case ServerControlOperation.VerifyBackup.NAME -> {
+                fields.exact("backupId", "payload");
+                byte[] verifyBytes = Base64.getDecoder().decode(fields.text("payload"));
+                yield new ServerControlOperation.VerifyBackup(
+                        new zeroecho.pki.api.backup.BackupArtifact(
+                                new PkiId(fields.text("backupId")),
+                                new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.BINARY, verifyBytes)));
+            }
+            case ServerControlOperation.ExecuteRestore.NAME -> {
+                fields.exact("backupId", "payload");
+                byte[] restoreBytes = Base64.getDecoder().decode(fields.text("payload"));
+                zeroecho.pki.api.backup.BackupArtifact artifact = new zeroecho.pki.api.backup.BackupArtifact(
+                        new PkiId(fields.text("backupId")),
+                        new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.BINARY, restoreBytes));
+                yield new ServerControlOperation.ExecuteRestore(
+                        new zeroecho.pki.api.backup.RestoreRequest(artifact,
+                                new zeroecho.pki.api.attr.AttributeSet() {
+                                    @Override public java.util.Set<zeroecho.pki.api.attr.AttributeId> ids() { return Set.of(); }
+                                    @Override public java.util.Optional<zeroecho.pki.api.attr.AttributeValue> get(zeroecho.pki.api.attr.AttributeId id) { return java.util.Optional.empty(); }
+                                    @Override public java.util.List<zeroecho.pki.api.attr.AttributeValue> getAll(zeroecho.pki.api.attr.AttributeId id) { return List.of(); }
+                                }));
+            }
+            case ServerControlOperation.RegisterEstEndpoint.NAME -> {
+                fields.allowed(Set.of("label", "authorityId", "profileId", "keygen"));
+                KeygenPolicy keygen;
+                if (fields.contains("keygen")) {
+                    Fields kg = fields.object("keygen");
+                    kg.exact("enabled", "permittedAlgorithms", "maximumKeySizeBits", "storeGeneratedKeys");
+                    keygen = new KeygenPolicy(kg.bool("enabled"),
+                            List.copyOf(kg.stringSet("permittedAlgorithms")),
+                            kg.integer("maximumKeySizeBits"), kg.bool("storeGeneratedKeys"));
+                    kg.complete();
+                } else {
+                    keygen = KeygenPolicy.DISABLED;
+                }
+                yield new ServerControlOperation.RegisterEstEndpoint(new EstEndpoint(
+                        fields.text("label"), fields.text("authorityId"),
+                        fields.text("profileId"), keygen));
+            }
+            case ServerControlOperation.DeregisterEstEndpoint.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.DeregisterEstEndpoint(fields.text("label"));
+            }
+            case ServerControlOperation.InspectEstEndpoint.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.InspectEstEndpoint(fields.text("label"));
+            }
+            case ServerControlOperation.ListEstEndpoints.NAME -> {
+                fields.exact("offset", "limit");
+                yield new ServerControlOperation.ListEstEndpoints(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.RegisterScepEndpoint.NAME -> {
+                fields.allowed(Set.of("label", "authorityId", "profileId", "challengePasswordHash"));
+                yield new ServerControlOperation.RegisterScepEndpoint(new ScepEndpoint(
+                        fields.text("label"), fields.text("authorityId"),
+                        fields.text("profileId"), fields.text("challengePasswordHash")));
+            }
+            case ServerControlOperation.DeregisterScepEndpoint.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.DeregisterScepEndpoint(fields.text("label"));
+            }
+            case ServerControlOperation.InspectScepEndpoint.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.InspectScepEndpoint(fields.text("label"));
+            }
+            case ServerControlOperation.ListScepEndpoints.NAME -> {
+                fields.exact("offset", "limit");
+                yield new ServerControlOperation.ListScepEndpoints(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.RegisterCmpEndpoint.NAME -> {
+                fields.allowed(Set.of("label", "authorityId", "profileId", "protectionPolicy"));
+                yield new ServerControlOperation.RegisterCmpEndpoint(new CmpEndpoint(
+                        fields.text("label"), fields.text("authorityId"),
+                        fields.text("profileId"),
+                        CmpProtectionPolicy.valueOf(fields.text("protectionPolicy"))));
+            }
+            case ServerControlOperation.DeregisterCmpEndpoint.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.DeregisterCmpEndpoint(fields.text("label"));
+            }
+            case ServerControlOperation.InspectCmpEndpoint.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.InspectCmpEndpoint(fields.text("label"));
+            }
+            case ServerControlOperation.ListCmpEndpoints.NAME -> {
+                fields.exact("offset", "limit");
+                yield new ServerControlOperation.ListCmpEndpoints(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.RegisterEnrollmentProfile.NAME -> {
+                fields.allowed(Set.of("id", "displayName", "certificateProfileId",
+                        "allowedAuthorityIds", "subjectDnPattern", "requiredSanDomains", "requireApproval"));
+                java.util.Set<String> allowedAuthorityIds = fields.contains("allowedAuthorityIds")
+                        ? fields.stringSet("allowedAuthorityIds")
+                        : java.util.Set.of();
+                Optional<String> subjectDnPattern = fields.contains("subjectDnPattern")
+                        ? Optional.of(fields.text("subjectDnPattern"))
+                        : Optional.empty();
+                java.util.List<String> requiredSanDomains = fields.contains("requiredSanDomains")
+                        ? java.util.List.copyOf(fields.stringSet("requiredSanDomains"))
+                        : java.util.List.of();
+                boolean requireApproval = fields.contains("requireApproval") && fields.bool("requireApproval");
+                yield new ServerControlOperation.RegisterEnrollmentProfile(new EnrollmentProfile(
+                        fields.text("id"), fields.text("displayName"), EnrollmentProfileState.ACTIVE,
+                        fields.text("certificateProfileId"), allowedAuthorityIds,
+                        subjectDnPattern, requiredSanDomains, requireApproval));
+            }
+            case ServerControlOperation.UpdateEnrollmentProfile.NAME -> {
+                fields.allowed(Set.of("id", "displayName", "certificateProfileId",
+                        "allowedAuthorityIds", "subjectDnPattern", "requiredSanDomains", "requireApproval", "state"));
+                java.util.Set<String> allowedAuthorityIds = fields.contains("allowedAuthorityIds")
+                        ? fields.stringSet("allowedAuthorityIds")
+                        : java.util.Set.of();
+                Optional<String> subjectDnPattern = fields.contains("subjectDnPattern")
+                        ? Optional.of(fields.text("subjectDnPattern"))
+                        : Optional.empty();
+                java.util.List<String> requiredSanDomains = fields.contains("requiredSanDomains")
+                        ? java.util.List.copyOf(fields.stringSet("requiredSanDomains"))
+                        : java.util.List.of();
+                boolean requireApproval = fields.contains("requireApproval") && fields.bool("requireApproval");
+                EnrollmentProfileState state = fields.contains("state")
+                        ? EnrollmentProfileState.valueOf(fields.text("state"))
+                        : EnrollmentProfileState.ACTIVE;
+                yield new ServerControlOperation.UpdateEnrollmentProfile(new EnrollmentProfile(
+                        fields.text("id"), fields.text("displayName"), state,
+                        fields.text("certificateProfileId"), allowedAuthorityIds,
+                        subjectDnPattern, requiredSanDomains, requireApproval));
+            }
+            case ServerControlOperation.InspectEnrollmentProfile.NAME -> {
+                fields.exact("id");
+                yield new ServerControlOperation.InspectEnrollmentProfile(fields.text("id"));
+            }
+            case ServerControlOperation.ListEnrollmentProfiles.NAME -> {
+                fields.exact("offset", "limit");
+                yield new ServerControlOperation.ListEnrollmentProfiles(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.ActivateEnrollmentProfile.NAME -> {
+                fields.exact("id");
+                yield new ServerControlOperation.ActivateEnrollmentProfile(fields.text("id"));
+            }
+            case ServerControlOperation.SuspendEnrollmentProfile.NAME -> {
+                fields.exact("id");
+                yield new ServerControlOperation.SuspendEnrollmentProfile(fields.text("id"));
+            }
             default -> throw new SecurityException("Control operation is not exposed");
         };
     }
@@ -808,6 +1018,8 @@ final class HttpOperationCodec {
 
     private static boolean realmWide(PkiOperation operation) {
         return operation instanceof PkiOperation.ListProfiles
+                || operation instanceof PkiOperation.QueryServerMetrics
+                || operation instanceof PkiOperation.ListStatusSchedules
                 || operation instanceof PkiOperation.ListRequests
                 || operation instanceof PkiOperation.ListAuthorities
                 || operation instanceof PkiOperation.ListAlgorithmBindings
@@ -837,6 +1049,12 @@ final class HttpOperationCodec {
             case PkiOperation.ListPendingCredentialConfirmations value -> Optional.of(value.authorityId());
             case PkiOperation.SelectIssuancePath value -> Optional.of(value.caId());
             case PkiOperation.RegisterIssuerChainPath value -> Optional.of(value.caId());
+            case PkiOperation.SetStatusSchedule value -> Optional.of(value.caId());
+            case PkiOperation.InspectStatusSchedule value -> Optional.of(value.caId());
+            case PkiOperation.QueryAuthorityMetrics value -> Optional.of(value.caId());
+            case PkiOperation.QueryCertificateMetrics value -> Optional.of(value.caId());
+            case PkiOperation.QueryRevocationMetrics value -> Optional.of(value.caId());
+            case PkiOperation.QueryPublicationMetrics value -> Optional.of(value.caId());
             default -> Optional.empty();
         };
         if (embedded.isPresent() && !embedded.equals(authority)) {

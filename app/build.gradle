@@ -53,6 +53,14 @@ application {
     mainClass = 'zeroecho.ZeroEcho'
 }
 
+// Bundle the generated operation parameter schema as a CLI classpath resource.
+tasks.named('processResources') {
+    dependsOn(':pki-server:generateSchema')
+    from(project(':pki-server').layout.buildDirectory.file('generated/schema/operationSchema.json')) {
+        into 'schema'
+    }
+}
+
 // Thin module jar. The runnable distribution is produced by the application
 // plugin (installDist / distZip), which places each dependency on the classpath;
 // dependencies are never bundled into this jar.
@@ -67,7 +75,9 @@ jar {
 }
 
 javadoc {
-    options.links("https://www.egothor.org/javadoc/zeroecho/lib")
+    dependsOn ':lib:javadoc'
+    options.linksOffline("https://www.egothor.org/javadoc/zeroecho/lib/",
+            project(':lib').layout.buildDirectory.dir('docs/javadoc').get().asFile.absolutePath)
 }
 
 // Deployment-only profile seeding entry point, outside the public CLI catalog.
@@ -78,10 +88,22 @@ def profileBootstrapScripts = tasks.register('profileBootstrapScripts', CreateSt
     outputDir = layout.buildDirectory.dir('profile-bootstrap-scripts').get().asFile
     classpath = tasks.named('startScripts').get().classpath
 }
+
+// Deployment-only publisher secrets management tool, outside the public CLI catalog.
+def publisherSecretsScripts = tasks.register('publisherSecretsScripts', CreateStartScripts) {
+    applicationName = 'zeroecho-pki-publisher-secrets'
+    mainClass = 'zeroecho.pki.cli.PublisherSecretsManagerCli'
+    outputDir = layout.buildDirectory.dir('publisher-secrets-scripts').get().asFile
+    classpath = tasks.named('startScripts').get().classpath
+}
 distributions {
     main {
         contents {
             from(profileBootstrapScripts) {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+            from(publisherSecretsScripts) {
                 into 'bin'
                 filePermissions { unix('rwxr-xr-x') }
             }

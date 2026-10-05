@@ -371,7 +371,7 @@ final class FsSnapshotExporter {
             boolean published = false;
             try {
                 build(temporaryRoot, at);
-                Files.move(temporaryRoot, absoluteTarget, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                PlatformFs.atomicMove(temporaryRoot, absoluteTarget, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
                 published = true;
             } catch (IOException | IllegalStateException failure) {
                 if (!published) {
@@ -444,7 +444,7 @@ final class FsSnapshotExporter {
             Files.deleteIfExists(paths.revocationCurrentIndex());
             Files.createDirectories(paths.revocationTransitionLog().getParent());
             try {
-                Files.move(stagedPrefix, paths.revocationTransitionLog(),
+                PlatformFs.atomicMove(stagedPrefix, paths.revocationTransitionLog(),
                         java.nio.file.StandardCopyOption.ATOMIC_MOVE,
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {

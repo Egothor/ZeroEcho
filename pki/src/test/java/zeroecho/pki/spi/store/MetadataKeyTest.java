@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2025 ZeroEcho
+ * Copyright (C) 2025, Leo Galambos
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,

@@ -598,6 +598,18 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         return new DefaultPreparedSemanticSigningRequest(prepared, this);
     }
 
+    /**
+     * Accepts a prepared status command with its immutable scheduled authorization.
+     * @param prepared preparation owned by this service
+     * @param claim durable schedule claim
+     * @return authoritative acceptance disposition
+     */
+    public SigningAcceptanceResult acceptScheduled(PreparedSemanticSigningRequest prepared,
+            zeroecho.pki.api.schedule.StatusScheduleState.Execution claim) {
+        signing.requireAvailable();
+        return signing.acceptScheduled(unwrap(prepared), claim);
+    }
+
     @Override public SigningAcceptanceResult accept(PreparedSemanticSigningRequest prepared) {
         signing.requireAvailable();
         DefaultPreparedSigningRequest exact = unwrap(prepared);

@@ -60,8 +60,9 @@ import java.io.IOException;
  * <ul>
  * <li>The shared secret must be immediately fed into a key-derivation function
  * (KDF). Applications should zeroize the byte array after use.</li>
- * <li>Implementations must validate ciphertexts carefully; malformed inputs
- * should fail decapsulation without leaking side-channel information.</li>
+ * <li>Structural ciphertext validation is algorithm-specific. KEMs with implicit
+ * rejection may return a pseudorandom secret for an invalid, correctly sized
+ * ciphertext; a returned secret does not authenticate the peer.</li>
  * <li>Contexts are not guaranteed to be thread-safe; use one instance per
  * flow.</li>
  * </ul>
@@ -93,8 +94,11 @@ public non-sealed interface KemContext extends CryptoContext {
      * Encapsulation result holding both ciphertext and shared secret.
      *
      * <p>
-     * Instances of this class are immutable. The caller is responsible for handling
-     * and clearing the secret bytes after use.
+     * The array references are final, but their contents are mutable. Construction
+     * and access do not copy either array: the producer and recipient share the
+     * same buffers. The recipient must arrange exclusive access and clear the
+     * shared secret after use; clearing it also changes this result. This object
+     * provides no synchronization or automatic destruction.
      * </p>
      */
     final class KemResult {
@@ -102,7 +106,7 @@ public non-sealed interface KemContext extends CryptoContext {
         private final byte[] sharedSecret;
 
         /**
-         * Creates a new result object with the provided values.
+         * Retains the provided arrays without copying or validating them.
          *
          * @param ciphertext   the encapsulation ciphertext to be transmitted
          * @param sharedSecret the derived shared secret (sensitive material)
@@ -115,7 +119,7 @@ public non-sealed interface KemContext extends CryptoContext {
         /**
          * Returns the encapsulation ciphertext.
          *
-         * @return ciphertext to send to the peer
+         * @return the retained ciphertext array, not a defensive copy
          */
         public byte[] ciphertext() {
             return ciphertext; // NOPMD
@@ -129,7 +133,7 @@ public non-sealed interface KemContext extends CryptoContext {
          * as soon as possible.
          * </p>
          *
-         * @return the raw shared secret
+         * @return the retained shared-secret array, not a defensive copy
          */
         public byte[] sharedSecret() {
             return sharedSecret; // NOPMD

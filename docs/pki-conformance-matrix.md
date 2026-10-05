@@ -80,5 +80,5 @@ The [failure model](pki-failure-model.md) defines safe classification and redact
 The [deployment and CLI contracts](pki-deployment-cli-contracts.md) define mode
 boundaries, local administrative approval and exit codes. The
 [validation record](pki-validation.md) contains current test totals and quality
-results; [raw measurements](pki-signing-performance.md#recorded-serial-measurements--2026-09-28)
+results; [raw measurements](pki-signing-performance.md#recorded-serial-measurements-2026-09-28)
 are informational and impose no numerical performance threshold.

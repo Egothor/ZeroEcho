@@ -1,7 +1,7 @@
 # Selection API and validation contract
 
-The frontend catalog contains 107 operations: 41 PKI operations, ten signing
-operations and 56 server controls. New read operations extend the same admin
+The frontend consumes the generated server catalog across PKI, signing and
+server-control families, filtering unavailable operations. Read operations use the same admin
 POST envelope, gateway authorization and audit path; no separate selection
 service, persistent registry, index or server-held cursor is introduced.
 

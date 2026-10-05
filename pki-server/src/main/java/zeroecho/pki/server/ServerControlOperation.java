@@ -37,9 +37,14 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
+
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.server.acme.AcmeService;
+import zeroecho.pki.server.cmp.CmpEndpoint;
+import zeroecho.pki.server.enrollment.EnrollmentProfile;
+import zeroecho.pki.server.est.EstEndpoint;
+import zeroecho.pki.server.scep.ScepEndpoint;
 
 /** Closed transport-neutral server-control administration operation hierarchy. */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExcessivePublicCount" })
@@ -67,8 +72,20 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.InspectAcmeAccount, ServerControlOperation.ListAcmeAccounts,
         ServerControlOperation.DeactivateAcmeAccount, ServerControlOperation.RegisterOcspResponder,
         ServerControlOperation.InspectOcspResponder, ServerControlOperation.ListOcspResponders,
-        ServerControlOperation.SetOcspResponderActive, ServerControlOperation.SearchAudit,
-        ServerControlOperation.VerifyAuditIntegrity, ServerControlOperation.ConfigurationChoices,
+        ServerControlOperation.SetOcspResponderActive,
+        ServerControlOperation.RegisterEstEndpoint, ServerControlOperation.DeregisterEstEndpoint,
+        ServerControlOperation.InspectEstEndpoint, ServerControlOperation.ListEstEndpoints,
+        ServerControlOperation.RegisterScepEndpoint, ServerControlOperation.DeregisterScepEndpoint,
+        ServerControlOperation.InspectScepEndpoint, ServerControlOperation.ListScepEndpoints,
+        ServerControlOperation.RegisterCmpEndpoint, ServerControlOperation.DeregisterCmpEndpoint,
+        ServerControlOperation.InspectCmpEndpoint, ServerControlOperation.ListCmpEndpoints,
+        ServerControlOperation.RegisterEnrollmentProfile, ServerControlOperation.UpdateEnrollmentProfile,
+        ServerControlOperation.InspectEnrollmentProfile, ServerControlOperation.ListEnrollmentProfiles,
+        ServerControlOperation.ActivateEnrollmentProfile, ServerControlOperation.SuspendEnrollmentProfile,
+        ServerControlOperation.SearchAudit,
+        ServerControlOperation.VerifyAuditIntegrity, ServerControlOperation.ExportBackup,
+        ServerControlOperation.VerifyBackup, ServerControlOperation.ExecuteRestore,
+        ServerControlOperation.ConfigurationChoices,
         ServerControlOperation.ListCapabilities {
 
     /**
@@ -585,6 +602,52 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
     }
 
     /**
+     * Exports a backup of PKI state, excluding private keys.
+     *
+     * @param label operator-provided human-readable label
+     * @param attributes optional backup metadata
+     */
+    record ExportBackup(String label, zeroecho.pki.api.attr.AttributeSet attributes)
+            implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
+        public static final String NAME = "backup.export";
+        /** Validates the operation's immutable input. */
+        public ExportBackup {
+            Permission.requireBounded(label, 256, "label");
+            Objects.requireNonNull(attributes, "attributes");
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Verifies structural integrity and completeness of a backup artifact.
+     *
+     * @param artifact backup artifact to verify
+     */
+    record VerifyBackup(zeroecho.pki.api.backup.BackupArtifact artifact)
+            implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
+        public static final String NAME = "backup.verify";
+        /** Validates the operation's immutable input. */
+        public VerifyBackup { Objects.requireNonNull(artifact, "artifact"); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Executes a restore from a backup artifact.
+     *
+     * @param request restore request including the artifact
+     */
+    record ExecuteRestore(zeroecho.pki.api.backup.RestoreRequest request)
+            implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
+        public static final String NAME = "backup.restore";
+        /** Validates the operation's immutable input. */
+        public ExecuteRestore { Objects.requireNonNull(request, "request"); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
      * Exact repository alias inspection.
      *
      * @param authorityId exact logical authority identifier
@@ -829,6 +892,230 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         /** Validates the operation's immutable input. */
         public SetOcspResponderActive { Permission.requireId(responderId, "OCSP responder"); }
         @Override public String name() { return active ? ACTIVATE : DEACTIVATE; }
+    }
+
+    /**
+     * Registers an EST RFC 7030 endpoint.
+     *
+     * @param endpoint the endpoint to register
+     */
+    record RegisterEstEndpoint(EstEndpoint endpoint) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "est.endpoint.register";
+        /** Validates the operation input. */
+        public RegisterEstEndpoint { Objects.requireNonNull(endpoint, "endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * De-registers an EST endpoint by label.
+     *
+     * @param label the URL-safe endpoint label to remove
+     */
+    record DeregisterEstEndpoint(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "est.endpoint.deregister";
+        /** Validates the label. */
+        public DeregisterEstEndpoint { Permission.requireId(label, "EST endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Inspects one registered EST endpoint.
+     *
+     * @param label the URL-safe endpoint label
+     */
+    record InspectEstEndpoint(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "est.endpoint.inspect";
+        /** Validates the label. */
+        public InspectEstEndpoint { Permission.requireId(label, "EST endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Lists registered EST endpoints.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
+    record ListEstEndpoints(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "est.endpoint.list";
+        /** Validates bounds. */
+        public ListEstEndpoints { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Registers a SCEP RFC 8894 endpoint.
+     *
+     * @param endpoint the endpoint to register
+     */
+    record RegisterScepEndpoint(ScepEndpoint endpoint) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "scep.endpoint.register";
+        /** Validates the operation input. */
+        public RegisterScepEndpoint { Objects.requireNonNull(endpoint, "endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * De-registers a SCEP endpoint by label.
+     *
+     * @param label the URL-safe endpoint label to remove
+     */
+    record DeregisterScepEndpoint(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "scep.endpoint.deregister";
+        /** Validates the label. */
+        public DeregisterScepEndpoint { Permission.requireId(label, "SCEP endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Inspects one registered SCEP endpoint.
+     *
+     * @param label the URL-safe endpoint label
+     */
+    record InspectScepEndpoint(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "scep.endpoint.inspect";
+        /** Validates the label. */
+        public InspectScepEndpoint { Permission.requireId(label, "SCEP endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Lists registered SCEP endpoints.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
+    record ListScepEndpoints(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "scep.endpoint.list";
+        /** Validates bounds. */
+        public ListScepEndpoints { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Registers a CMP RFC 4210/9480 endpoint.
+     *
+     * @param endpoint the endpoint to register
+     */
+    record RegisterCmpEndpoint(CmpEndpoint endpoint) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "cmp.endpoint.register";
+        /** Validates the operation input. */
+        public RegisterCmpEndpoint { Objects.requireNonNull(endpoint, "endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * De-registers a CMP endpoint by label.
+     *
+     * @param label the URL-safe endpoint label to remove
+     */
+    record DeregisterCmpEndpoint(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "cmp.endpoint.deregister";
+        /** Validates the label. */
+        public DeregisterCmpEndpoint { Permission.requireId(label, "CMP endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Inspects one registered CMP endpoint.
+     *
+     * @param label the URL-safe endpoint label
+     */
+    record InspectCmpEndpoint(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "cmp.endpoint.inspect";
+        /** Validates the label. */
+        public InspectCmpEndpoint { Permission.requireId(label, "CMP endpoint"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Lists registered CMP endpoints.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
+    record ListCmpEndpoints(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "cmp.endpoint.list";
+        /** Validates bounds. */
+        public ListCmpEndpoints { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Registers a new enrollment profile.
+     *
+     * @param profile the profile to register
+     */
+    record RegisterEnrollmentProfile(EnrollmentProfile profile) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "enrollment.profile.register";
+        /** Validates the operation input. */
+        public RegisterEnrollmentProfile { Objects.requireNonNull(profile, "profile"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Updates an existing enrollment profile (replaces all mutable fields).
+     *
+     * @param profile the updated profile
+     */
+    record UpdateEnrollmentProfile(EnrollmentProfile profile) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "enrollment.profile.update";
+        /** Validates the operation input. */
+        public UpdateEnrollmentProfile { Objects.requireNonNull(profile, "profile"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Inspects one enrollment profile.
+     *
+     * @param id the profile identity
+     */
+    record InspectEnrollmentProfile(String id) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "enrollment.profile.inspect";
+        /** Validates the id. */
+        public InspectEnrollmentProfile { Permission.requireId(id, "enrollment profile"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Lists enrollment profiles.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
+    record ListEnrollmentProfiles(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "enrollment.profile.list";
+        /** Validates bounds. */
+        public ListEnrollmentProfiles { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Activates a suspended enrollment profile.
+     *
+     * @param id the profile identity
+     */
+    record ActivateEnrollmentProfile(String id) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "enrollment.profile.activate";
+        /** Validates the id. */
+        public ActivateEnrollmentProfile { Permission.requireId(id, "enrollment profile"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Suspends an active enrollment profile.
+     *
+     * @param id the profile identity
+     */
+    record SuspendEnrollmentProfile(String id) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "enrollment.profile.suspend";
+        /** Validates the id. */
+        public SuspendEnrollmentProfile { Permission.requireId(id, "enrollment profile"); }
+        @Override public String name() { return NAME; }
     }
 
     private static void page(int offset, int limit) {

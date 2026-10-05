@@ -105,11 +105,14 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
      *
      * @param definition authoritative profile definition
      * @return runtime profile projection
+     * @throws IllegalArgumentException if the definition is not an end-entity profile
+     *         or requests an unsupported hybrid lifecycle
      */
     public static CertificateProfile fromDefinition(CertificateProfileDefinition definition) {
         if (definition == null) {
             throw new IllegalArgumentException("definition must not be null");
         }
+        definition.requireSupportedIssuance();
         if (definition.certificateType() != CertificateProfileKind.END_ENTITY) {
             throw new IllegalArgumentException("Only end-entity definitions have a runtime issuance projection");
         }

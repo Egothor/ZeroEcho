@@ -54,6 +54,10 @@ public final class KeyringException extends IOException {
     // Stable diagnostic codes are externally inspected and must retain their exact names.
     @SuppressWarnings("PMD.LongVariable")
     public enum Code {
+        /** Stateful signing authority is missing, pending, mismatched or uncertain. */
+        KEYRING_STATEFUL_RECOVERY_REQUIRED,
+        /** No unused signature leaves remain. */
+        KEYRING_STATEFUL_EXHAUSTED,
         /** Another process or session already owns the keyring lock. */
         KEYRING_ALREADY_OPEN,
         /** Filesystem ownership, permissions, links, or atomicity do not meet the security policy. */

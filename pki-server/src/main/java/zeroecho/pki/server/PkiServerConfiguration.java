@@ -65,16 +65,20 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
  * @param runtime process-local capability references
  * @param publicListener optional separately bounded public repository listener
  * @param acmeListener optional separately bounded ACME protocol listener
+ * @param estListener optional separately bounded EST protocol listener
+ * @param scepListener optional separately bounded SCEP protocol listener
+ * @param cmpListener optional separately bounded CMP protocol listener
  * @param auditProjection bounded audit-projection scheduling policy
  */
 @SuppressWarnings("PMD")
 public record PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
         Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
         Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener,
-        AuditProjection auditProjection) {
+        Optional<EstListener> estListener, Optional<ScepListener> scepListener,
+        Optional<CmpListener> cmpListener, AuditProjection auditProjection) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 7;
+    public static final int CURRENT_VERSION = 8;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {
@@ -87,6 +91,9 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Objects.requireNonNull(runtime, "runtime");
         publicListener = Objects.requireNonNull(publicListener, "publicListener");
         acmeListener = Objects.requireNonNull(acmeListener, "acmeListener");
+        estListener = Objects.requireNonNull(estListener, "estListener");
+        scepListener = Objects.requireNonNull(scepListener, "scepListener");
+        cmpListener = Objects.requireNonNull(cmpListener, "cmpListener");
         Objects.requireNonNull(auditProjection, "auditProjection");
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
@@ -103,12 +110,45 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             }
         });
         Optional<PublicListener> exactPublicListener = publicListener;
+        Optional<AcmeListener> exactAcmeListener = acmeListener;
         acmeListener.ifPresent(acme -> {
             requireDistinct(listener.address(), listener.port(), acme.address(), acme.port(),
                     "Administrative and ACME listeners conflict");
             exactPublicListener.ifPresent(publicConfiguration -> requireDistinct(publicConfiguration.address(),
                     publicConfiguration.port(), acme.address(), acme.port(),
                     "Public and ACME listeners conflict"));
+        });
+        estListener.ifPresent(est -> {
+            requireDistinct(listener.address(), listener.port(), est.address(), est.port(),
+                    "Administrative and EST listeners conflict");
+            exactPublicListener.ifPresent(pub -> requireDistinct(pub.address(), pub.port(),
+                    est.address(), est.port(), "Public and EST listeners conflict"));
+            exactAcmeListener.ifPresent(acme -> requireDistinct(acme.address(), acme.port(),
+                    est.address(), est.port(), "ACME and EST listeners conflict"));
+        });
+        Optional<EstListener> exactEstListener = estListener;
+        scepListener.ifPresent(scep -> {
+            requireDistinct(listener.address(), listener.port(), scep.address(), scep.port(),
+                    "Administrative and SCEP listeners conflict");
+            exactPublicListener.ifPresent(pub -> requireDistinct(pub.address(), pub.port(),
+                    scep.address(), scep.port(), "Public and SCEP listeners conflict"));
+            exactAcmeListener.ifPresent(acme -> requireDistinct(acme.address(), acme.port(),
+                    scep.address(), scep.port(), "ACME and SCEP listeners conflict"));
+            exactEstListener.ifPresent(est -> requireDistinct(est.address(), est.port(),
+                    scep.address(), scep.port(), "EST and SCEP listeners conflict"));
+        });
+        Optional<ScepListener> exactScepListener = scepListener;
+        cmpListener.ifPresent(cmp -> {
+            requireDistinct(listener.address(), listener.port(), cmp.address(), cmp.port(),
+                    "Administrative and CMP listeners conflict");
+            exactPublicListener.ifPresent(pub -> requireDistinct(pub.address(), pub.port(),
+                    cmp.address(), cmp.port(), "Public and CMP listeners conflict"));
+            exactAcmeListener.ifPresent(acme -> requireDistinct(acme.address(), acme.port(),
+                    cmp.address(), cmp.port(), "ACME and CMP listeners conflict"));
+            exactEstListener.ifPresent(est -> requireDistinct(est.address(), est.port(),
+                    cmp.address(), cmp.port(), "EST and CMP listeners conflict"));
+            exactScepListener.ifPresent(scep -> requireDistinct(scep.address(), scep.port(),
+                    cmp.address(), cmp.port(), "SCEP and CMP listeners conflict"));
         });
     }
 
@@ -128,7 +168,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener) {
         this(version, serverName, realm, listener, authentication, execution, runtime, publicListener,
-                Optional.empty(), AuditProjection.defaults());
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), AuditProjection.defaults());
     }
 
     /**
@@ -148,7 +188,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
         this(version, serverName, realm, listener, authentication, execution, runtime, publicListener, acmeListener,
-                AuditProjection.defaults());
+                Optional.empty(), Optional.empty(), Optional.empty(), AuditProjection.defaults());
     }
 
     /**
@@ -165,7 +205,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
         this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty(),
-                Optional.empty(), AuditProjection.defaults());
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), AuditProjection.defaults());
     }
 
     /**
@@ -631,12 +671,116 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
+     * Separately bounded EST protocol listener configuration.
+     *
+     * @param listenerId  stable process-local listener identity
+     * @param address     canonical bind address
+     * @param port        TCP port, including zero for an ephemeral test listener
+     * @param tlsProvider explicit server TLS identity provider
+     * @param execution   isolated protocol workers, queue, admission, and deadlines
+     * @param maximumHeaderBytes bounded request-header bytes
+     * @param maximumBodyBytes   bounded request-body bytes (must accommodate a PKCS#10 CSR)
+     */
+    public record EstListener(String listenerId, InetAddress address, int port,
+            ProviderConfig tlsProvider, Execution execution,
+            int maximumHeaderBytes, int maximumBodyBytes) {
+        /** Validates the EST listener configuration. */
+        public EstListener {
+            Permission.requireId(listenerId, "EST listener");
+            Objects.requireNonNull(address, "address");
+            if (port < 0 || port > 65_535) throw new IllegalArgumentException("EST listener port is invalid");
+            Objects.requireNonNull(tlsProvider, "tlsProvider");
+            Objects.requireNonNull(execution, "execution");
+            bounded(maximumHeaderBytes, 1_024, 1_048_576, "EST header bound");
+            bounded(maximumBodyBytes, 1_024, 16_777_216, "EST body bound");
+        }
+
+        /**
+         * Returns the listener socket address.
+         *
+         * @return exact socket address
+         */
+        public InetSocketAddress socketAddress() { return new InetSocketAddress(address, port); }
+    }
+
+    /**
+     * Configuration for the optional SCEP RFC 8894 HTTPS listener.
+     *
+     * @param listenerId         stable process-local listener identity
+     * @param address            canonical bind address
+     * @param port               TCP port, including zero for an ephemeral test listener
+     * @param tlsProvider        explicit server TLS identity provider
+     * @param execution          isolated protocol workers, queue, admission, and deadlines
+     * @param maximumHeaderBytes bounded request-header bytes
+     * @param maximumBodyBytes   bounded request-body bytes
+     */
+    public record ScepListener(String listenerId, InetAddress address, int port,
+            ProviderConfig tlsProvider, Execution execution,
+            int maximumHeaderBytes, int maximumBodyBytes) {
+        /** Validates the SCEP listener configuration. */
+        public ScepListener {
+            Permission.requireId(listenerId, "SCEP listener");
+            Objects.requireNonNull(address, "address");
+            if (port < 0 || port > 65_535) throw new IllegalArgumentException("SCEP listener port is invalid");
+            Objects.requireNonNull(tlsProvider, "tlsProvider");
+            Objects.requireNonNull(execution, "execution");
+            bounded(maximumHeaderBytes, 1_024, 1_048_576, "SCEP header bound");
+            bounded(maximumBodyBytes, 1_024, 16_777_216, "SCEP body bound");
+        }
+
+        /**
+         * Returns the listener socket address.
+         *
+         * @return exact socket address
+         */
+        public InetSocketAddress socketAddress() { return new InetSocketAddress(address, port); }
+    }
+
+    /**
+     * Configuration for the optional CMP RFC 4210/9480 HTTPS listener.
+     *
+     * @param listenerId         stable process-local listener identity
+     * @param address            canonical bind address
+     * @param port               TCP port, including zero for an ephemeral test listener
+     * @param tlsProvider        explicit server TLS identity provider
+     * @param execution          isolated protocol workers, queue, admission, and deadlines
+     * @param maximumHeaderBytes bounded request-header bytes
+     * @param maximumBodyBytes   bounded request-body bytes
+     */
+    public record CmpListener(String listenerId, InetAddress address, int port,
+            ProviderConfig tlsProvider, Execution execution,
+            int maximumHeaderBytes, int maximumBodyBytes) {
+        /** Validates the CMP listener configuration. */
+        public CmpListener {
+            Permission.requireId(listenerId, "CMP listener");
+            Objects.requireNonNull(address, "address");
+            if (port < 0 || port > 65_535) throw new IllegalArgumentException("CMP listener port is invalid");
+            Objects.requireNonNull(tlsProvider, "tlsProvider");
+            Objects.requireNonNull(execution, "execution");
+            bounded(maximumHeaderBytes, 1_024, 1_048_576, "CMP header bound");
+            bounded(maximumBodyBytes, 1_024, 16_777_216, "CMP body bound");
+        }
+
+        /**
+         * Returns the listener socket address.
+         *
+         * @return exact socket address
+         */
+        public InetSocketAddress socketAddress() { return new InetSocketAddress(address, port); }
+    }
+
+    /**
      * Process-local capability references.
      *
-     * @param keyUnlockEnvironmentVariable optional external unlock reference
+     * @param keyUnlockEnvironmentVariable        optional keyring unlock environment variable
+     * @param publisherSecretsStore               optional path to the encrypted publisher secrets store
+     * @param publisherSecretsEnvironmentVariable optional environment variable whose value is the
+     *                                            store password; required for CLASSIC and HYBRID stores
      */
-    public record RuntimeCapabilities(Optional<String> keyUnlockEnvironmentVariable) {
-        /** Validates the external reference without resolving its secret value. */
+    public record RuntimeCapabilities(Optional<String> keyUnlockEnvironmentVariable,
+            Optional<String> publisherSecretsStore,
+            Optional<String> publisherSecretsEnvironmentVariable) {
+        /** Validates external references without resolving secret values. */
         public RuntimeCapabilities {
             keyUnlockEnvironmentVariable = Objects.requireNonNull(keyUnlockEnvironmentVariable,
                     "keyUnlockEnvironmentVariable").map(value -> {
@@ -645,6 +789,57 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                         }
                         return value;
                     });
+            publisherSecretsStore = Objects.requireNonNull(publisherSecretsStore,
+                    "publisherSecretsStore");
+            publisherSecretsEnvironmentVariable = Objects.requireNonNull(
+                    publisherSecretsEnvironmentVariable,
+                    "publisherSecretsEnvironmentVariable").map(value -> {
+                        if (!value.matches("[A-Z][A-Z0-9_]{0,127}")) {
+                            throw new IllegalArgumentException(
+                                    "Publisher-secrets environment reference is invalid");
+                        }
+                        return value;
+                    });
+        }
+    }
+
+    /**
+     * Bounds for one signing-reconciliation pass executed by {@code SigningReconciliationWorker}.
+     *
+     * @param maximumRecords maximum signing workflow records examined per pass
+     * @param maximumProviderCalls maximum provider calls issued per pass
+     * @param passTimeout maximum wall-clock duration of one reconciliation pass
+     * @param providerCallTimeout maximum duration of a single provider call
+     * @param idleInterval sleep duration between passes when there is no immediate work
+     */
+    public record SigningReconciliation(int maximumRecords, int maximumProviderCalls,
+            Duration passTimeout, Duration providerCallTimeout, Duration idleInterval) {
+        /**
+         * Validates one reconciliation budget.
+         * @param maximumRecords number of records, from 1 to 4096
+         * @param maximumProviderCalls provider calls, from 1 to maximumRecords
+         * @param passTimeout positive duration no greater than five minutes
+         * @param providerCallTimeout positive duration no greater than passTimeout
+         * @param idleInterval positive duration no greater than five minutes
+         * @throws NullPointerException if a duration is null
+         * @throws IllegalArgumentException if a bound is exceeded
+         */
+        public SigningReconciliation {
+            bounded(maximumRecords, 1, 4096, "signing reconciliation record count");
+            bounded(maximumProviderCalls, 1, maximumRecords, "signing reconciliation provider call count");
+            positive(passTimeout, Duration.ofMinutes(5), "signing reconciliation pass timeout");
+            positive(providerCallTimeout, passTimeout, "signing reconciliation provider call timeout");
+            positive(idleInterval, Duration.ofMinutes(5), "signing reconciliation idle interval");
+        }
+
+        /**
+         * Returns the standard bounded reconciliation policy.
+         * @return a 256-record, 64-call budget with a 30-second pass timeout,
+         *         10-second provider timeout and 2-second idle interval
+         */
+        public static SigningReconciliation defaults() {
+            return new SigningReconciliation(256, 64, Duration.ofSeconds(30), Duration.ofSeconds(10),
+                    Duration.ofSeconds(2));
         }
     }
 

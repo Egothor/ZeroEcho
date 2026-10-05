@@ -39,21 +39,23 @@ import zeroecho.pki.spi.ProviderConfig;
 /**
  * ServiceLoader provider for {@link AuditSink} implementations.
  *
- * <p>
- * {@link java.util.ServiceLoader} cannot construct {@link AuditSink} instances
- * directly because stores typically require backend-specific configuration
- * (filesystem root, etc.). This SPI provides a uniform instantiation mechanism.
- * </p>
+ * <p>{@link java.util.ServiceLoader} cannot construct {@link AuditSink}
+ * instances directly because stores typically require backend-specific
+ * configuration (filesystem root, etc.). This SPI provides a uniform
+ * instantiation mechanism.
  *
- * <p>
- * Implementations must provide a public no-arg constructor to be discoverable
- * via {@link java.util.ServiceLoader}.
- * </p>
+ * <p>Implementations must provide a public no-arg constructor to be
+ * discoverable via {@link java.util.ServiceLoader}.
  *
- * <p>
- * Security note: providers and bootstraps must never log configuration values
- * because they can contain sensitive material (passwords, tokens, endpoints).
- * </p>
+ * <p>Security note: providers and bootstraps must never log configuration
+ * values because they can contain sensitive material (passwords, tokens,
+ * endpoints).
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; the same provider instance may be
+ * called from multiple threads during server startup.
+ *
+ * @since 1.0
  */
 public interface AuditSinkProvider extends ConfigurableProvider<AuditSink> {
     /**

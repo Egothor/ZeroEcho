@@ -67,13 +67,38 @@ final class SigningLedgerSnapshotExporter {
     /** Borrows the caller's exact pinned revision without closing it. */
     /* default */ static void export(SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot, Path targetRoot,
             Set<String> excludedNamespaces) throws IOException {
+        export(engine, snapshot, targetRoot, excludedNamespaces, Long.MAX_VALUE, false);
+    }
+
+    /** Preserves authoritative record and transaction-result revisions for backup recovery. */
+    /* default */ static void exportBackup(SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot,
+            Path targetRoot, long maximumCheckpointBytes) throws IOException {
+        export(engine, snapshot, targetRoot, Set.of(), maximumCheckpointBytes, true);
+    }
+
+    private static void export(SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot, Path targetRoot,
+            Set<String> excludedNamespaces, long maximumCheckpointBytes, boolean preserveRevisions) throws IOException {
         Set<String> excluded = Set.copyOf(excludedNamespaces);
-        SigningLedgerRecovery.initializeFormat(targetRoot);
         SnapshotShape shape = shape(snapshot, excluded);
+        if (preserveRevisions && shape.count == 0 && snapshot.revision() != 0L) {
+            throw new IOException("BACKUP_CHECKPOINT_BOUNDARY_MISSING");
+        }
+        if (maximumCheckpointBytes != Long.MAX_VALUE) {
+            long[] measured = { shape.dataOffset };
+            long[] ordinal = { 0L };
+            snapshot.visit(record -> {
+                if (excluded.contains(record.key().namespace())) return;
+                int length = frame(engine, record, ordinal[0]++).length;
+                if (length > maximumCheckpointBytes - measured[0]) throw new IOException("BACKUP_ENTRY_LIMIT");
+                measured[0] += length;
+            });
+            if (measured[0] > maximumCheckpointBytes) throw new IOException("BACKUP_ENTRY_LIMIT");
+        }
+        SigningLedgerRecovery.initializeFormat(targetRoot);
+        long revision = preserveRevisions ? snapshot.revision() : shape.count;
         Optional<SigningManifestCodec.Checkpoint> checkpoint = shape.count == 0
                 ? Optional.empty() : Optional.of(writeCheckpoint(
-                        engine, snapshot, targetRoot, excluded, shape));
-        long revision = shape.count;
+                        engine, snapshot, targetRoot, excluded, shape, revision, preserveRevisions));
         long sequence = shape.count == 0 ? 0L : shape.count - 1L;
         SigningManifestCodec.ActiveWal active = writeEmptyActive(targetRoot,
                 shape.count == 0 ? 0L : shape.count, revision);
@@ -103,34 +128,35 @@ final class SigningLedgerSnapshotExporter {
 
     private static SigningManifestCodec.Checkpoint writeCheckpoint(
             SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot,
-            Path targetRoot, Set<String> excluded, SnapshotShape shape) throws IOException {
+            Path targetRoot, Set<String> excluded, SnapshotShape shape, long revision,
+            boolean preserveRevisions) throws IOException {
         long committedSequence = shape.count - 1L;
         SigningCheckpointCodec.Header header = new SigningCheckpointCodec.Header(
-                CHECKPOINT_IDENTITY, shape.count, committedSequence,
+                CHECKPOINT_IDENTITY, revision, committedSequence,
                 shape.count, shape.dataOffset);
-        String name = SigningManifestCodec.checkpointName(shape.count, committedSequence);
+        String name = SigningManifestCodec.checkpointName(revision, committedSequence);
         Path path = targetRoot.resolve(name);
         SigningFilePublisher.publishImmutable(path,
-                channel -> writeCheckpoint(engine, snapshot, excluded, header, channel));
+                channel -> writeCheckpoint(engine, snapshot, excluded, header, channel, preserveRevisions));
         byte[] commitment;
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ,
                 LinkOption.NOFOLLOW_LINKS)) {
             commitment = SigningFileCommitment.sha256(channel);
         }
-        return new SigningManifestCodec.Checkpoint(CHECKPOINT_IDENTITY, shape.count,
+        return new SigningManifestCodec.Checkpoint(CHECKPOINT_IDENTITY, revision,
                 committedSequence, java.nio.file.Files.size(path), commitment, name);
     }
 
     private static void writeCheckpoint(SigningLedgerStoreEngine engine,
             SigningMvccIndex.Snapshot snapshot, Set<String> excluded,
-            SigningCheckpointCodec.Header header, FileChannel channel) throws IOException {
+            SigningCheckpointCodec.Header header, FileChannel channel, boolean preserveRevisions) throws IOException {
         SigningCheckpointCodec.Writer writer = SigningCheckpointCodec.writer(channel, header);
         long[] ordinal = { 0L };
         long[] offset = { header.dataOffset() };
         snapshot.visit(record -> {
             if (excluded.contains(record.key().namespace())) return;
             byte[] frame = frame(engine, record, ordinal[0]);
-            writer.writeIndex(descriptor(record, frame, ordinal[0], offset[0]));
+            writer.writeIndex(descriptor(record, frame, ordinal[0], offset[0], preserveRevisions));
             offset[0] = Math.addExact(offset[0], frame.length);
             ordinal[0] = Math.incrementExact(ordinal[0]);
         });
@@ -141,7 +167,7 @@ final class SigningLedgerSnapshotExporter {
             if (excluded.contains(record.key().namespace())) return;
             byte[] frame = frame(engine, record, ordinal[0]);
             SigningCheckpointCodec.EntryDescriptor descriptor =
-                    descriptor(record, frame, ordinal[0], offset[0]);
+                    descriptor(record, frame, ordinal[0], offset[0], preserveRevisions);
             writer.writeValidatedFrame(descriptor, frame);
             offset[0] = Math.addExact(offset[0], frame.length);
             ordinal[0] = Math.incrementExact(ordinal[0]);
@@ -150,7 +176,7 @@ final class SigningLedgerSnapshotExporter {
     }
 
     private static SigningCheckpointCodec.EntryDescriptor descriptor(
-            SigningMvccIndex.SnapshotRecord record, byte[] frame, long ordinal, long offset) {
+            SigningMvccIndex.SnapshotRecord record, byte[] frame, long ordinal, long offset, boolean preserveRevisions) {
         SigningWalFrameCodec.Frame decoded;
         try {
             decoded = SigningWalFrameCodec.decode(frame);
@@ -158,7 +184,7 @@ final class SigningLedgerSnapshotExporter {
             throw new IllegalStateException("Synthesized snapshot frame is invalid", impossible);
         }
         return new SigningCheckpointCodec.EntryDescriptor(record.key().canonical(),
-                decoded.recordType(), offset, frame.length, ordinal + 1L, ordinal);
+                decoded.recordType(), offset, frame.length, preserveRevisions ? record.revision() : ordinal + 1L, ordinal);
     }
 
     private static byte[] frame(SigningLedgerStoreEngine engine,

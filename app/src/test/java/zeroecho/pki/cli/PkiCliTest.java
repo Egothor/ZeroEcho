@@ -528,8 +528,9 @@ class PkiCliTest {
 
     private Path configuration(String name) throws IOException {
         Path store = temporaryDirectory.resolve(name + "-store");
+        String storePath = store.toString().replace("\\", "/");
         return plan(name + "-config.json", "{\"version\":1,\"mode\":\"local\",\"operatorId\":\"test-operator\",\"publishers\":[],\"bindingProviders\":[],\"store\":{\"provider\":\"fs\",\"properties\":{\"root\":\""
-                + store + "\"}},\"audit\":{\"provider\":\"memory\",\"properties\":{\"size\":\"32\"}}}");
+                + storePath + "\"}},\"audit\":{\"provider\":\"memory\",\"properties\":{\"size\":\"32\"}}}");
     }
 
     private Path plan(String name, String content) throws IOException {

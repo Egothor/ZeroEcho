@@ -59,26 +59,25 @@ interface Props {
 /** Two-pane operation browser: a searchable, discoverability-filtered list + a runner. */
 export function OperationBrowser({ operations }: Props) {
   const descriptors = useOperationDescriptors();
-  const index = useMemo(() => indexDescriptors(descriptors.data), [descriptors.data]);
+  const index = useMemo(() => indexDescriptors(descriptors.isError ? undefined : descriptors.data),
+    [descriptors.data, descriptors.isError]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
 
-  // Until the catalog loads (or if it is unavailable) show all; once loaded,
-  // only operations this identity may invoke are shown at all — never merely
-  // disabled. The server remains the authority on every request.
-  const permitted = (id: string) => index.size === 0 || index.has(id);
+  // Discovery is authoritative even when the response is an empty set.
+  const permitted = (id: string) => index.has(id);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return operations
-      .filter((o) => permitted(o.id))
+      .filter((o) => o.available && permitted(o.id))
       .filter((o) => !q || o.title.toLowerCase().includes(q) || o.id.toLowerCase().includes(q))
       .slice()
       .sort((a, b) => Number(a.read) - Number(b.read) || a.title.localeCompare(b.title));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [operations, search, index]);
 
-  const activeId = selected ?? visible[0]?.id ?? null;
+  const activeId = visible.some((operation) => operation.id === selected) ? selected : visible[0]?.id ?? null;
 
   return (
     <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '340px 1fr' }, alignItems: 'start' }}>
@@ -132,7 +131,7 @@ export function OperationBrowser({ operations }: Props) {
       <Box>
         {descriptors.isError && (
           <Alert severity="warning" sx={{ mb: 2 }}>
-            Could not load the operation catalog. Showing the built-in operation set; the server remains authoritative.
+            Could not load the operation catalog. Operations remain unavailable until discovery succeeds.
           </Alert>
         )}
         {activeId ? (

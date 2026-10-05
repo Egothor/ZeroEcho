@@ -47,6 +47,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@generated': fileURLToPath(new URL('../pki-server/build/generated/schema', import.meta.url)),
     },
   },
   build: {

@@ -75,12 +75,36 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
     public static final String IMPLEMENTATION_ID = "bc.x509-verification";
 
     private static final int BUFFER_BYTES = 16 * 1024;
-    private static final Set<AlgorithmIdentity> SIGNATURES = Set.of(
-            BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384,
-            BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512, BootstrapAlgorithmIdentities.RSA_PSS_SHA256,
-            BootstrapAlgorithmIdentities.ECDSA_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA384,
-            BootstrapAlgorithmIdentities.ECDSA_SHA512, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
-            BootstrapAlgorithmIdentities.ED448_SIGNATURE, BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE);
+    private static final Set<AlgorithmIdentity> ML_DSA_SIGNATURES = Set.of(
+            BootstrapAlgorithmIdentities.ML_DSA_44_SIGNATURE,
+            BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE,
+            BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE);
+    private static final Set<AlgorithmIdentity> SLH_DSA_SIGNATURES = Set.of(
+            BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128S_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128F_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192S_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192F_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256S_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256F_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128S_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128F_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192S_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192F_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256S_SIGNATURE,
+            BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256F_SIGNATURE);
+    private static final Set<AlgorithmIdentity> SIGNATURES;
+    static {
+        Set<AlgorithmIdentity> all = new java.util.HashSet<>(Set.of(
+                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384,
+                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512, BootstrapAlgorithmIdentities.RSA_PSS_SHA256,
+                BootstrapAlgorithmIdentities.ECDSA_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA384,
+                BootstrapAlgorithmIdentities.ECDSA_SHA512, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
+                BootstrapAlgorithmIdentities.ED448_SIGNATURE,
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE));
+        all.addAll(ML_DSA_SIGNATURES);
+        all.addAll(SLH_DSA_SIGNATURES);
+        SIGNATURES = Set.copyOf(all);
+    }
 
     /** Creates a stateless X.509 verification executor. */
     public BcX509VerificationExecutor() {
@@ -97,7 +121,7 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
 
             @Override
             public String domainFingerprint() {
-                return "bc-x509-verification-v1:bootstrap-classic";
+                return "bc-x509-verification-v2:bootstrap-classic+pqc";
             }
 
             @Override
@@ -142,7 +166,13 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
         }
         byte[] nativePublicKey = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(publicKeyInfoDer);
         if (BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE.equals(signatureIdentity)) {
-            return verifyNamed(nativePublicKey, "SPHINCS+", signedContent, signature);
+            return verifyNamed(nativePublicKey, "SLH-DSA", signedContent, signature);
+        }
+        if (ML_DSA_SIGNATURES.contains(signatureIdentity)) {
+            return verifyNamed(nativePublicKey, "MLDSA", signedContent, signature);
+        }
+        if (SLH_DSA_SIGNATURES.contains(signatureIdentity)) {
+            return verifyNamed(nativePublicKey, "SLH-DSA", signedContent, signature);
         }
         if (!authority.bindings().resolve(signatureIdentity, X509AlgorithmRole.SIGNATURE_ALGORITHM)
                 .equals(BcX509AlgorithmAdapter.fromLib(algorithmIdentifier))) {

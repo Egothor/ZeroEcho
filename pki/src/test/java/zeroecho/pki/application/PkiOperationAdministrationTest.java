@@ -83,6 +83,42 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.SemanticIssuanceFixture;
 
 final class PkiOperationAdministrationTest {
+    @Test
+    void dashboardPublicationsAreScopedByAuthoritativeSourceAndExpiredCredentialsAreNotActive(@TempDir Path temporary) throws Exception {
+        ObservedBootstrap bootstrap = new ObservedBootstrap();
+        try (PkiSession session = open(temporary, bootstrap)) {
+            Fixture authority = fixture(bootstrap.store);
+            Credential first = bootstrap.store.getCredential(authority.first().credentialId()).orElseThrow();
+            Credential second = new Credential(new PkiId("binary-child"), new FormatId("publication-test-binary"),
+                    new IssuerRef(CHILD), new SubjectRef("CN=child"), first.validity(), "binary-child", first.publicKeyId(),
+                    first.profileBinding(), CredentialStatus.ISSUED, PkiTestRuntime.fixtureReference(bootstrap.store.stagedContent(),
+                    zeroecho.pki.api.Encoding.DER, new byte[]{1, 2, 3}), new SimpleAttributeSet());
+            bootstrap.store.putCredential(second);
+            for (Credential credential : List.of(first, second)) {
+                bootstrap.store.createPublicationRecord(new zeroecho.pki.api.publication.PublicationRecord(
+                        new PkiId("publication:" + credential.issuerRef().caId().value()), zeroecho.pki.api.publication.PublicationSourceType.CREDENTIAL,
+                        credential.credentialId(), credential.content(), new zeroecho.pki.api.publication.PublicationTarget(
+                                zeroecho.pki.api.publication.PublicationTargetType.HTTP, "destination"),
+                        zeroecho.pki.api.publication.PublicationStatus.PENDING, 0, Optional.empty(),
+                        IntermediateCreationFixture.CLOCK.instant(), IntermediateCreationFixture.CLOCK.instant(), Optional.empty(), Optional.empty()));
+            }
+            for (PkiId ca : List.of(ROOT, CHILD)) {
+                PkiOperationResult result = completed(session.operations(), new PkiOperation.QueryPublicationMetrics(ca));
+                assertEquals(new PkiOperationValue.IntegerValue(1), result.fields().get("publicationsPendingTotal"));
+                assertEquals(new PkiOperationValue.IntegerValue(0), result.fields().get("publicationsTerminalFailureTotal"));
+                PkiOperationResult certificates = completed(session.operations(), new PkiOperation.QueryCertificateMetrics(ca));
+                assertFalse(certificates.fields().containsKey("pendingRequestsTotal"));
+                assertTrue(certificates.fields().get("metricStates").toString().contains("CA_REQUEST_LIFECYCLE_UNAVAILABLE"));
+            }
+        }
+        try (PkiSession session = open(temporary, bootstrap, java.time.Clock.fixed(SemanticIssuanceFixture.AFTER,
+                java.time.ZoneOffset.UTC))) {
+            PkiOperationResult expired = completed(session.operations(), new PkiOperation.QueryCertificateMetrics(ROOT));
+            assertEquals(new PkiOperationValue.IntegerValue(0), expired.fields().get("activeTotal"));
+            assertEquals(new PkiOperationValue.IntegerValue(3), expired.fields().get("expiredTotal"));
+        }
+    }
+
     private static final PkiId ROOT = new PkiId("admin-root");
     private static final PkiId CHILD = new PkiId("admin-child");
     private static final PkiId MISSING = new PkiId("missing-admin-object");
@@ -363,10 +399,14 @@ final class PkiOperationAdministrationTest {
             IssuerGeneration childGeneration, IssuerChainPath childPath) { }
 
     private static PkiSession open(Path temporary, ObservedBootstrap bootstrap) {
+        return open(temporary, bootstrap, IntermediateCreationFixture.CLOCK);
+    }
+
+    private static PkiSession open(Path temporary, ObservedBootstrap bootstrap, java.time.Clock clock) {
         PkiSessionConfiguration configuration = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", temporary.resolve("store").toString())),
                 new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of());
-        PkiSession session = DefaultPkiSession.open(configuration, IntermediateCreationFixture.CLOCK, bootstrap);
+        PkiSession session = DefaultPkiSession.open(configuration, clock, bootstrap);
         bootstrap.calls.clear();
         return session;
     }

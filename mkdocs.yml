@@ -130,6 +130,14 @@ nav:
       - developer/library.md
       - developer/crypto-primer.md
       - developer/cryptography.md
+      - developer/stateful-signing.md
+      - developer/backup-format.md
+      - developer/metadata-benchmarks.md
+      - developer/guard.md
+      - developer/hybrid-kex.md
+      - developer/tag-engine.md
+      - developer/sdk-utilities.md
+      - developer/ext-module.md
       - developer/extending.md
   - Applications:
       - applications/index.md
@@ -140,6 +148,7 @@ nav:
               - deployment/requirements.md
               - deployment/containers.md
               - deployment/configuration.md
+              - deployment/remote-signing-provider.md
               - deployment/kubernetes.md
               - deployment/operations.md
               - deployment/security-hardening.md
@@ -153,7 +162,9 @@ nav:
               - admin/access-control.md
               - admin/audit-and-disclosure.md
               - admin/protocols.md
+              - admin/backup-restore.md
               - admin/command-line.md
+              - admin/operational-monitoring.md
           - Using certificates:
               - user/index.md
               - user/accessing.md
@@ -166,5 +177,8 @@ nav:
       - reference/admin-api.md
       - reference/cli-reference.md
       - reference/configuration-reference.md
+      - reference/bc-migration.md
+      - reference/certificate-profile-schema.md
       - reference/security-model.md
+      - reference/operation-permissions.md
       - reference/glossary.md

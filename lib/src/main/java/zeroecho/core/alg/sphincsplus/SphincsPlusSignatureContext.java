@@ -39,9 +39,12 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import org.bouncycastle.pqc.jcajce.interfaces.SPHINCSPlusPublicKey;
-import org.bouncycastle.pqc.jcajce.spec.SPHINCSPlusParameterSpec;
+import org.bouncycastle.jcajce.interfaces.SLHDSAPublicKey;
+import org.bouncycastle.jcajce.spec.SLHDSAParameterSpec;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.alg.common.sig.GenericJcaSignatureContext;
@@ -54,8 +57,8 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
  * verify.
  *
  * <p>
- * This context uses the Bouncy Castle PQC provider to obtain a JCA
- * {@code Signature} instance for the "SPHINCSPlus" algorithm and exposes it via
+ * This context uses the Bouncy Castle provider to obtain a JCA
+ * {@code Signature} instance for the "SLH-DSA" algorithm and exposes it via
  * the {@link SignatureContext} and {@link TagEngine} contracts. In produce
  * (SIGN) mode, the wrapped stream emits the original data followed by a
  * detached signature trailer. In verify (VERIFY) mode, the wrapped stream emits
@@ -75,7 +78,7 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
  * SPHINCS+ signatures have fixed byte lengths that depend on the parameter set
  * attached to the key. When constructed with a public key, this context
  * resolves the expected signature length from
- * {@link org.bouncycastle.pqc.jcajce.spec.SPHINCSPlusParameterSpec} on the key.
+ * {@link SLHDSAParameterSpec} on the key.
  * </p>
  *
  * <h3>Canonical sizes (bytes)</h3>
@@ -123,8 +126,11 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
  * @since 1.0
  */
 public final class SphincsPlusSignatureContext implements SignatureContext {
-    private static final String ALG = "SPHINCSPlus";
-    private static final String PROVIDER = "BCPQC";
+    private static final String ALG = "SLH-DSA";
+    private static final String PROVIDER = "BC";
+
+    private static final Pattern PARAM_PATTERN = Pattern
+            .compile("^slh-dsa-(sha2|shake)-(128|192|256)([fs])(?:-with-[a-z0-9]+)?$");
 
     private final GenericJcaSignatureContext delegate;
 
@@ -132,7 +138,7 @@ public final class SphincsPlusSignatureContext implements SignatureContext {
      * Creates a SPHINCS+ signing context bound to a private key.
      *
      * <p>
-     * The JCA engine is obtained from the "BCPQC" provider using the "SPHINCSPlus"
+     * The JCA engine is obtained from the "BC" provider using the "SLH-DSA"
      * algorithm name. The signature length resolver probes the JCA engine to
      * determine the produced signature size.
      * </p>
@@ -155,7 +161,7 @@ public final class SphincsPlusSignatureContext implements SignatureContext {
      *
      * <p>
      * The expected signature length is derived from the public key's
-     * {@link org.bouncycastle.pqc.jcajce.spec.SPHINCSPlusParameterSpec}.
+     * {@link SLHDSAParameterSpec}.
      * </p>
      *
      * @param algorithm the parent cryptographic algorithm abstraction; must not be
@@ -171,55 +177,49 @@ public final class SphincsPlusSignatureContext implements SignatureContext {
     }
 
     /**
-     * Resolves the canonical signature length from the SPHINCS+ parameter set on a
+     * Resolves the canonical SLH-DSA signature length (bytes) from an SLH-DSA
      * public key.
      *
      * <p>
-     * Expected key type is Bouncy Castle's
-     * {@link org.bouncycastle.pqc.jcajce.interfaces.SPHINCSPlusPublicKey}.
-     * Supported parameter names match the pattern
-     * {@code <hash>-<level><variant>(-robust|-simple)?}, for example
-     * {@code shake-256s-robust}, {@code sha2-192f-simple}, or {@code haraka-128s}.
+     * SPHINCS+ was standardized as SLH-DSA (FIPS 205). The BC provider exposes an
+     * {@link SLHDSAParameterSpec} whose
+     * {@linkplain SLHDSAParameterSpec#getName() name} encodes the family, security
+     * level, and variant. The name is normalized to lowercase with hyphens before
+     * matching.
      * </p>
      *
-     * @param pk a SPHINCS+ public key carrying a parameter spec
+     * @param pk an SLH-DSA public key
      * @return the canonical signature length in bytes
      * @throws GeneralSecurityException if the key type or parameter spec is missing
      *                                  or unrecognized
      */
     private static int sigLenFromPublicKey(PublicKey pk) throws GeneralSecurityException {
-        if (!(pk instanceof SPHINCSPlusPublicKey spk)) {
-            throw new GeneralSecurityException("Expected a BouncyCastle SPHINCS+ public key (BCPQC)");
+        if (!(pk instanceof SLHDSAPublicKey slhPk)) {
+            throw new GeneralSecurityException("Expected a BouncyCastle SLH-DSA public key (BC provider)");
         }
-        final SPHINCSPlusParameterSpec ps = spk.getParameterSpec();
+        SLHDSAParameterSpec ps = slhPk.getParameterSpec();
         if (ps == null) {
-            throw new GeneralSecurityException("Missing SPHINCS+ parameter spec on public key");
+            throw new GeneralSecurityException("Missing SLH-DSA parameter spec on public key");
         }
-        final String name = ps.getName(); // e.g. "shake-256s-robust", "sha2-192f-simple", "haraka-128s"
+        String name = ps.getName();
         if (name == null || name.isEmpty()) {
-            throw new GeneralSecurityException("Unknown SPHINCS+ parameter (no name)");
+            throw new GeneralSecurityException("Unknown SLH-DSA parameter (no name)");
         }
 
-        // Pattern: <hash>-<level><variant>(-robust|-simple)?
-        // Examples: shake-256s-robust, sha2-192f-simple, haraka-128s
-        final java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("^[a-z0-9]+-(128|192|256)([sf])(?:-(robust|simple))?$").matcher(name);
+        String normalized = name.toLowerCase(Locale.ROOT).replace('_', '-');
+        Matcher m = PARAM_PATTERN.matcher(normalized);
         if (!m.matches()) {
-            throw new GeneralSecurityException("Cannot parse SPHINCS+ security level/variant from: " + name);
+            throw new GeneralSecurityException("Cannot parse SLH-DSA parameter from: " + name);
         }
-        final int level = Integer.parseInt(m.group(1));
-        final char var = m.group(2).charAt(0); // 's' or 'f'
-        final boolean isSmall = var == 's';
+        int level = Integer.parseInt(m.group(2));
+        char var = m.group(3).charAt(0);
+        boolean isSmall = var == 's';
 
-        // Canonical signature sizes (bytes) for SPHINCS+ per spec:
-        // 128s: 7856, 128f: 17088
-        // 192s: 16224, 192f: 35664
-        // 256s: 29792, 256f: 49856
         return switch (level) {
             case 128 -> isSmall ? 7_856 : 17_088;
             case 192 -> isSmall ? 16_224 : 35_664;
             case 256 -> isSmall ? 29_792 : 49_856;
-            default -> throw new GeneralSecurityException("Unsupported SPHINCS+ level: " + level);
+            default -> throw new GeneralSecurityException("Unsupported SLH-DSA level: " + level);
         };
     }
 

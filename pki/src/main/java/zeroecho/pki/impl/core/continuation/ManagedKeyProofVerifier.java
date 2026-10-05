@@ -39,10 +39,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.GeneralSecurityException;
-import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.SignatureException;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Optional;
@@ -141,8 +139,10 @@ final class ManagedKeyProofVerifier {
         SignatureInteropProfile profile = SignatureInteropProfiles.resolve(identity.canonicalForm())
                 .orElseThrow(() -> new IllegalStateException("Managed key proof verification profile unavailable"));
         byte[] nativeSpki = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(spki);
-        String keyAlgorithm = "ECDSA".equals(profile.keyAlgorithmId()) ? "EC" : profile.keyAlgorithmId();
-        PublicKey key = KeyFactory.getInstance(keyAlgorithm).generatePublic(new X509EncodedKeySpec(nativeSpki));
+        // Parse through the same provider-neutral PKIX boundary as certificate
+        // verification. The default JCA ML-DSA factory may return a JDK key that
+        // cannot be used by the installed ZeroEcho verification context.
+        PublicKey key = Pkix.publicKeyFromSubjectPublicKeyInfo(nativeSpki);
         verify(profile, key, challenge, signature.bytes());
     }
 

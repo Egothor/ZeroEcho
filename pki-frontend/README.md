@@ -12,7 +12,7 @@ the `verifyBouncyCastleConfinement` gate. It compiles against nothing in
 ## What it does
 
 - Renders typed, validated forms for the **entire** server operation catalog
-  (107 operations — 41 PKI, 10 signing, 56 control), grouped into administration areas
+  generated from the server catalog, grouped into administration areas
   (authorities, issuer generations, profiles, requests, issuance, lifecycle,
   revocation, status/CRLs, publication, principals, roles & grants, approvals,
   break-glass, disclosure, audit, ACME, OCSP, repository aliases, configuration),
@@ -40,6 +40,7 @@ administration surface and its current boundaries.
 ## Develop
 
 ```bash
+../gradlew -p .. :pki-server:generateSchema # required before direct npm commands
 npm install
 npm run dev          # Vite dev server on http://localhost:5173
 ```
@@ -74,8 +75,14 @@ npm run build        # production bundle -> dist/
 npm run test:e2e     # Playwright browser tests (demo mode by default)
 ```
 
-Unit tests cover the API client, the operation catalog integrity (asserts the
-full 107-operation contract), request-envelope construction (realm vs authority
+Direct npm commands require the generated catalog above; rerun generation after
+server catalog changes. Gradle frontend tasks generate it automatically. JSON and
+TypeScript outputs stay under `pki-server/build/generated/schema`, never `src/`.
+The nginx source image uses a Java 25 Gradle stage to generate this input before
+its Node build. The `prebuilt` target consumes an existing bundle independently.
+
+Unit tests cover the API client, exact generated catalog field and permission
+parity, request-envelope construction (realm vs authority
 scoping), and the demo backend (persona discoverability, denial, approval flow).
 The default Playwright suite drives a real browser against the built demo bundle.
 `E2E_BASE_URL` changes where that bundle is served and disables the preview server;

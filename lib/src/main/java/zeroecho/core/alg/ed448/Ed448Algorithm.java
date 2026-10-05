@@ -37,6 +37,11 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -95,6 +100,9 @@ import zeroecho.core.spec.VoidSpec;
  * @since 1.0
  */
 public final class Ed448Algorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs and wires the Ed448 algorithm definition.
      *
@@ -161,4 +169,16 @@ public final class Ed448Algorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(Ed448PublicKeySpec.class, new Ed448PublicKeyBuilder());
         registerPrivateKeyImporter(Ed448PrivateKeySpec.class, new Ed448PrivateKeyBuilder());
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("Ed448", "Ed448 (224-bit)", SecurityLevel.classical(224), Ed448KeyGenSpec.defaultSpec())
+        );
+    }
+
 }

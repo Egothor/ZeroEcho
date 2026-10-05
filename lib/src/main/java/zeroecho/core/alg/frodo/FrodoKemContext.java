@@ -44,12 +44,12 @@ import java.util.Objects;
 import javax.security.auth.DestroyFailedException;
 
 import org.bouncycastle.crypto.SecretWithEncapsulation;
-import org.bouncycastle.pqc.crypto.frodo.FrodoKEMExtractor;
-import org.bouncycastle.pqc.crypto.frodo.FrodoKEMGenerator;
-import org.bouncycastle.pqc.crypto.frodo.FrodoPrivateKeyParameters;
-import org.bouncycastle.pqc.crypto.frodo.FrodoPublicKeyParameters;
-import org.bouncycastle.pqc.crypto.util.PrivateKeyFactory;
-import org.bouncycastle.pqc.crypto.util.PublicKeyFactory;
+import org.bouncycastle.crypto.kems.FrodoKEMExtractor;
+import org.bouncycastle.crypto.kems.FrodoKEMGenerator;
+import org.bouncycastle.crypto.params.FrodoKEMPrivateKeyParameters;
+import org.bouncycastle.crypto.params.FrodoKEMPublicKeyParameters;
+import org.bouncycastle.crypto.util.PrivateKeyFactory;
+import org.bouncycastle.crypto.util.PublicKeyFactory;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.context.KemContext;
@@ -175,7 +175,7 @@ public final class FrodoKemContext implements KemContext {
             throw new IllegalStateException("Not initialized for ENCAPSULATE");
         }
         try {
-            final FrodoPublicKeyParameters keyParam = (FrodoPublicKeyParameters) PublicKeyFactory
+            final FrodoKEMPublicKeyParameters keyParam = (FrodoKEMPublicKeyParameters) PublicKeyFactory
                     .createKey(key.getEncoded());
             FrodoKEMGenerator gen = new FrodoKEMGenerator(new SecureRandom());
             SecretWithEncapsulation res = gen.generateEncapsulated(keyParam);
@@ -208,7 +208,7 @@ public final class FrodoKemContext implements KemContext {
             throw new IllegalStateException("Not initialized for DECAPSULATE");
         }
         try {
-            final FrodoPrivateKeyParameters keyParam = (FrodoPrivateKeyParameters) PrivateKeyFactory
+            final FrodoKEMPrivateKeyParameters keyParam = (FrodoKEMPrivateKeyParameters) PrivateKeyFactory
                     .createKey(key.getEncoded());
             FrodoKEMExtractor ex = new FrodoKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);

@@ -42,8 +42,12 @@ import java.util.TreeMap;
 import zeroecho.core.util.RandomSupport;
 
 /**
- * A utility class for generating pseudo-random textual content based on
- * predefined character frequency distributions.
+ * <strong>Experimental.</strong> This class is part of the {@code zeroecho.ext}
+ * module, which carries no API stability guarantees and may change or be removed
+ * in any future release.
+ *
+ * <p>A utility class for generating pseudo-random textual content based on
+ * predefined character frequency distributions.</p>
  * <p>
  * The {@code TextualCodec} class contains a nested {@link Generator} class that
  * can be configured with a set of character frequencies (e.g., English letter
@@ -91,13 +95,20 @@ public final class TextualCodec { // NOPMD
                 Map.entry('s', 6.3), Map.entry('t', 9.1), Map.entry('u', 2.8), Map.entry('v', 0.98),
                 Map.entry('w', 2.4), Map.entry('x', 0.15), Map.entry('y', 2.0), Map.entry('z', 0.074),
                 Map.entry(' ', 25.4));
-        /**
-         * A default generator using the {@link #ENGLISH} frequency distribution.
-         */
-        public final static Generator EN = new Generator(ENGLISH);
 
         private Character lastChar = '~';
         private final Queue<Character> backlog = new ArrayDeque<>();
+        /**
+         * Creates a new generator using the {@link #ENGLISH} frequency distribution.
+         *
+         * <p>{@code Generator} is not thread-safe. This factory returns a fresh instance
+         * on every call so each thread can hold its own.</p>
+         *
+         * @return a new {@code Generator} seeded with the English distribution
+         */
+        public static Generator english() {
+            return new Generator(ENGLISH);
+        }
 
         /**
          * Constructs a new {@code Generator} with the specified character frequency
@@ -129,7 +140,7 @@ public final class TextualCodec { // NOPMD
          * @return a randomly generated string
          */
         public String getText(int length) {
-            StringBuffer sb = new StringBuffer();
+            StringBuilder sb = new StringBuilder(length);
 
             while (length-- > 0) { // NOPMD
                 sb.append(getChar());

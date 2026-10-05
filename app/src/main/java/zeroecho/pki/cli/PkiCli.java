@@ -38,11 +38,13 @@ import java.io.OutputStream;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.PkiOperationFailure;
@@ -76,6 +78,8 @@ public final class PkiCli {
     private static final java.time.Duration REMOTE_POLL_INTERVAL = java.time.Duration.ofMillis(100);
     private static final RemoteExchangeFactory DEFAULT_EXCHANGE_FACTORY = target ->
             JdkHttpExchange.open(target.baseUri(), PkiRemoteTls.createContext(target, System::getenv));
+    private static final Set<String> BOOLEAN_ARGUMENT_VALUES = Set.of("requireApproval");
+    private static final Set<String> SET_ARGUMENT_VALUES = Set.of("allowedAuthorityIds", "requiredSanDomains");
     private static final Map<String, String> OPERATION_ARGUMENT_NAMES = Map.ofEntries(
             Map.entry("--profile-file", "profileFile"), Map.entry("--profile-id", "profileId"),
             Map.entry("--profile-version", "profileVersion"), Map.entry("--ca-id", "caId"),
@@ -101,7 +105,18 @@ public final class PkiCli {
             Map.entry("--expected-lifecycle-revision", "expectedLifecycleRevision"),
             Map.entry("--expected-lifecycle-record-commitment", "expectedLifecycleRecordCommitment"),
             Map.entry("--expected-challenge-record-commitment", "expectedChallengeRecordCommitment"),
-            Map.entry("--response", "response"));
+            Map.entry("--response", "response"),
+            Map.entry("--label", "label"),
+            Map.entry("--offset", "offset"),
+            Map.entry("--id", "id"),
+            Map.entry("--display-name", "displayName"),
+            Map.entry("--certificate-profile-id", "certificateProfileId"),
+            Map.entry("--challenge-password-hash", "challengePasswordHash"),
+            Map.entry("--protection-policy", "protectionPolicy"),
+            Map.entry("--allowed-authority-ids", "allowedAuthorityIds"),
+            Map.entry("--subject-dn-pattern", "subjectDnPattern"),
+            Map.entry("--required-san-domains", "requiredSanDomains"),
+            Map.entry("--require-approval", "requireApproval"));
     private static final int RUN_TOKEN_COUNT = 2;
 
     private PkiCli() {
@@ -132,7 +147,7 @@ public final class PkiCli {
             try {
                 return new zeroecho.core.storage.KeyringPassword(secret);
             } finally {
-                java.util.Arrays.fill(secret, '\0');
+                Arrays.fill(secret, '\0');
             }
         });
     }
@@ -215,8 +230,9 @@ public final class PkiCli {
         }
         try {
             renderer.render(execution, invocation.outputMode(), invocation.batch(), output);
-        } catch (IOException failure) {
-            return PkiExitCodes.RESOURCE_FAILURE;
+        } catch (IOException ignored) {
+            // Render failure is an output channel issue; the operation itself completed.
+            // Return the operation's exit code to prevent callers from retrying a completed operation.
         }
         return PkiExitCodes.from(execution);
     }
@@ -226,6 +242,14 @@ public final class PkiCli {
     private static int executeRemote(Remote remote, PkiOutputMode mode, java.time.Duration pendingWait,
             PkiOutputRenderer renderer, RemoteExchangeFactory factory, CancellationSignal cancellation,
             OutputStream output) {
+        try {
+            if (!PkiLocalCommand.INSPECT.equals(remote.operationId())) {
+                PkiSchemaValidator.validateIfKnown(remote.operationId(), remote.arguments());
+            }
+        } catch (IllegalArgumentException invalid) {
+            return renderFailure(renderer, mode, "INVALID_INVOCATION", "INVOCATION_INVALID",
+                    PkiExitCodes.INVALID_INVOCATION, output);
+        }
         PkiHttpExchange exchange;
         try {
             exchange = factory.open(remote.target());
@@ -248,7 +272,8 @@ public final class PkiCli {
         } catch (PkiRemoteTransportException failure) {
             return renderFailure(renderer, mode, failure.category(), failure.code(), failure.exitCode(), output);
         } catch (IOException failure) {
-            return PkiExitCodes.RESOURCE_FAILURE;
+            return renderFailure(renderer, mode, "RESOURCE_FAILURE", "REMOTE_IO_FAILED",
+                    PkiExitCodes.RESOURCE_FAILURE, output);
         } catch (RuntimeException failure) {
             return renderFailure(renderer, mode, "INTERNAL_FAILURE", "REMOTE_INTERNAL_FAILURE",
                     PkiExitCodes.INTERNAL_FAILURE, output);
@@ -330,7 +355,7 @@ public final class PkiCli {
             throw new IllegalArgumentException("Explicit completion is local only");
         }
         if (PkiLocalCommand.INSPECT.equals(operation)) {
-            if (!arguments.fields().keySet().equals(java.util.Set.of("operationId"))
+            if (!arguments.fields().keySet().equals(Set.of("operationId"))
                     || remoteOptions.authorityId() != null || remoteOptions.approvalId() != null
                     || remoteOptions.deadline() != null || pendingWaitSelected) {
                 throw new IllegalArgumentException("Signing inspection accepts only operationId");
@@ -358,8 +383,20 @@ public final class PkiCli {
         for (int index = 0; index < tokens.size(); index += 2) {
             String name = argumentName(tokens.get(index));
             String raw = tokens.get(index + 1);
-            PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)
-                    ? new PkiOperationValue.IntegerValue(parseLong(raw)) : new PkiOperationValue.Text(raw);
+            PkiOperationValue value;
+            if ("limit".equals(name) || "offset".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)) {
+                value = new PkiOperationValue.IntegerValue(parseLong(raw));
+            } else if (BOOLEAN_ARGUMENT_VALUES.contains(name)) {
+                value = new PkiOperationValue.BooleanValue(Boolean.parseBoolean(raw));
+            } else if (SET_ARGUMENT_VALUES.contains(name)) {
+                value = new PkiOperationValue.ListValue(
+                        Arrays.stream(raw.split(",")).map(String::trim)
+                                .filter(s -> !s.isEmpty())
+                                .<PkiOperationValue>map(PkiOperationValue.Text::new)
+                                .toList());
+            } else {
+                value = new PkiOperationValue.Text(raw);
+            }
             if (arguments.putIfAbsent(name, value) != null) {
                 throw new IllegalArgumentException("Operation argument is duplicated");
             }
@@ -436,8 +473,8 @@ public final class PkiCli {
         writer.println("  Local signing executes synchronously; explicit invocation is local root approval.");
         writer.println("  signing.operation.inspect --operation-id <id> (local read or remote GET; no --pending-wait)");
         writer.println("  signing.operation.complete --operation-id <id> (explicit recovery, local only)");
-        writer.println("  Remote mode accepts any dotted operation id (including security.*, acme.*, ocsp.*,"
-                + " repository.*);");
+        writer.println("  Remote mode accepts any dotted operation id (including security.*, acme.*, ocsp.*,");
+        writer.println("    repository.*, est.*, scep.*, cmp.*, enrollment.*);");
         writer.println("  arguments use --arg name=value, --arg-int name=value, --arg-bool name=true|false,"
                 + " or the known --option spellings.");
         writer.println("  Passwords are read only from the named environment variables, never from the"
@@ -502,6 +539,34 @@ public final class PkiCli {
         writer.println("      --expected-lifecycle-record-commitment <value> --expected-challenge-record-commitment <value>");
         writer.println("      --response <unpadded-base64url>");
         writer.println("  credential.confirmation.pending.revoke --credential-id <id> [--justification <text>]");
+        writer.println("Remote operations (enrollment protocol endpoints — remote mode only):");
+        writer.println("  est.endpoint.register --label <label> --authority-id <id> --profile-id <id>");
+        writer.println("  est.endpoint.deregister --label <label>");
+        writer.println("  est.endpoint.inspect --label <label>");
+        writer.println("  est.endpoint.list --offset <n> --limit <1..1000>");
+        writer.println("  scep.endpoint.register --label <label> --authority-id <id> --profile-id <id>"
+                + " --challenge-password-hash <sha256hex>");
+        writer.println("  scep.endpoint.deregister --label <label>");
+        writer.println("  scep.endpoint.inspect --label <label>");
+        writer.println("  scep.endpoint.list --offset <n> --limit <1..1000>");
+        writer.println("  cmp.endpoint.register --label <label> --authority-id <id> --profile-id <id>"
+                + " --protection-policy SIGNATURE_BASED|SHARED_SECRET_MAC");
+        writer.println("  cmp.endpoint.deregister --label <label>");
+        writer.println("  cmp.endpoint.inspect --label <label>");
+        writer.println("  cmp.endpoint.list --offset <n> --limit <1..1000>");
+        writer.println("Remote operations (enrollment profiles — remote mode only):");
+        writer.println("  enrollment.profile.register --id <id> --display-name <name>"
+                + " --certificate-profile-id <id> --require-approval true|false");
+        writer.println("    [--allowed-authority-ids ca1,ca2,...] [--subject-dn-pattern <regex>]");
+        writer.println("    [--required-san-domains dom1,dom2,...]");
+        writer.println("  enrollment.profile.update --id <id> --display-name <name>"
+                + " --certificate-profile-id <id> --state ACTIVE|SUSPENDED --require-approval true|false");
+        writer.println("    [--allowed-authority-ids ca1,ca2,...] [--subject-dn-pattern <regex>]");
+        writer.println("    [--required-san-domains dom1,dom2,...]");
+        writer.println("  enrollment.profile.inspect --id <id>");
+        writer.println("  enrollment.profile.list --offset <n> --limit <1..1000>");
+        writer.println("  enrollment.profile.activate --id <id>");
+        writer.println("  enrollment.profile.suspend --id <id>");
         writer.flush();
     }
 
@@ -577,7 +642,7 @@ public final class PkiCli {
     // Mutable parsing accumulator; behavior belongs to the enclosing CLI parser after validation.
     @SuppressWarnings("PMD.DataClass")
     private static final class RemoteOptions {
-        private final java.util.Set<String> supplied = new java.util.HashSet<>();
+        private final Set<String> supplied = new java.util.HashSet<>();
         private String url;
         private String clientKeystore;
         private String clientKeystorePasswordEnv;

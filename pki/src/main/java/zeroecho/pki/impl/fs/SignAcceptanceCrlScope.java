@@ -280,6 +280,12 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
             SignWorkflowStore.AcceptanceCommand accepted, DomainCommandEncoding.Decoded command,
             X509Certificate candidate, PkiId authority, ScopeSerialReservation.SigningOwner owner,
             boolean issuance) throws IOException {
+        if (!issuance) {
+            String frozen = command.field(10);
+            require(frozen.equals(candidate.getSubjectX500Principal().getName(X500Principal.RFC2253))
+                    || frozen.equals(Pkix.distinguishedNameString(
+                            Pkix.parseDistinguishedName(candidate.getSubjectX500Principal().getEncoded()))));
+        }
         IssuerGeneration generation = store.getIssuerGeneration(new PkiId(command.field(issuance ? 1 : 3)))
                 .orElseThrow(SignAcceptanceCrlScope::invalid);
         IssuerChainPath path = store.getIssuerChainPath(new PkiId(command.field(issuance ? 2 : 4)))

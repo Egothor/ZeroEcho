@@ -36,9 +36,10 @@
  * high-level SDK ({@code zeroecho.sdk}) kept together in one artifact/module.
  */
 module zeroecho.lib {
-    // BouncyCastle is an internal implementation detail confined to this module.
+    // BC implementation is confined here; ElgamalParamSpec.parameters() deliberately
+    // exposes a provider type for source/binary compatibility.
     requires org.bouncycastle.pkix;
-    requires org.bouncycastle.provider;
+    requires transitive org.bouncycastle.provider;
     requires org.bouncycastle.util;
     // Conflux marshalling (automatic module, derived from the jar file name).
     requires conflux;
@@ -59,8 +60,11 @@ module zeroecho.lib {
     exports zeroecho.core.alg.mldsa;
     exports zeroecho.core.alg.rsa;
     exports zeroecho.core.alg.slhdsa;
+    exports zeroecho.core.alg.lms;
     exports zeroecho.core.alg.sphincsplus;
     exports zeroecho.core.alg.xdh;
+    exports zeroecho.core.alg.xmss;
+    exports zeroecho.core.alg.xwing;
     exports zeroecho.core.context;
     exports zeroecho.core.err;
     exports zeroecho.core.io;
@@ -87,9 +91,12 @@ module zeroecho.lib {
     // BouncyCastle implementation in zeroecho.pkix.bc stays internal to this module.
     exports zeroecho.pkix;
     exports zeroecho.pkix.cert;
+    exports zeroecho.pkix.cmp;
+    exports zeroecho.pkix.ct;
     exports zeroecho.pkix.crl;
     exports zeroecho.pkix.csr;
     exports zeroecho.pkix.ocsp;
+    exports zeroecho.pkix.scep;
     exports zeroecho.pkix.sign;
     exports zeroecho.pkix.spi;
 
@@ -121,7 +128,10 @@ module zeroecho.lib {
             zeroecho.core.alg.ntruprime.SntruPrimeAlgorithm,
             zeroecho.core.alg.rsa.RsaAlgorithm,
             zeroecho.core.alg.saber.SaberAlgorithm,
+            zeroecho.core.alg.lms.LmsAlgorithm,
             zeroecho.core.alg.slhdsa.SlhDsaAlgorithm,
             zeroecho.core.alg.sphincsplus.SphincsPlusAlgorithm,
-            zeroecho.core.alg.xdh.XdhAlgorithm;
+            zeroecho.core.alg.xdh.XdhAlgorithm,
+            zeroecho.core.alg.xmss.XmssAlgorithm,
+            zeroecho.core.alg.xwing.XWingAlgorithm;
 }

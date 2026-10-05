@@ -173,10 +173,19 @@ public final class IntermediateCreationFixture {
 
     /** Adds a real parent-to-anchor chain for an internally proved child. */
     public IntermediateCreateCommand intermediateParent(PkiStore store, int pathLength, boolean selfIssued) throws Exception {
+        return intermediateParent(store, pathLength, selfIssued ? "CN=Parent" : "CN=Middle", false);
+    }
+
+    /** Adds a pre-remediation authority whose metadata uses the BC display order. */
+    public IntermediateCreateCommand legacyIntermediateParent(PkiStore store, int pathLength) throws Exception {
+        return intermediateParent(store, pathLength, "CN=Legacy Middle,C=CZ", true);
+    }
+
+    private IntermediateCreateCommand intermediateParent(PkiStore store, int pathLength, String subject, boolean legacy) throws Exception {
         PkiId middle = new PkiId("middle-authority");
         KeyRef middleKey = new KeyRef("middle-key");
         KeyPair middlePair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
-        String subject = selfIssued ? "CN=Parent" : "CN=Middle";
+        String metadataSubject = legacy ? Pkix.distinguishedNameString(Pkix.parseDistinguishedName(new X500Principal(subject).getEncoded())) : subject;
         CaRecord root = store.getCa(CA).orElseThrow();
         IssuerChainPath rootPath = store.getIssuerChainPath(root.issuanceChainPathId()).orElseThrow();
         byte[] tbs = Pkix.certificateBuilder().serialNumber(BigInteger.TWO).issuer(new X500Principal("CN=Parent"))
@@ -190,7 +199,7 @@ public final class IntermediateCreationFixture {
         IssuerChainPath path = IssuerChainPath.create(middle, generation, List.of(credentialId, rootPath.orderedCredentialIds().getFirst()));
         CertificateProfileRef profile = store.requireActiveProfile("intermediate-ca").reference();
         store.putCredential(new Credential(credentialId, new FormatId("x509"),
-                new IssuerRef(CA, root.currentIssuanceIssuerId(), rootPath.pathId()), new SubjectRef(subject),
+                new IssuerRef(CA, root.currentIssuanceIssuerId(), rootPath.pathId()), new SubjectRef(metadataSubject),
                 new Validity(NOW.minusSeconds(3600), NOW.plus(Duration.ofDays(180))), "2",
                 new PkiId("spki:" + hash(middlePair.getPublic().getEncoded())), new CaProfileBinding(profile), CredentialStatus.ISSUED,
                 PkiTestRuntime.stageCredential(store, der), new SimpleAttributeSet()));
@@ -198,7 +207,7 @@ public final class IntermediateCreationFixture {
         store.putIssuerGeneration(new IssuerGeneration(generation, middle, credentialId, middleKey, IssuerGenerationState.ACTIVE,
                 commitment, commitment));
         store.putIssuerChainPath(path);
-        store.putCa(new CaRecord(middle, CaKind.INTERMEDIATE, CaState.ACTIVE, middleKey, new SubjectRef(subject),
+        store.putCa(new CaRecord(middle, CaKind.INTERMEDIATE, CaState.ACTIVE, middleKey, new SubjectRef(metadataSubject),
                 List.of(generation), generation, path.pathId()));
         return new IntermediateCreateCommand(new FormatId("x509"), middle, new SubjectRef("CN=Grandchild"), "intermediate-ca",
                 CHILD_KEY, new SimpleAttributeSet());

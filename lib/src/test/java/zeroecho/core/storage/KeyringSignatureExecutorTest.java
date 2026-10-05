@@ -105,6 +105,25 @@ final class KeyringSignatureExecutorTest {
     }
 
     @Test
+    void rejectsStatefulStoredMetadataAndActualKeysBeforeSessionOrContent() throws Exception {
+        for (String algorithm : java.util.List.of("LMS", "XMSS")) {
+            KeyringStore mockedStore = mock(KeyringStore.class);
+            ZeroEchoSession session = mock(ZeroEchoSession.class);
+            PrivateKey key = mock(PrivateKey.class);
+            when(key.getAlgorithm()).thenReturn(algorithm);
+            when(mockedStore.getPrivateWithId(PRIVATE_ALIAS))
+                    .thenReturn(new KeyringStore.PrivateWithId("RSA", key));
+            TestContent content = new TestContent(() -> { throw new AssertionError("No content read"); });
+            KeyringSignatureExecutor.Failure failure = assertThrows(KeyringSignatureExecutor.Failure.class,
+                    () -> new KeyringSignatureExecutor(mockedStore, session).sign(PRIVATE_ALIAS,
+                            BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, content, CancellationSignal.NONE));
+            assertEquals(KeyringSignatureExecutor.FailureCode.ALGORITHM_MISMATCH, failure.code());
+            org.mockito.Mockito.verifyNoInteractions(session);
+            assertEquals(0, content.openCount.get());
+        }
+    }
+
+    @Test
     void signsMultipleBuffersAndReturnedSignatureVerifies() throws Exception {
         System.out.println("signsMultipleBuffersAndReturnedSignatureVerifies");
         byte[] payload = new byte[96 * 1024 + 37];

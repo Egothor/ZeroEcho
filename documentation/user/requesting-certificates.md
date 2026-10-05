@@ -79,12 +79,12 @@ track and act on the request.
     openssl req -in example.csr -outform DER -out example.der
 
     # Submit it over mutual TLS. request.import takes the format id and the
-    # base64-encoded DER CSR; the CLI reads the file and encodes it for you.
+    # base64-encoded DER CSR in CSR_B64 (encode example.der before submission).
     zeroecho pki request.import \
       --url https://pki.example.com:8443 \
       --client-keystore me.p12 --client-keystore-password-env PKI_P12_PASSWORD \
       --format-id x509 \
-      --encoding DER --request-file example.der \
+      --arg "encoded=$CSR_B64" \
       --output json
     ```
 

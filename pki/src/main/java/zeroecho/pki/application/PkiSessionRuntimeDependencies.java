@@ -48,12 +48,14 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofProvider;
  * @param auditSink optional precomposed lifecycle-owned audit sink
  * @param keyPossessionProofProviders explicitly trusted key-possession proof providers
  * @param credentialConfirmationProofPolicy optional server-controlled proof runtime policy
+ * @param dashboardLiveSource server-layer live counters for dashboard metrics; defaults to {@link DashboardLiveSource#NONE}
  */
 // The proof-policy component name defines the exported runtime-wiring accessor.
 @SuppressWarnings("PMD.LongVariable")
 public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider,
         Optional<AuditSink> auditSink, List<KeyPossessionProofProvider> keyPossessionProofProviders,
-        Optional<CredentialConfirmationProofRuntimePolicy> credentialConfirmationProofPolicy) {
+        Optional<CredentialConfirmationProofRuntimePolicy> credentialConfirmationProofPolicy,
+        DashboardLiveSource dashboardLiveSource) {
 
     /**
      * Creates dependencies without an externally composed audit sink.
@@ -61,7 +63,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      * @param keyringUnlockProvider optional secure key-unlock capability
      */
     public PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider) {
-        this(keyringUnlockProvider, Optional.empty(), List.of(), Optional.empty());
+        this(keyringUnlockProvider, Optional.empty(), List.of(), Optional.empty(), DashboardLiveSource.NONE);
     }
 
     /** Validates the optional capability container. */
@@ -72,6 +74,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
                 Objects.requireNonNull(keyPossessionProofProviders, "keyPossessionProofProviders"));
         credentialConfirmationProofPolicy = Objects.requireNonNull(
                 credentialConfirmationProofPolicy, "credentialConfirmationProofPolicy");
+        dashboardLiveSource = Objects.requireNonNull(dashboardLiveSource, "dashboardLiveSource");
     }
 
     /**
@@ -80,7 +83,8 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      * @return immutable dependency set without key-unlock access
      */
     public static PkiSessionRuntimeDependencies none() {
-        return new PkiSessionRuntimeDependencies(Optional.empty(), Optional.empty(), List.of(), Optional.empty());
+        return new PkiSessionRuntimeDependencies(Optional.empty(), Optional.empty(), List.of(), Optional.empty(),
+                DashboardLiveSource.NONE);
     }
 
     /**
@@ -91,7 +95,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      */
     public static PkiSessionRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
         return new PkiSessionRuntimeDependencies(Optional.of(Objects.requireNonNull(provider, "provider")),
-                Optional.empty(), List.of(), Optional.empty());
+                Optional.empty(), List.of(), Optional.empty(), DashboardLiveSource.NONE);
     }
 
     /**
@@ -107,7 +111,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
     public PkiSessionRuntimeDependencies withAuditSink(AuditSink sink) {
         return new PkiSessionRuntimeDependencies(keyringUnlockProvider,
                 Optional.of(Objects.requireNonNull(sink, "sink")), keyPossessionProofProviders,
-                credentialConfirmationProofPolicy);
+                credentialConfirmationProofPolicy, dashboardLiveSource);
     }
 
     /**
@@ -123,7 +127,8 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
     public PkiSessionRuntimeDependencies withKeyPossessionProofProviders(
             List<KeyPossessionProofProvider> providers) {
         return new PkiSessionRuntimeDependencies(keyringUnlockProvider, auditSink,
-                Objects.requireNonNull(providers, "providers"), credentialConfirmationProofPolicy);
+                Objects.requireNonNull(providers, "providers"), credentialConfirmationProofPolicy,
+                dashboardLiveSource);
     }
 
     /**
@@ -137,6 +142,19 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
             CredentialConfirmationProofRuntimePolicy policy) {
         return new PkiSessionRuntimeDependencies(keyringUnlockProvider, auditSink,
                 keyPossessionProofProviders,
-                Optional.of(Objects.requireNonNull(policy, "policy")));
+                Optional.of(Objects.requireNonNull(policy, "policy")), dashboardLiveSource);
+    }
+
+    /**
+     * Returns dependencies wired to one explicit server-layer live counter source.
+     *
+     * @param source non-null live counter implementation
+     * @return immutable dependencies preserving every other process-local capability
+     * @throws NullPointerException if {@code source} is {@code null}
+     */
+    public PkiSessionRuntimeDependencies withDashboardLiveSource(DashboardLiveSource source) {
+        return new PkiSessionRuntimeDependencies(keyringUnlockProvider, auditSink,
+                keyPossessionProofProviders, credentialConfirmationProofPolicy,
+                Objects.requireNonNull(source, "source"));
     }
 }

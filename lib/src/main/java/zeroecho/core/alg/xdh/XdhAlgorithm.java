@@ -41,6 +41,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -117,6 +122,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class XdhAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates a new XDH algorithm registration.
      *
@@ -177,4 +185,17 @@ public final class XdhAlgorithm extends AbstractCryptoAlgorithm {
             }
         });
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("X25519", "X25519 (128-bit)", SecurityLevel.classical(128), XdhSpec.X25519),
+            new ParameterSetDescriptor.Concrete<>("X448",   "X448 (224-bit)",   SecurityLevel.classical(224), XdhSpec.X448)
+        );
+    }
+
 }

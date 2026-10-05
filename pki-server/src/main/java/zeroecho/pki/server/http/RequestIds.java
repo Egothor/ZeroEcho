@@ -40,15 +40,26 @@ import java.util.Objects;
 
 /** Strict opaque request-correlation identity policy. */
 @SuppressWarnings("PMD")
-final class RequestIds {
-    static final String HEADER = "X-ZeroEcho-Request-Id";
+public final class RequestIds {
+    /** HTTP header carrying the opaque correlation identifier. */
+    public static final String HEADER = "X-ZeroEcho-Request-Id";
     private final SecureRandom random;
 
     RequestIds(SecureRandom random) {
         this.random = Objects.requireNonNull(random, "random");
     }
 
-    String resolve(List<String> supplied) {
+    /**
+     * Validates a supplied correlation identifier or generates a random one.
+     * This identifier conveys no authentication or authorization.
+     *
+     * @param supplied header values; null or empty requests a fresh identifier
+     * @return the single supplied identifier or a new 144-bit URL-safe identifier
+     * @throws IllegalArgumentException if multiple values are supplied, or the
+     *         value is not 16–128 ASCII letters, digits, underscores or hyphens
+     * @throws NullPointerException if the sole supplied value is null
+     */
+    public String resolve(List<String> supplied) {
         if (supplied == null || supplied.isEmpty()) {
             byte[] value = new byte[18];
             random.nextBytes(value);

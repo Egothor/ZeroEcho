@@ -7,7 +7,7 @@ trust, its listeners, and its administrative authentication mode. The server own
 no secret values in this file — it holds only the *names* of environment variables
 that carry secrets.
 
-This page documents the current schema (`version` **7**). For the deployment
+This page documents the current schema (`version` **8**). For the deployment
 topology that surrounds it, see the
 [deployment configuration guide](../deployment/configuration.md); for the API the
 listeners serve, see the [administrative API](admin-api.md).
@@ -27,44 +27,53 @@ listeners serve, see the [administrative API](admin-api.md).
 
 ## Top-level structure
 
-```json
+This is a structural outline; use the complete example below for validation.
+
+```text
 {
-  "version": 7,
+  "version": 8,
   "serverName": "zeroecho-admin",
   "realm": { },
   "listener": { },
   "authentication": { },
   "execution": { },
-  "signingReconciliation": { },
+  "auditProjection": { },
   "publicListener": { "enabled": false },
   "acmeListener": { "enabled": false },
+  "estListener": { "enabled": false },
+  "scepListener": { "enabled": false },
+  "cmpListener": { "enabled": false },
   "runtime": { }
 }
 ```
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `version` | yes | Schema version. Must be `7`. |
+| `version` | yes | Schema version. Must be `8`. |
 | `serverName` | yes | A safe operational name (≤ 128 characters). |
 | `realm` | yes | Realm identity, store/audit, signing, approval, and disclosure policy. |
 | `listener` | yes | The administrative HTTPS listener. |
 | `authentication` | yes | Administrative client-certificate authentication. |
 | `execution` | yes | Worker, queue, admission, deadline, and shutdown bounds. |
-| `signingReconciliation` | yes | Recovered-signing reconciliation policy (must be enabled). |
+| `auditProjection` | yes | Audit projection batch and idle interval bounds. |
 | `publicListener` | yes | The public repository listener, or `{ "enabled": false }`. |
 | `acmeListener` | yes | The ACME listener, or `{ "enabled": false }`. |
+| `estListener`, `scepListener`, `cmpListener` | yes | Protocol listener configuration, or `{ "enabled": false }` for each. |
 | `runtime` | yes | Process-local capability references (for example the keyring unlock variable). |
 
 Unknown fields anywhere in the document are rejected.
 
-## Annotated example
+## Complete example
 
-The following loopback example is a complete, valid `version 7` document. Callouts
-mark the load-bearing fields.
+The following loopback example is a complete, valid `version 8` document. The
+notes below describe its security and storage fields. Replace the example policy
+commitments and certificate mapping with your deployment's values before use.
+The codec validates structure and policy consistency without opening providers
+or checking that referenced TLS files exist.
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -79,25 +88,44 @@ mark the load-bearing fields.
       "authorityIds": [],
       "creationPermitted": false
     },
-    "authorizationCommitment": "0123…",          // (1)
-    "approvalCommitment": "96f8…",
-    "disclosureCommitment": "abcd…",
+    "authorizationCommitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "approvalCommitment": "96f85d99cb556b16af9b963833a832f905010681f437a757d94aab4a22e4c29c",
+    "disclosureCommitment": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
     "disclosureDefaults": {
-      "rootCa": "PUBLIC", "intermediateCa": "PUBLIC", "caChain": "PUBLIC",
-      "crl": "PUBLIC", "leaf": "OWNER_ONLY", "sensitiveLeaf": "RESTRICTED"
+      "rootCa": "PUBLIC",
+      "intermediateCa": "PUBLIC",
+      "caChain": "PUBLIC",
+      "crl": "PUBLIC",
+      "leaf": "OWNER_ONLY",
+      "sensitiveLeaf": "RESTRICTED"
     },
-    "controlLog": "state/server-control.log",     // (2)
+    "controlLog": "state/server-control.log",
     "controlStoreId": "0123456789abcdef0123456789abcdef",
     "approvalPolicy": {
-      "policyId": "high-risk", "threshold": 1,
-      "eligibleApprovers": ["bootstrap-approver"], "requiredRoleTemplateIds": [],
-      "requesterSeparation": true, "lifetimeMillis": 3600000,
+      "policyId": "high-risk",
+      "threshold": 1,
+      "eligibleApprovers": [
+        "bootstrap-approver"
+      ],
+      "requiredRoleTemplateIds": [],
+      "requesterSeparation": true,
+      "lifetimeMillis": 3600000,
       "justificationRequired": true
     },
     "pkiSession": {
-      "version": 1,
-      "store": { "id": "fs",   "properties": { "root": "state/pki" } },   // (3)
-      "audit": { "id": "file", "properties": { "root": "state/audit" } }, // (4)
+      "version": 6,
+      "store": {
+        "id": "fs",
+        "properties": {
+          "root": "state/pki"
+        }
+      },
+      "audit": {
+        "id": "file",
+        "properties": {
+          "root": "state/audit"
+        }
+      },
       "publishers": [],
       "bindingProviders": []
     }
@@ -109,12 +137,12 @@ mark the load-bearing fields.
       "id": "jsse-pkcs12",
       "properties": {
         "keyStore": "tls/server-identity.p12",
-        "keyStorePasswordEnvironment": "ZEROECHO_TLS_KEYSTORE_PASSWORD",       // (5)
+        "keyStorePasswordEnvironment": "ZEROECHO_TLS_KEYSTORE_PASSWORD",
         "trustStore": "tls/administrators-trust.p12",
         "trustStorePasswordEnvironment": "ZEROECHO_TLS_TRUSTSTORE_PASSWORD"
       }
     },
-    "clientCertificateRequired": true,             // (6)
+    "clientCertificateRequired": true,
     "maximumHeaderBytes": 32768,
     "maximumBodyBytes": 1048576
   },
@@ -124,26 +152,43 @@ mark the load-bearing fields.
       {
         "mappingId": "bootstrap-administrator",
         "principalId": "bootstrap-admin",
-        "certificateSha256": "0000…"               // (7)
+        "certificateSha256": "0000000000000000000000000000000000000000000000000000000000000000"
       }
     ]
   },
   "execution": {
-    "transportWorkers": 8, "transportQueueCapacity": 64,
-    "operationWorkers": 4, "operationQueueCapacity": 32,
+    "transportWorkers": 8,
+    "transportQueueCapacity": 64,
+    "operationWorkers": 4,
+    "operationQueueCapacity": 32,
     "maximumAdmittedRequests": 96,
-    "defaultDeadlineMillis": 30000, "maximumDeadlineMillis": 120000,
-    "gracefulShutdownMillis": 30000, "forcedShutdownMillis": 10000
+    "defaultDeadlineMillis": 30000,
+    "maximumDeadlineMillis": 120000,
+    "gracefulShutdownMillis": 30000,
+    "forcedShutdownMillis": 10000
   },
-  "signingReconciliation": {
-    "enabled": true, "maxRecords": 256, "maxCalls": 64,
-    "passTimeoutMillis": 30000, "providerCallTimeoutMillis": 10000,
+  "auditProjection": {
+    "maxRecords": 256,
+    "maxSinkCalls": 64,
     "idleIntervalMillis": 2000
   },
-  "publicListener": { "enabled": false },
-  "acmeListener": { "enabled": false },
+  "publicListener": {
+    "enabled": false
+  },
+  "acmeListener": {
+    "enabled": false
+  },
+  "estListener": {
+    "enabled": false
+  },
+  "scepListener": {
+    "enabled": false
+  },
+  "cmpListener": {
+    "enabled": false
+  },
   "runtime": {
-    "keyUnlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"  // (8)
+    "keyUnlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"
   }
 }
 ```
@@ -191,7 +236,7 @@ Inside `realm.pkiSession`:
 | `version` | PKI session schema version. |
 | `store` | The object/metadata store provider: `{ "id": …, "properties": { … } }`. The store root is the store provider's `properties`. |
 | `audit` | The audit sink provider, same `{ "id", "properties" }` shape. |
-| `signing` | Optional signing configuration (workflow/framework providers, signature algorithm, key-unlock variable, per-CA routing). |
+| `signing` | Optional signing provider, signature algorithm, signing TTL, and finite lane topology. |
 | `publishers` | A list of publisher output providers. |
 | `bindingProviders` | A list of algorithm-binding providers. |
 
@@ -199,11 +244,42 @@ Every provider block is `{ "id": "<provider-id>", "properties": { "<k>": "<v>" }
 Property values are strings; those that reference secrets hold environment-variable
 names, not the secret itself.
 
+#### Built-in publisher providers
+
+| Provider ID | Required properties | Optional properties | Description |
+| --- | --- | --- | --- |
+| `filesystem` | `root` (directory path), `targetId` (stable publication target identifier) | — | Publishes artifacts to a local directory. |
+| `https` | `url` (HTTPS endpoint URL), `method` (`PUT` or `POST`), `targetId` (stable publication target identifier) | `credentials` (verbatim `Authorization` header value; supports `keyring:`, `env:`, and `dev-plaintext:` prefixes) | Publishes artifacts to a remote HTTPS endpoint via HTTP PUT or POST. |
+
+Publisher property values that contain secrets should use a `keyring:` reference (resolved against the publisher secrets store) or an `env:` reference (resolved from the environment) rather than `dev-plaintext:`, which is for development only.
+
+#### Built-in audit sink providers
+
+| Provider ID | Required keys | Optional keys (default) | Description |
+| --- | --- | --- | --- |
+| `file` | `root` | — | Durable newline-delimited JSON records in a rotating log under `root`. Recommended for production. |
+| `syslog` | `host` | `port` (514), `protocol` (udp), `app-name` (zeroecho-pki) | Forwards RFC 5424 syslog messages to a remote collector. `protocol` is `udp` or `tcp`. |
+| `stdout` | — | — | Prints a single summary line per event to standard output. Useful for development. |
+| `memory` | — | — | Retains events in-process (for testing only; not persistent). |
+
+Example — syslog over TCP to a SIEM:
+
+```json
+"audit": {
+  "id": "syslog",
+  "properties": {
+    "host": "siem.internal",
+    "port": "6514",
+    "protocol": "tcp",
+    "app-name": "pki-prod"
+  }
+}
+```
+
 ### Keyring unlock
 
 The signing keyring is unlocked from an environment variable. Set
-`runtime.keyUnlockEnvironmentVariable` (and/or the signing block's
-`unlockEnvironmentVariable`) to the variable **name**; the process reads that
+`runtime.keyUnlockEnvironmentVariable` to the variable **name**; the process reads that
 variable at startup. The name must match `[A-Z][A-Z0-9_]{0,127}`.
 
 ## Listener (administrative HTTPS)
@@ -292,14 +368,20 @@ The `authentication` block selects one of two mutually exclusive modes.
 | `defaultDeadlineMillis`, `maximumDeadlineMillis` | Default and hard-ceiling request deadlines. |
 | `gracefulShutdownMillis`, `forcedShutdownMillis` | Graceful drain and forced-termination durations. |
 
-## Signing reconciliation
+## Audit projection and signing reconciliation
+
+The required `auditProjection` block controls audit delivery:
 
 | Field | Description |
 | --- | --- |
-| `enabled` | Must be `true`. |
-| `maxRecords`, `maxCalls` | Records examined and provider calls per pass. |
-| `passTimeoutMillis`, `providerCallTimeoutMillis` | Per-pass and per-call timeouts (the call timeout must not exceed the pass timeout). |
-| `idleIntervalMillis` | Delay after each completed pass. |
+| `maxRecords` | Maximum records examined per pass (1–4096). |
+| `maxSinkCalls` | Maximum sink calls per pass (1–`maxRecords`). |
+| `idleIntervalMillis` | Delay between passes (1–300000 ms). |
+
+Signing reconciliation is owned by `realm.pkiSession.signing.topology`; the
+removed top-level `signingReconciliation` field is rejected. Configure the
+signing provider and finite coordinator/lane topology, including coordinator
+bounds, exact key groups, and the required `catchAll` lane pool.
 
 ## Public repository listener
 
@@ -328,8 +410,67 @@ capacity, presentation limits, rate-admission windows and ceilings, and the
 enabled `challengeProviders` and `eabProviders`. See the administrator guide for
 directory setup.
 
+## EST listener
+
+Set `{ "enabled": false }` to disable it. When enabled, configures a separately bounded EST
+(RFC 7030) protocol listener for automated certificate enrolment. Fields:
+
+| Field | Description |
+| --- | --- |
+| `enabled` | `true` to activate the listener; `false` (or absent) to disable. |
+| `listenerId` | Identifier for log correlation. |
+| `address` | Bind address (e.g. `"0.0.0.0"` or `"127.0.0.1"`). |
+| `port` | TCP port. |
+| `tlsProvider` | TLS configuration block (see Administrative listener). |
+| `execution` | Thread-pool and deadline bounds (see Execution). |
+| `maximumHeaderBytes` | Request-header size bound. |
+| `maximumBodyBytes` | Request-body size bound. |
+
+EST endpoints are managed at runtime via `est.endpoint.register/deregister/inspect/list`.
+
+## SCEP listener
+
+Set `{ "enabled": false }` to disable it. When enabled, configures a separately bounded SCEP
+(RFC 8894) protocol listener for network-device and MDM certificate enrolment. Fields:
+
+| Field | Description |
+| --- | --- |
+| `enabled` | `true` to activate the listener; `false` (or absent) to disable. |
+| `listenerId` | Identifier for log correlation. |
+| `address` | Bind address. |
+| `port` | TCP port. |
+| `tlsProvider` | TLS configuration block. |
+| `execution` | Thread-pool and deadline bounds. |
+| `maximumHeaderBytes` | Request-header size bound. |
+| `maximumBodyBytes` | Request-body size bound. |
+
+SCEP endpoints are managed at runtime via `scep.endpoint.register/deregister/inspect/list`.
+The challenge password hash is a SHA-256 hex string (64 lower-case hex characters).
+
+## CMP listener
+
+Set `{ "enabled": false }` to disable it. When enabled, configures a separately bounded CMP
+(RFC 4210 / RFC 9480 Lightweight Profile) listener for telco, automotive, and regulated deployments.
+Fields:
+
+| Field | Description |
+| --- | --- |
+| `enabled` | `true` to activate the listener; `false` (or absent) to disable. |
+| `listenerId` | Identifier for log correlation. |
+| `address` | Bind address. |
+| `port` | TCP port. |
+| `tlsProvider` | TLS configuration block. |
+| `execution` | Thread-pool and deadline bounds. |
+| `maximumHeaderBytes` | Request-header size bound. |
+| `maximumBodyBytes` | Request-body size bound. |
+
+CMP endpoints are managed at runtime via `cmp.endpoint.register/deregister/inspect/list`.
+The `protectionPolicy` field of a CMP endpoint is either `SHARED_SECRET_MAC` or `SIGNATURE_BASED`.
+
 ## Runtime
 
 | Field | Description |
 | --- | --- |
 | `keyUnlockEnvironmentVariable` | Optional name of the environment variable that unlocks the signing keyring. |
+| `publisherSecretsStore` | Optional path to the encrypted publisher secrets store file. Required when any publisher provider property uses a `keyring:` reference. |
+| `publisherSecretsEnvironmentVariable` | Optional name of the environment variable whose value is used as the password to unlock the publisher secrets store (CLASSIC and HYBRID protection profiles). |

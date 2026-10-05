@@ -430,6 +430,29 @@ public final class ServerControlStore implements AutoCloseable {
     }
 
     /**
+     * Counts pending, unexpired approvals in one stable metadata scan using constant auxiliary memory.
+     * @param now evaluation instant
+     * @return exact count in this snapshot
+     */
+    public synchronized long pendingApprovalCount(Instant now) {
+        requireOpen();
+        Objects.requireNonNull(now, "now");
+        long count = 0;
+        try (MetadataSnapshot snapshot = metadata.snapshot();
+                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(APPROVAL), CancellationSignal.NONE)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                    ApprovalService.Request request = decode(record, KIND_APPROVAL, ServerControlStore::readApproval);
+                    if (!record.key().equals(key(APPROVAL, request.approvalId()))) throw new IllegalStateException("Approval metadata identity differs");
+                    if (request.state() == ApprovalService.State.PENDING && request.expiresAt().isAfter(now)) count++;
+                }
+            }
+            return count;
+        } catch (IOException failure) { throw new IllegalStateException("Approval count unavailable", failure); }
+    }
+
+    /**
      * Creates one break-glass record.
      *
      * @param value validated record to create

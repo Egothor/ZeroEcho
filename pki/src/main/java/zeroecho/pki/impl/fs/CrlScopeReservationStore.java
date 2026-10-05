@@ -65,6 +65,14 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
     private final TransactionalMetadataStore metadata;
     private final Consumer<MetadataCommitResult> outcome;
     private final BigInteger initialCrlNumber;
+    /** Visits an owner participating in CRL counter reservation. */
+    /* default */ @FunctionalInterface interface OwnerVisitor {
+        /** Processes one retained scope owner.
+         * @param owner retained scope owner
+         * @throws IOException if processing fails
+         */
+        void accept(CrlScopeOwner owner) throws IOException;
+    }
 
     /* default */ CrlScopeReservationStore(TransactionalMetadataStore metadata, BigInteger initialCrlNumber,
             Consumer<MetadataCommitResult> outcome) {
@@ -87,7 +95,7 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
 
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
                   @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
-                  void validateAuthority(Consumer<CrlScopeOwner> owners, ReservationVisitor visitor) throws IOException {
+                  void validateAuthority(OwnerVisitor owners, ReservationVisitor visitor) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(
                     "io.zeroecho.pki.crl-scope-owner"), CancellationSignal.NONE)) {

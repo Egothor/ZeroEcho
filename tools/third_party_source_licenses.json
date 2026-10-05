@@ -1,0 +1,10 @@
+{
+  "gradlew": {
+    "origin": "Gradle wrapper generated launcher (Apache-2.0), retained upstream notice",
+    "header_sha256": "18dfd9bd4789308370425ebbf66bdecbfa754f3357480ea7e73450b2b4c9a702"
+  },
+  "gradlew.bat": {
+    "origin": "Gradle wrapper generated launcher (Apache-2.0), retained upstream notice",
+    "header_sha256": "0cebc95d2c2c4e5e6a5ae130439cce7d84ef2f4037b780619df61bc0e4c478fd"
+  }
+}

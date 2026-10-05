@@ -35,13 +35,10 @@
 /**
  * Client-side operation-parameter schema.
  *
- * The server's `GET /admin/v1/operations` descriptors carry only SECURITY
- * metadata (family, mutating, resourceType, approval, dataView) — NOT the input
- * parameter contract. The authoritative parameter contract lives in the server
- * decoder `HttpOperationCodec`. This module mirrors that contract so the SPA can
- * render typed, validated forms today. When the backend publishes a machine
- * readable parameter schema (see the gap document), this mirror can be replaced
- * by the served schema. The server always remains the validating authority.
+ * Rendering types for the generated server OperationDescriptorCatalog projection.
+ * Identity, fields, permissions and transport semantics are generated under the
+ * server build directory. Runtime discovery controls visibility; the server
+ * decoder and authorization boundary remain authoritative for requests.
  */
 
 export type FieldType =
@@ -88,6 +85,10 @@ export type ApprovalCategory = 'NONE' | 'HIGH_RISK' | 'ISSUANCE_SINGLE' | 'ISSUA
 
 export interface OperationSpec {
   readonly id: string;
+  /** Static execution availability; server authorization is additionally required. */
+  readonly available: boolean;
+  readonly permissionAction: string;
+  readonly permissionResourceType: string;
   readonly title: string;
   readonly summary: string;
   readonly family: OperationFamily;

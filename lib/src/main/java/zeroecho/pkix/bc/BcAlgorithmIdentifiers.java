@@ -34,6 +34,7 @@
 package zeroecho.pkix.bc;
 
 import java.io.IOException;
+import java.util.Map;
 
 import org.bouncycastle.asn1.ASN1Encoding;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
@@ -55,6 +56,11 @@ import zeroecho.pkix.AlgorithmIdentifier;
 final class BcAlgorithmIdentifiers {
 
     private static final DefaultAlgorithmNameFinder NAME_FINDER = new DefaultAlgorithmNameFinder();
+    private static final Map<String, String> EGOTHOR_JCA_NAMES = Map.of(
+            zeroecho.core.alg.EgothorAlgorithmOids.OID_SPHINCS_PLUS_CSR_SIGNATURE, "SPHINCSPlus",
+            zeroecho.core.alg.EgothorAlgorithmOids.OID_SPHINCS_PLUS_CERTIFICATE_SIGNATURE, "SPHINCSPlus",
+            zeroecho.core.alg.EgothorAlgorithmOids.OID_SPHINCS_PLUS_CRL_SIGNATURE, "SPHINCSPlus",
+            zeroecho.core.alg.EgothorAlgorithmOids.OID_SPHINCS_PLUS_OCSP_REQUEST_SIGNATURE, "SPHINCSPlus");
 
     private BcAlgorithmIdentifiers() {
     }
@@ -99,6 +105,10 @@ final class BcAlgorithmIdentifiers {
      * @return the JCA algorithm name
      */
     /* default */ static String jcaName(AlgorithmIdentifier identifier) {
+        String egothorName = EGOTHOR_JCA_NAMES.get(identifier.oid());
+        if (egothorName != null) {
+            return egothorName;
+        }
         return NAME_FINDER.getAlgorithmName(new ASN1ObjectIdentifier(identifier.oid()));
     }
 }

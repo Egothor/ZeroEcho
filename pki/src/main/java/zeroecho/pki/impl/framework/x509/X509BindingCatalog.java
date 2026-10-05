@@ -43,6 +43,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 
 /**
  * Deeply immutable snapshot of authoritative X.509 binding rules.
@@ -63,14 +64,73 @@ public final class X509BindingCatalog {
 
     private final List<X509BindingRule> rules;
     private final Map<String, X509BindingRule> byRoleAndOid;
+    private final Map<String, X509BindingRule> byBindingId;
+    private final Map<IdentityKey, X509BindingRule> fixedByIdentity;
+    private final List<X509BindingRule> fallbackRules;
 
     private X509BindingCatalog(List<X509BindingRule> rules) {
-        this.rules = List.copyOf(rules);
+        List<X509BindingRule> snapshots = new ArrayList<>(rules.size());
         Map<String, X509BindingRule> reverse = new HashMap<>();
+        Map<String, X509BindingRule> identifiers = new HashMap<>();
+        Map<IdentityKey, X509BindingRule> fixed = new HashMap<>();
+        List<X509BindingRule> fallback = new ArrayList<>();
         for (X509BindingRule rule : rules) {
-            reverse.put(key(rule.role(), rule.oid()), rule);
+            SnapshotRule snapshot = rule instanceof SnapshotRule existing ? existing
+                    : new SnapshotRule(rule, List.copyOf(rule.bindings())); // NOPMD AvoidInstantiatingObjectsInLoops - Each catalog rule, archive entry or schedule snapshot must retain distinct state.
+            snapshots.add(snapshot);
+            reverse.put(key(snapshot.role(), snapshot.oid()), snapshot);
+            indexIdentifier(identifiers, snapshot.id(), snapshot);
+            for (X509AlgorithmBinding binding : snapshot.bindings()) {
+                indexIdentifier(identifiers, binding.bindingId(), snapshot);
+            }
+            if (!snapshot.bindings().isEmpty() && snapshot.bindings().stream()
+                    .noneMatch(binding -> binding.origin() == X509AlgorithmBinding.Origin.STANDARD)) {
+                continue;
+            }
+            Optional<AlgorithmIdentity> identity = StandardX509Bindings.fixedIdentity(snapshot.delegate());
+            if (identity.isPresent()) {
+                if (fixed.putIfAbsent(new IdentityKey(snapshot.role(), identity.get()), snapshot) != null) { // NOPMD AvoidInstantiatingObjectsInLoops - Each catalog rule, archive entry or schedule snapshot must retain distinct state.
+                    throw new IllegalArgumentException("Ambiguous fixed X.509 identity binding");
+                }
+            } else {
+                fallback.add(snapshot);
+            }
         }
+        this.rules = List.copyOf(snapshots);
         this.byRoleAndOid = Map.copyOf(reverse);
+        this.byBindingId = Map.copyOf(identifiers);
+        this.fixedByIdentity = Map.copyOf(fixed);
+        this.fallbackRules = List.copyOf(fallback);
+    }
+
+    private static void indexIdentifier(Map<String, X509BindingRule> identifiers, String id,
+            X509BindingRule rule) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("X.509 binding identifier must not be blank");
+        }
+        X509BindingRule previous = identifiers.putIfAbsent(id, rule);
+        if (previous != null && previous != rule) { // NOPMD CompareObjectsWithEquals - Only the same rule instance may repeat an alias; distinct rule identities conflict.
+            throw new IllegalArgumentException("Duplicate X.509 binding identifier or alias");
+        }
+    }
+
+    private record IdentityKey(X509AlgorithmRole role, AlgorithmIdentity identity) { }
+
+    /** Retains the provider's immutable metadata once without memoizing its encoding domain. */
+    private record SnapshotRule(X509BindingRule delegate, List<X509AlgorithmBinding> bindings)
+            implements X509BindingRule {
+        @Override public String id() { return delegate.id(); }
+        @Override public X509AlgorithmRole role() { return delegate.role(); }
+        @Override public String oid() { return delegate.oid(); }
+        @Override public String semanticFingerprint() { return delegate.semanticFingerprint(); }
+        @Override public SignatureEncoding signatureEncoding() { return delegate.signatureEncoding(); }
+        @Override public PublicKeyEncoding publicKeyEncoding() { return delegate.publicKeyEncoding(); }
+        @Override public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
+            return delegate.encode(identity);
+        }
+        @Override public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier identifier) {
+            return delegate.decode(identifier);
+        }
     }
 
     /**
@@ -117,6 +177,10 @@ public final class X509BindingCatalog {
      * @param identity exact identity
      * @param role     X.509 role
      * @return canonical X.509 representation
+     * @implNote Fixed standard lookup uses one expected constant-time hash lookup,
+     * followed by every applicable parameterized or extension rule. Hashing costs
+     * are proportional to identity size; fallback work is proportional to the
+     * number and encoding cost of those rules. No descriptor graph is rebuilt.
      * @throws IllegalArgumentException if no rule or more than one rule resolves
      */
     public X509AlgorithmIdentifier resolve(AlgorithmIdentity identity, X509AlgorithmRole role) {
@@ -125,14 +189,10 @@ public final class X509BindingCatalog {
         if (role == X509AlgorithmRole.SIGNATURE_ALGORITHM) {
             X509SecurityFloor.requirePermitted(identity);
         }
-        X509AlgorithmIdentifier resolved = null;
-        for (X509BindingRule rule : rules) {
+        X509BindingRule fixed = fixedByIdentity.get(new IdentityKey(role, identity));
+        X509AlgorithmIdentifier resolved = fixed == null ? null : fixed.encode(identity).orElseThrow();
+        for (X509BindingRule rule : fallbackRules) {
             if (rule.role() != role) {
-                continue;
-            }
-            if (!rule.bindings().isEmpty() && rule.bindings().stream()
-                    .noneMatch(binding -> binding.origin()
-                            == zeroecho.pki.api.algorithm.X509AlgorithmBinding.Origin.STANDARD)) {
                 continue;
             }
             Optional<X509AlgorithmIdentifier> candidate = rule.encode(identity);
@@ -163,10 +223,10 @@ public final class X509BindingCatalog {
         Objects.requireNonNull(bindingId, "bindingId");
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(role, "role");
-        X509BindingRule rule = rules.stream()
-                .filter(candidate -> candidate.id().equals(bindingId)
-                        || candidate.bindings().stream().anyMatch(binding -> binding.bindingId().equals(bindingId)))
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown X.509 binding identifier"));
+        X509BindingRule rule = byBindingId.get(bindingId);
+        if (rule == null) {
+            throw new IllegalArgumentException("Unknown X.509 binding identifier");
+        }
         if (rule.role() != role) {
             throw new IllegalArgumentException("X.509 binding role mismatch");
         }
@@ -225,11 +285,11 @@ public final class X509BindingCatalog {
     private static X509BindingCatalog create(List<X509BindingRule> rules, boolean builtIn) {
         Objects.requireNonNull(rules, "rules");
         for (X509BindingRule rule : rules) {
+            Objects.requireNonNull(rule, "rule");
             if (rule.role() == X509AlgorithmRole.SIGNATURE_ALGORITHM
                     && FORBIDDEN_SIGNATURE_OIDS.contains(rule.oid())) {
                 throw new IllegalArgumentException("SHA-1 X.509 signature binding is forbidden");
             }
-            Objects.requireNonNull(rule, "rule");
             if (builtIn != rule.id().startsWith(BUILTIN_PREFIX)) {
                 throw new IllegalArgumentException(
                         builtIn ? "Built-in rule must use reserved identifier"

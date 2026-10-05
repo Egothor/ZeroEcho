@@ -60,7 +60,7 @@ import zeroecho.core.spi.PrivateKeyImporter;
  * <h2>Example</h2> <pre>{@code
  * // Assuming bytes contain a PKCS#8-encoded SPHINCS+ private key:
  * SphincsPlusPrivateKeySpec spec =
- *     new SphincsPlusPrivateKeySpec("BCPQC", encodedBytes);
+ *     new SphincsPlusPrivateKeySpec(encodedBytes, "BC");
  *
  * PrivateKey priv =
  *     new SphincsPlusPrivateKeyBuilder().importPrivate(spec);
@@ -79,7 +79,7 @@ public final class SphincsPlusPrivateKeyBuilder implements PrivateKeyImporter<Sp
      * Imports a SPHINCS+ private key from PKCS#8 encoding.
      *
      * <p>
-     * The method uses {@link KeyFactory} with algorithm {@code "SPHINCSPlus"} and
+     * The method uses {@link KeyFactory} with algorithm {@code "SLH-DSA"} and
      * the provider specified in the {@code spec}. If no provider name is given, the
      * default provider resolution is used.
      * </p>
@@ -94,8 +94,8 @@ public final class SphincsPlusPrivateKeyBuilder implements PrivateKeyImporter<Sp
      */
     @Override
     public PrivateKey importPrivate(SphincsPlusPrivateKeySpec spec) throws GeneralSecurityException {
-        KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance("SPHINCSPlus")
-                : KeyFactory.getInstance("SPHINCSPlus", spec.providerName());
+        KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance("SLH-DSA")
+                : KeyFactory.getInstance("SLH-DSA", spec.providerName());
         byte[] encoded = spec.encoded();
         try {
             return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));

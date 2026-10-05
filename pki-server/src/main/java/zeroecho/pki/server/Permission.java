@@ -127,7 +127,16 @@ public final class Permission {
         /** Reads an ACME directory. */ ACME_DIRECTORY_READ(180),
         /** Manages an ACME directory. */ ACME_DIRECTORY_MANAGE(181),
         /** Reads an ACME account. */ ACME_ACCOUNT_READ(182),
-        /** Manages an ACME account. */ ACME_ACCOUNT_MANAGE(183);
+        /** Manages an ACME account. */ ACME_ACCOUNT_MANAGE(183),
+        /** Administers an EST endpoint. */ EST_ENDPOINT_ADMINISTER(190),
+        /** Reads an EST endpoint. */ EST_ENDPOINT_READ(191),
+        /** Administers a SCEP endpoint. */ SCEP_ENDPOINT_ADMINISTER(192),
+        /** Reads a SCEP endpoint. */ SCEP_ENDPOINT_READ(193),
+        /** Administers a CMP endpoint. */ CMP_ENDPOINT_ADMINISTER(194),
+        /** Reads a CMP endpoint. */ CMP_ENDPOINT_READ(195),
+        /** Administers an enrollment profile. */ ENROLLMENT_PROFILE_ADMINISTER(196),
+        /** Reads an enrollment profile. */ ENROLLMENT_PROFILE_READ(197),
+        /** Manages automatic status-generation schedules. */ STATUS_SCHEDULE_MANAGE(198);
 
         private final int code;
 
@@ -211,7 +220,12 @@ public final class Permission {
         /** Public repository alias. */ REPOSITORY_ALIAS(37),
         /** ACME directory configuration. */ ACME_DIRECTORY(38),
         /** ACME account. */ ACME_ACCOUNT(39),
-        /** OCSP responder configuration. */ OCSP_RESPONDER(40);
+        /** OCSP responder configuration. */ OCSP_RESPONDER(40),
+        /** EST endpoint configuration. */ EST_ENDPOINT(41),
+        /** SCEP endpoint configuration. */ SCEP_ENDPOINT(42),
+        /** CMP endpoint configuration. */ CMP_ENDPOINT(43),
+        /** Enrollment profile configuration. */ ENROLLMENT_PROFILE(44),
+        /** Status-generation schedule configuration. */ STATUS_SCHEDULE(45);
         private final int code;
         ResourceType(int code) { this.code = code; }
         /**

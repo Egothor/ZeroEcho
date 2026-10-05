@@ -20,9 +20,19 @@ activated for use.
 
 === "Register"
 
-    **Register profile** (`profile.register`) uploads a profile document
-    (DER or JSON, base64-encoded) into the realm. Registration alone does not put
-    the profile into service — you activate a version separately.
+    **Register profile** (`profile.register`) imports a profile document
+    (DER or JSON, base64-encoded) into the realm. The behaviour depends on the
+    profile's `approvalRequirement` field and on whether the content has changed:
+
+    - **No approval required (`NONE`):** `profile.register` imports the new version
+      and immediately activates it. No separate `profile.activate` call is needed.
+    - **Approval required (`SINGLE` or `THRESHOLD`):** `profile.register` imports
+      the new version but leaves it in DRAFT state. Use `profile.activate` to put
+      it into service after the required approval has been obtained.
+    - **Identical content (reconciliation):** if the incoming document's content is
+      identical to the currently active version (same canonical SHA-256 of the
+      document), `profile.register` is a no-op and returns the existing active
+      reference without creating a new version.
 
 === "Validate without registering"
 
@@ -49,6 +59,12 @@ every credential subsequently issued under that profile.
     approvals is carried by the resolved profile, not by the issue operation. A
     profile can therefore make its own issuance subject to dual control without
     any change to the issuing workflow.
+
+!!! info "Profile document format"
+    The structure of a profile JSON document — all fields, types, constraints,
+    and enum values — is documented in the
+    [Certificate profile schema](../reference/certificate-profile-schema.md)
+    reference.
 
 ## Certification requests (CSRs)
 
@@ -90,6 +106,35 @@ single or threshold approval, have it approved, and re-run citing the approval i
 **Inspect credential** (`credential.inspect`) shows an issued credential by
 `credentialId`. Credentials are looked up by identifier (for example the one
 returned by issuance) rather than from a realm-wide list.
+
+## Browse / search credentials
+
+**Browse credentials** (`credential.search`) lists credentials issued by a given
+authority. Supply `authorityId` to scope the results, then optionally narrow them
+with any combination of the filters below. All filters are optional and
+AND-combined: omitting a filter leaves that field unconstrained.
+
+| Filter parameter | Type | How it matches |
+|---|---|---|
+| `subjectFilter` | optional text | Case-insensitive substring match on the subject distinguished name. For example, `server1` matches `CN=server1,O=Acme`. |
+| `serialFilter` | optional text | Case-insensitive substring match on the serial number or unique identifier. |
+| `fingerprintFilter` | optional text | Case-insensitive hex prefix match on the credential fingerprint (`credentialId`). |
+| `statusFilter` | optional enum: `ISSUED`, `REVOKED`, `EXPIRED` | Exact match on the credential's inventory status. |
+| `profileIdFilter` | optional text | Exact match on the profile logical identifier. |
+
+Results are paginated. Use `limit` to control the page size and `after` to advance
+to the next page, exactly as in other paginated operations.
+
+!!! note "Fields included in search results"
+    Each result row includes `subjectRef` and `serialOrUniqueId` in addition to the
+    standard identifier and status fields. Use `credential.inspect` to retrieve full
+    credential detail for a specific entry.
+
+!!! tip "Filtering in the admin UI"
+    The **Browse certificates** form in the admin UI exposes all five filters as
+    labelled input fields: a subject DN substring box, a serial box, a fingerprint
+    prefix box, a status dropdown, and a profile ID box. Leave any field blank to
+    omit that filter.
 
 ## Credential lifecycle
 

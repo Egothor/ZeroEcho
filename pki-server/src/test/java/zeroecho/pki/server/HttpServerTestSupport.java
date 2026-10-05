@@ -200,7 +200,8 @@ public final class HttpServerTestSupport {
                 authentication,
                 new PkiServerConfiguration.Execution(2, 4, 2, 4, 8, Duration.ofSeconds(5),
                         Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofSeconds(1)),
-                new PkiServerConfiguration.RuntimeCapabilities(Optional.empty()));
+                new PkiServerConfiguration.RuntimeCapabilities(Optional.empty(), Optional.empty(),
+                        Optional.empty()));
     }
 
     private static PkiServerConfiguration.ClientCertificateMapping mapping(String mappingId,

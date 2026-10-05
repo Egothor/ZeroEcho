@@ -38,10 +38,14 @@ import zeroecho.pki.api.audit.AuditEvent;
 /**
  * SPI for persisting audit events.
  *
- * <p>
- * Implementations must apply appropriate redaction policies and must never
+ * <p>Implementations must apply appropriate redaction policies and must never
  * write secrets.
- * </p>
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; the PKI server calls
+ * {@link #record(AuditEvent)} from multiple threads concurrently.
+ *
+ * @since 1.0
  */
 @FunctionalInterface
 public interface AuditSink extends AutoCloseable {

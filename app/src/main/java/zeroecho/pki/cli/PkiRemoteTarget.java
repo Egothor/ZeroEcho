@@ -77,14 +77,14 @@ record PkiRemoteTarget(URI baseUri, Optional<Path> clientKeystore, Optional<Stri
                 || trustStorePasswordEnv.isPresent() && trustStore.isEmpty()) {
             throw new IllegalArgumentException("Password environment option requires its corresponding store");
         }
+        if (clientCertificate.isPresent() != clientKey.isPresent()) {
+            throw new IllegalArgumentException("--client-cert and --client-key must be supplied together");
+        }
         boolean keystore = clientKeystore.isPresent();
         boolean pem = clientCertificate.isPresent() && clientKey.isPresent();
         if (keystore == pem) {
             throw new IllegalArgumentException(
                     "Remote mode requires either --client-keystore or a --client-cert/--client-key PEM pair");
-        }
-        if (clientCertificate.isPresent() != clientKey.isPresent()) {
-            throw new IllegalArgumentException("--client-cert and --client-key must be supplied together");
         }
     }
 

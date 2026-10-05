@@ -42,10 +42,18 @@ import zeroecho.pki.spi.ProviderConfig;
 
 /**
  * Secret-confining external-account-binding verification SPI.
- * Implementations verify and consume nested EAB authority internally and never
- * return HMAC key material.
+ *
+ * <p>Implementations verify and consume nested EAB authority internally and
+ * must never return HMAC key material, raw JWS bytes, or any other secret
+ * material in the {@link Binding} result.
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; {@link #verify} may be called
+ * concurrently for independent account-creation requests.
+ *
+ * @since 1.0
  */
-@SuppressWarnings("PMD.ControlStatementBraces")
+@SuppressWarnings("PMD.ControlStatementBraces") // compact record compact constructors are intentionally terse
 public interface AcmeExternalAccountBindingProvider {
     /**
      * Returns the stable, explicitly configured provider identity.

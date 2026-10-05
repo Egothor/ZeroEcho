@@ -36,6 +36,8 @@ package zeroecho.pki.server.http;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Objects;
 import java.util.ServiceLoader;
 
@@ -55,10 +57,19 @@ final class ClientTrustProviders {
         List<PkiServerClientTrustProvider> providers = new ArrayList<>();
         ServiceLoader.load(PkiServerClientTrustProvider.class, Objects.requireNonNull(loader, "loader"))
                 .forEach(providers::add);
-        providers.sort(Comparator.comparing(PkiServerClientTrustProvider::id));
-        if (providers.stream().map(PkiServerClientTrustProvider::id).distinct().count() != providers.size()) {
+        ServiceLoader.load(zeroecho.pki.server.spi.v2.PkiServerClientTrustProvider.class, loader)
+                .forEach(provider -> providers.add(new PkiServerClientTrustProvider() {
+                    @Override public String id() { return provider.id(); }
+                    @Override public X509TrustManager create(ProviderConfig config) throws Exception {
+                        return provider.create(config);
+                    }
+                }));
+        Set<String> ids = new HashSet<>();
+        if (providers.stream().anyMatch(provider -> provider.id() == null || provider.id().isBlank()
+                || !ids.add(provider.id()))) {
             throw new IllegalStateException("Administrative-client trust provider identities are ambiguous");
         }
+        providers.sort(Comparator.comparing(PkiServerClientTrustProvider::id));
         PkiServerClientTrustProvider selected = providers.stream()
                 .filter(provider -> provider.id().equals(exact.backendId())).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException(

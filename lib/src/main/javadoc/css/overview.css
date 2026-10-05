@@ -119,7 +119,40 @@ table.zecat td.usage-first-td {
   border-left: 1px solid #555;   /* between Family and Key usage group */
 }
 
-table.zecat th.default-col,
-table.zecat td.default-td {
-  border-left: 1px solid #555;   /* between Key usage group and Default spec */
+table.zecat th.paramsets-col,
+table.zecat td.paramsets-td {
+  border-left: 1px solid #555;
+  min-width: 220px;
+  vertical-align: top;
+  padding: 4px 6px;
+}
+
+/* Individual parameter set entry */
+table.zecat .param-set {
+  margin: 2px 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.88em;
+  white-space: nowrap;
+}
+
+table.zecat .param-set.concrete {
+  background: #eef4ff;
+}
+
+table.zecat .param-set.template {
+  background: #fff8e8;
+}
+
+table.zecat .param-set .sec-level {
+  color: #555;
+  font-size: 0.85em;
+}
+
+table.zecat .param-set .template-marker {
+  color: #856000;
+}
+
+table.zecat .no-paramsets {
+  color: #aaa;
 }

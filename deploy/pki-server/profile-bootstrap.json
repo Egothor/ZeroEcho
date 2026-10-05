@@ -2,7 +2,7 @@
   "version": 1,
   "mode": "local",
   "operatorId": "deployment-profile-bootstrap",
-  "store": {"provider": "fs", "properties": {"root": "/var/lib/zeroecho/store"}},
+  "store": {"provider": "fs", "properties": {"root": "/var/lib/zeroecho/store-container/store"}},
   "audit": {"provider": "file", "properties": {"root": "/var/lib/zeroecho/audit"}},
   "publishers": [],
   "bindingProviders": []

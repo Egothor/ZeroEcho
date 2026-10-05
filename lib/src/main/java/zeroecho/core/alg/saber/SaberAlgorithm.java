@@ -47,6 +47,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 
 import zeroecho.core.AlgorithmFamily;
@@ -108,6 +113,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * }</pre>
  */
 public final class SaberAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates a SABER algorithm instance backed by the Bouncy Castle PQC provider
      * and registers KEM and AGREEMENT capabilities, along with key generation and
@@ -220,4 +228,24 @@ public final class SaberAlgorithm extends AbstractCryptoAlgorithm {
             throw new NoSuchProviderException("BCPQC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("LightSaber-128", "LightSaber KEM (128-bit)", SecurityLevel.classical(128), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.LIGHTSABERKEM128R3)),
+            new ParameterSetDescriptor.Concrete<>("Saber-128",      "Saber KEM (128-bit)",      SecurityLevel.classical(128), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.SABERKEM128R3)),
+            new ParameterSetDescriptor.Concrete<>("FireSaber-128",  "FireSaber KEM (128-bit)",  SecurityLevel.classical(128), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.FIRESABERKEM128R3)),
+            new ParameterSetDescriptor.Concrete<>("LightSaber-192", "LightSaber KEM (192-bit)", SecurityLevel.classical(192), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.LIGHTSABERKEM192R3)),
+            new ParameterSetDescriptor.Concrete<>("Saber-192",      "Saber KEM (192-bit)",      SecurityLevel.classical(192), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.SABERKEM192R3)),
+            new ParameterSetDescriptor.Concrete<>("FireSaber-192",  "FireSaber KEM (192-bit)",  SecurityLevel.classical(192), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.FIRESABERKEM192R3)),
+            new ParameterSetDescriptor.Concrete<>("LightSaber-256", "LightSaber KEM (256-bit)", SecurityLevel.classical(256), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.LIGHTSABERKEM256R3)),
+            new ParameterSetDescriptor.Concrete<>("Saber-256",      "Saber KEM (256-bit)",      SecurityLevel.classical(256), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.SABERKEM256R3)),
+            new ParameterSetDescriptor.Concrete<>("FireSaber-256",  "FireSaber KEM (256-bit)",  SecurityLevel.classical(256), SaberKeyGenSpec.of(SaberKeyGenSpec.Variant.FIRESABERKEM256R3))
+        );
+    }
+
 }

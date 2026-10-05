@@ -73,9 +73,24 @@ to run without owner-only permission support.
 
 ### Volumes
 
+The durable mount is `/var/lib/zeroecho/store-container`; the replaceable PKI root
+is its `store/` child. Server-control authority lives separately at
+`server-control/server-control.log`. Keep the parent writable so cold restore can
+retain sibling stage/rollback roots and `.store.restore-control`. Do not mount a
+volume directly on the replaceable child.
+
+Existing deployments require an **offline layout migration**. Stop every server
+and bootstrap process and preserve a complete copy of the old volume first.
+Place the former PKI root under `store/`, move its existing `server-control.log`
+to `server-control/server-control.log`, and preserve all other external authority
+under separately configured stable paths. Update server and bootstrap configs
+together, retaining ownership and permissions. The entrypoint rejects a legacy
+`VERSION` at the new mount root; it never migrates or initializes over it. This
+layout change does not authorize rewinding PKI safety state or external effects.
+
 | Mount (in-container) | Purpose | POSIX perms | Persistence guidance |
 |---|---|---|---|
-| `/var/lib/zeroecho/store` | Main PKI store (CAs, requests, credentials, revocations, metadata log, staged content) **and** `server-control.log` | dir `0700` | **Stable, durable PV.** This is the system of record. Back it up consistently; never share it between two running servers (single-writer flock). |
+| `/var/lib/zeroecho/store-container` | Main PKI store (CAs, requests, credentials, revocations, metadata log, staged content) **and** `server-control.log` | dir `0700` | **Stable, durable PV.** This is the system of record. Back it up consistently; never share it between two running servers (single-writer flock). |
 | `/var/lib/zeroecho/keyring` | CA signing keyring (`.zek`) — private-key material | dir `0700`, keys `0600` | **Separate, stricter volume** from the store. Restrict backups/access; separate encryption/key-management if available. |
 | `/var/lib/zeroecho/artifacts` | Published objects (CA certs, leaf certs, CRLs) written by the filesystem publisher | dir `0750` | Durable but reconstructible; can be republished from the store. |
 | `/var/lib/zeroecho/audit` | Durable audit sink (`file` provider `root`) | dir `0750` | Durable; retain per your audit-retention policy. Append-heavy. |
@@ -91,7 +106,7 @@ user.
 
 | Mount | Source | Notes |
 |---|---|---|
-| `/etc/zeroecho/server-config.json` | operator file / ConfigMap | Strict versioned JSON, **schema version 7**. Start from [`docs/pki-server-trusted-proxy-rfc9440-example.json`](../docs/pki-server-trusted-proxy-rfc9440-example.json) for this topology. Validated by `--validate-config` at start-up (fail-fast). |
+| `/etc/zeroecho/server-config.json` | operator file / ConfigMap | Strict versioned JSON, **schema version 8**. Start from [`docs/pki-server-trusted-proxy-rfc9440-example.json`](../docs/pki-server-trusted-proxy-rfc9440-example.json) for this topology. Validated by `--validate-config` at start-up (fail-fast). |
 | `/etc/zeroecho/profile-bootstrap.json` | operator file / ConfigMap | Local schema v1, explicit `operatorId`, matching filesystem store and audit sink; no signer or publishers. |
 | `/etc/zeroecho/profiles/` | operator dir / ConfigMap | One `*.json` certificate-profile document (**schemaVersion 5**) per file. Reconciled at start-up (see below). |
 | `/var/lib/zeroecho/tls/` (compose) or `/etc/zeroecho/tls/` (k8s) | operator dir / Secret | pki-server's own PKCS#12 stores referenced by `server-config.json`. In Compose the server working dir is `/var/lib/zeroecho`, so config paths like `tls/server-identity.p12` resolve there; the k8s ConfigMap uses absolute `/etc/zeroecho/tls/...` paths. |
@@ -116,10 +131,10 @@ The env-var name syntax is constrained by the server: `[A-Z][A-Z0-9_]{0,127}`.
 > `/var/lib/zeroecho`. The shipped example configs use illustrative relative
 > paths (`state/pki`, `state/audit`, `tls/...`); when adapting one for a
 > container, point them at the actual mounts. The canonical mapping used by these
-> artifacts is: `store.root` → `/var/lib/zeroecho/store`, `audit.root` →
+> artifacts is: `store.root` → `/var/lib/zeroecho/store-container/store`, `audit.root` →
 > `/var/lib/zeroecho/audit`, publisher `root` → `/var/lib/zeroecho/artifacts`,
 > signing `keyringPath` → `/var/lib/zeroecho/keyring/ca-keyring.zek`, `controlLog`
-> → `/var/lib/zeroecho/store/server-control.log`, and the TLS PKCS#12 stores →
+> → `/var/lib/zeroecho/store-container/server-control/server-control.log`, and the TLS PKCS#12 stores →
 > `/var/lib/zeroecho/tls/...` (Compose) or `/etc/zeroecho/tls/...` (the k8s
 > ConfigMap, which already uses absolute paths). Prefer absolute in-container
 > paths to avoid ambiguity.
@@ -176,7 +191,7 @@ To enrol an administrator:
 
 ## Startup profile bootstrap and profile changes
 
-The entrypoint first validates server schema v7 (backend session schema v6), then
+The entrypoint first validates server schema v8 (backend session schema v6), then
 runs the distribution's deployment-only `bin/zeroecho-pki-profile-bootstrap`
 launcher, then executes the server as PID 1. The helper uses the existing local
 schema-v1 parser and core PKI operations. It opens no signer, HTTP listener or
@@ -254,14 +269,14 @@ exit semantics.
 The store location is **configuration + a mounted volume**, never baked into the
 image. To move it:
 
-* **Compose:** the named volume `store` maps to `/var/lib/zeroecho/store`. To use
+* **Compose:** the named volume `store` maps to `/var/lib/zeroecho/store-container`. To use
   a specific host path or external volume, replace the `store:` named volume with
   a bind mount (`- type: bind, source: /data/zeroecho/store, target:
-  /var/lib/zeroecho/store`) — `chown 10001` and `chmod 700` it first — or declare
+  /var/lib/zeroecho/store-container`) — `chown 10001` and `chmod 700` it first — or declare
   the named volume as `external: true`. No image rebuild is needed; the config's
-  `store.properties.root` already points at `/var/lib/zeroecho/store`.
+  `store.properties.root` already points at `/var/lib/zeroecho/store-container/store`.
 * **Kubernetes:** the `store` `volumeClaimTemplate` binds a PVC to
-  `/var/lib/zeroecho/store`. Set `storageClassName` to a POSIX class, or
+  `/var/lib/zeroecho/store-container`. Set `storageClassName` to a POSIX class, or
   pre-provision the PV. `server-config.json` (ConfigMap) points `root` at the
   same in-container path.
 

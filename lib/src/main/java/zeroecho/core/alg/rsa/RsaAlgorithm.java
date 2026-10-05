@@ -45,6 +45,13 @@ import java.security.spec.RSAKeyGenParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.ParameterConstraint;
+import zeroecho.core.SecurityLevel;
+import zeroecho.core.TemplateParameter;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -103,6 +110,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class RsaAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs a new RSA algorithm definition and registers its roles and key
      * builders.
@@ -195,4 +205,35 @@ public final class RsaAlgorithm extends AbstractCryptoAlgorithm {
             }
         });
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("RSA-2048", "RSA-2048 (112-bit)", SecurityLevel.classical(112), RsaKeyGenSpec.rsa2048()),
+            new ParameterSetDescriptor.Concrete<>("RSA-3072", "RSA-3072 (128-bit)", SecurityLevel.classical(128), RsaKeyGenSpec.rsa3072()),
+            new ParameterSetDescriptor.Concrete<>("RSA-4096", "RSA-4096 (140-bit)", SecurityLevel.classical(140), RsaKeyGenSpec.rsa4096()),
+            new ParameterSetDescriptor.Template<>("rsa-custom", "RSA (custom key size)",
+                SecurityLevel.classical(112),
+                List.of(
+                    new TemplateParameter("keySizeBits",    "Key size (bits)",  Integer.class, "RSA modulus size in bits (minimum 2048 recommended)"),
+                    new TemplateParameter("publicExponent", "Public exponent",  Integer.class, "RSA public exponent (typically 65537)")
+                ),
+                List.of(
+                    new ParameterConstraint("keySizeBits", ParameterConstraint.ValueKind.INTEGER,
+                        true, null, List.of(), 1024L, null, 1, 0),
+                    new ParameterConstraint("publicExponent", ParameterConstraint.ValueKind.INTEGER,
+                        false, 65_537, List.of(), 3L, null, 2, 1)
+                ),
+                args -> new RsaKeyGenSpec(
+                    (Integer) args.get("keySizeBits"),
+                    (Integer) args.getOrDefault("publicExponent", 65_537)
+                )
+            )
+        );
+    }
+
 }

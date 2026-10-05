@@ -45,12 +45,22 @@ import zeroecho.pki.server.RealmId;
  * Bounded read-only mutual-TLS authentication input, independent of operation
  * arguments.
  *
- * @param peerCertificates trusted JSSE peer chain, leaf first
- * @param protocol negotiated TLS protocol
- * @param cipherSuite negotiated cipher suite
- * @param requestId safe request correlation identity
+ * <p>All fields are immutably snapshotted at construction time. Sensitive
+ * material (certificate contents, header values, TLS session details) is never
+ * rendered in {@link #toString()}.
+ *
+ * <h2>Thread safety</h2>
+ * <p>Immutable after construction; safe for concurrent access without
+ * additional synchronization.
+ *
+ * @param peerCertificates trusted JSSE peer chain, leaf first; 1–64 entries
+ * @param protocol negotiated TLS protocol; max 64 chars
+ * @param cipherSuite negotiated cipher suite; max 128 chars
+ * @param requestId safe request correlation identity matching {@code [A-Za-z0-9_-]{16,128}}
  * @param realmId exact server realm
- * @param requestHeaders bounded immutable request headers used only by an explicitly configured proxy mode
+ * @param requestHeaders bounded immutable request headers used only by an
+ *                       explicitly configured proxy mode; max 256 entries
+ * @since 1.0
  */
 public record PkiServerAuthenticationContext(List<X509Certificate> peerCertificates, String protocol,
         String cipherSuite, String requestId, RealmId realmId, Map<String, List<String>> requestHeaders) {

@@ -132,21 +132,19 @@ class KemHybridRoundTripTest {
             }
         }
 
-        // 3) Classic McEliece (CMCE)
-        var cmces = new CmceKeyGenSpec[] { CmceKeyGenSpec.mceliece348864(), CmceKeyGenSpec.mceliece348864f(),
-                CmceKeyGenSpec.mceliece460896(), CmceKeyGenSpec.mceliece460896f(), CmceKeyGenSpec.mceliece6688128(),
-                CmceKeyGenSpec.mceliece6688128f(), CmceKeyGenSpec.mceliece6960119(), CmceKeyGenSpec.mceliece6960119f(),
-                CmceKeyGenSpec.mceliece8192128(), CmceKeyGenSpec.mceliece8192128f() };
+        // 3) Classic McEliece (CMCE) — mceliece348864/348864f removed in BC 1.86
+        var cmces = new CmceKeyGenSpec[] { CmceKeyGenSpec.mceliece460896(), CmceKeyGenSpec.mceliece460896f(),
+                CmceKeyGenSpec.mceliece6688128(), CmceKeyGenSpec.mceliece6688128f(), CmceKeyGenSpec.mceliece6960119(),
+                CmceKeyGenSpec.mceliece6960119f(), CmceKeyGenSpec.mceliece8192128(), CmceKeyGenSpec.mceliece8192128f() };
         for (var spec : cmces) {
             for (var m : MODES) {
                 out.add(Arguments.of("CMCE", spec, m, "CMCE:" + labelOf(spec) + " · " + m));
             }
         }
 
-        // 4) FrodoKEM
-        var frodos = new FrodoKeyGenSpec[] { FrodoKeyGenSpec.frodo640aes(), FrodoKeyGenSpec.frodo640shake(),
-                FrodoKeyGenSpec.frodo976aes(), FrodoKeyGenSpec.frodo976shake(), FrodoKeyGenSpec.frodo1344aes(),
-                FrodoKeyGenSpec.frodo1344shake() };
+        // 4) FrodoKEM — frodo640aes/640shake removed in BC 1.86
+        var frodos = new FrodoKeyGenSpec[] { FrodoKeyGenSpec.frodo976aes(), FrodoKeyGenSpec.frodo976shake(),
+                FrodoKeyGenSpec.frodo1344aes(), FrodoKeyGenSpec.frodo1344shake() };
         for (var spec : frodos) {
             for (var m : MODES) {
                 out.add(Arguments.of("Frodo", spec, m, "Frodo:" + labelOf(spec) + " · " + m));

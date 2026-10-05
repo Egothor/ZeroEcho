@@ -197,6 +197,23 @@ public interface CertificateBuilder {
     byte[] buildTbs(AlgorithmIdentifier signatureAlgorithm);
 
     /**
+     * Encodes the standardized alternative-signature input, omitting both the
+     * {@code TBSCertificate.signature} field and the {@code AltSignatureValue}
+     * extension. Other configured fields and extension order are preserved.
+     * The alternative algorithm and subject alternative public key extensions
+     * must be supplied by the caller. No signer is invoked.
+     * Time and auxiliary memory are linear in the encoded body size.
+     * @return newly allocated canonical DER pre-TBS sequence
+     * @throws UnsupportedOperationException if this provider lacks this capability
+     * @throws IllegalArgumentException if configured fields or extensions are invalid
+     * @throws NullPointerException if a required field is missing
+     * @throws IllegalStateException if encoding fails
+     */
+    default byte[] buildAlternativeSignatureTbs() {
+        throw new UnsupportedOperationException("Alternative-signature pre-TBS is unavailable");
+    }
+
+    /**
      * Signs the assembled {@code tbsCertificate} with the given signer and returns
      * the resulting certificate.
      *

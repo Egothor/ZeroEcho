@@ -62,7 +62,7 @@ You reach these operations three ways, all of which invoke exactly the same
 server operation and enforce exactly the same rules:
 
 - **The web console** — task-oriented screens over the operation catalogue.
-- **The command line** — `zeroecho admin` against a running server; see
+- **The command line** — `zeroecho pki` against a running server; see
   [Administering from the command line](command-line.md).
 - **The HTTP API directly** — documented in the
   [Admin API reference](../reference/admin-api.md).
@@ -147,3 +147,4 @@ data views, and conditions — is described under
 | Search and verify the audit trail | [Audit and disclosure](audit-and-disclosure.md) |
 | Administer ACME enrolment | [Protocols](protocols.md) |
 | Script against the server | [Command line](command-line.md) |
+| Monitor the server in production | [Operational monitoring](operational-monitoring.md) |

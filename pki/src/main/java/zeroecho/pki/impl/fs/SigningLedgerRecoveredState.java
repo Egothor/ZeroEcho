@@ -106,12 +106,18 @@ final class SigningLedgerRecoveredState {
     /** Transactional recovery sink that publishes one immutable folded candidate. */
     /* default */ static final class RecoveryFold implements SigningLedgerRecovery.RecoverySink {
         private final MetadataStoreId storeId;
+        private final int maximumRecords;
         private State preparedState;
         private State state;
 
         /* default */ RecoveryFold(Path root, MetadataStoreId storeId) {
+            this(root, storeId, Integer.MAX_VALUE);
+        }
+
+        /* default */ RecoveryFold(Path root, MetadataStoreId storeId, int maximumRecords) {
             Objects.requireNonNull(root, "root");
             this.storeId = Objects.requireNonNull(storeId, "storeId");
+            this.maximumRecords = maximumRecords;
         }
 
         @Override public Session begin(SigningManifestCodec.Manifest manifest) {
@@ -179,7 +185,7 @@ final class SigningLedgerRecoveredState {
                     entry.sequence(), entry.revision(), entry.recordType());
             SigningMvccIndex.RecoveredRecord recovered =
                     new SigningMvccIndex.RecoveredRecord(key, pointer, entry.revision());
-            if (records.put(key, recovered) != null) {
+            if (putRecord(key, recovered) != null) {
                 throw new IOException("Metadata checkpoint key is duplicated");
             }
             if (OUTCOME_NAMESPACE.equals(key.namespace())) {
@@ -187,6 +193,7 @@ final class SigningLedgerRecoveredState {
             } else if (key.equals(WATERMARK_KEY)) {
                 watermark = Math.max(watermark, payload.watermark());
             }
+            checkRestoreBudget();
         }
 
         @Override public void acceptCheckpointBoundary(SigningCheckpointCodec.Header header)
@@ -233,11 +240,33 @@ final class SigningLedgerRecoveredState {
                 validateAndApplyCallerMutations(payload.mutations(), pointer, scanned.revision());
                 if (payload.watermark() >= 0L) {
                     watermark = Math.max(watermark, payload.watermark());
-                    records.put(WATERMARK_KEY, new SigningMvccIndex.RecoveredRecord(
+                    putRecord(WATERMARK_KEY, new SigningMvccIndex.RecoveredRecord(
                             WATERMARK_KEY, pointer, scanned.revision()));
                 }
             }
             applyOutcomeLifecycle(frame.transactionId(), payload, pointer, scanned.revision());
+            checkRestoreBudget();
+        }
+
+        private void checkRestoreBudget() throws IOException {
+            if (records.size() > owner.maximumRecords || outcomes.size() > owner.maximumRecords) {
+                throw new IOException("RESTORE_METADATA_RECORD_LIMIT");
+            }
+        }
+
+        private SigningMvccIndex.RecoveredRecord putRecord(MetadataKey key, SigningMvccIndex.RecoveredRecord value)
+                throws IOException {
+            if (records.size() >= owner.maximumRecords && !records.containsKey(key)) {
+                throw new IOException("RESTORE_METADATA_RECORD_LIMIT");
+            }
+            return records.put(key, value);
+        }
+
+        private MetadataCommitResult putOutcome(UUID key, MetadataCommitResult value) throws IOException {
+            if (outcomes.size() >= owner.maximumRecords && !outcomes.containsKey(key)) {
+                throw new IOException("RESTORE_METADATA_RECORD_LIMIT");
+            }
+            return outcomes.put(key, value);
         }
 
         private SigningTransactionPayloadCodec.Payload decodeBound(
@@ -299,7 +328,7 @@ final class SigningLedgerRecoveredState {
                 case ACK, WATERMARK ->
                     throw new IOException("Metadata checkpoint outcome is invalid");
             };
-            if (outcomes.put(token, outcome) != null) {
+            if (putOutcome(token, outcome) != null) {
                 throw new IOException("Metadata checkpoint outcome identity is duplicated");
             }
         }
@@ -322,7 +351,7 @@ final class SigningLedgerRecoveredState {
                 if (mutation.kind() == SigningTransactionPayloadCodec.MutationKind.DELETE) {
                     records.remove(mutation.key());
                 } else {
-                    records.put(mutation.key(), new SigningMvccIndex.RecoveredRecord(
+                    putRecord(mutation.key(), new SigningMvccIndex.RecoveredRecord(
                             mutation.key(), pointer, mutationRevision));
                 }
             }
@@ -338,8 +367,8 @@ final class SigningLedgerRecoveredState {
                     if (existing != null) {
                         throw new IOException("Metadata issuance is duplicated");
                     }
-                    outcomes.put(token, unknown(id));
-                    records.put(outcomeKey(token), new SigningMvccIndex.RecoveredRecord(
+                    putOutcome(token, unknown(id));
+                    putRecord(outcomeKey(token), new SigningMvccIndex.RecoveredRecord(
                             outcomeKey(token), pointer, outcomeRevision));
                 }
                 case COMMIT, REJECT -> {
@@ -354,8 +383,8 @@ final class SigningLedgerRecoveredState {
                                     MetadataCommitResult.Outcome.COMMITTED,
                                     OptionalLong.of(outcomeRevision), Optional.empty())
                             : notCommitted(id, payload.failure());
-                    outcomes.put(token, terminal);
-                    records.put(outcomeKey(token), new SigningMvccIndex.RecoveredRecord(
+                    putOutcome(token, terminal);
+                    putRecord(outcomeKey(token), new SigningMvccIndex.RecoveredRecord(
                             outcomeKey(token), pointer, outcomeRevision));
                 }
                 case DIRECT_COMMIT -> {
@@ -377,7 +406,7 @@ final class SigningLedgerRecoveredState {
                         throw new IOException("Metadata watermark does not advance");
                     }
                     watermark = payload.watermark();
-                    records.put(WATERMARK_KEY, new SigningMvccIndex.RecoveredRecord(
+                    putRecord(WATERMARK_KEY, new SigningMvccIndex.RecoveredRecord(
                             WATERMARK_KEY, pointer, outcomeRevision));
                 }
             }

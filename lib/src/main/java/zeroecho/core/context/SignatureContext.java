@@ -66,7 +66,7 @@ import zeroecho.core.tag.ThrowingBiPredicate;
  * <h3>Sign with Ed25519</h3> <pre>
  * {@code
  * TagEngine<java.security.Signature> eng =
- *     TagEngineBuilder.ed25519Sign(privateKey).get();
+ *     TagEngineBuilder.ed25519Sign(session, privateKey).get();
  *
  * try (java.io.InputStream in = eng.wrap(upstream)) {
  *     in.transferTo(out); // body, then detached signature trailer

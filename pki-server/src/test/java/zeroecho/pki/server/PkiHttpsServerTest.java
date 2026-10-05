@@ -53,6 +53,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.io.OutputStream;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
@@ -272,8 +273,11 @@ class PkiHttpsServerTest {
                 "Server execution shutdown timed out: code=SERVER_EXECUTION_SHUTDOWN_TIMEOUT"))
                 .doNothing().when(transport).shutdown(configuration.execution().gracefulShutdown());
         AtomicReference<PkiHttpsServer.State> state = new AtomicReference<>(PkiHttpsServer.State.READY);
+        StatusScheduleWorker noopSchedule = new StatusScheduleWorker(
+                cancellation -> StatusScheduleWorker.PassHints.idle(), Duration.ofSeconds(1), Clock.systemUTC(), code -> { });
         PkiHttpsServer server = new PkiHttpsServer(configuration, realm, authenticator, transport,
-                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), state);
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.empty(), noopSchedule, state);
 
         IllegalStateException timeout = assertThrows(IllegalStateException.class, server::close);
         assertTrue(timeout.getMessage().contains("SERVER_EXECUTION_SHUTDOWN_TIMEOUT"));
@@ -331,10 +335,10 @@ class PkiHttpsServerTest {
         assertTrue(decoded.publicListener().isEmpty());
         assertEquals(PkiServerConfiguration.AuditProjection.defaults(), decoded.auditProjection());
         assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
-                .replace("\"version\": 7", "\"version\": 5")
+                .replace("\"version\": " + PkiServerConfiguration.CURRENT_VERSION, "\"version\": 5")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
-                .replace("\"version\": 7", "\"version\": 6")
+                .replace("\"version\": " + PkiServerConfiguration.CURRENT_VERSION, "\"version\": 7")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThrows(IllegalArgumentException.class,
                 () -> new PkiServerConfiguration.AuditProjection(4, 5, Duration.ofSeconds(2)));
@@ -550,6 +554,40 @@ class PkiHttpsServerTest {
                     spoofed, Permission.Relationship.ANY, Permission.Context.empty(), Optional.empty(), "scope-spoof");
             assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,
                     server.realm().gateway().execute(request, zeroecho.core.io.CancellationSignal.NONE));
+        }
+    }
+
+    @Test
+    void dashboardCountsAdminHandlerEntriesIncludingRejectionsButExcludesHealth() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        PkiServerConfiguration configuration = HttpServerTestSupport.configuration(temporaryDirectory, tls.clientCertificate());
+        seed(configuration);
+        try (ServerRealmContext context = ServerRealmContext.open(configuration.realm(),
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+            Permission.Scope scope = new Permission.Scope(ServerTestSupport.REALM, Optional.empty(), Optional.empty(), Optional.empty());
+            context.grant(ServerTestSupport.grant("dashboard", "administrator", Permission.Effect.ALLOW,
+                    Permission.Action.SERVER_HEALTH_READ, Permission.ResourceType.SERVER_CONFIGURATION, scope,
+                    Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
+            context.createPrincipal(ServerTestSupport.principal("requester"), "system");
+            context.approvals().request("dashboard-pending", "ca.intermediate.create", ServerTestSupport.DIGEST,
+                    scope, "requester", new ApprovalService.Policy("metrics", 1, Set.of("administrator"),
+                            Set.of(), true, Duration.ofHours(1), true));
+        }
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader());
+                HttpClient client = HttpClient.newBuilder().sslContext(tls.clientContext()).build()) {
+            URI base = URI.create("https://localhost:" + server.address().getPort());
+            URI metrics = base.resolve("/admin/v1/operations/dashboard.server");
+            HttpResponse<String> first = post(client, metrics, "{\"version\":1,\"arguments\":{}}");
+            assertEquals(200, first.statusCode(), first.body());
+            assertTrue(first.body().contains("\"adminRequestsTotal\":1"), first.body());
+            assertTrue(first.body().contains("\"approvalPendingTotal\":1"), first.body());
+            assertTrue(first.body().contains("\"auditProjectionFailureTotal\":0"), first.body());
+            assertTrue(first.body().contains("UNAVAILABLE"), "Unconfigured signing has no scheduling measurement");
+            assertEquals(200, get(client, base.resolve("/health/live")).statusCode());
+            assertEquals(404, get(client, base.resolve("/admin/v1/not-registered")).statusCode());
+            HttpResponse<String> second = post(client, metrics, "{\"version\":1,\"arguments\":{}}");
+            assertTrue(second.body().contains("\"adminRequestsTotal\":3"), second.body());
         }
     }
 
@@ -996,8 +1034,11 @@ class PkiHttpsServerTest {
 
     private static PkiHttpsServer closeServer(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, PkiHttpsTransport transport) {
+        StatusScheduleWorker noopSchedule = new StatusScheduleWorker(
+                cancellation -> StatusScheduleWorker.PassHints.idle(), Duration.ofSeconds(1), Clock.systemUTC(), code -> { });
         return new PkiHttpsServer(configuration, realm, authenticator, transport, Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), new AtomicReference<>(PkiHttpsServer.State.READY));
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+                noopSchedule, new AtomicReference<>(PkiHttpsServer.State.READY));
     }
 
     private static Future<?> submitClose(ExecutorService callers, PkiHttpsServer server,

@@ -39,11 +39,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.DigestInputStream;
 import java.security.GeneralSecurityException;
-import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.HexFormat;
 import zeroecho.core.KeyUsage;
@@ -81,8 +79,7 @@ public final class StreamingCrlSignatureVerifier {
         SignatureInteropProfile profile = SignatureInteropProfiles.resolve(algorithm)
                 .orElseThrow(() -> new GeneralSecurityException("CRL signature algorithm is unsupported"));
         byte[] nativeSpki = new BcX509PublicKeyAdapter(bindings).unwrap(Pkix.subjectPublicKeyInfo(issuer));
-        String keyAlgorithm = "ECDSA".equals(profile.keyAlgorithmId()) ? "EC" : profile.keyAlgorithmId();
-        PublicKey key = KeyFactory.getInstance(keyAlgorithm).generatePublic(new X509EncodedKeySpec(nativeSpki));
+        PublicKey key = Pkix.publicKeyFromSubjectPublicKeyInfo(nativeSpki);
         byte[] expected = profile.externalToInternalSignature(signature);
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (SignatureContext verifier = new ZeroEchoSession().createContext(profile.contextAlgorithmId(),

@@ -87,7 +87,7 @@ spec:
             - name: ZEROECHO_PROFILES_DIR
               value: /etc/zeroecho/profiles
             - name: ZEROECHO_STORE_DIR
-              value: /var/lib/zeroecho/store
+              value: /var/lib/zeroecho/store-container/store
             - name: ZEROECHO_AUDIT_DIR
               value: /var/lib/zeroecho/audit
             - name: ZEROECHO_ADMIN_PORT
@@ -104,7 +104,7 @@ spec:
             - {name: profiles, mountPath: /etc/zeroecho/profiles, readOnly: true}
             - {name: tls, mountPath: /etc/zeroecho/tls, readOnly: true}
             - {name: health, mountPath: /etc/zeroecho/health, readOnly: true}
-            - {name: store, mountPath: /var/lib/zeroecho/store}
+            - {name: store, mountPath: /var/lib/zeroecho/store-container}
             - {name: keyring, mountPath: /var/lib/zeroecho/keyring}
             - {name: artifacts, mountPath: /var/lib/zeroecho/artifacts}
             - {name: audit, mountPath: /var/lib/zeroecho/audit}

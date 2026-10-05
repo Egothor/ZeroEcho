@@ -37,6 +37,11 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -71,6 +76,9 @@ import zeroecho.core.spec.VoidSpec;
  */
 public final class SlhDsaAlgorithm extends AbstractCryptoAlgorithm {
 
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
+
     /**
      * Creates a new SLH-DSA algorithm instance and registers its capabilities.
      *
@@ -103,4 +111,27 @@ public final class SlhDsaAlgorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(SlhDsaPublicKeySpec.class, new SlhDsaPublicKeyBuilder());
         registerPrivateKeyImporter(SlhDsaPrivateKeySpec.class, new SlhDsaPrivateKeyBuilder());
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHA2-128f",  "SLH-DSA-SHA2-128f (NIST L1)",  SecurityLevel.nist(1, 128), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHA2,  SlhDsaKeyGenSpec.Security.L1_128, SlhDsaKeyGenSpec.Variant.FAST,  SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHA2-128s",  "SLH-DSA-SHA2-128s (NIST L1)",  SecurityLevel.nist(1, 128), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHA2,  SlhDsaKeyGenSpec.Security.L1_128, SlhDsaKeyGenSpec.Variant.SMALL, SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHA2-192f",  "SLH-DSA-SHA2-192f (NIST L3)",  SecurityLevel.nist(3, 192), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHA2,  SlhDsaKeyGenSpec.Security.L3_192, SlhDsaKeyGenSpec.Variant.FAST,  SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHA2-192s",  "SLH-DSA-SHA2-192s (NIST L3)",  SecurityLevel.nist(3, 192), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHA2,  SlhDsaKeyGenSpec.Security.L3_192, SlhDsaKeyGenSpec.Variant.SMALL, SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHA2-256f",  "SLH-DSA-SHA2-256f (NIST L5)",  SecurityLevel.nist(5, 256), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHA2,  SlhDsaKeyGenSpec.Security.L5_256, SlhDsaKeyGenSpec.Variant.FAST,  SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHA2-256s",  "SLH-DSA-SHA2-256s (NIST L5)",  SecurityLevel.nist(5, 256), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHA2,  SlhDsaKeyGenSpec.Security.L5_256, SlhDsaKeyGenSpec.Variant.SMALL, SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHAKE-128f", "SLH-DSA-SHAKE-128f (NIST L1)", SecurityLevel.nist(1, 128), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHAKE, SlhDsaKeyGenSpec.Security.L1_128, SlhDsaKeyGenSpec.Variant.FAST,  SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHAKE-128s", "SLH-DSA-SHAKE-128s (NIST L1)", SecurityLevel.nist(1, 128), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHAKE, SlhDsaKeyGenSpec.Security.L1_128, SlhDsaKeyGenSpec.Variant.SMALL, SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHAKE-192f", "SLH-DSA-SHAKE-192f (NIST L3)", SecurityLevel.nist(3, 192), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHAKE, SlhDsaKeyGenSpec.Security.L3_192, SlhDsaKeyGenSpec.Variant.FAST,  SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHAKE-192s", "SLH-DSA-SHAKE-192s (NIST L3)", SecurityLevel.nist(3, 192), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHAKE, SlhDsaKeyGenSpec.Security.L3_192, SlhDsaKeyGenSpec.Variant.SMALL, SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHAKE-256f", "SLH-DSA-SHAKE-256f (NIST L5)", SecurityLevel.nist(5, 256), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHAKE, SlhDsaKeyGenSpec.Security.L5_256, SlhDsaKeyGenSpec.Variant.FAST,  SlhDsaKeyGenSpec.PreHash.NONE)),
+            new ParameterSetDescriptor.Concrete<>("SLH-DSA-SHAKE-256s", "SLH-DSA-SHAKE-256s (NIST L5)", SecurityLevel.nist(5, 256), SlhDsaKeyGenSpec.of("BC", SlhDsaKeyGenSpec.Hash.SHAKE, SlhDsaKeyGenSpec.Security.L5_256, SlhDsaKeyGenSpec.Variant.SMALL, SlhDsaKeyGenSpec.PreHash.NONE))
+        );
+    }
+
 }

@@ -43,6 +43,7 @@ module zeroecho.pki {
 
     // Public PKI API.
     exports zeroecho.pki.api;
+    exports zeroecho.pki.api.ct;
     exports zeroecho.pki.api.algorithm;
     exports zeroecho.pki.api.attr;
     exports zeroecho.pki.api.audit;
@@ -54,10 +55,12 @@ module zeroecho.pki {
     exports zeroecho.pki.api.issuance;
     exports zeroecho.pki.api.orch;
     exports zeroecho.pki.api.policy;
+    exports zeroecho.pki.api.hybrid;
     exports zeroecho.pki.api.profile;
     exports zeroecho.pki.api.publication;
     exports zeroecho.pki.api.request;
     exports zeroecho.pki.api.revocation;
+    exports zeroecho.pki.api.schedule;
     exports zeroecho.pki.api.status;
     exports zeroecho.pki.api.signing;
     exports zeroecho.pki.api.transfer;
@@ -69,10 +72,13 @@ module zeroecho.pki {
     exports zeroecho.pki.spi.bootstrap;
     exports zeroecho.pki.spi.confirmation;
     exports zeroecho.pki.spi.crypto;
+    exports zeroecho.pki.spi.ct;
     exports zeroecho.pki.spi.store;
 
     // Default backends, exposed only to sibling modules that must construct them.
     exports zeroecho.pki.impl.fs to zeroecho.pki.server, zeroecho.app;
+    exports zeroecho.pki.impl.fs.ct to zeroecho.pki.server, zeroecho.app;
+    exports zeroecho.pki.impl.secrets to zeroecho.pki.server, zeroecho.app;
 
     // Service usage (backend selection).
     uses zeroecho.pki.spi.async.AsyncBusProvider;
@@ -93,13 +99,16 @@ module zeroecho.pki {
     provides zeroecho.pki.spi.audit.AuditSinkProvider with
             zeroecho.pki.impl.audit.FileAuditSinkProvider,
             zeroecho.pki.impl.audit.InMemoryAuditSinkProvider,
-            zeroecho.pki.impl.audit.StdoutAuditSinkProvider;
+            zeroecho.pki.impl.audit.StdoutAuditSinkProvider,
+            zeroecho.pki.impl.audit.SyslogAuditSinkProvider;
     provides zeroecho.pki.spi.crypto.SigningProviderFactory
-            with zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProviderFactory;
+            with zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProviderFactory,
+                 zeroecho.pki.impl.crypto.pkcs11.Pkcs11SigningProviderFactory;
     provides zeroecho.pki.spi.framework.CredentialFrameworkProvider
             with zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFrameworkProvider;
     provides zeroecho.pki.spi.publish.PublisherProvider
-            with zeroecho.pki.impl.publish.FilesystemPublisherProvider;
+            with zeroecho.pki.impl.publish.FilesystemPublisherProvider,
+                 zeroecho.pki.impl.publish.HttpsPublisherProvider;
     provides zeroecho.pki.spi.store.PkiStoreProvider
             with zeroecho.pki.impl.fs.FilesystemPkiStoreProvider;
 }

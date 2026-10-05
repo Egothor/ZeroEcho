@@ -43,7 +43,7 @@ is not treated as proof of invocation count. Existing unit coverage also retains
 local caller-thread/no-reactor behavior, store exclusivity, unknown durability,
 internal key proofs, authority lifecycle, issuance, and full/delta CRLs.
 
-[Performance results and raw samples](pki-signing-performance.md#recorded-serial-measurements--2026-09-28)
+[Performance results and raw samples](pki-signing-performance.md#recorded-serial-measurements-2026-09-28)
 record the hardware, runtime, workload, latency distribution and separate startup
 costs. They are informational and establish no capacity or scaling target.
 

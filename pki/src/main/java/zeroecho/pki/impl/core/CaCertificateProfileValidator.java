@@ -118,6 +118,7 @@ final class CaCertificateProfileValidator {
 
     private static void requireProfileShape(CertificateProfileDefinition definition,
             CertificateProfileKind expectedKind, FormatId formatId) {
+        definition.requireSupportedIssuance();
         if (definition.certificateType() != expectedKind) {
             throw reject("CA_PROFILE_KIND_MISMATCH");
         }

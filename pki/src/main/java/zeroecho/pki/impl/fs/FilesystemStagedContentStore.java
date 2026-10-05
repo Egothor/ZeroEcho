@@ -89,7 +89,7 @@ import zeroecho.pki.spi.store.TemporaryUniqueIndex;
  */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ConfusingTernary",
         "PMD.AvoidCatchingGenericException", "PMD.UnusedPrivateMethod" })
-public final class FilesystemStagedContentStore implements StagedContentStore {
+public final class FilesystemStagedContentStore implements StagedContentStore { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
     private static final String OWNERS_SUFFIX = ".owners";
 
 
@@ -116,6 +116,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private final AtomicReference<TransactionalOwnership> transactionalOwnership;
     private final ContentReadObserver contentReadObserver;
     private final Semaphore openSinks;
+    private final StoreMutationBarrier mutationBarrier;
 
     /**
      * Creates a staged-content store.
@@ -141,6 +142,13 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
             ContentReadObserver observer, boolean cleanupTemporaryState) throws IOException {
+        this(root, storeId, maximumOpenSinks, observer, cleanupTemporaryState, new StoreMutationBarrier());
+    }
+
+    /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
+            ContentReadObserver observer, boolean cleanupTemporaryState, StoreMutationBarrier mutationBarrier)
+            throws IOException {
+        this.mutationBarrier = Objects.requireNonNull(mutationBarrier, "mutationBarrier");
         if (maximumOpenSinks <= 0) {
             throw new IllegalArgumentException("maximumOpenSinks must be positive");
         }
@@ -179,7 +187,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     @Override
     public String contentStoreId() {
-        return storeId;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            return storeId;
+        }
     }
 
     /* package */ static void validateExistingLayout(Path root) throws IOException {
@@ -329,133 +339,149 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     @Override
     public ContentSink beginContent(Encoding encoding, DurableContentReference.Lifecycle lifecycle) throws IOException {
-        Objects.requireNonNull(encoding, "encoding");
-        Objects.requireNonNull(lifecycle, "lifecycle");
-        if (!openSinks.tryAcquire()) {
-            throw new IOException("Staged-content preparation is busy: code=STAGED_CONTENT_PREPARATION_BUSY");
-        }
-        String contentId = UUID.randomUUID().toString();
-        Path incomplete = root.resolve(contentId + ".incomplete");
-        Path complete = root.resolve(contentId + ".content");
-        try {
-            createOwnerOnlyFile(incomplete);
-            return new FileSink(contentId, incomplete, complete, encoding, lifecycle);
-        } catch (IOException | RuntimeException failure) {
-            openSinks.release();
-            throw failure;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            Objects.requireNonNull(encoding, "encoding");
+            Objects.requireNonNull(lifecycle, "lifecycle");
+            if (!openSinks.tryAcquire()) {
+                throw new IOException("Staged-content preparation is busy: code=STAGED_CONTENT_PREPARATION_BUSY");
+            }
+            String contentId = UUID.randomUUID().toString();
+            Path incomplete = root.resolve(contentId + ".incomplete");
+            Path complete = root.resolve(contentId + ".content");
+            try {
+                createOwnerOnlyFile(incomplete);
+                return new FileSink(contentId, incomplete, complete, encoding, lifecycle);
+            } catch (IOException | RuntimeException failure) {
+                openSinks.release();
+                throw failure;
+            }
         }
     }
 
     @Override
     public RepeatableContent openContent(DurableContentReference reference) throws IOException {
-        DurableContentReference exact = requireOwned(reference);
-        DurableContentReference persisted = readMetadata(exact.contentId());
-        if (!persisted.equals(exact)) {
-            throw new IOException("Staged content metadata mismatch: code=CONTENT_INTEGRITY_FAILED");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            DurableContentReference exact = requireOwned(reference);
+            DurableContentReference persisted = readMetadata(exact.contentId());
+            if (!persisted.equals(exact)) {
+                throw new IOException("Staged content metadata mismatch: code=CONTENT_INTEGRITY_FAILED");
+            }
+            Path path = completePath(exact);
+            if (!isRegularFile(path)) {
+                throw new IOException("Staged content missing: code=STAGED_CONTENT_MISSING");
+            }
+            long actualLength = Files.size(path);
+            if (actualLength != exact.length()) {
+                throw new IOException("Staged content integrity failed: code=CONTENT_INTEGRITY_FAILED");
+            }
+            return new FileContent(path, exact, contentReadObserver);
         }
-        Path path = completePath(exact);
-        if (!isRegularFile(path)) {
-            throw new IOException("Staged content missing: code=STAGED_CONTENT_MISSING");
-        }
-        long actualLength = Files.size(path);
-        if (actualLength != exact.length()) {
-            throw new IOException("Staged content integrity failed: code=CONTENT_INTEGRITY_FAILED");
-        }
-        return new FileContent(path, exact, contentReadObserver);
     }
 
     @Override
     public DurableContentReference restoreReference(String persistedStoreId, String contentId, Encoding encoding,
             long length, String sha256, DurableContentReference.Lifecycle lifecycle) throws IOException {
-        if (!storeId.equals(requireStoreIdentifier(persistedStoreId))) {
-            throw new IllegalArgumentException("Staged content belongs to another store");
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            if (!storeId.equals(requireStoreIdentifier(persistedStoreId))) {
+                throw new IllegalArgumentException("Staged content belongs to another store");
+            }
+            requireContentIdentifier(contentId);
+            StoreReference supplied = new StoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
+            DurableContentReference persisted = readMetadata(contentId);
+            if (!persisted.equals(supplied)) {
+                throw new MalformedStagedContentException();
+            }
+            return persisted;
         }
-        requireContentIdentifier(contentId);
-        StoreReference supplied = new StoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
-        DurableContentReference persisted = readMetadata(contentId);
-        if (!persisted.equals(supplied)) {
-            throw new MalformedStagedContentException();
-        }
-        return persisted;
     }
 
     @Override
     public boolean retainContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
-        DurableContentReference exact = requireOwned(reference);
-        Objects.requireNonNull(owner, "owner");
-        TransactionalOwnershipIo.requireSidecarOwner(owner);
-        ReentrantLock lock = ownerLock(exact.contentId());
-        lock.lock();
-        try {
-            requireExactMetadata(exact);
-            Set<DurableContentOwner> owners = readOwners(exact.contentId());
-            if (!owners.add(owner)) {
-                return false;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            DurableContentReference exact = requireOwned(reference);
+            Objects.requireNonNull(owner, "owner");
+            TransactionalOwnershipIo.requireSidecarOwner(owner);
+            ReentrantLock lock = ownerLock(exact.contentId());
+            lock.lock();
+            try {
+                requireExactMetadata(exact);
+                Set<DurableContentOwner> owners = readOwners(exact.contentId());
+                if (!owners.add(owner)) {
+                    return false;
+                }
+                writeOwners(exact.contentId(), owners);
+                return true;
+            } finally {
+                lock.unlock();
             }
-            writeOwners(exact.contentId(), owners);
-            return true;
-        } finally {
-            lock.unlock();
         }
     }
 
     @Override
     public boolean releaseContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
-        DurableContentReference exact = requireOwned(reference);
-        Objects.requireNonNull(owner, "owner");
-        TransactionalOwnershipIo.requireSidecarOwner(owner);
-        ReentrantLock lock = ownerLock(exact.contentId());
-        lock.lock();
-        try {
-            if (!isRegularFile(metadataPath(exact.contentId()))) {
-                return false;
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            DurableContentReference exact = requireOwned(reference);
+            Objects.requireNonNull(owner, "owner");
+            TransactionalOwnershipIo.requireSidecarOwner(owner);
+            ReentrantLock lock = ownerLock(exact.contentId());
+            lock.lock();
+            try {
+                if (!isRegularFile(metadataPath(exact.contentId()))) {
+                    return false;
+                }
+                requireExactMetadata(exact);
+                Set<DurableContentOwner> owners = readOwners(exact.contentId());
+                if (!owners.remove(owner)) {
+                    return false;
+                }
+                writeOwners(exact.contentId(), owners);
+                TransactionalOwnershipIo.retireIfUnowned(this, exact, owners);
+                return true;
+            } finally {
+                lock.unlock();
             }
-            requireExactMetadata(exact);
-            Set<DurableContentOwner> owners = readOwners(exact.contentId());
-            if (!owners.remove(owner)) {
-                return false;
-            }
-            writeOwners(exact.contentId(), owners);
-            TransactionalOwnershipIo.retireIfUnowned(this, exact, owners);
-            return true;
-        } finally {
-            lock.unlock();
         }
     }
 
     @Override
     public Set<DurableContentOwner> contentOwners(DurableContentReference reference) throws IOException {
-        DurableContentReference exact = requireOwned(reference);
-        ReentrantLock lock = ownerLock(exact.contentId());
-        lock.lock();
-        try {
-            requireExactMetadata(exact);
-            Set<DurableContentOwner> owners = readOwners(exact.contentId());
-            owners.addAll(transactionalOwnership.get().findOwners(exact));
-            return Set.copyOf(owners);
-        } finally {
-            lock.unlock();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            DurableContentReference exact = requireOwned(reference);
+            ReentrantLock lock = ownerLock(exact.contentId());
+            lock.lock();
+            try {
+                requireExactMetadata(exact);
+                Set<DurableContentOwner> owners = readOwners(exact.contentId());
+                owners.addAll(transactionalOwnership.get().findOwners(exact));
+                return Set.copyOf(owners);
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
     @Override
     public void retireUnownedContent(DurableContentReference reference) throws IOException {
-        DurableContentReference exact = requireOwned(reference);
-        ReentrantLock lock = ownerLock(exact.contentId());
-        lock.lock();
-        try {
-            requireExactMetadata(exact);
-            TransactionalOwnershipIo.requireUnowned(this, exact);
-            retireFiles(exact);
-        } finally {
-            lock.unlock();
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            DurableContentReference exact = requireOwned(reference);
+            ReentrantLock lock = ownerLock(exact.contentId());
+            lock.lock();
+            try {
+                requireExactMetadata(exact);
+                TransactionalOwnershipIo.requireUnowned(this, exact);
+                retireFiles(exact);
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
     @Override
     public void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners) throws IOException {
-        try (TemporaryUniqueIndex transactionalOwners = beginUniqueIndex()) {
-            StoreIo.recoverContent(this, retained, retainedOwners, transactionalOwners);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            try (TemporaryUniqueIndex transactionalOwners = beginUniqueIndex()) {
+                StoreIo.recoverContent(this, retained, retainedOwners, transactionalOwners);
+            }
         }
     }
 
@@ -467,10 +493,12 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     @Override
     public TemporaryUniqueIndex beginUniqueIndex() throws IOException {
-        Path directory = root.resolve(UUID.randomUUID() + ".unique-index");
-        Files.createDirectory(directory);
-        restrictDirectory(directory);
-        return FilesystemTemporaryUniqueIndex.general(directory);
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            Path directory = root.resolve(UUID.randomUUID() + ".unique-index");
+            Files.createDirectory(directory);
+            restrictDirectory(directory);
+            return FilesystemTemporaryUniqueIndex.general(directory);
+        }
     }
 
     /* default */ TemporaryUniqueIndex beginOwnerIndex() throws IOException {
@@ -503,6 +531,30 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     private Path completePath(DurableContentReference reference) {
         return resolveOwned(reference.contentId() + ".content");
+    }
+
+    /** Called only while the owning store's exclusive backup barrier is held. */
+    /* default */ void copyBackupContent(Path target, FsBackupFiles.Budget budget, TemporaryUniqueIndex selected,
+            TemporaryUniqueIndex requiredPayload)
+            throws IOException {
+        Files.createDirectories(target);
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(root, "*.meta")) {
+            for (Path metadata : entries) {
+                String name = metadata.getFileName().toString();
+                String contentId = name.substring(0, name.length() - ".meta".length());
+                DurableContentReference reference = readMetadata(contentId);
+                if (!selected.contains(reference.contentId().getBytes(StandardCharsets.US_ASCII))) { continue; }
+                FsBackupFiles.copy(metadata, target.resolve(name), budget);
+                if (requiredPayload.contains(reference.contentId().getBytes(StandardCharsets.US_ASCII))) {
+                    Path payload = completePath(reference);
+                    FsBackupFiles.copy(payload, target.resolve(payload.getFileName()), budget);
+                }
+                Path owners = ownerPath(contentId);
+                if (Files.exists(owners, LinkOption.NOFOLLOW_LINKS)) {
+                    FsBackupFiles.copy(owners, target.resolve(owners.getFileName()), budget);
+                }
+            }
+        }
     }
 
     private Path metadataPath(String contentId) {
@@ -700,37 +752,39 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
         @Override
         public DurableContentReference complete() throws IOException {
-            lock.lock();
-            try {
-                requireOpen();
-                if (output == null) {
-                    output = openCountingOutput(incomplete);
-                }
-                output.close();
-                try (FileChannel channel = FileChannel.open(incomplete, StandardOpenOption.READ,
-                        LinkOption.NOFOLLOW_LINKS)) {
-                    tripSealFault(SealFaultPoint.PAYLOAD_FORCE);
-                    channel.force(true);
-                }
-                tripSealFault(SealFaultPoint.PAYLOAD_ATOMIC_MOVE);
-                Files.move(incomplete, complete, StandardCopyOption.ATOMIC_MOVE);
-                tripSealFault(SealFaultPoint.PAYLOAD_DIRECTORY_FORCE);
-                SigningFormatSupport.forceDirectory(root);
-                DurableContentReference reference = new StoreReference(storeId, contentId, encoding,
-                        output.length(), output.digestHex(), lifecycle);
+            try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+                lock.lock();
                 try {
-                    writeMetadata(reference);
-                    markTerminal();
-                    return reference;
-                } catch (IOException failure) {
-                    markTerminal();
-                    Files.deleteIfExists(complete);
-                    Files.deleteIfExists(resolveOwned(contentId + ".meta.incomplete"));
-                    Files.deleteIfExists(metadataPath(contentId));
-                    throw failure;
+                    requireOpen();
+                    if (output == null) {
+                        output = openCountingOutput(incomplete);
+                    }
+                    output.close();
+                    try (FileChannel channel = FileChannel.open(incomplete, StandardOpenOption.READ,
+                            LinkOption.NOFOLLOW_LINKS)) {
+                        tripSealFault(SealFaultPoint.PAYLOAD_FORCE);
+                        channel.force(true);
+                    }
+                    tripSealFault(SealFaultPoint.PAYLOAD_ATOMIC_MOVE);
+                    Files.move(incomplete, complete, StandardCopyOption.ATOMIC_MOVE);
+                    tripSealFault(SealFaultPoint.PAYLOAD_DIRECTORY_FORCE);
+                    SigningFormatSupport.forceDirectory(root);
+                    DurableContentReference reference = new StoreReference(storeId, contentId, encoding,
+                            output.length(), output.digestHex(), lifecycle);
+                    try {
+                        writeMetadata(reference);
+                        markTerminal();
+                        return reference;
+                    } catch (IOException failure) {
+                        markTerminal();
+                        Files.deleteIfExists(complete);
+                        Files.deleteIfExists(resolveOwned(contentId + ".meta.incomplete"));
+                        Files.deleteIfExists(metadataPath(contentId));
+                        throw failure;
+                    }
+                } finally {
+                    lock.unlock();
                 }
-            } finally {
-                lock.unlock();
             }
         }
 

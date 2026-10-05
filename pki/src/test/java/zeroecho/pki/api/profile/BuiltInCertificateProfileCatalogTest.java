@@ -64,6 +64,7 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.hybrid.HybridCertificateMode;
 
 final class BuiltInCertificateProfileCatalogTest {
 
@@ -74,11 +75,15 @@ final class BuiltInCertificateProfileCatalogTest {
     private static final String EMAIL = ROOT + "email-signing.json";
     private static final String ROOT_CA = ROOT + "root-ca.json";
     private static final String INTERMEDIATE_CA = ROOT + "intermediate-ca.json";
+    private static final String HYBRID_ROOT_CA = ROOT + "hybrid-root-ca.json";
+    private static final String PQC_ROOT_CA = ROOT + "pqc-root-ca.json";
+    private static final String PQC_INTERMEDIATE_CA = ROOT + "pqc-intermediate-ca.json";
     private static final List<String> PROFILE_RESOURCES = List.of(SERVER, VPN_SERVER, VPN_CLIENT, EMAIL, ROOT_CA,
-            INTERMEDIATE_CA);
+            INTERMEDIATE_CA, HYBRID_ROOT_CA, PQC_ROOT_CA, PQC_INTERMEDIATE_CA);
     private static final List<String> EXPECTED_ORDER = List.of("server-tls", "vpn-server", "vpn-client",
-            "email-signing", "root-ca", "intermediate-ca");
-    private static final Set<String> EXPECTED_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519");
+            "email-signing", "root-ca", "intermediate-ca", "hybrid-root-ca", "pqc-root-ca", "pqc-intermediate-ca");
+    private static final Set<String> EXPECTED_LEAF_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519");
+    private static final Set<String> EXPECTED_CA_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "ML-DSA", "SLH-DSA");
     private static final ExtendedKeyUsageId SERVER_AUTH = new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1");
     private static final ExtendedKeyUsageId CLIENT_AUTH = new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.2");
     private static final ExtendedKeyUsageId EMAIL_PROTECTION = new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.4");
@@ -92,7 +97,7 @@ final class BuiltInCertificateProfileCatalogTest {
         List<BuiltInCertificateProfileTemplate> second = BuiltInCertificateProfileCatalog
                 .load(getClass().getClassLoader());
 
-        assertEquals(6, first.size());
+        assertEquals(9, first.size());
         assertEquals(EXPECTED_ORDER, first.stream().map(template -> template.definition().profileId()).toList());
         assertEquals(first, second);
         assertThrows(UnsupportedOperationException.class, () -> first.add(first.get(0)));
@@ -159,6 +164,8 @@ final class BuiltInCertificateProfileCatalogTest {
         }
         assertTrue(profiles.get("root-ca").confirmationPolicy().isEmpty());
         assertTrue(profiles.get("intermediate-ca").confirmationPolicy().isEmpty());
+        assertTrue(profiles.get("pqc-root-ca").confirmationPolicy().isEmpty());
+        assertTrue(profiles.get("pqc-intermediate-ca").confirmationPolicy().isEmpty());
     }
 
     @Test
@@ -206,6 +213,16 @@ final class BuiltInCertificateProfileCatalogTest {
         assertCaProfile(profiles.get("root-ca"), CertificateProfileKind.ROOT_CA, Duration.ofHours(87_600), 1);
         assertCaProfile(profiles.get("intermediate-ca"), CertificateProfileKind.INTERMEDIATE_CA,
                 Duration.ofHours(43_800), 0);
+        assertCaProfile(profiles.get("hybrid-root-ca"), CertificateProfileKind.ROOT_CA, Duration.ofHours(87_600), 1);
+        assertTrue(profiles.get("hybrid-root-ca").hybridMode() instanceof HybridCertificateMode.AltSignature,
+                "hybrid-root-ca must use AltSignature hybrid mode");
+        assertCaProfile(profiles.get("pqc-root-ca"), CertificateProfileKind.ROOT_CA, Duration.ofHours(87_600), 1);
+        assertCaProfile(profiles.get("pqc-intermediate-ca"), CertificateProfileKind.INTERMEDIATE_CA,
+                Duration.ofHours(43_800), 0);
+        assertTrue(profiles.get("pqc-root-ca").hybridMode() instanceof HybridCertificateMode.TwinCertificate,
+                "pqc-root-ca must use TwinCertificate hybrid mode");
+        assertTrue(profiles.get("pqc-intermediate-ca").hybridMode() instanceof HybridCertificateMode.TwinCertificate,
+                "pqc-intermediate-ca must use TwinCertificate hybrid mode");
     }
 
     @Test
@@ -315,7 +332,7 @@ final class BuiltInCertificateProfileCatalogTest {
         assertEquals(expectedExtendedUsages, leaf.extendedKeyUsages());
         assertFalse(leaf.extendedKeyUsageCritical());
         assertTrue(leaf.basicConstraintsCritical());
-        assertEquals(EXPECTED_ALGORITHMS, leaf.allowedSubjectKeyAlgorithmIds());
+        assertEquals(EXPECTED_LEAF_ALGORITHMS, leaf.allowedSubjectKeyAlgorithmIds());
     }
 
     private static void assertCaProfile(CertificateProfileDefinition definition, CertificateProfileKind kind,
@@ -334,7 +351,7 @@ final class BuiltInCertificateProfileCatalogTest {
         assertEquals(pathLength, ca.pathLengthConstraint());
         assertTrue(ca.keyUsageCritical());
         assertEquals(Set.of(CaKeyUsage.KEY_CERT_SIGN, CaKeyUsage.CRL_SIGN), ca.keyUsages());
-        assertEquals(EXPECTED_ALGORITHMS, ca.allowedSubjectKeyAlgorithmIds());
+        assertEquals(EXPECTED_CA_ALGORITHMS, ca.allowedSubjectKeyAlgorithmIds());
     }
 
     private static SubjectAlternativeNameRule rule(SubjectAlternativeNamePolicy policy,

@@ -452,7 +452,15 @@ class FullCrlStreamingPublicationTest {
             @Override public void close() { }
         };
         DefaultSigningService signing = new DefaultSigningService(store, provider, algorithm, Duration.ofMinutes(1),
-                new SecureRandom(), () -> { }, (command, custody) -> { custody.run(); return store.acceptSign(command); }, () -> { },
+                new SecureRandom(), () -> { }, new DefaultSigningService.AcceptanceOperation() {
+                    @Override public SignWorkflowStore.AcceptanceResult accept(SignWorkflowStore.AcceptanceCommand command, Runnable custody) {
+                        custody.run(); return store.acceptSign(command);
+                    }
+                    @Override public SignWorkflowStore.AcceptanceResult acceptScheduled(SignWorkflowStore.AcceptanceCommand command,
+                            zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable custody) {
+                        custody.run(); return store.acceptScheduledSign(command, claim);
+                    }
+                }, () -> { },
                 (boundedWaitId, boundedWaitCancellation) -> { throw new UnsupportedOperationException("Fixture has no reactor wait"); });
         return new DefaultSemanticSigningService(store, signing, PkiTestRuntime.endEntityPreparation(store, CLOCK), maximum);
     }

@@ -67,6 +67,8 @@ public final class HybridSignatureContexts {
      * @return signing signature context
      * @throws NullPointerException     if any mandatory argument is {@code null}
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
+     * @throws zeroecho.core.err.UnsupportedRoleException if either component uses
+     *         LMS/XMSS, before constructing either child context
      * @since 1.0
      */
     public static SignatureContext sign(ZeroEchoSession session, HybridSignatureProfile profile,
@@ -75,6 +77,8 @@ public final class HybridSignatureContexts {
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicPrivate, "classicPrivate");
         Objects.requireNonNull(pqcPrivate, "pqcPrivate");
+        zeroecho.core.alg.common.sig.StatefulSigningGuard.requireStateless(profile.classicSigId(), classicPrivate);
+        zeroecho.core.alg.common.sig.StatefulSigningGuard.requireStateless(profile.pqcSigId(), pqcPrivate);
         return new HybridSignatureContext(session, profile, classicPrivate, pqcPrivate, maxBufferedBytes);
     }
 

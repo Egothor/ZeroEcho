@@ -113,6 +113,7 @@ class PkiCliRemoteTest {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         int code = PkiCli.execute(new String[] { "credential.issue", "--url", "https://pki.example.org:8443",
                 "--client-cert", "client.pem", "--client-key", "client.key", "--authority-id", "authority-1",
+                "--arg", "issuerCaId=authority-1", "--request-id", "request-1", "--profile-id", "profile-1",
                 "--pending-wait", "0", "--output", "json" }, output, FORBIDDEN_OPENER, () -> false, factory);
         String rendered = output.toString(StandardCharsets.UTF_8);
         assertEquals(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN, code);
@@ -134,6 +135,7 @@ class PkiCliRemoteTest {
         int code = PkiCli.execute(new String[] { "security.principal.list", "--url",
                 "https://pki.example.org:8443", "--client-keystore", "client.p12",
                 "--client-keystore-password-env", "PKI_PW", "--arg", "role=admin", "--arg-int", "limit=25",
+                "--arg-int", "offset=0",
                 "--output", "json" }, output, FORBIDDEN_OPENER, () -> false, factory);
         String requestBody = new String(captured[0].requests.get(0).body().orElseThrow(), StandardCharsets.UTF_8);
         assertEquals(PkiExitCodes.SUCCESS, code);
@@ -213,6 +215,7 @@ class PkiCliRemoteTest {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         int code = PkiCli.execute(new String[] { "profile.list-all", "--url", "https://pki.example",
                 "--client-keystore", "client.p12", "--subject-ref", "--url", "--expected-lifecycle-revision", "7",
+                "--arg-int", "limit=25",
                 "--output", "json" }, output, FORBIDDEN_OPENER, () -> false, target -> {
                     captured[0] = new FakeExchange(request -> ok("{\"version\":1,\"requestId\":\"test\",\"failure\":null,\"operation\":\"profile.list-all\","
                             + "\"status\":\"SUCCEEDED\",\"result\":{}}"));
@@ -249,6 +252,7 @@ class PkiCliRemoteTest {
     void structuredArgumentsRoundTripThroughCliWithoutOpeningLocalSession() {
         FakeExchange[] exchange = new FakeExchange[1];
         int exit = PkiCli.execute(new String[] { "security.approval.request", "--url", "https://pki.example",
+                "--arg", "approvalId=approval-1", "--arg", "targetOperation=future.operation",
                 "--client-keystore", "client.p12", "--arg-json", "targetArguments={\"names\":[\"one\",\"two\"],\"limit\":2,\"active\":true}" },
                 new ByteArrayOutputStream(), FORBIDDEN_OPENER, () -> false, target -> {
                     exchange[0] = new FakeExchange(request -> ok("{\"version\":1,\"requestId\":\"test\","
@@ -258,6 +262,16 @@ class PkiCliRemoteTest {
         assertEquals(0, exit);
         String body = new String(exchange[0].requests.getFirst().body().orElseThrow(), StandardCharsets.UTF_8);
         assertTrue(body.contains("\"targetArguments\":{\"names\":[\"one\",\"two\"],\"limit\":2,\"active\":true}"));
+    }
+
+    @Test
+    void missingKnownRequiredFieldIsInvalidBeforeOpeningRemoteExchange() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int exit = PkiCli.execute(new String[] { "profile.inspect", "--url", "https://pki.example",
+                "--client-keystore", "client.p12", "--output", "json" }, output, FORBIDDEN_OPENER,
+                () -> false, target -> { throw new AssertionError("Invalid invocation opened exchange"); });
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, exit);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("INVOCATION_INVALID"));
     }
 
     private static PkiHttpExchange.Response ok(String json) {

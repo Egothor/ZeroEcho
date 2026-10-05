@@ -260,6 +260,7 @@ public final class HybridKexContexts {
      *                                {@code null})
      * @return initiator-side {@link HybridKexContext}
      * @throws NullPointerException if any required argument is {@code null}
+     * @since 1.0
      */
     public static HybridKexContext initiatorPairMessage(ZeroEchoSession session, HybridKexProfile profile,
             String classicAlgId, zeroecho.core.alg.common.agreement.KeyPairKey classicInitiatorKeyPair,
@@ -308,6 +309,7 @@ public final class HybridKexContexts {
      *                                {@code null})
      * @return responder-side {@link HybridKexContext}
      * @throws NullPointerException if any required argument is {@code null}
+     * @since 1.0
      */
     public static HybridKexContext responderPairMessage(ZeroEchoSession session, HybridKexProfile profile,
             String classicAlgId, zeroecho.core.alg.common.agreement.KeyPairKey classicResponderKeyPair,

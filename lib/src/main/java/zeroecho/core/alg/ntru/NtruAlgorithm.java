@@ -47,6 +47,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.pqc.jcajce.spec.NTRUParameterSpec;
 
@@ -163,6 +168,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @see MessageAgreementContext
  */
 public final class NtruAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates an algorithm instance that registers KEM and AGREEMENT roles and
      * wires asymmetric key builders for generation and X.509/PKCS#8 import.
@@ -298,4 +306,21 @@ public final class NtruAlgorithm extends AbstractCryptoAlgorithm {
                     "BouncyCastle PQC provider not found. Add bcpqc-jdk18on to classpath and register it.");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("NTRU-HPS-2048-509",  "NTRU-HPS-2048-509 (128-bit)",  SecurityLevel.classical(128), NtruKeyGenSpec.hps2048_509()),
+            new ParameterSetDescriptor.Concrete<>("NTRU-HPS-2048-677",  "NTRU-HPS-2048-677 (192-bit)",  SecurityLevel.classical(192), NtruKeyGenSpec.hps2048_677()),
+            new ParameterSetDescriptor.Concrete<>("NTRU-HPS-4096-821",  "NTRU-HPS-4096-821 (192-bit)",  SecurityLevel.classical(192), NtruKeyGenSpec.hps4096_821()),
+            new ParameterSetDescriptor.Concrete<>("NTRU-HPS-4096-1229", "NTRU-HPS-4096-1229 (256-bit)", SecurityLevel.classical(256), NtruKeyGenSpec.hps4096_1229()),
+            new ParameterSetDescriptor.Concrete<>("NTRU-HRSS-701",      "NTRU-HRSS-701 (128-bit)",      SecurityLevel.classical(128), NtruKeyGenSpec.hrss701()),
+            new ParameterSetDescriptor.Concrete<>("NTRU-HRSS-1373",     "NTRU-HRSS-1373 (256-bit)",     SecurityLevel.classical(256), NtruKeyGenSpec.hrss1373())
+        );
+    }
+
 }

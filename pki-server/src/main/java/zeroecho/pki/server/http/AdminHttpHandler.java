@@ -68,6 +68,8 @@ import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerOperationGateway;
 import zeroecho.pki.server.ServerRealmContext;
+import zeroecho.pki.server.jfr.AdminRequestEvent;
+import zeroecho.pki.server.schema.GenerateOperationSchema;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
@@ -98,6 +100,11 @@ final class AdminHttpHandler implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
+        if (exchange.getRequestURI().getPath().startsWith("/admin/")) realm.recordAdminRequest();
+        AdminRequestEvent jfrEvent = new AdminRequestEvent();
+        jfrEvent.operationId = "";
+        jfrEvent.principalId = "";
+        jfrEvent.begin();
         String requestId = "unavailable-request";
         HttpResponses.Response response;
         boolean admitted = false;
@@ -152,6 +159,11 @@ final class AdminHttpHandler implements HttpHandler {
         } finally {
             if (admitted) runtime.releaseAdmission();
         }
+        if (jfrEvent.shouldCommit()) {
+            jfrEvent.httpStatus = response.statusCode();
+            jfrEvent.authorized = admitted;
+            jfrEvent.commit();
+        }
         send(exchange, requestId, response);
     }
 
@@ -172,6 +184,7 @@ final class AdminHttpHandler implements HttpHandler {
                 authenticationDetails(requestId, authenticated.mode(), authenticated.transportPrincipalId(),
                         Optional.of(principalId), "ACCEPTED"));
         if ("/admin/v1/realm".equals(path)) return realm(exchange, requestId, principalId);
+        if ("/admin/v1/schema".equals(path)) return schema(requestId);
         if ("/admin/v1/operations".equals(path)) return operations(exchange, requestId, principalId);
         String signingPrefix = "/admin/v1/signing-operations/";
         if (path.startsWith(signingPrefix) && path.length() > signingPrefix.length()) {
@@ -186,6 +199,12 @@ final class AdminHttpHandler implements HttpHandler {
         if (!path.startsWith(prefix) || path.length() == prefix.length()) return notFound(requestId);
         String operationId = path.substring(prefix.length());
         if (!operationId.matches("[a-z][a-z0-9.-]{2,127}")) return notFound(requestId);
+        // Legacy unavailable operations still pass through authorization and approval.
+        // Their descriptor remains hidden from GET/list/schema discovery.
+        if (requireMethod(exchange, "POST") && zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
+                .find(operationId).filter(entry -> !entry.available()).isPresent()) {
+            return execute(exchange, requestId, authenticated, operationId);
+        }
         Optional<OperationSecurityDescriptors.Descriptor> descriptor = realm.gateway()
                 .discoverableOperations(principalId).stream()
                 .filter(item -> item.operationId().equals(operationId)).findFirst();
@@ -257,6 +276,17 @@ final class AdminHttpHandler implements HttpHandler {
             case COMPLETED -> new zeroecho.pki.application.PkiOperationOutcome.Completed(
                     realm.session().signingCommands().orElseThrow().completedResult(snapshot));
         };
+    }
+
+    private HttpResponses.Response schema(String requestId) {
+        try {
+            byte[] json = GenerateOperationSchema.serialize(zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
+                    .entries().stream().filter(zeroecho.pki.server.schema.OperationDescriptorCatalog.Entry::available)
+                    .map(zeroecho.pki.server.schema.OperationDescriptorCatalog.Entry::parameters).toList());
+            return new HttpResponses.Response(200, json);
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("Schema serialization failed", failure);
+        }
     }
 
     private HttpResponses.Response realm(HttpsExchange exchange, String requestId, String principalId) {
@@ -465,6 +495,22 @@ final class AdminHttpHandler implements HttpHandler {
         fields.put("resourceType", new PkiOperationValue.Text(value.resourceType().name()));
         fields.put("approval", new PkiOperationValue.Text(value.approvalCategory().name()));
         fields.put("dataView", new PkiOperationValue.Text(value.dataView().name()));
+        fields.put("permissionAction", new PkiOperationValue.Text(value.action().name()));
+        fields.put("available", new PkiOperationValue.BooleanValue(value.available()));
+        zeroecho.pki.server.schema.OperationDescriptorCatalog.current().find(value.operationId()).ifPresent(entry -> {
+            fields.put("scope", new PkiOperationValue.Text(entry.presentation().transport().scope()));
+            fields.put("authorityFrom", new PkiOperationValue.Text(entry.presentation().transport().authorityFrom()));
+            List<PkiOperationValue> parameters = entry.parameters().fields().stream().map(field -> {
+                Map<String, PkiOperationValue> parameter = new LinkedHashMap<>();
+                parameter.put("name", new PkiOperationValue.Text(field.name()));
+                parameter.put("type", new PkiOperationValue.Text(field.type().name().toLowerCase(java.util.Locale.ROOT).replace('_', '-')));
+                parameter.put("required", new PkiOperationValue.BooleanValue(field.required()));
+                parameter.put("choices", new PkiOperationValue.ListValue(field.choices().stream()
+                        .map(PkiOperationValue.Text::new).map(PkiOperationValue.class::cast).toList()));
+                return (PkiOperationValue) new PkiOperationValue.ObjectValue(parameter);
+            }).toList();
+            fields.put("fields", new PkiOperationValue.ListValue(parameters));
+        });
         return new PkiOperationValue.ObjectValue(fields);
     }
 
@@ -502,6 +548,7 @@ final class AdminHttpHandler implements HttpHandler {
         byte[] body = response.body();
         exchange.getResponseHeaders().set("Content-Type", JSON);
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         if (response.oneTimeSensitive()) {
             exchange.getResponseHeaders().set("Pragma", "no-cache");
             exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");

@@ -309,7 +309,7 @@ is added.
 
 Transport workers, transport backlog, concurrent operation workers, waiting operation capacity, admitted requests, request body size, deadlines, and both shutdown periods are finite configuration values. Saturation never runs a request on the caller thread and a rejected request never invokes the gateway.
 
-Configuration schema version 7 is the only accepted server schema. Every realm
+Configuration schema version 8 is the only accepted server schema. Every realm
 has a mandatory `confirmationProof` object. Its `audience` is a public,
 non-secret deployment or cluster identifier expressed as an exact lowercase
 UUID-v4 URN. Operators provision the same audience mapping into participating

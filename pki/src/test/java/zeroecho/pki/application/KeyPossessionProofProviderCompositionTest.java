@@ -120,7 +120,7 @@ final class KeyPossessionProofProviderCompositionTest {
     void rejectsNullDuplicateInvalidAndFailingProviderIdentities() {
         TestProvider duplicate = new TestProvider("duplicate.v1", new AtomicInteger());
         assertThrows(NullPointerException.class, () -> new PkiSessionRuntimeDependencies(
-                Optional.empty(), Optional.empty(), null, Optional.empty()));
+                Optional.empty(), Optional.empty(), null, Optional.empty(), DashboardLiveSource.NONE));
         assertThrows(NullPointerException.class, () -> PkiSessionRuntimeDependencies.none()
                 .withKeyPossessionProofProviders(Arrays.asList(duplicate, null)));
         assertThrows(IllegalArgumentException.class,

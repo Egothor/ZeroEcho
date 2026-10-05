@@ -47,7 +47,12 @@ die() { log "FATAL: $*"; exit 1; }
 : "${ZEROECHO_SERVER_CONFIG:=/etc/zeroecho/server-config.json}"
 : "${ZEROECHO_PROFILE_BOOTSTRAP_CONFIG:=/etc/zeroecho/profile-bootstrap.json}"
 : "${ZEROECHO_PROFILES_DIR:=/etc/zeroecho/profiles}"
-: "${ZEROECHO_STORE_DIR:=/var/lib/zeroecho/store}"
+: "${ZEROECHO_STORE_DIR:=/var/lib/zeroecho/store-container/store}"
+
+# Older deployments mounted the PKI root itself. Never bootstrap a new child
+# beside that existing authority: an operator must migrate the complete volume offline.
+STORE_PARENT=$(dirname -- "${ZEROECHO_STORE_DIR}")
+[ ! -f "${STORE_PARENT}/VERSION" ] || die "legacy store volume requires offline layout migration"
 
 SERVER_BIN="${ZEROECHO_SERVER_HOME}/bin/zeroecho-pki-server"
 BOOTSTRAP_BIN="${ZEROECHO_APP_HOME}/bin/zeroecho-pki-profile-bootstrap"

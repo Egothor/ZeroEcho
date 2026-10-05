@@ -53,7 +53,7 @@ by nothing.
 | `lib` | `zeroecho.lib` | Cryptographic core, the `zeroecho.pkix` PKIX API, the encrypted keyring, and core SPIs. The concrete cryptographic toolkit is confined here behind a service seam. | (platform: nothing) | `zeroecho.pkix`, `zeroecho.pkix.cert`/`csr`/`crl`/`ocsp`/`sign`/`spi`, `zeroecho.core.storage`, `zeroecho.core.spi`, `zeroecho.sdk*` |
 | `ext` | `zeroecho.ext` | Supporting utilities — content export and covert/steganographic integrations. Not on the PKI issuance path. | `zeroecho.lib` (transitive) | `zeroecho.ext.integrations.covert.jpeg` |
 | `pki` | `zeroecho.pki` | The PKI domain and application layer (authorities, profiles, issuance, revocation, status, publication), the extension-point SPIs, and the default filesystem persistence and signing backends. | `zeroecho.lib` (transitive) | `zeroecho.pki.api.*`, `zeroecho.pki.application`, `zeroecho.pki.spi`, `zeroecho.pki.spi.store`/`crypto`/`publish`/`audit` |
-| `pki-server` | `zeroecho.pki.server` | The long-lived HTTPS server and administrative JSON API over the PKI domain, plus ACME and TLS/trust extension points. Runnable; exposes no API to other production modules. | `zeroecho.pki` (transitive), `zeroecho.lib` | (none — terminal application) |
+| `pki-server` | `zeroecho.pki.server` | The long-lived HTTPS server and administrative JSON API over the PKI domain, plus exported ACME, TLS/trust and CT extension contracts. | `zeroecho.pki` (transitive), `zeroecho.lib` | `zeroecho.pki.server.spi.v2`, `zeroecho.pki.server.ct` |
 | `app` | `zeroecho.app` | The single-process `zeroecho` command-line application, including the `zeroecho pki` utility. Runnable; exposes no API. | `zeroecho.lib`, `zeroecho.ext`, `zeroecho.pki` | (none — terminal application) |
 | `pki-frontend` | *(not a JPMS module)* | The administrator web console: a descriptor-driven single-page application over the `pki-server` admin API. React + MUI, built with Vite/TypeScript, shipped as static assets. | `pki-server` admin API (over HTTPS) | (static bundle) |
 | `samples` | *(test-only)* | Runnable examples and demonstration tests that exercise the public API. | `zeroecho.lib` | (examples) |
@@ -115,14 +115,15 @@ only to the sibling application modules that must construct them
 ### `pki-server` — `module zeroecho.pki.server`
 
 `pki-server` `requires transitive zeroecho.pki` and adds the JDK HTTP server and
-naming stack. It `uses` and `provides` its own ACME challenge and TLS/trust
-providers, but exports nothing — it is a terminal, runnable module.
+naming stack. It exports `zeroecho.pki.server.spi.v2` for explicitly configured
+ACME challenge, EAB, TLS and trust providers, and `zeroecho.pki.server.ct` for CT
+client composition. Legacy classpath providers remain supported through internal
+adapters. Server implementation and authentication packages stay unexported.
 
 ### `app` — `module zeroecho.app`
 
 `app` reads `zeroecho.lib`, `zeroecho.ext`, and `zeroecho.pki`, plus a small
-command-line parsing library. Like `pki-server`, it is terminal and exports no
-packages.
+command-line parsing library. It is terminal and exports no packages.
 
 !!! info "Cryptographic provider confinement"
 

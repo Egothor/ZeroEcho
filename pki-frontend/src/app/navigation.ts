@@ -57,6 +57,10 @@ import VisibilityIcon from '@mui/icons-material/VisibilityOutlined';
 import TuneIcon from '@mui/icons-material/TuneOutlined';
 import PublicIcon from '@mui/icons-material/PublicOutlined';
 import TerminalIcon from '@mui/icons-material/TerminalOutlined';
+import SyncAltIcon from '@mui/icons-material/SyncAltOutlined';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccountsOutlined';
+import VpnKeyIcon from '@mui/icons-material/VpnKeyOutlined';
+import AssignmentIcon from '@mui/icons-material/AssignmentOutlined';
 
 /** A navigable domain area, each backed by a group of catalog operations. */
 export interface NavItem {
@@ -100,6 +104,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
 
   { id: 'acme', label: 'ACME', path: '/acme', icon: GppGoodIcon, group: 'Operations', operationPrefixes: ['acme.'] },
   { id: 'ocsp', label: 'OCSP', path: '/ocsp', icon: VerifiedIcon, group: 'Operations', operationPrefixes: ['ocsp.'] },
+  { id: 'scep', label: 'SCEP', path: '/scep', icon: SyncAltIcon, group: 'Operations', operationPrefixes: ['scep.'] },
+  { id: 'cmp', label: 'CMP', path: '/cmp', icon: ManageAccountsIcon, group: 'Operations', operationPrefixes: ['cmp.'] },
+  { id: 'est', label: 'EST', path: '/est', icon: VpnKeyIcon, group: 'Operations', operationPrefixes: ['est.'] },
+  { id: 'enrollment', label: 'Enrollment Profiles', path: '/enrollment', icon: AssignmentIcon, group: 'Operations', operationPrefixes: ['enrollment.'] },
   { id: 'repository', label: 'Repository Aliases', path: '/repository', icon: FolderIcon, group: 'Operations', operationPrefixes: ['repository.alias.'] },
   { id: 'configuration', label: 'Algorithm Bindings & Config', path: '/configuration', icon: TuneIcon, group: 'Operations', operationPrefixes: ['algorithm.binding.', 'configuration.'] },
   { id: 'operations', label: 'Operations Explorer', path: '/operations', icon: TerminalIcon, group: 'Operations', operationPrefixes: [] },

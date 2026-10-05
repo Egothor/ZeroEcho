@@ -64,7 +64,7 @@ export function OperationField({ field, value, onChange, disabled, context }: Pr
   const label = labelFor(field);
 
   if (field.name === 'targetOperation' || field.name === 'targetOperationId') {
-    const options = OPERATIONS.filter((op) => field.name === 'targetOperationId' || (!op.read && op.id !== 'security.approval.request'));
+    const options = OPERATIONS.filter((op) => op.available && (field.name === 'targetOperationId' || (!op.read && op.id !== 'security.approval.request')));
     return <Autocomplete size="small" options={options} getOptionLabel={(op) => `${op.title} · ${op.id}`} value={options.find((op) => op.id === value) ?? null} onChange={(_, op) => onChange(op?.id ?? '')} disabled={disabled} renderInput={(params) => <TextField {...params} label={label} />} />;
   }
   if (field.readOnly) return <TextField fullWidth size="small" label={label} value={Array.isArray(value) ? value.join(', ') : value ?? ''} slotProps={{ input: { readOnly: true } }} helperText={field.help ?? 'Supplied by the selected server record.'} />;

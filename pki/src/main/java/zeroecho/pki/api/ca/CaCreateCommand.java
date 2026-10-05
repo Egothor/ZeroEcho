@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
+import java.util.Optional;
+
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.SubjectRef;
@@ -53,22 +55,41 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param subjectRef normalized CA subject reference
  * @param profileId  nonblank strict UTF-8 profile id, at most 256 bytes
  * @param keyRef     existing managed key, nonblank strict UTF-8, at most 1,048,576 bytes
+ * @param altKeyRef  optional alternative key reference for hybrid certificate issuance;
+ *                   when absent the profile's default alternative key reference is used
  * @param attributes universal attributes (may be empty but not null)
  */
 public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
-        AttributeSet attributes) {
+        Optional<KeyRef> altKeyRef, AttributeSet attributes) {
 
     /**
      * Creates a CA create command.
      *
-     * @throws IllegalArgumentException if any component is null or bounded text is invalid
+     * @throws IllegalArgumentException if any required component is null or bounded text is invalid
      */
     public CaCreateCommand {
         CaCommandInputs.required(formatId);
         CaCommandInputs.required(subjectRef);
         CaCommandInputs.profile(profileId);
         CaCommandInputs.key(keyRef);
+        CaCommandInputs.required(altKeyRef);
         CaCommandInputs.required(attributes);
+    }
+
+    /**
+     * Creates a CA create command without an explicit alternative key reference.
+     * The profile's default alternative key reference will be used for hybrid issuance.
+     *
+     * @param formatId   target credential format
+     * @param subjectRef normalized CA subject reference
+     * @param profileId  nonblank strict UTF-8 profile id, at most 256 bytes
+     * @param keyRef     existing managed key, nonblank strict UTF-8, at most 1,048,576 bytes
+     * @param attributes universal attributes (may be empty but not null)
+     * @throws IllegalArgumentException if any component is null or bounded text is invalid
+     */
+    public CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
+            AttributeSet attributes) {
+        this(formatId, subjectRef, profileId, keyRef, Optional.empty(), attributes);
     }
 
     /** Returns a diagnostic representation without command coordinates or attributes. */

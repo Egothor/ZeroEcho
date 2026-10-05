@@ -47,6 +47,7 @@ import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.List;
@@ -83,6 +84,36 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
 /** Realm composition, one-session lifecycle and exposure-policy tests. */
 class ServerRealmContextTest {
     @TempDir Path temporaryDirectory;
+
+    @Test
+    void dashboardCountsRealPendingApprovalsAndRecordsSafeScheduleFailures() throws Exception {
+        ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
+                AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
+        try (ServerRealmContext context = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            assertEquals(0, context.pendingApprovalCount(ServerTestSupport.CLOCK.instant()));
+            context.createPrincipal(ServerTestSupport.principal("requester"), "system");
+            Permission.Scope scope = new Permission.Scope(ServerTestSupport.REALM, Optional.empty(), Optional.empty(), Optional.empty());
+            ApprovalService.Policy policy = new ApprovalService.Policy("metrics", 1, Set.of("approver"),
+                    Set.of(), true, Duration.ofHours(1), true);
+            context.approvals().request("pending-metric", "ca.intermediate.create", ServerTestSupport.DIGEST,
+                    scope, "requester", policy);
+            assertEquals(1, context.pendingApprovalCount(ServerTestSupport.CLOCK.instant()));
+            assertEquals(0, context.pendingApprovalCount(ServerTestSupport.CLOCK.instant().plusSeconds(3600)));
+            assertEquals(0, context.adminRequestsTotal());
+            context.recordAdminRequest();
+            assertEquals(1, context.adminRequestsTotal());
+            assertEquals(0, context.scheduleFailureTotal());
+            context.recordScheduleFailure("STATUS_SCHEDULE_FAILED");
+            assertEquals(1, context.scheduleFailureTotal());
+            assertEquals(0, context.auditProjectionFailureTotal());
+        }
+        try (ServerRealmContext context = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            assertEquals(1, context.pendingApprovalCount(ServerTestSupport.CLOCK.instant()));
+            assertEquals(0, context.adminRequestsTotal(), "Process-local request count restarts at zero");
+        }
+    }
 
     @Test
     void concurrentCloseSharesOneSuccessfulAttemptAndClosesExactlyOnce() throws Exception {
@@ -346,6 +377,30 @@ class ServerRealmContextTest {
                 DisclosureService.Defaults.recommended(), temporaryDirectory.resolve("control.log"),
                 ServerTestSupport.STORE_ID,
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
+    }
+
+    @Test
+    void pendingRestoreRejectsNestedControlBeforeOpeningOrMutatingAnyStore() throws Exception {
+        ServerRealmConfiguration original = configuration(new AuthorityExposurePolicy(
+                AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
+        Path root = temporaryDirectory.resolve("pki-store");
+        Files.createDirectories(root);
+        Path nested = root.resolve("server-control.log");
+        Files.writeString(nested, "preserved control authority");
+        Path coordinator = temporaryDirectory.resolve(".pki-store.restore-control");
+        Files.createDirectories(coordinator);
+        Files.writeString(coordinator.resolve("journal"), "pending journal sentinel");
+        ServerRealmConfiguration configured = new ServerRealmConfiguration(original.realmId(),
+                original.displayName(), original.confirmationProofPolicy(), original.pkiSessionConfiguration(),
+                original.authorityExposure(), original.authorizationCommitment(), original.approvalCommitment(),
+                original.extendedApprovalCommitment(), original.disclosureCommitment(), original.disclosureDefaults(),
+                nested, original.controlStoreId(), original.approvalPolicies());
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
+                ServerRealmContext.open(configured, PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom()));
+        assertEquals("RESTORE_COLOCATED_SERVER_AUTHORITY", failure.getMessage());
+        assertEquals("preserved control authority", Files.readString(nested));
+        assertEquals("pending journal sentinel", Files.readString(coordinator.resolve("journal")));
+        assertTrue(Files.notExists(root.resolve("VERSION")));
     }
 
     private static ServerRealmContext closeContext(PkiSession session, ServerControlStore control)

@@ -60,7 +60,9 @@ public interface ContextFactoryKS<C extends CryptoContext, K extends Key, S exte
      * Creates a context bound to the supplied key and specification.
      *
      * @param key  non-null key
-     * @param spec non-null resolved context specification
+     * @param spec resolved context specification; may be {@code null} for algorithms
+     *             that do not require a separate specification (the algorithm's own
+     *             defaults apply in that case)
      * @return a newly created context
      */
     C createContext(K key, S spec);

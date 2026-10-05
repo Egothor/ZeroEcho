@@ -47,6 +47,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.pqc.jcajce.spec.BIKEParameterSpec;
 
@@ -100,6 +105,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class BikeAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs and registers the BIKE algorithm with all its roles and key
      * builders.
@@ -195,4 +203,18 @@ public final class BikeAlgorithm extends AbstractCryptoAlgorithm {
             throw new NoSuchProviderException("BCPQC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("BIKE-128", "BIKE-128 (NIST Level 1)", SecurityLevel.nist(1, 128), BikeKeyGenSpec.bike128()),
+            new ParameterSetDescriptor.Concrete<>("BIKE-192", "BIKE-192 (NIST Level 3)", SecurityLevel.nist(3, 192), BikeKeyGenSpec.bike192()),
+            new ParameterSetDescriptor.Concrete<>("BIKE-256", "BIKE-256 (NIST Level 5)", SecurityLevel.nist(5, 256), BikeKeyGenSpec.bike256())
+        );
+    }
+
 }

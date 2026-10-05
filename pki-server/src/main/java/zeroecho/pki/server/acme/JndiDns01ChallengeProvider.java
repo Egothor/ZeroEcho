@@ -100,6 +100,7 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
         environment.put("java.naming.provider.url", settings.providerUrl());
         environment.put("com.sun.jndi.dns.timeout.initial", Integer.toString(settings.timeoutMillis()));
         environment.put("com.sun.jndi.dns.timeout.retries", "1");
+        environment.put("com.sun.jndi.object.trustURLCodebase", "false");
         DirContext context = new InitialDirContext(environment);
         try {
             Attributes attributes = context.getAttributes(name, new String[] { "TXT", "CNAME" });

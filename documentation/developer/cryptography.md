@@ -44,6 +44,7 @@ identifier. Enumerate them with `CryptoAlgorithms`:
 
 ```java
 import java.util.Set;
+import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
 
 Set<String> ids = CryptoAlgorithms.available(); // deterministic, sorted order
@@ -51,14 +52,14 @@ boolean haveMlDsa = ids.contains("ML-DSA");
 boolean haveMlKem = ids.contains("ML-KEM");
 
 // Resolve a specific one (throws IllegalArgumentException if absent):
-var mldsa = CryptoAlgorithms.require("ML-DSA");
+CryptoAlgorithm mldsa = CryptoAlgorithms.require("ML-DSA");
 ```
 
 The canonical identifier is the string you pass to the key builders and signing
 contexts shown below — for example `"RSA"`, `"ECDSA"`, `"Ed25519"`, `"ML-DSA"`,
-`"SLH-DSA"`, `"SPHINCS+"`, and `"ML-KEM"`. Because the set is discovered at
-runtime, guard optional algorithms with `available().contains(id)` rather than
-assuming a fixed list.
+`"SLH-DSA"`, `"SPHINCS+"`, `"ML-KEM"`, `"X-Wing"`, `"LMS"`, and `"XMSS"`.
+Because the set is discovered at runtime, guard optional algorithms with
+`available().contains(id)` rather than assuming a fixed list.
 
 On the PKIX side, algorithms are named the way X.509 names them: by object
 identifier. The value type is `zeroecho.pkix.AlgorithmIdentifier`, an OID plus an
@@ -81,6 +82,57 @@ The facade can also read algorithm identifiers back out of encoded material —
 `Pkix.parseAlgorithmIdentifier(der)`, and `Pkix.subjectPublicKeyAlgorithm(spki)`
 to recover the algorithm of a `SubjectPublicKeyInfo`.
 
+### Enumerating parameter sets
+
+Each algorithm exposes the key-generation configurations it supports through
+`CryptoAlgorithm.parameterSets()`. A `ParameterSetDescriptor` is either:
+
+- **`Concrete`** — a fully pre-built, named configuration. The enclosed
+  `AlgorithmKeySpec` can be passed directly to a key builder.
+- **`Template`** — a parameterised family. The descriptor lists the named
+  inputs a caller must supply; a factory then produces the spec.
+
+Both carry a `SecurityLevel` that expresses NIST PQC category (1–5) and
+classical-bit equivalence.
+
+Templates expose ordered, immutable `constraints()` for required flags, defaults,
+value kinds, choices and numeric bounds. Invoke `factory().apply(arguments)` to
+apply centralized validation; invalid maps throw `IllegalArgumentException`.
+Do not infer constraints from display descriptions. The compatibility behavior
+of older template constructors and algorithm migrations is documented in
+[BouncyCastle migration notes](../reference/bc-migration.md).
+
+```java
+import zeroecho.core.CryptoAlgorithm;
+import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
+CryptoAlgorithm mldsa = CryptoAlgorithms.require("ML-DSA");
+
+for (ParameterSetDescriptor<?> d : mldsa.parameterSets()) {
+    SecurityLevel level = d.securityLevel();
+    String levelStr = level.nistLevel().isPresent()
+            ? "L" + level.nistLevel().getAsInt() + " / " + level.classicalBits() + "-bit"
+            : level.classicalBits() + "-bit";
+
+    if (d instanceof ParameterSetDescriptor.Concrete<?> c) {
+        // c.spec() is the ready-to-use AlgorithmKeySpec.
+        System.out.println(c.id() + "  " + levelStr + "  → " + c.spec().getClass().getSimpleName());
+    } else if (d instanceof ParameterSetDescriptor.Template<?> t) {
+        // List the required inputs: name → Java type.
+        String params = t.parameters().stream()
+                .map(p -> p.name() + ": " + p.type().getSimpleName())
+                .collect(java.util.stream.Collectors.joining(", "));
+        System.out.println(t.id() + "  template(" + params + ")");
+    }
+}
+```
+
+The complete catalog — all algorithms with their parameter sets, families, and
+security levels — is rendered in the `lib` module's Javadoc overview page, which
+is generated at build time by `GenerateCryptoCatalogTable`.
+
 ### Supported algorithm families
 
 | Family | Canonical id(s) | Kind | Class | Typical use |
@@ -91,8 +143,11 @@ to recover the algorithm of a `SubjectPublicKeyInfo`.
 | ECDH / XDH | (see `available()`) | Key agreement | Classic | Ephemeral key establishment |
 | ML-DSA (Dilithium) | `ML-DSA` | Signature | Post-quantum | General-purpose PQ signing (FIPS 204) |
 | SLH-DSA | `SLH-DSA` | Signature (hash-based, **stateless**) | Post-quantum | Conservative PQ signing (FIPS 205) |
-| SPHINCS+ | `SPHINCS+` | Signature (hash-based, **stateless**) | Post-quantum | Conservative PQ signing |
+| SPHINCS+ | `SPHINCS+` | Signature (hash-based, **stateless**) | Post-quantum | Conservative PQ signing; maps to SLH-DSA internally as of BC 1.86 |
+| LMS | `LMS` | Hash-based, **stateful** signatures | Post-quantum | RFC 8554; signing requires an explicit durable authority |
+| XMSS | `XMSS` | Hash-based, **stateful** signatures | Post-quantum | RFC 8391; signing requires an explicit durable authority |
 | ML-KEM (Kyber) | `ML-KEM` | Key encapsulation | Post-quantum | PQ key establishment (FIPS 203) |
+| X-Wing | `X-Wing` | Key encapsulation (hybrid) | Classic + post-quantum | Hybrid PQ key establishment (X25519 + ML-KEM-768; draft-connolly-cfrg-xwing-kem) |
 | Other PQ KEMs | FrodoKEM, BIKE, Classic McEliece, HQC, NTRU, NTRU Prime, SABER (see `available()`) | Key encapsulation | Post-quantum | Alternative / experimental key establishment |
 | Symmetric & digests | AES, ChaCha20 / ChaCha20-Poly1305, HMAC, SHA-2 / SHA-3 | AEAD / MAC / digest | Classic | Bulk encryption, integrity, KDF inputs |
 
@@ -165,6 +220,59 @@ keys flow unchanged into the `zeroecho.pkix` API.
     `SlhDsaKeyGenSpec` selects the hash family (SHA-2 or SHAKE), the security
     level (`L1_128`, `L3_192`, `L5_256`), and a size-vs-speed variant; and
     `KyberKeyGenSpec` offers `kyber512()`, `kyber768()`, and `kyber1024()`.
+
+    !!! note "KyberKeyGenSpec and the ML-KEM canonical identifier"
+        The specification class is named `KyberKeyGenSpec` after the algorithm's
+        pre-standardisation name. Pass `"ML-KEM"` as the canonical algorithm
+        identifier to `generateKeyPair` (not `"KYBER"`). The class name reflects
+        the implementation lineage; the identifier follows the NIST FIPS 203
+        designation.
+
+=== "Hybrid KEM (X-Wing)"
+
+    X-Wing has no selectable parameters. Pass `XWingKeyGenSpec.DEFAULT` as the
+    specification:
+
+    ```java
+    import java.security.KeyPair;
+    import zeroecho.core.alg.xwing.XWingKeyGenSpec;
+    import zeroecho.sdk.ZeroEchoSession;
+
+    ZeroEchoSession session = new ZeroEchoSession();
+
+    KeyPair xwing = session.keyBuilders().asymmetric().generateKeyPair(
+            "X-Wing", XWingKeyGenSpec.DEFAULT);
+    ```
+
+    The key pair embeds both an X25519 component and an ML-KEM-768 component.
+    Key sizes are fixed by the X-Wing specification and cannot be tuned.
+
+=== "Stateful hash-based (LMS / XMSS)"
+
+    LMS and XMSS use singleton specifications for the default parameter sets.
+    Ordinary key generation, import, and verification remain available. Signing
+    requires fresh enrollment through `generateStatefulKey` and a `StatefulSigner`
+    with the durable local authority described in [Stateful signing](stateful-signing.md).
+    Ordinary generated or imported keys cannot sign through a stateless executor.
+
+    ```java
+    import java.security.KeyPair;
+    import zeroecho.core.alg.lms.LmsKeyGenSpec;
+    import zeroecho.core.alg.xmss.XmssKeyGenSpec;
+    import zeroecho.sdk.ZeroEchoSession;
+
+    ZeroEchoSession session = new ZeroEchoSession();
+
+    // LMS default: lms_sha256_n32_h5 / sha256_n32_w8 (32 one-time leaves)
+    KeyPair lms = session.keyBuilders().asymmetric().generateKeyPair(
+            "LMS", LmsKeyGenSpec.DEFAULT);
+
+    // XMSS default: SHA2_10_256 (SHA-256, height 10, 1024 leaves)
+    KeyPair xmss = session.keyBuilders().asymmetric().generateKeyPair(
+            "XMSS", XmssKeyGenSpec.DEFAULT);
+    ```
+
+    These defaults describe key generation only and do not enable signing.
 
 ## Signing and verifying
 
@@ -275,21 +383,24 @@ checks it at end-of-stream.
     byte[] message = "attach and sign".getBytes();
 
     // Sign: the wrapped stream yields message || signature-trailer.
-    SignatureContext signer = session.createContext("Ed25519", KeyUsage.SIGN, ed25519.getPrivate());
-    int sigLen = signer.tagLength();
-    ByteArrayOutputStream framed = new ByteArrayOutputStream();
-    try (InputStream in = signer.wrap(new ByteArrayInputStream(message))) {
-        in.transferTo(framed);
+    byte[] signature;
+    try (SignatureContext signer = session.createContext("Ed25519", KeyUsage.SIGN, ed25519.getPrivate())) {
+        int sigLen = signer.tagLength();
+        ByteArrayOutputStream framed = new ByteArrayOutputStream();
+        try (InputStream in = signer.wrap(new ByteArrayInputStream(message))) {
+            in.transferTo(framed);
+        }
+        byte[] out = framed.toByteArray();
+        signature = Arrays.copyOfRange(out, out.length - sigLen, out.length);
     }
-    byte[] out = framed.toByteArray();
-    byte[] signature = Arrays.copyOfRange(out, out.length - sigLen, out.length);
 
     // Verify: supply the detached signature; throw on mismatch at EOF.
-    SignatureContext verifier = session.createContext("Ed25519", KeyUsage.VERIFY, ed25519.getPublic());
-    verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
-    verifier.setExpectedTag(signature);
-    try (InputStream in = verifier.wrap(new ByteArrayInputStream(message))) {
-        in.transferTo(OutputStream.nullOutputStream()); // IOException here means invalid
+    try (SignatureContext verifier = session.createContext("Ed25519", KeyUsage.VERIFY, ed25519.getPublic())) {
+        verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
+        verifier.setExpectedTag(signature);
+        try (InputStream in = verifier.wrap(new ByteArrayInputStream(message))) {
+            in.transferTo(OutputStream.nullOutputStream()); // IOException here means invalid
+        }
     }
     ```
 
@@ -311,39 +422,54 @@ checks it at end-of-stream.
     ZeroEchoSession session = new ZeroEchoSession();
     byte[] message = "attach and sign".getBytes();
 
-    SignatureContext signer = session.createContext("ML-DSA", KeyUsage.SIGN, mldsa.getPrivate());
-    int sigLen = signer.tagLength();
-    ByteArrayOutputStream framed = new ByteArrayOutputStream();
-    try (InputStream in = signer.wrap(new ByteArrayInputStream(message))) {
-        in.transferTo(framed);
+    byte[] signature;
+    try (SignatureContext signer = session.createContext("ML-DSA", KeyUsage.SIGN, mldsa.getPrivate())) {
+        int sigLen = signer.tagLength();
+        ByteArrayOutputStream framed = new ByteArrayOutputStream();
+        try (InputStream in = signer.wrap(new ByteArrayInputStream(message))) {
+            in.transferTo(framed);
+        }
+        byte[] out = framed.toByteArray();
+        signature = Arrays.copyOfRange(out, out.length - sigLen, out.length);
     }
-    byte[] out = framed.toByteArray();
-    byte[] signature = Arrays.copyOfRange(out, out.length - sigLen, out.length);
 
-    SignatureContext verifier = session.createContext("ML-DSA", KeyUsage.VERIFY, mldsa.getPublic());
-    verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
-    verifier.setExpectedTag(signature);
-    try (InputStream in = verifier.wrap(new ByteArrayInputStream(message))) {
-        in.transferTo(OutputStream.nullOutputStream());
+    try (SignatureContext verifier = session.createContext("ML-DSA", KeyUsage.VERIFY, mldsa.getPublic())) {
+        verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
+        verifier.setExpectedTag(signature);
+        try (InputStream in = verifier.wrap(new ByteArrayInputStream(message))) {
+            in.transferTo(OutputStream.nullOutputStream());
+        }
     }
     ```
 
     Substitute `"SLH-DSA"` or `"SPHINCS+"` for `"ML-DSA"` to use a hash-based
     scheme instead; the surrounding code does not change.
 
-!!! warning "Hash-based signatures here are stateless — and stateful schemes are deliberately absent"
+!!! note "SLH-DSA and SPHINCS+ are stateless"
 
     SLH-DSA (FIPS 205) and SPHINCS+ are **stateless** hash-based signature
     schemes: there is no per-signature secret state to advance, so an operator
-    cannot destroy a key's security by reusing it, and signing keys can be
-    treated like any other private key.
+    cannot destroy the key's security by reusing a signing invocation, and the
+    private key can be treated like any other private key.
 
-    The library intentionally does **not** provide *stateful* hash-based schemes
-    such as LMS or XMSS. Those require rigorous, durable tracking of a one-time
-    key index across every signature and every process restart; a single reused
-    index catastrophically breaks the scheme. If you have a genuine requirement
-    for a stateful scheme, treat its state management as a dedicated, audited
-    subsystem — do not approximate it with the APIs on this page.
+### Stateful hash-based signatures (LMS and XMSS)
+
+LMS (RFC 8554) and XMSS (RFC 8391) retain key generation, parsing, import,
+and streaming verification. Signing is available only through the explicit
+`StatefulSigner` capability for freshly generated keyring keys and a separately
+preserved local authority. See [durable stateful signing](stateful-signing.md)
+for enrollment, failure handling and the mandatory backup/restore contract.
+
+The algorithms do not advertise `SIGN`. Direct signing constructors and generic
+signing helpers throw `UnsupportedRoleException` before initializing a provider
+or probing signature length. `KeyringSignatureExecutor` rejects stored LMS/XMSS
+keys with the existing `Failure(ALGORITHM_MISMATCH)` category. Verification
+contexts derive signature length from public parameters without advancing state.
+
+Persisting a private key after signing is insufficient: a crash or restoration
+of an older key can reuse a leaf already exposed in a signature. Applications
+requiring hash-based signing without that operational discipline can use
+stateless SLH-DSA.
 
 ## Key encapsulation with ML-KEM
 
@@ -384,6 +510,47 @@ try (InputStream in = encrypting.getStream()) {
 Decryption mirrors the chain with `DataContentChainBuilder.decrypt()`, the same
 KEM id and HKDF `info`, and `recipientPrivate(mlkem.getPrivate())` for
 decapsulation.
+
+## Hybrid key encapsulation with X-Wing
+
+X-Wing (draft-connolly-cfrg-xwing-kem) is a hybrid KEM that combines X25519 and
+ML-KEM-768 in a single encapsulation. The combined shared secret provides 128-bit
+classical security from the X25519 component and post-quantum security from the
+ML-KEM-768 component. A break in either component alone does not compromise the
+shared secret.
+
+X-Wing uses the same `KemContext` API as ML-KEM:
+
+```java
+import java.security.KeyPair;
+import zeroecho.core.KeyUsage;
+import zeroecho.core.alg.xwing.XWingKeyGenSpec;
+import zeroecho.core.context.KemContext;
+import zeroecho.core.context.KemContext.KemResult;
+import zeroecho.sdk.ZeroEchoSession;
+
+ZeroEchoSession session = new ZeroEchoSession();
+
+// Generate a key pair (no parameter choices — X-Wing has fixed parameters).
+KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair(
+        "X-Wing", XWingKeyGenSpec.DEFAULT);
+
+// Encapsulate (sender side): produces a ciphertext and the sender's shared secret.
+KemContext encCtx = session.createContext("X-Wing", KeyUsage.ENCAPSULATE, kp.getPublic());
+KemResult result = encCtx.encapsulate();
+byte[] ciphertext   = result.ciphertext();
+byte[] sharedSecret = result.sharedSecret();
+
+// Decapsulate (recipient side): recovers the same shared secret.
+KemContext decCtx = session.createContext("X-Wing", KeyUsage.DECAPSULATE, kp.getPrivate());
+byte[] recovered = decCtx.decapsulate(ciphertext);
+```
+
+Both sides obtain an identical shared secret that can be passed to a KDF
+(for example `Kdf.hkdfSha256`) before use with an AEAD cipher. X-Wing is the
+recommended default KEM for new deployments where both classical and post-quantum
+resilience is required. Use ML-KEM alone only when integration with an existing
+system that does not support X-Wing is required.
 
 ## Hybrid signatures and algorithm selection
 
@@ -430,11 +597,16 @@ the profile out of band.
 - For **general-purpose post-quantum signing**, prefer **ML-DSA** — it offers
   small signatures and fast operations across three strength levels
   (`ML_DSA_44`/`65`/`87`).
-- For a **conservative, hash-based** signature whose security rests only on the
-  underlying hash, use **SLH-DSA** (or SPHINCS+). Expect larger signatures and
-  slower signing; tune the size-vs-speed variant to your workload.
-- For **key establishment**, use the **ML-KEM** KEM with an AEAD cipher rather
-  than a signature algorithm.
+- For a **conservative, stateless hash-based** signature whose security rests
+  only on the underlying hash, use **SLH-DSA** (or SPHINCS+). Expect larger
+  signatures and slower signing; tune the size-vs-speed variant to your workload.
+- **LMS** and **XMSS** signing requires the explicit durable capability and
+  independently preserved authority described above.
+- For **key establishment with post-quantum resilience**, prefer **X-Wing** —
+  it provides both classical (X25519) and post-quantum (ML-KEM-768) protection
+  in a single encapsulation and is the recommended default for new deployments.
+  Use **ML-KEM** alone only when interoperating with a system that does not
+  support X-Wing.
 - For **standards-interoperable X.509**, sign certificates and CRLs with a
   classic algorithm (RSA, ECDSA, or EdDSA) through the `zeroecho.pkix` API, and
   reach for hybrid or pure post-quantum signatures on the data plane where you
@@ -448,9 +620,131 @@ implications of these choices, including which algorithms are acceptable for a
 given assurance level, are discussed in the
 [Security model](../reference/security-model.md).
 
+## Hybrid X.509 certificates (Alt Signature Extensions)
+
+The hybrid signature mechanism above operates outside X.509 and is typically
+used on application-level data. For X.509 certificates themselves, ZeroEcho
+supports a standards-track alternative: the **Alternative Signature Extensions**
+defined in X.509 2019 Amendment 2 (and mirrored in IETF
+draft-lamps-pq-composite-certs). This is referred to as hybrid certificate
+variant B.
+
+A certificate issued under this scheme carries three non-critical extensions in
+addition to the primary signature:
+
+| Extension | OID | Content |
+|---|---|---|
+| SubjectAltPublicKeyInfo | 2.5.29.72 | Post-quantum public key |
+| AltSignatureAlgorithm | 2.5.29.73 | Post-quantum signature algorithm identifier |
+| AltSignatureValue | 2.5.29.74 | Post-quantum signature over the pre-TBS structure |
+
+Classical verifiers that do not recognise these OIDs ignore them and verify only
+the primary (classical) signature. Post-quantum-aware verifiers additionally
+check the alternative signature, gaining protection against a break of the
+primary algorithm.
+
+### How it works
+
+The signing service uses a three-phase protocol:
+
+1. Build a **pre-TBS** carrying SubjectAltPublicKeyInfo and AltSignatureAlgorithm,
+   omitting the entire AltSignatureValue extension and the TBSCertificate
+   `signature` field. `CertificateBuilder.buildAlternativeSignatureTbs()` performs
+   this standardized transform without signing or requiring a signature-size estimate.
+2. Sign the pre-TBS with the alternative key and verify the returned signature
+   before staging any primary-signing work.
+3. Build the **final TBS** with the real AltSignatureValue extension and primary
+   signature algorithm, then sign it with the primary key. Publication verifies
+   both signatures. `Pkix.verifyAlternativeSignature(certificate, issuerAlternativeKey)`
+   uses the explicitly supplied issuer key; it does not establish trust or validate
+   the primary signature, validity interval or certification path.
+
+The resulting certificate is structurally a normal X.509 certificate — it has
+one primary signature in the `signatureValue` field and three extension values
+that carry the alternative-signature material.
+
+Alternative-signature algorithm bindings currently support absent or DER-NULL
+parameters. Bindings requiring structured DER parameters, such as RSA-PSS,
+are rejected for this alternative-signature path.
+
+### Issuing a hybrid certificate
+
+Enable hybrid issuance by activating a profile that includes `hybridMode`. The
+built-in `hybrid-root-ca` profile uses ECDSA as the primary algorithm and
+ML-DSA-65 as the alternative. Operators who activate this profile must provision
+an ML-DSA-65 key under the reference `zeroecho-lib:root-alt.prv` in the signing
+provider's keyring alongside the primary ECDSA key.
+
+To create a custom hybrid profile, add the `hybridMode` object to a `ROOT_CA` profile
+document:
+
+```json
+"hybridMode": {
+  "type": "ALT_SIGNATURE",
+  "altSignatureAlgorithmId": "zealg:2:9:signature8:zeroecho9:ml-dsa-6516:zeroecho.builtin6:bm9uZQ",
+  "altKeyRef": "zeroecho-lib:root-alt.prv"
+}
+```
+
+The `altSignatureAlgorithmId` is the canonical form of the ZeroEcho algorithm
+identity. Obtain it programmatically in code that may run against a known
+runtime:
+
+```java
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+
+String altAlgoId = BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE.canonicalForm();
+```
+
+The canonical form for common ML-DSA parameter sets:
+
+| Parameter set | Security level | Signature bytes | Canonical form |
+|---|---|---|---|
+| ML-DSA-44 | 2 (≈ 128-bit) | 2 420 | `zealg:2:9:signature8:zeroecho9:ml-dsa-4416:zeroecho.builtin6:bm9uZQ` |
+| ML-DSA-65 | 3 (≈ 192-bit) | 3 309 | `zealg:2:9:signature8:zeroecho9:ml-dsa-6516:zeroecho.builtin6:bm9uZQ` |
+| ML-DSA-87 | 5 (≈ 256-bit) | 4 627 | `zealg:2:9:signature8:zeroecho9:ml-dsa-8716:zeroecho.builtin6:bm9uZQ` |
+
+### Variants A, B, and C
+
+ZeroEcho is architecturally prepared for three hybrid certificate variants.
+Variants A and B are implemented; C is a reserved stub:
+
+| Variant | Description | Status |
+|---|---|---|
+| A — Twin certificates | Two independent CA hierarchies, one classical and one PQC, coordinated at the deployment level | **Implemented** |
+| B — Alt Signature Extensions | Root certificate with embedded alternative signature (X.509 2019 Amd 2) | **Implemented for root lifecycle** |
+| C — Composite signatures | Single certificate with a composite key and composite signature (draft-ounsworth-pq-composite-sigs) | Reserved |
+
+The `HybridCertificateMode` sealed interface (`None`, `AltSignature`,
+`TwinCertificate`, `Composite`) is the exhaustive switch target at the profile
+layer. `Composite` is the only remaining stub; adding it will not break existing
+code.
+
+### Variant A: twin certificate deployment
+
+Variant A uses `TwinCertificate` mode as a semantic profile marker. Each
+individual certificate in a twin deployment is a standard, single-algorithm
+X.509 certificate — there are no extra extensions. The classical and PQC CA
+hierarchies are separate, and the relationship between them is a deployment-level
+configuration, not a per-certificate property.
+
+Built-in profiles for variant A are `pqc-root-ca` (root CA, ML-DSA-65 primary,
+10-year validity) and `pqc-intermediate-ca` (intermediate CA, ML-DSA-65 primary,
+5-year validity). Both allow any registered PQC or classical algorithm as the
+subject public-key type.
+
+Egothor OIDs (IANA PEN 31424, arc `1.3.6.1.4.1.31424`) are used for
+non-standardised PQC algorithms such as SPHINCS+. These OIDs are registered in
+`EgothorAlgorithmOids` and are recognised by the signing and verification
+infrastructure within the ZeroEcho ecosystem.
+
 ## See also
 
 - [The library](library.md) — the full tour of the `zeroecho.pkix` API and the
   encrypted keyring.
 - [Security model](../reference/security-model.md) — trust boundaries, key
   handling, and algorithm policy.
+- [Certificate profile schema](../reference/certificate-profile-schema.md#hybrid-mode) — `hybridMode` field reference.
+- [BouncyCastle 1.86 migration notes](../reference/bc-migration.md) — breaking
+  changes to algorithm parameter sets and provider names introduced in the
+  BC 1.86 upgrade.

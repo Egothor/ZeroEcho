@@ -34,9 +34,11 @@
 package zeroecho.pki.cli;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import zeroecho.pki.application.PkiOperationValue;
 
@@ -66,6 +68,13 @@ final class PkiRemoteArguments {
     private static final String ARG_INT = "--arg-int";
     private static final String ARG_BOOL = "--arg-bool";
     private static final String ARG_JSON = "--arg-json";
+
+    private static final Set<String> INTEGER_FIELDS = Set.of(
+            "limit", "offset", "profileVersion", "expectedLifecycleRevision");
+    private static final Set<String> BOOLEAN_FIELDS = Set.of(
+            "requireApproval");
+    private static final Set<String> SET_FIELDS = Set.of(
+            "allowedAuthorityIds", "requiredSanDomains");
 
     private PkiRemoteArguments() {
     }
@@ -109,8 +118,20 @@ final class PkiRemoteArguments {
         if (name == null) {
             throw new IllegalArgumentException("Unknown remote operation argument");
         }
-        PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)
-                ? new PkiOperationValue.IntegerValue(parseLong(raw)) : new PkiOperationValue.Text(raw);
+        PkiOperationValue value;
+        if (INTEGER_FIELDS.contains(name)) {
+            value = new PkiOperationValue.IntegerValue(parseLong(raw));
+        } else if (BOOLEAN_FIELDS.contains(name)) {
+            value = new PkiOperationValue.BooleanValue(parseBoolean(raw));
+        } else if (SET_FIELDS.contains(name)) {
+            value = new PkiOperationValue.ListValue(
+                    Arrays.stream(raw.split(",")).map(String::trim)
+                            .filter(s -> !s.isEmpty())
+                            .<PkiOperationValue>map(PkiOperationValue.Text::new)
+                            .toList());
+        } else {
+            value = new PkiOperationValue.Text(raw);
+        }
         return new Field(name, value);
     }
 

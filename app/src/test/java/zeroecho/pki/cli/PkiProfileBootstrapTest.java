@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -60,7 +61,7 @@ class PkiProfileBootstrapTest {
     @TempDir Path directory;
 
     @Test
-    void importsArbitraryIdentityAndActualVersionThenSkipsKnownIdentity() throws Exception {
+    void importsNewVersionWhenContentChangesAndSkipsOnIdenticalRerun() throws Exception {
         Path configuration = configuration();
         Path profiles = Files.createDirectory(directory.resolve("profiles"));
         Files.write(profiles.resolve("root.json"), profile("team/α", 7));
@@ -69,28 +70,39 @@ class PkiProfileBootstrapTest {
             PkiOperationResult listed = completed(session, new PkiOperation.ListProfileVersions("team/α"));
             assertEquals(new PkiOperationValue.IntegerValue(7), listed.fields().get("activeVersion"));
         }
-        Files.write(profiles.resolve("root.json"), profile("team/α", 8));
+        // Identical rerun: SHA matches active — no new version
         assertEquals(0, invoke(configuration, profiles).code());
         try (PkiSession session = open(configuration)) {
             PkiOperationResult listed = completed(session, new PkiOperation.ListProfileVersions("team/α"));
             assertEquals(new PkiOperationValue.IntegerValue(1), listed.fields().get("count"));
             assertEquals(new PkiOperationValue.IntegerValue(7), listed.fields().get("activeVersion"));
         }
+        // Changed content (version 8): SHA differs — registers and activates version 8
+        Files.write(profiles.resolve("root.json"), profile("team/α", 8));
+        assertEquals(0, invoke(configuration, profiles).code());
+        try (PkiSession session = open(configuration)) {
+            PkiOperationResult listed = completed(session, new PkiOperation.ListProfileVersions("team/α"));
+            assertEquals(new PkiOperationValue.IntegerValue(2), listed.fields().get("count"));
+            assertEquals(new PkiOperationValue.IntegerValue(8), listed.fields().get("activeVersion"));
+        }
     }
 
     @Test
-    void existingInactiveProfileIsNeverAutomaticallyActivated() throws Exception {
+    void activeProfileWithMatchingContentIsSkippedByBootstrap() throws Exception {
         Path configuration = configuration();
         Path profiles = Files.createDirectory(directory.resolve("profiles"));
         byte[] document = profile("already-imported", 2);
         Files.write(profiles.resolve("profile.json"), document);
+        // Pre-register via executor — auto-activates (approvalRequirement == NONE)
         try (PkiSession session = open(configuration)) {
             completed(session, new PkiOperation.RegisterProfile(document));
         }
+        // Bootstrap with identical content: SHA matches active — skip, no re-registration
         assertEquals(0, invoke(configuration, profiles).code());
         try (PkiSession session = open(configuration)) {
-            assertFalse(completed(session, new PkiOperation.ListProfileVersions("already-imported"))
-                    .fields().containsKey("activeVersion"));
+            PkiOperationResult listed = completed(session, new PkiOperation.ListProfileVersions("already-imported"));
+            assertEquals(new PkiOperationValue.IntegerValue(1), listed.fields().get("count"));
+            assertEquals(new PkiOperationValue.IntegerValue(2), listed.fields().get("activeVersion"));
         }
     }
 
@@ -147,9 +159,13 @@ class PkiProfileBootstrapTest {
         Path profiles = Files.createDirectory(directory.resolve("profiles"));
         Path projection = Files.createDirectory(profiles.resolve("..projection"));
         Files.write(projection.resolve("profile.json"), profile("projected", 2));
-        Files.createSymbolicLink(profiles.resolve("profile.json"), Path.of("..projection/profile.json"));
-        Path link = Files.createSymbolicLink(directory.resolve("configuration-link.json"), configuration);
-        assertEquals(0, invoke(link, profiles).code());
+        try {
+            Files.createSymbolicLink(profiles.resolve("profile.json"), Path.of("..projection/profile.json"));
+            Path link = Files.createSymbolicLink(directory.resolve("configuration-link.json"), configuration);
+            assertEquals(0, invoke(link, profiles).code());
+        } catch (java.nio.file.FileSystemException e) {
+            assumeTrue(false, "Symlink creation not supported on this platform: " + e.getMessage());
+        }
     }
 
     @Test
@@ -171,12 +187,13 @@ class PkiProfileBootstrapTest {
 
     private Path configuration() throws Exception {
         Path path = directory.resolve("local.json");
+        String storePath = directory.resolve("store").toString().replace("\\", "/");
         Files.writeString(path, """
                 {"version":1,"mode":"local","operatorId":"bootstrap-test",
                 "store":{"provider":"fs","properties":{"root":"%s"}},
                 "audit":{"provider":"memory","properties":{"size":"128"}},
                 "publishers":[],"bindingProviders":[]}
-                """.formatted(directory.resolve("store")));
+                """.formatted(storePath));
         return path;
     }
 

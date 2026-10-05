@@ -116,7 +116,10 @@ break-glass, repository alias, ACME directory/account, OCSP responder, and the
 server/realm/principal/role/grant control objects).
 
 The complete enumerations are listed in the
-[security model reference](../reference/security-model.md).
+[security model reference](../reference/security-model.md). For a per-operation
+lookup table that maps every operation ID to its required action and resource
+type, see the
+[operation permissions reference](../reference/operation-permissions.md).
 
 ## Approvals
 

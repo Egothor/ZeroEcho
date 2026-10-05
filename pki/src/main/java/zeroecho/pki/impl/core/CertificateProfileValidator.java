@@ -316,6 +316,12 @@ final class CertificateProfileValidator {
         if (identity.equals(BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY)) {
             return new SubjectKeyAlgorithm("SPHINCS+", "SPHINCS+");
         }
+        if (identity.family().name().startsWith("ml-dsa-")) {
+            return new SubjectKeyAlgorithm("ML-DSA", "ML-DSA");
+        }
+        if (identity.family().name().startsWith("slh-dsa-")) {
+            return new SubjectKeyAlgorithm("SLH-DSA", "SLH-DSA");
+        }
         throw reject("SUBJECT_KEY_ALGORITHM_UNKNOWN");
     }
 

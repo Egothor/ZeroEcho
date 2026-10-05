@@ -77,9 +77,9 @@ class TargetArchitectureTest {
             }
         }
 
-        assertEquals(20, counts.getOrDefault(KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE, 0));
-        assertEquals(20, counts.getOrDefault(KeyOperation.ASYMMETRIC_PUBLIC_IMPORT, 0));
-        assertEquals(20, counts.getOrDefault(KeyOperation.ASYMMETRIC_PRIVATE_IMPORT, 0));
+        assertEquals(23, counts.getOrDefault(KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE, 0));
+        assertEquals(23, counts.getOrDefault(KeyOperation.ASYMMETRIC_PUBLIC_IMPORT, 0));
+        assertEquals(23, counts.getOrDefault(KeyOperation.ASYMMETRIC_PRIVATE_IMPORT, 0));
         assertEquals(4, counts.getOrDefault(KeyOperation.SYMMETRIC_GENERATE, 0));
         assertEquals(4, counts.getOrDefault(KeyOperation.SYMMETRIC_IMPORT, 0));
         progress("registrations=" + registrations.size());

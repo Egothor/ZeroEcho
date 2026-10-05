@@ -330,6 +330,13 @@ final class WindowsKeyringPolicy implements KeyringPlatformPolicy {
                 // path is not owner-only (inheritance was not broken).
                 throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
             }
+            // DENY entries for the owner (e.g. added by domain policy or inherited ACEs) are
+            // accepted intentionally. They reduce the owner's own access rights but do not
+            // expose key material to any other principal — the security guarantee of the
+            // keyring is that no foreign principal appears in the ACL, not that the owner
+            // holds full access. A DENY for the owner is an availability concern, not a
+            // confidentiality breach; restrictToOwner() always writes a single ALLOW entry,
+            // so DENY entries for the owner are only possible through external policy.
         }
     }
 

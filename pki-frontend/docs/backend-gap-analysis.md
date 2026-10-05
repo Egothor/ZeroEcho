@@ -8,7 +8,7 @@ feature parity. Unimplemented proposals are consolidated in the sole
 ## Method
 
 - The frontend is **descriptor/catalog driven**: it renders typed forms for the
-  full server operation catalog (107 operations — 41 PKI, 10 signing, 56 control) and runs
+  available operations from the generated server catalog and runs
   them with the server's signing-receipt `PENDING` / explicit `APPROVAL_REQUIRED`
   semantics. See `src/api/operationCatalog.ts`.
 - EJBCA is used as the feature benchmark (Community + Enterprise). Each EJBCA

@@ -35,7 +35,9 @@ package zeroecho.logging;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.logging.Handler;
 import java.util.logging.LogManager;
+import java.util.logging.Logger;
 
 /**
  * Configures {@link java.util.logging} (JUL) from a {@code jul.properties}
@@ -59,11 +61,21 @@ import java.util.logging.LogManager;
  * is configured.</li>
  * </ul>
  *
+ * <h2>JSON structured logging</h2>
+ * <p>
+ * When the system property {@code zeroecho.logging.json} is set to {@code true}
+ * before construction, a {@link JsonLogFormatter} is installed on every handler
+ * attached to the root logger. Each record is then emitted as a single-line JSON
+ * object, making log ingestion by Splunk, ELK, or Datadog trivial without grok
+ * patterns.
+ * </p>
+ *
  * <h2>Usage</h2> <pre>{@code
- * // Trigger JUL initialization from classpath
+ * // Enable JSON output before initialising logging:
+ * System.setProperty("zeroecho.logging.json", "true");
  * new ClasspathJulConfig();
  *
- * // Afterwards, logging is configured per jul.properties
+ * // Afterwards, all log records are emitted as newline-delimited JSON.
  * Logger log = Logger.getLogger("my.app");
  * log.info("Configured via classpath resource");
  * }</pre>
@@ -90,7 +102,13 @@ public final class ClasspathJulConfig {
             LogManager.getLogManager().readConfiguration(in);
         } catch (SecurityException | IOException e) {
             // As a last resort, print — logging may not be configured yet.
-            e.printStackTrace(); // NOPMD
+            System.err.println(e.getMessage()); //
+        }
+        if (Boolean.getBoolean("zeroecho.logging.json")) {
+            Logger root = Logger.getLogger("");
+            for (Handler h : root.getHandlers()) {
+                h.setFormatter(JsonLogFormatter.INSTANCE);
+            }
         }
     }
 }

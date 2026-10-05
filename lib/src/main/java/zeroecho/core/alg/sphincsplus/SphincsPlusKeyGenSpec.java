@@ -42,7 +42,9 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <p>
  * {@code SphincsPlusKeyGenSpec} selects the hash family, security strength,
- * signature variant, and mode for the SPHINCS+ post-quantum signature scheme.
+ * signature variant, and mode for the current SLH-DSA compatibility binding.
+ * ROBUST and HARAKA remain representable for source compatibility but generation
+ * rejects them with {@link IllegalArgumentException}; they are never remapped.
  * It also carries an optional provider name and explicit Bouncy Castle
  * parameter constant for direct mapping.
  * </p>
@@ -53,35 +55,35 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * or {@code HARAKA}).</li>
  * <li>{@link Security}: NIST security level, expressed as {@code 128},
  * {@code 192}, or {@code 256} bits.</li>
- * <li>{@link Variant}: tradeoff between {@code FAST} (smaller signatures,
+ * <li>{@link Variant}: tradeoff between {@code FAST} (larger signatures,
  * higher signing speed) and {@code SMALL} (shorter signatures, slower signing).
  * Security is unaffected.</li>
- * <li>{@link Mode}: {@code ROBUST} (conservative construction) or
- * {@code SIMPLE} (more efficient, narrower assumptions).</li>
- * <li>{@code providerName}: JCA provider name (e.g., {@code "BCPQC"} for Bouncy
- * Castle PQC).</li>
+ * <li>{@link Mode}: only {@code SIMPLE} is executable in this binding.</li>
+ * <li>{@code providerName}: JCA provider name (e.g., {@code "BC"} for Bouncy
+ * Castle). Legacy {@code "BCPQC"} generation is rejected.</li>
  * <li>{@code explicitParamConstant}: optional override; the exact field name of
- * a {@code SPHINCSPlusParameterSpec} constant in the Bouncy Castle API. If
- * non-null, it bypasses the automatic mapping.</li>
+ * a {@code SLHDSAParameterSpec} constant in the Bouncy Castle API. If
+ * non-null, it overrides automatic hash/strength/variant mapping, but cannot
+ * bypass rejection of ROBUST, HARAKA or prehash parameter constants.</li>
  * </ul>
  *
  * <h2>Defaults</h2> The {@link #defaultSpec()} uses:
  * <ul>
- * <li>Provider: {@code "BCPQC"}</li>
+ * <li>Provider: {@code "BC"}</li>
  * <li>Hash: {@link Hash#SHAKE}</li>
  * <li>Security: {@link Security#L5_256}</li>
  * <li>Variant: {@link Variant#SMALL}</li>
- * <li>Mode: {@link Mode#ROBUST}</li>
+ * <li>Mode: {@link Mode#SIMPLE}</li>
  * </ul>
  *
  * <h2>Example</h2> <pre>{@code
- * // Conservative, NIST Level 3 security, SHA-2 based
+ * // Pure SLH-DSA, NIST Level 3 security, SHA-2 based
  * SphincsPlusKeyGenSpec spec = SphincsPlusKeyGenSpec.of(
- *     "BCPQC", 
+ *     "BC",
  *     SphincsPlusKeyGenSpec.Hash.SHA2,
  *     SphincsPlusKeyGenSpec.Security.L3_192,
  *     SphincsPlusKeyGenSpec.Variant.FAST,
- *     SphincsPlusKeyGenSpec.Mode.ROBUST);
+ *     SphincsPlusKeyGenSpec.Mode.SIMPLE);
  *
  * KeyPair kp = new SphincsPlusKeyGenBuilder().generateKeyPair(spec);
  * }</pre>
@@ -138,18 +140,13 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
     } // f vs s (speed vs signature size), same security
 
     /**
-     * Construction mode: conservative {@code ROBUST} vs. more efficient
-     * {@code SIMPLE}.
-     *
-     * <p>
-     * {@code ROBUST} is recommended when in doubt; {@code SIMPLE} offers smaller
-     * signatures and faster signing under additional assumptions.
-     * </p>
+     * Legacy construction selector. The current binding executes only SIMPLE
+     * as pure SLH-DSA; ROBUST is retained for source compatibility and rejected.
      */
     public enum Mode {
-        /** Conservative construction (recommended default). */
+        /** Legacy construction; rejected by the current SLH-DSA binding. */
         ROBUST,
-        /** Simpler and more efficient construction. */
+        /** Selects the current pure SLH-DSA compatibility binding. */
         SIMPLE
     } // ROBUST = conservative
 
@@ -160,8 +157,8 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
     private final Mode mode;
     private final String explicitParamConstant; // nullable
 
-    private static final SphincsPlusKeyGenSpec DEFAULT = new SphincsPlusKeyGenSpec("BCPQC", Hash.SHAKE, Security.L5_256,
-            Variant.SMALL, Mode.ROBUST, null);
+    private static final SphincsPlusKeyGenSpec DEFAULT = new SphincsPlusKeyGenSpec("BC", Hash.SHAKE, Security.L5_256,
+            Variant.SMALL, Mode.SIMPLE, null);
 
     private SphincsPlusKeyGenSpec(String providerName, Hash hash, Security sec, Variant var, Mode mode,
             String explicit) {
@@ -176,7 +173,7 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
     /**
      * Returns the default SPHINCS+ key generation spec.
      *
-     * @return a singleton default specification (SHAKE, L5, SMALL, ROBUST)
+     * @return a singleton default specification (SHAKE, L5, SMALL, SIMPLE)
      */
     public static SphincsPlusKeyGenSpec defaultSpec() {
         return DEFAULT;
@@ -185,7 +182,7 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
     /**
      * Creates a new specification with explicit algorithm parameters.
      *
-     * @param providerName JCA provider name (e.g., "BCPQC")
+     * @param providerName JCA provider name (e.g., "BC")
      * @param hash         hash function family
      * @param sec          security level
      * @param var          signature variant (FAST vs SMALL)
@@ -201,11 +198,12 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
      * constant override.
      *
      * <p>
-     * This bypasses automatic mapping of hash family, security, variant, and mode.
-     * It is useful to test new or provider-specific constants.
+     * This overrides automatic mapping of hash family, security and variant among
+     * the twelve pure SLH-DSA constants. It cannot bypass rejection of ROBUST,
+     * HARAKA or prehash parameters. A null name restores automatic mapping.
      * </p>
      *
-     * @param name the name of the static field in {@code SPHINCSPlusParameterSpec}
+     * @param name the name of the static field in {@code SLHDSAParameterSpec}
      * @return a new {@code SphincsPlusKeyGenSpec} with the override
      */
     public SphincsPlusKeyGenSpec withExplicitParamConstant(String name) {

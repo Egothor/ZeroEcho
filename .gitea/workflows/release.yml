@@ -47,6 +47,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate source license headers
+        run: |
+          python3 -m unittest discover -s tools -p 'test_validate_source_licenses.py'
+          python3 tools/validate_source_licenses.py
+
       - name: Set up Java 21
         uses: actions/setup-java@v3
         with:
@@ -72,6 +77,9 @@ jobs:
           rm /etc/apt/sources.list.d/microsoft-prod.list
           apt-get update
           apt install -y rsync
+
+      - name: Validate public API documentation
+        run: ./gradlew :lib:javadoc :pki:javadoc :pki-server:javadoc :app:javadoc :ext:javadoc :api-spec:javadoc --no-daemon
 
       - name: Build and publish to Gitea Maven and JavaDoc to the website
         run: ./gradlew clean publish --no-daemon -PgiteaToken=${{ secrets.CI_PUBLISH_TOKEN }}

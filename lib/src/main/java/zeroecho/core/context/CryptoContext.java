@@ -55,16 +55,17 @@ import zeroecho.core.CryptoAlgorithm;
  * <li>Contexts are created via {@code ZeroEchoSession#createContext(...)}.</li>
  * <li>They may wrap native or provider-managed resources that must be
  * released.</li>
- * <li>Once closed, a context must not be reused; callers should request a new
- * one for subsequent operations.</li>
+ * <li>Callers must stop using a context after closing it. This is a caller
+ * lifecycle obligation, not a guarantee that subsequent calls are rejected;
+ * some implementations have no context-owned resources and close is a no-op.</li>
  * </ul>
  *
  * <h2>Security considerations</h2>
  * <ul>
  * <li>Bound keys are borrowed from the caller and are never destroyed by
  * context closure.</li>
- * <li>Applications should always call {@link #close()} promptly to avoid
- * leaking key material or other sensitive state.</li>
+ * <li>Applications should call {@link #close()} promptly. Closing is not a
+ * guarantee of erasing provider-managed key material or Java heap copies.</li>
  * <li>Contexts are not guaranteed to be thread-safe; concurrent use should be
  * avoided unless explicitly documented by the implementation.</li>
  * </ul>
@@ -105,13 +106,17 @@ public sealed interface CryptoContext extends Closeable
     Key key();
 
     /**
-     * Closes this context and releases all associated resources.
+     * Completes the context's implementation-specific cleanup.
      *
      * <p>
-     * Implementations free context-owned provider state and native handles. The
+     * Implementations release resources they explicitly own; cleanup can be a
+     * no-op for contexts holding only borrowed or garbage-collected state. The
      * bound key remains caller-owned: closing a context never destroys the key.
      * Callers that own a destroyable key must destroy it explicitly after all
      * contexts and other consumers have released it.
+     * Streams returned by the context have independent lifecycles: callers must
+     * complete and close those streams before closing the context. This method
+     * does not promise to finalize stream output or verify authentication tags.
      * </p>
      *
      * @throws java.io.IOException if the underlying provider encounters an I/O

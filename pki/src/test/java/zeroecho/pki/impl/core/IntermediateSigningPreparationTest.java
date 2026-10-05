@@ -71,6 +71,35 @@ import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pkix.Pkix;
 
 final class IntermediateSigningPreparationTest {
+    @Test void existingLegacySubjectRotationPreservesActualDerAndMetadata(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = open(root)) {
+            IntermediateCreationFixture fixture = new IntermediateCreationFixture();
+            fixture.initialize(store, 2);
+            fixture.legacyIntermediateParent(store, 1);
+            zeroecho.pki.api.profile.CertificateProfileDefinition base = store.requireActiveProfile("intermediate-ca").definition();
+            zeroecho.pki.testkit.RootCreationFixture.install(store, new zeroecho.pki.api.profile.CertificateProfileDefinition(
+                    base.certificateType(), base.profileId(), 2, base.formatId(), base.displayName(), base.maximumValidity(),
+                    new zeroecho.pki.api.profile.SubjectPolicy(false, java.util.List.of(
+                            new zeroecho.pki.api.profile.SubjectRdnRule(zeroecho.pki.api.profile.SubjectRdnType.COMMON_NAME,
+                                    1, 1, 128, Optional.empty(), true),
+                            new zeroecho.pki.api.profile.SubjectRdnRule(zeroecho.pki.api.profile.SubjectRdnType.COUNTRY_NAME,
+                                    1, 1, 2, Optional.empty(), true))), base.certificatePolicy()));
+            PkiId middle = new PkiId("middle-authority");
+            String oldMetadata = store.getCa(middle).orElseThrow().subjectRef().value();
+            zeroecho.pki.api.ca.CaKeyRotationCommand.Intermediate rotation = new zeroecho.pki.api.ca.CaKeyRotationCommand.Intermediate(
+                    middle, IntermediateCreationFixture.ROTATED_KEY, IntermediateCreationFixture.CA,
+                    new zeroecho.pki.impl.core.attr.SimpleAttributeSet());
+            DomainSigningRequest prepared = fixture.preparer(store).prepare(IntermediateCreationFixture.ACCESS, rotation,
+                    fixture.submission(store), IntermediateCreationFixture.TTL, CancellationSignal.NONE);
+            byte[] tbs = PkiTestRuntime.readContent(store, prepared.content());
+            X509Certificate certificate = Pkix.parseCertificate(Pkix.assembleCertificateOrCrl(tbs, new byte[]{0}, false));
+            assertEquals(new javax.security.auth.x500.X500Principal("CN=Legacy Middle,C=CZ"), certificate.getSubjectX500Principal());
+            assertEquals(oldMetadata, DomainCommandEncoding.decode(prepared.domainTemplate().command()).field(10));
+            for (zeroecho.pki.api.content.DurableContentReference candidate : prepared.candidates()) {
+                store.stagedContent().retireUnownedContent(candidate);
+            }
+        }
+    }
     @Test void enforcesEveryPathLevelAndCountsOnlyNonSelfIssuedCertificates(@TempDir Path root) throws Exception {
         for (int scenario = 0; scenario < 3; scenario++) {
             try (FilesystemPkiStore store = open(root.resolve(Integer.toString(scenario)))) {

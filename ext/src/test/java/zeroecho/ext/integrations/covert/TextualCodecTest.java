@@ -48,7 +48,7 @@ public class TextualCodecTest {
     void testGenerate100CharacterText() {
         System.out.println("testGenerate100CharacterText");
 
-        TextualCodec.Generator generator = TextualCodec.Generator.EN;
+        TextualCodec.Generator generator = TextualCodec.Generator.english();
         String result = generator.getText(100);
 
         System.out.println("...generated text: " + result);

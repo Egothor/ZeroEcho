@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -118,8 +119,12 @@ class PkiFoundationTest {
         Path oversized = write(" ".repeat(PkiCliJson.MAXIMUM_DOCUMENT_BYTES + 1));
         assertThrows(IOException.class, () -> PkiCliConfiguration.read(oversized));
         Path link = temporaryDirectory.resolve("config-link.json");
-        Files.createSymbolicLink(link, write(valid));
-        assertThrows(IOException.class, () -> PkiCliConfiguration.read(link));
+        try {
+            Files.createSymbolicLink(link, write(valid));
+            assertThrows(IOException.class, () -> PkiCliConfiguration.read(link));
+        } catch (java.nio.file.FileSystemException e) {
+            assumeTrue(false, "Symlink creation not supported on this platform: " + e.getMessage());
+        }
     }
 
     @Test
@@ -199,8 +204,9 @@ class PkiFoundationTest {
     @Test
     void controlsAcceptExactlyOneIdentityAndRequireSigningCapability() throws IOException {
         PkiOperationRegistry registry = new PkiOperationRegistry();
+        String storePath = temporaryDirectory.resolve("store").toString().replace("\\", "/");
         Path config = write(CONFIGURATION.formatted("").replace("\"root\":\"store\"",
-                "\"root\":\"" + temporaryDirectory.resolve("store") + "\""));
+                "\"root\":\"" + storePath + "\""));
         for (String command : List.of(PkiLocalCommand.INSPECT, PkiLocalCommand.COMPLETE)) {
             PkiLocalCommand bound = registry.bind(command, arguments("{\"operationId\":\"signing-id\"}"), temporaryDirectory);
             assertTrue(bound instanceof PkiLocalCommand.Inspect || bound instanceof PkiLocalCommand.Complete);

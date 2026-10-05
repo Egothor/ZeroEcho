@@ -38,6 +38,7 @@ import java.util.Optional;
 
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
+import zeroecho.pki.api.hybrid.HybridCertificateMode;
 
 /**
  * Immutable, versioned certificate-profile configuration.
@@ -46,22 +47,25 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
  * Schema version 4 adds an exact immutable confirmation policy to end-entity
  * profiles in the closed pre-release profile shape. Schema version 5 adds an
  * explicit {@link IssuanceApprovalRequirement} that selects the multi-party
- * approval control applied to issuance. The certificate kind and its closed
+ * approval control applied to issuance. The {@code hybridMode} component selects
+ * the hybrid certificate variant; it is optional in the codec and defaults to
+ * {@link HybridCertificateMode.None}. The certificate kind and its closed
  * policy variant are immutable across the definition.
  * Runtime activation state is deliberately excluded.
  * </p>
  *
- * @param certificateType   kind of certificate governed by the profile
- * @param profileId         stable profile identifier
- * @param profileVersion    positive configuration version
- * @param formatId          framework/format identifier
- * @param displayName       human-readable profile name
- * @param maximumValidity   positive maximum validity
+ * @param certificateType    kind of certificate governed by the profile
+ * @param profileId          stable profile identifier
+ * @param profileVersion     positive configuration version
+ * @param formatId           framework/format identifier
+ * @param displayName        human-readable profile name
+ * @param maximumValidity    positive maximum validity
  * @param approvalRequirement multi-party approval requirement for issuance
- * @param subjectPolicy     complete subject policy
- * @param certificatePolicy closed certificate-specific policy variant
+ * @param subjectPolicy      complete subject policy
+ * @param certificatePolicy  closed certificate-specific policy variant
  * @param algorithmBindingPolicy explicit X.509 representation policy
  * @param confirmationPolicy exact leaf confirmation policy; absent for CA profiles
+ * @param hybridMode         hybrid certificate mode; {@link HybridCertificateMode.None} for standard profiles
  */
 // The record is the stable closed schema; replacing components with containers would change its public contract.
 @SuppressWarnings("PMD.ExcessiveParameterList")
@@ -69,7 +73,7 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
         long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
         IssuanceApprovalRequirement approvalRequirement, SubjectPolicy subjectPolicy,
         CertificatePolicy certificatePolicy, X509AlgorithmBindingPolicy algorithmBindingPolicy,
-        Optional<CredentialConfirmationPolicy> confirmationPolicy) {
+        Optional<CredentialConfirmationPolicy> confirmationPolicy, HybridCertificateMode hybridMode) {
 
     /** Current certificate-profile document schema version. */
     public static final int SCHEMA_VERSION = 5;
@@ -91,7 +95,7 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
             SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy) {
         this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
                 IssuanceApprovalRequirement.NONE, subjectPolicy, certificatePolicy,
-                X509AlgorithmBindingPolicy.standardOnly(), Optional.empty());
+                X509AlgorithmBindingPolicy.standardOnly(), Optional.empty(), HybridCertificateMode.None.INSTANCE);
     }
 
     /**
@@ -113,7 +117,7 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
             X509AlgorithmBindingPolicy algorithmBindingPolicy) {
         this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
                 IssuanceApprovalRequirement.NONE, subjectPolicy, certificatePolicy, algorithmBindingPolicy,
-                Optional.empty());
+                Optional.empty(), HybridCertificateMode.None.INSTANCE);
     }
 
     /**
@@ -139,7 +143,34 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
             Optional<CredentialConfirmationPolicy> confirmationPolicy) {
         this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
                 IssuanceApprovalRequirement.NONE, subjectPolicy, certificatePolicy, algorithmBindingPolicy,
-                confirmationPolicy);
+                confirmationPolicy, HybridCertificateMode.None.INSTANCE);
+    }
+
+    /**
+     * Creates a profile with full components except {@code hybridMode}, defaulting it to
+     * {@link HybridCertificateMode.None}. Retained so existing programmatic callers that
+     * use the approval-requirement order stay source-compatible.
+     *
+     * @param certificateType certificate kind governed by the profile
+     * @param profileId nonblank stable profile identifier
+     * @param profileVersion positive imported profile version
+     * @param formatId credential framework and encoding format
+     * @param displayName nonblank human-readable profile name
+     * @param maximumValidity positive maximum credential validity
+     * @param approvalRequirement multi-party approval requirement for issuance
+     * @param subjectPolicy complete subject policy
+     * @param certificatePolicy closed certificate-specific policy
+     * @param algorithmBindingPolicy explicit X.509 representation policy
+     * @param confirmationPolicy exact leaf confirmation policy; absent for CA profiles
+     */
+    public CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
+            long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
+            IssuanceApprovalRequirement approvalRequirement, SubjectPolicy subjectPolicy,
+            CertificatePolicy certificatePolicy, X509AlgorithmBindingPolicy algorithmBindingPolicy,
+            Optional<CredentialConfirmationPolicy> confirmationPolicy) {
+        this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
+                approvalRequirement, subjectPolicy, certificatePolicy, algorithmBindingPolicy,
+                confirmationPolicy, HybridCertificateMode.None.INSTANCE);
     }
 
     /**
@@ -173,6 +204,12 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
         }
         if (approvalRequirement == null) {
             throw new IllegalArgumentException("approvalRequirement must not be null");
+        }
+        if (hybridMode == null) {
+            throw new IllegalArgumentException("hybridMode must not be null");
+        }
+        if (hybridMode instanceof HybridCertificateMode.Composite) {
+            throw new IllegalArgumentException("Composite hybrid certificate mode is not yet implemented");
         }
         boolean leaf = certificatePolicy instanceof LeafCertificatePolicy;
         if (certificateType == CertificateProfileKind.END_ENTITY != leaf) {
@@ -212,5 +249,17 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
             return ca;
         }
         throw new IllegalStateException("Profile is not a CA profile");
+    }
+
+    /**
+     * Requires a currently supported certificate lifecycle before import,
+     * activation or issuance. Historical definitions remain representable for
+     * archival reads and backup even when their lifecycle is unsupported.
+     * @throws IllegalArgumentException if the requested hybrid lifecycle is unsupported
+     */
+    public void requireSupportedIssuance() {
+        if (hybridMode instanceof HybridCertificateMode.AltSignature && certificateType != CertificateProfileKind.ROOT_CA) {
+            throw new IllegalArgumentException("AltSignature is supported only for ROOT_CA profiles");
+        }
     }
 }

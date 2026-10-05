@@ -87,13 +87,7 @@ import zeroecho.sdk.ZeroEchoSession;
  * @since 1.0
  */
 public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
-    /**
-     * 
-     */
     private static final String PUBLIC_KEY = "publicKey";
-    /**
-     * 
-     */
     private static final String PRIVATE_KEY = "privateKey";
     private final Supplier<TagEngine<T>> factory;
 

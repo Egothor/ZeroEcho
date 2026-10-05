@@ -108,8 +108,11 @@ final class FullCrlContinuationPublisher {
             Optional<StatusObject> existing = store.getStatusObject(id);
             if (existing.isPresent()) {
                 requirePublished(existing.orElseThrow(), domain, assembled);
+                if (store.supportsStatusScheduling()) {
+                    store.putStatusObjectFromSigning(existing.orElseThrow(), domain.operationId(), domain.commandCommitment());
+                }
             } else {
-                store.putStatusObject(status(id, assembled, domain));
+                store.putStatusObjectFromSigning(status(id, assembled, domain), domain.operationId(), domain.commandCommitment());
                 published = true;
                 DomainContinuationPublisher.afterDurablePublication(DomainContinuationPublisher.PublicationFaultPoint.AFTER_STATUS);
             }

@@ -47,6 +47,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.pqc.jcajce.spec.NTRULPRimeParameterSpec;
 
@@ -114,6 +119,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @see VoidSpec
  */
 public final class NtrulPrimeAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates a new algorithm wrapper for NTRU LPRime and registers its KEM and
      * agreement capabilities, together with key builders for generation and import.
@@ -218,4 +226,21 @@ public final class NtrulPrimeAlgorithm extends AbstractCryptoAlgorithm {
             throw new NoSuchProviderException("BCPQC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("NTRULPR653",  "NTRU LPRime 653 (128-bit)",  SecurityLevel.classical(128), NtrulPrimeKeyGenSpec.of(NtrulPrimeKeyGenSpec.Variant.NTRULPR653)),
+            new ParameterSetDescriptor.Concrete<>("NTRULPR761",  "NTRU LPRime 761 (128-bit)",  SecurityLevel.classical(128), NtrulPrimeKeyGenSpec.of(NtrulPrimeKeyGenSpec.Variant.NTRULPR761)),
+            new ParameterSetDescriptor.Concrete<>("NTRULPR857",  "NTRU LPRime 857 (192-bit)",  SecurityLevel.classical(192), NtrulPrimeKeyGenSpec.of(NtrulPrimeKeyGenSpec.Variant.NTRULPR857)),
+            new ParameterSetDescriptor.Concrete<>("NTRULPR953",  "NTRU LPRime 953 (192-bit)",  SecurityLevel.classical(192), NtrulPrimeKeyGenSpec.of(NtrulPrimeKeyGenSpec.Variant.NTRULPR953)),
+            new ParameterSetDescriptor.Concrete<>("NTRULPR1013", "NTRU LPRime 1013 (192-bit)", SecurityLevel.classical(192), NtrulPrimeKeyGenSpec.of(NtrulPrimeKeyGenSpec.Variant.NTRULPR1013)),
+            new ParameterSetDescriptor.Concrete<>("NTRULPR1277", "NTRU LPRime 1277 (256-bit)", SecurityLevel.classical(256), NtrulPrimeKeyGenSpec.of(NtrulPrimeKeyGenSpec.Variant.NTRULPR1277))
+        );
+    }
+
 }

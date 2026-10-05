@@ -35,6 +35,7 @@ package zeroecho.pki.server;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.util.Map;
@@ -72,7 +73,7 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
         "PMD.PreserveStackTrace", "PMD.SignatureDeclareThrowsException", "PMD.CommentRequired",
         "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects" })
-public final class ServerRealmContext implements AutoCloseable {
+public final class ServerRealmContext implements AutoCloseable { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
     /** Closed lifecycle states. */
     public enum State {
         /** Realm accepts operations. */ OPEN,
@@ -107,6 +108,9 @@ public final class ServerRealmContext implements AutoCloseable {
     private final AtomicBoolean closeAuditAttempted = new AtomicBoolean();
     private final AtomicBoolean sessionClosed = new AtomicBoolean();
     private final AtomicBoolean controlClosed = new AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicLong adminRequests = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong scheduleFailures = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.logging.Logger SCHEDULE_LOG = java.util.logging.Logger.getLogger("zeroecho.pki.server.status-schedule");
     private final AtomicReference<zeroecho.pki.api.audit.AuditIntegrityService> auditIntegrity =
             new AtomicReference<>();
     private final AtomicReference<String> auditAnchorCommitment = new AtomicReference<>();
@@ -175,6 +179,8 @@ public final class ServerRealmContext implements AutoCloseable {
      * @param configuration validated immutable realm configuration
      * @param dependencies key-access capabilities, never secret values
      * @return fully recovered realm context
+     * @throws IllegalArgumentException if a restore coordinator exists and server-control
+     *         storage is nested inside the replaceable PKI root
      */
     public static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies) {
@@ -184,10 +190,12 @@ public final class ServerRealmContext implements AutoCloseable {
     static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random) {
         ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
+        zeroecho.pki.server.schema.OperationDescriptorCatalog.current();
         PkiSessionRuntimeDependencies runtime = confirmationProofRuntime(exact,
                 Objects.requireNonNull(dependencies, "dependencies"));
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(random, "random");
+        rejectColocatedRestoreAuthority(exact);
         if (Files.isSymbolicLink(exact.controlLogPath())) {
             throw new IllegalArgumentException("Server-control log must not be a symbolic link");
         }
@@ -222,12 +230,35 @@ public final class ServerRealmContext implements AutoCloseable {
                 result.auditIntegrity.set(audit);
                 result.reconcileAuditAnchor();
             }
+            session.backup().ifPresent(result.gateway::installBackup);
             result.audit.record("REALM_OPEN", "system", Optional.empty(), Map.of("realm", exact.realmId().value()));
             return result;
         } catch (RuntimeException | Error primary) {
             closeAfterFailure(session, audit, control, primary);
             throw primary;
         }
+    }
+
+    private static void rejectColocatedRestoreAuthority(ServerRealmConfiguration configuration) {
+        zeroecho.pki.spi.ProviderConfig store = configuration.pkiSessionConfiguration().store();
+        if (!"fs".equals(Objects.requireNonNull(store.backendId()))) { return; }
+        Path root = Path.of(store.require("root")).toAbsolutePath().normalize();
+        if (root.getParent() == null) return;
+        Path journal = root.getParent().resolve("." + root.getFileName() + ".restore-control/journal");
+        if (!Files.exists(journal)) return;
+        if (configuration.controlLogPath().startsWith(root)) {
+            throw new IllegalArgumentException("RESTORE_COLOCATED_SERVER_AUTHORITY");
+        }
+        configuration.pkiSessionConfiguration().audit().get("root").ifPresent(path -> {
+            if (Path.of(path).toAbsolutePath().normalize().startsWith(root)) {
+                throw new IllegalArgumentException("RESTORE_COLOCATED_SERVER_AUTHORITY");
+            }
+        });
+        configuration.pkiSessionConfiguration().signing().ifPresent(signing -> signing.provider().get("keyringPath").ifPresent(path -> {
+            if (Path.of(path).toAbsolutePath().normalize().startsWith(root)) {
+                throw new IllegalArgumentException("RESTORE_COLOCATED_SERVER_AUTHORITY");
+            }
+        }));
     }
 
     static PkiSessionRuntimeDependencies confirmationProofRuntime(
@@ -442,6 +473,26 @@ public final class ServerRealmContext implements AutoCloseable {
         Permission.requireBounded(action, 128, "audit action");
         Permission.requirePrincipal(principalId);
         audit.record(action, principalId, Optional.empty(), Map.copyOf(safeDetails));
+    }
+
+    /** Records an administrative HTTP request upon handler entry, including rejected requests. */
+    public void recordAdminRequest() { adminRequests.updateAndGet(value -> value == Long.MAX_VALUE ? value : value + 1); }
+
+    long adminRequestsTotal() { return adminRequests.get(); }
+    long scheduleFailureTotal() { return scheduleFailures.get(); }
+    long pendingApprovalCount(java.time.Instant now) { requireOpen(); return control.pendingApprovalCount(now); }
+
+    long auditProjectionFailureTotal() {
+        requireOpen();
+        long count = RevocationAuditProjectionState.load(control).map(value -> (long) value.state().failureCount()).orElse(0L);
+        for (AuditEvidenceProjector projector : evidenceProjectors) count = Math.addExact(count, projector.failureCount());
+        return count;
+    }
+
+    void recordScheduleFailure(String code) {
+        scheduleFailures.updateAndGet(value -> value == Long.MAX_VALUE ? value : value + 1);
+        SCHEDULE_LOG.log(java.util.logging.Level.WARNING, "Status schedule failure: code={0}", code);
+        audit.record("STATUS_SCHEDULE_FAILURE", "system", Optional.empty(), Map.of("code", code));
     }
     /**
      * Returns current lifecycle state.

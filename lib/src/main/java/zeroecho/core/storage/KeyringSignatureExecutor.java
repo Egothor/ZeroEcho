@@ -86,7 +86,7 @@ public final class KeyringSignatureExecutor {
     public enum FailureCode {
         /** A requested key entry is absent or has the wrong entry kind. */
         KEY_UNAVAILABLE,
-        /** The exact signature identity is incompatible with the stored keys. */
+        /** The identity is incompatible, or a stored LMS/XMSS key cannot safely sign. */
         ALGORITHM_MISMATCH,
         /** Cryptographic-provider execution failed. */
         PROVIDER_FAILURE
@@ -162,7 +162,8 @@ public final class KeyringSignatureExecutor {
      *                                  streaming fails; or if a stream makes zero
      *                                  progress
      * @throws Failure                  if a key is unavailable, the algorithm does
-     *                                  not match, or provider execution fails
+     *                                  not match, or provider execution fails;
+     *                                  LMS/XMSS keys yield {@code ALGORITHM_MISMATCH}
      */
     public byte[] sign(String privateAlias, AlgorithmIdentity algorithmIdentity, RepeatableContent content,
             CancellationSignal cancellation) throws IOException, Failure {
@@ -196,6 +197,11 @@ public final class KeyringSignatureExecutor {
             throw new Failure(resolutionFailure);
         }
 
+        try {
+            zeroecho.core.alg.common.sig.StatefulSigningGuard.requireStateless(privateEntry.algorithm(), privateEntry.key());
+        } catch (UnsupportedRoleException unavailable) {
+            throw new Failure(FailureCode.ALGORITHM_MISMATCH); // NOPMD PreserveStackTrace - Expose a redacted category without provider details.
+        }
         String expectedKeyAlgorithm = profile.keyAlgorithmId();
         if (!expectedKeyAlgorithm.equals(privateEntry.algorithm())) {
             throw new Failure(FailureCode.ALGORITHM_MISMATCH);

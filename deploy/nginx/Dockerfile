@@ -47,6 +47,13 @@
 # --- Base image pins (replace tags with @sha256 digests for production) ------
 ARG NODE_IMAGE=node:22.11.0-bookworm
 ARG NGINX_IMAGE=nginx:1.27-bookworm
+ARG JAVA_IMAGE=eclipse-temurin:25-jdk
+
+# Generate the authoritative frontend input from Java, independently of Node.
+FROM ${JAVA_IMAGE} AS schema
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/root/.gradle ./gradlew :pki-server:generateSchema --no-daemon
 
 ###############################################################################
 # Stage 1: build the SPA bundle from source with the pinned Node toolchain.
@@ -62,6 +69,7 @@ COPY LICENSE-binary.txt /src/LICENSE-binary.txt
 COPY pki-frontend/package.json pki-frontend/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY pki-frontend/ ./
+COPY --from=schema /src/pki-server/build/generated/schema/ /src/pki-server/build/generated/schema/
 RUN npm run build   # emits ./dist (hashed assets under dist/assets, index.html)
 
 ###############################################################################

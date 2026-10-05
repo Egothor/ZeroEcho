@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "serverName": "zeroecho-admin-nginx",
   "realm": {
     "realmId": "production",
@@ -48,5 +48,8 @@
   "auditProjection": {"maxRecords": 256, "maxSinkCalls": 64, "idleIntervalMillis": 2000},
   "publicListener": {"enabled":false},
   "acmeListener": {"enabled":false},
+  "estListener": {"enabled":false},
+  "scepListener": {"enabled":false},
+  "cmpListener": {"enabled":false},
   "runtime": {}
 }

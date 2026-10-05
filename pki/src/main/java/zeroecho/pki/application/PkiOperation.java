@@ -34,6 +34,7 @@
 package zeroecho.pki.application;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -47,9 +48,10 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor;
 import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.revocation.RevocationReason;
+import zeroecho.pki.api.status.StatusObjectType;
 
 /** Closed set of synchronous non-signing PKI operations. */
-public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration, PkiOperation.ValidateProfile,
+public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration, PkiOperation.ValidateProfile, // NOPMD ExcessivePublicCount - Sealed public operation algebra preserves stable consumer API.
         PkiOperation.ListProfiles, PkiOperation.ListRequests, PkiOperation.SearchCredentials,
         PkiOperation.ListIssuerGenerations, PkiOperation.ListAlgorithmBindings, PkiOperation.InspectAlgorithmBinding,
         PkiOperation.ValidateAlgorithmBindings, PkiOperation.RegisterProfile,
@@ -65,10 +67,18 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
         PkiOperation.ReadRevocationHistory, PkiOperation.SnapshotRevocations,
         PkiOperation.InspectPublication, PkiOperation.ListPublications,
         PkiOperation.RegisterPublication, PkiOperation.ProcessPublication,
-        PkiOperation.RetryPublication, PkiOperation.ReconcilePublication {
+        PkiOperation.RetryPublication, PkiOperation.ReconcilePublication,
+        PkiOperation.SetStatusSchedule, PkiOperation.InspectStatusSchedule, PkiOperation.ListStatusSchedules,
+        PkiOperation.QueryAuthorityMetrics, PkiOperation.QueryCertificateMetrics,
+        PkiOperation.QueryRevocationMetrics, PkiOperation.QueryPublicationMetrics,
+        PkiOperation.QueryServerMetrics {
 
     /** Maximum allowed limit for capped presentation operations. */
     int MAXIMUM_RESULT_ENTRIES = 1_000;
+
+    private static void requireAuthority(PkiId caId) {
+        Objects.requireNonNull(caId, "caId");
+    }
 
     /**
      * Returns the stable semantic operation name.
@@ -104,18 +114,31 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
     }
 
     /**
-     * Lists credentials issued by one authoritative authority, ordered by identifier.
+     * Searches credentials issued by one authoritative authority with optional filters.
      *
-     * @param authorityId exact authority identifier that scopes the query
-     * @param limit maximum number of returned entries, from 1 to 1000
-     * @param after optional exclusive identifier cursor; empty starts the first page
+     * @param authorityId      exact authority identifier that scopes the query
+     * @param limit            maximum number of returned entries, from 1 to 1000
+     * @param after            optional exclusive identifier cursor; empty starts the first page
+     * @param subjectFilter    optional case-insensitive substring match on the subject DN
+     * @param serialFilter     optional case-insensitive substring match on the serial/unique id
+     * @param fingerprintFilter optional case-insensitive prefix match on the credential fingerprint
+     * @param statusFilter     optional exact credential status name (ISSUED, REVOKED, EXPIRED)
+     * @param profileIdFilter  optional exact profile logical id
      */
-    record SearchCredentials(PkiId authorityId, int limit, Optional<String> after) implements PkiOperation {
+    record SearchCredentials(PkiId authorityId, int limit, Optional<String> after,
+            Optional<String> subjectFilter, Optional<String> serialFilter,
+            Optional<String> fingerprintFilter, Optional<String> statusFilter,
+            Optional<String> profileIdFilter) implements PkiOperation {
         /** Stable operation name. */ public static final String NAME = "credential.search";
-        /** Validates the scope, page limit and exclusive cursor. */
+        /** Validates the scope, page limit, exclusive cursor and optional filters. */
         public SearchCredentials {
             Objects.requireNonNull(authorityId, "authorityId");
             requireLimit(limit); after = requireCursor(after);
+            Objects.requireNonNull(subjectFilter, "subjectFilter");
+            Objects.requireNonNull(serialFilter, "serialFilter");
+            Objects.requireNonNull(fingerprintFilter, "fingerprintFilter");
+            Objects.requireNonNull(statusFilter, "statusFilter");
+            Objects.requireNonNull(profileIdFilter, "profileIdFilter");
         }
         @Override public String name() { return NAME; }
     }
@@ -317,7 +340,7 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
          * @param caId exact stored-object identifier
          * @throws NullPointerException if {@code caId} is {@code null}
          */
-        public InspectAuthority { Objects.requireNonNull(caId, "caId"); }
+        public InspectAuthority { requireAuthority(caId); }
 
         /** {@return the stable semantic name {@value #NAME}} */
         @Override public String name() { return NAME; }
@@ -554,7 +577,7 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
          * @throws IllegalArgumentException if the reason is null or blank
          */
         public TransitionAuthority {
-            Objects.requireNonNull(caId, "caId");
+            requireAuthority(caId);
             Objects.requireNonNull(state, "state");
             requireText(reason, "reason");
         }
@@ -592,7 +615,7 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
          * @throws IllegalArgumentException if the reason is null or blank
          */
         public SelectIssuancePath {
-            Objects.requireNonNull(caId, "caId");
+            requireAuthority(caId);
             Objects.requireNonNull(issuerId, "issuerId");
             Objects.requireNonNull(pathId, "pathId");
             requireText(reason, "reason");
@@ -628,7 +651,7 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
          * @throws NullPointerException if an identifier is null
          */
         public RegisterIssuerChainPath {
-            Objects.requireNonNull(caId, "caId");
+            requireAuthority(caId);
             Objects.requireNonNull(issuerId, "issuerId");
             Objects.requireNonNull(parentPathId, "parentPathId");
         }
@@ -910,6 +933,147 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
         /** Stable name. */ public static final String NAME = "publication.reconcile";
         /** Validates the identifier. */
         public ReconcilePublication { Objects.requireNonNull(publicationId, "publicationId"); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Creates or replaces the automatic generation schedule for one CA status family.
+     *
+     * @param caId exact authority identifier
+     * @param statusType kind of status object to generate
+     * @param formatId encoding format for generated objects
+     * @param interval positive generation interval (minimum PT1M)
+     * @param graceSeconds non-negative grace seconds before the worker retries after {@code nextUpdate}
+     * @param enabled whether automatic generation is active
+     * @param publicationTarget optional publication destination; empty = generate only
+     */
+    record SetStatusSchedule(PkiId caId, StatusObjectType statusType, FormatId formatId,
+            Duration interval, long graceSeconds, boolean enabled,
+            Optional<PublicationTarget> publicationTarget) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "status.schedule.set";
+        /** Validates the schedule configuration. */
+        public SetStatusSchedule {
+            requireAuthority(caId);
+            Objects.requireNonNull(statusType, "statusType");
+            Objects.requireNonNull(formatId, "formatId");
+            Objects.requireNonNull(interval, "interval");
+            if (interval.isNegative() || interval.isZero()
+                    || interval.compareTo(zeroecho.pki.api.schedule.StatusSchedule.MINIMUM_INTERVAL) < 0) {
+                throw new IllegalArgumentException("interval must be at least PT1M");
+            }
+            if (graceSeconds < 0L || graceSeconds >= interval.getSeconds()) {
+                throw new IllegalArgumentException("graceSeconds must leave at least one whole second of cadence");
+            }
+            if (enabled && (statusType == StatusObjectType.OCSP || !"x509".equals(formatId.value()))) {
+                throw new IllegalArgumentException("Only X.509 full and delta CRL schedules are executable");
+            }
+            publicationTarget = Objects.requireNonNull(publicationTarget, "publicationTarget");
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Inspects the generation schedule for one CA status family.
+     *
+     * @param caId exact authority identifier
+     * @param statusType kind of status object
+     */
+    record InspectStatusSchedule(PkiId caId, StatusObjectType statusType) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "status.schedule.inspect";
+        /** Validates the identity. */
+        public InspectStatusSchedule {
+            requireAuthority(caId);
+            Objects.requireNonNull(statusType, "statusType");
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists all configured generation schedules.
+     *
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive cursor; empty starts the first page
+     */
+    record ListStatusSchedules(int limit, Optional<String> after) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "status.schedule.list";
+        /**
+         * Creates the first page query.
+         * @param limit maximum number of results, from 1 to 1000
+         * @throws IllegalArgumentException if the limit is outside the supported range
+         */
+        public ListStatusSchedules(int limit) { this(limit, Optional.empty()); }
+        /** Validates the bounded keyset query. */
+        public ListStatusSchedules { requireLimit(limit); after = requireCursor(after); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Queries authority-inventory metrics for one CA: issuer-generation states,
+     * chain depth, and CA lifecycle state.
+     *
+     * @param caId exact authority identifier
+     */
+    record QueryAuthorityMetrics(PkiId caId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "dashboard.authority";
+        /** Validates the identifier. */
+        public QueryAuthorityMetrics { requireAuthority(caId); }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Queries certificate-lifecycle metrics for one CA: active, expiring, and revoked counts.
+     * Pending-request lifecycle measurement is explicitly unavailable because requests have
+     * no authoritative CA lifecycle binding.
+     *
+     * @param caId exact authority identifier
+     */
+    record QueryCertificateMetrics(PkiId caId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "dashboard.certificate";
+        /** Validates the identifier. */
+        public QueryCertificateMetrics { requireAuthority(caId); }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Queries revocation and CRL freshness metrics for one CA.
+     *
+     * @param caId exact authority identifier
+     */
+    record QueryRevocationMetrics(PkiId caId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "dashboard.revocation";
+        /** Validates the identifier. */
+        public QueryRevocationMetrics { requireAuthority(caId); }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Queries publication-health metrics for one CA: pending and failing publication counts.
+     *
+     * @param caId exact authority identifier
+     */
+    record QueryPublicationMetrics(PkiId caId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "dashboard.publication";
+        /** Validates the identifier. */
+        public QueryPublicationMetrics { requireAuthority(caId); }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Queries server-health and enrollment metrics: JVM heap, approval queue depth,
+     * admin request totals, and audit-projection failure counts.
+     */
+    record QueryServerMetrics() implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "dashboard.server";
+        /** {@return the stable semantic name {@value #NAME}} */
         @Override public String name() { return NAME; }
     }
 

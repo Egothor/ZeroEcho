@@ -1,5 +1,10 @@
 # Container images
 
+Upgrading an existing store volume requires the explicit
+[offline layout migration](operations.md#offline-layout-migration). The parent volume now
+mounts at `store-container`; its replaceable `store/` child must not be a mount
+point. The entrypoint rejects legacy root layouts instead of initializing over them.
+
 The platform ships as two images. This page describes what each image contains,
 how to build or obtain them, and how to run them together with Docker Compose. For
 the volume and environment contract they consume, see [Configuration](configuration.md).
@@ -32,13 +37,15 @@ sequence before handing off to the server:
 3. **Start the server as PID 1** so it receives `SIGTERM` directly and runs its
    own graceful-shutdown hook.
 
-!!! note "Profile reconcile is identity-scoped"
-    The start-up reconcile registers profiles whose identifier is new. It does not
-    re-import a profile identifier that already exists, so editing an existing
-    profile's content and restarting does not update it. To change an existing
-    profile, register a new version through the console or CLI. Set
-    `ZEROECHO_PROFILE_RECONCILE=off` to disable the start-up reconcile entirely.
-    See [Configuration](configuration.md#changing-a-certificate-profile).
+!!! note "Profile reconcile is content-aware"
+    The bootstrap skips a profile when its active version already has identical
+    content (SHA-256 of the canonical document matches); changed content is always
+    re-registered and activated. Restarting with an unmodified profile document
+    is a no-op for that profile. To change an existing profile, update the
+    document content in the profiles source before restarting, or register a new
+    version through the console or CLI. Set `ZEROECHO_PROFILE_RECONCILE=off` to
+    disable the start-up reconcile entirely. See
+    [Configuration](configuration.md#changing-a-certificate-profile).
 
 ## The nginx edge image
 
@@ -112,7 +119,7 @@ services:
     expose:
       - "8443"                 # reachable only from the private network, never published
     volumes:
-      - store:/var/lib/zeroecho/store
+      - store:/var/lib/zeroecho/store-container
       - keyring:/var/lib/zeroecho/keyring
       - artifacts:/var/lib/zeroecho/artifacts
       - audit:/var/lib/zeroecho/audit

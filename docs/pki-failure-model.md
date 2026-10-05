@@ -38,11 +38,8 @@ owner-approved `STORE_DURABILITY_UNCONFIRMED` case to application classification
 reason token, exception message and cause remain internal. Classification does
 not retry the failed operation or inspect message text.
 
-Broader exhaustive reason mapping is not restored in the current executor.
-Other `PkiException` reasons retain the existing `POLICY_REJECTION` fallback;
-exception-type and internal control-marker classifications remain unchanged.
-The enum's declared classification describes its semantic reason family, not a
-claim that every application consumer currently implements that mapping.
+Exception-type and internal control-marker classifications remain unchanged.
+The enum's declared classification describes its semantic reason family.
 
 Store and domain layers each own their reason families, all carried structurally:
 

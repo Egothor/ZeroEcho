@@ -42,6 +42,18 @@ const pending: OperationEnvelope = {
 };
 
 describe('operation outcomes', () => {
+  it('preserves dashboard zero and exposes unavailable and failed measurements separately', async () => {
+    render(<OutcomeView outcome={{ kind: 'succeeded', envelope: { ...pending, operation: 'dashboard.server', status: 'SUCCEEDED',
+      result: { approvalPendingTotal: 0, metricStates: {
+        approvalPendingTotal: { state: 'AVAILABLE' },
+        statusScheduleWorkerRunning: { state: 'UNAVAILABLE', reason: 'NOT_CONFIGURED' },
+        auditProjectionFailureTotal: { state: 'FAILED', reason: 'COLLECTION_FAILED' },
+      } } } }} />);
+    expect(await screen.findByText('0')).toBeVisible();
+    expect(screen.getByText(/UNAVAILABLE/)).toBeVisible();
+    expect(screen.getByText(/COLLECTION_FAILED/)).toBeVisible();
+    expect(screen.getAllByText('0')).toHaveLength(1);
+  });
   it('keeps the receipt visible with a local polling error and can check the same operation', () => {
     const check = vi.fn();
     render(<OutcomeView outcome={{ kind: 'pending', envelope: pending, operationId: 'sign:1', pollingError: 'Connection lost' }} onCheckStatus={check} />);

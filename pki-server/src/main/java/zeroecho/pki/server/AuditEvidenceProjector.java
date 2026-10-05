@@ -88,6 +88,10 @@ final class AuditEvidenceProjector {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /* default */ long failureCount() {
+        return AuditEvidenceProjectionState.load(control, recordId).map(value -> (long) value.state().failureCount()).orElse(0L);
+    }
+
     /** Runs one bounded non-cancelling pass. */
     /* default */ PassResult project(int maxExamined, int maxSinkCalls) throws IOException {
         return project(maxExamined, maxSinkCalls, CancellationSignal.NONE);

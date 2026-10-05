@@ -83,8 +83,40 @@ public final class StandardX509Bindings {
     public static final String OID_P384 = "1.3.132.0.34";
     /** P-521 named-curve OID. */
     public static final String OID_P521 = "1.3.132.0.35";
-
+    /** ML-DSA-44 OID (FIPS 204). */
+    public static final String OID_ML_DSA_44 = "2.16.840.1.101.3.4.3.17";
+    /** ML-DSA-65 OID (FIPS 204). */
+    public static final String OID_ML_DSA_65 = "2.16.840.1.101.3.4.3.18";
+    /** ML-DSA-87 OID (FIPS 204). */
+    public static final String OID_ML_DSA_87 = "2.16.840.1.101.3.4.3.19";
+    /** SLH-DSA-SHA2-128s OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHA2_128S = "2.16.840.1.101.3.4.3.20";
+    /** SLH-DSA-SHA2-128f OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHA2_128F = "2.16.840.1.101.3.4.3.21";
+    /** SLH-DSA-SHA2-192s OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHA2_192S = "2.16.840.1.101.3.4.3.22";
+    /** SLH-DSA-SHA2-192f OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHA2_192F = "2.16.840.1.101.3.4.3.23";
+    /** SLH-DSA-SHA2-256s OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHA2_256S = "2.16.840.1.101.3.4.3.24";
+    /** SLH-DSA-SHA2-256f OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHA2_256F = "2.16.840.1.101.3.4.3.25";
+    /** SLH-DSA-SHAKE-128s OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHAKE_128S = "2.16.840.1.101.3.4.3.26";
+    /** SLH-DSA-SHAKE-128f OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHAKE_128F = "2.16.840.1.101.3.4.3.27";
+    /** SLH-DSA-SHAKE-192s OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHAKE_192S = "2.16.840.1.101.3.4.3.28";
+    /** SLH-DSA-SHAKE-192f OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHAKE_192F = "2.16.840.1.101.3.4.3.29";
+    /** SLH-DSA-SHAKE-256s OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHAKE_256S = "2.16.840.1.101.3.4.3.30";
+    /** SLH-DSA-SHAKE-256f OID (FIPS 205). */
+    public static final String OID_SLH_DSA_SHAKE_256F = "2.16.840.1.101.3.4.3.31";
     private static final X509BindingCatalog CATALOG = createCatalog(X509ComponentCatalog.builtIn());
+    private static final List<X509AlgorithmBinding> DESCRIPTORS = CATALOG.rules().stream()
+            .flatMap(rule -> rule.bindings().stream())
+            .sorted(java.util.Comparator.comparing(X509AlgorithmBinding::bindingId)).toList();
 
     private StandardX509Bindings() {
     }
@@ -129,6 +161,96 @@ public final class StandardX509Bindings {
                     X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
             fixed("zeroecho.spki.ed448", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
                     BootstrapAlgorithmIdentities.ED448_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_ED448),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.signature.ml-dsa-44", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.ML_DSA_44_SIGNATURE, X509AlgorithmIdentifier.absent(OID_ML_DSA_44),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.ml-dsa-65", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE, X509AlgorithmIdentifier.absent(OID_ML_DSA_65),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.ml-dsa-87", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE, X509AlgorithmIdentifier.absent(OID_ML_DSA_87),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.spki.ml-dsa-44", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.ML_DSA_44_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_ML_DSA_44),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.ml-dsa-65", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.ML_DSA_65_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_ML_DSA_65),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.ml-dsa-87", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.ML_DSA_87_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_ML_DSA_87),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.signature.slh-dsa-sha2-128s", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128S_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_128S),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-sha2-128f", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128F_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_128F),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-sha2-192s", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192S_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_192S),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-sha2-192f", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192F_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_192F),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-sha2-256s", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256S_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_256S),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-sha2-256f", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256F_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_256F),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-shake-128s", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128S_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_128S),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-shake-128f", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128F_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_128F),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-shake-192s", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192S_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_192S),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-shake-192f", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192F_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_192F),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-shake-256s", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256S_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_256S),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.signature.slh-dsa-shake-256f", X509AlgorithmRole.SIGNATURE_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256F_SIGNATURE, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_256F),
+                    X509BindingRule.SignatureEncoding.OPAQUE, X509BindingRule.PublicKeyEncoding.NOT_APPLICABLE),
+            fixed("zeroecho.spki.slh-dsa-sha2-128s", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128S_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_128S),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-sha2-128f", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128F_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_128F),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-sha2-192s", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192S_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_192S),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-sha2-192f", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192F_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_192F),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-sha2-256s", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256S_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_256S),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-sha2-256f", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256F_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHA2_256F),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-shake-128s", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128S_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_128S),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-shake-128f", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128F_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_128F),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-shake-192s", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192S_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_192S),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-shake-192f", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192F_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_192F),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-shake-256s", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256S_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_256S),
+                    X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW),
+            fixed("zeroecho.spki.slh-dsa-shake-256f", X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM,
+                    BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256F_PUBLIC_KEY, X509AlgorithmIdentifier.absent(OID_SLH_DSA_SHAKE_256F),
                     X509BindingRule.SignatureEncoding.NOT_APPLICABLE, X509BindingRule.PublicKeyEncoding.RAW)));
     }
 
@@ -157,8 +279,12 @@ public final class StandardX509Bindings {
      * @return immutable standard binding descriptors
      */
     public static List<X509AlgorithmBinding> descriptors() {
-        return CATALOG.rules().stream().flatMap(rule -> rule.bindings().stream())
-                .sorted(java.util.Comparator.comparing(X509AlgorithmBinding::bindingId)).toList();
+        return DESCRIPTORS;
+    }
+
+    // Only this closed implementation proves a complete, exact identity domain.
+    /* default */ static Optional<AlgorithmIdentity> fixedIdentity(X509BindingRule rule) {
+        return rule instanceof FixedRule fixed ? Optional.of(fixed.identity()) : Optional.empty();
     }
 
     private static X509BindingRule fixed(String id, X509AlgorithmRole role, AlgorithmIdentity identity,

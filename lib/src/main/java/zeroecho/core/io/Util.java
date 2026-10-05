@@ -362,9 +362,10 @@ public final class Util { // NOPMD
      * length prefix followed by the actual data read.
      *
      * <p>
-     * This method is optimized for performance and memory usage. Data is read in
-     * chunks to avoid large intermediate allocations, and a single result array is
-     * created only after the full size is known.
+     * Input is retained in chunks until the full size is known, then copied into
+     * one result array. For n input bytes, time and auxiliary memory are O(n);
+     * the retained chunks coexist with the result during the final copy. The
+     * size limit bounds accepted input, not peak allocation to a single buffer.
      *
      * <p>
      * The size prefix uses a packed 7-bit encoding, where the most significant bit

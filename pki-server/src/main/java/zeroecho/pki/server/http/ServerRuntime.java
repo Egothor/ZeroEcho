@@ -39,6 +39,8 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
@@ -54,7 +56,7 @@ import zeroecho.pki.server.PkiServerConfiguration;
 
 /** Centralized owner of all bounded server-created threads, queues and permits. */
 @SuppressWarnings("PMD")
-final class ServerRuntime implements AutoCloseable {
+public final class ServerRuntime implements AutoCloseable {
     static final String TRANSPORT_PREFIX = "zeroecho-pki-https-";
     static final String OPERATION_PREFIX = "zeroecho-pki-operation-";
     static final String PUBLIC_TRANSPORT_PREFIX = "zeroecho-pki-public-https-";
@@ -64,10 +66,15 @@ final class ServerRuntime implements AutoCloseable {
     static final String ACME_VALIDATION_PREFIX = "zeroecho-pki-acme-validation-";
     static final String OCSP_TRANSPORT_PREFIX = "zeroecho-pki-ocsp-https-";
     static final String OCSP_OPERATION_PREFIX = "zeroecho-pki-ocsp-response-";
+    static final String SCEP_TRANSPORT_PREFIX = "zeroecho-pki-scep-https-";
+    static final String SCEP_OPERATION_PREFIX = "zeroecho-pki-scep-operation-";
+    static final String CMP_TRANSPORT_PREFIX = "zeroecho-pki-cmp-https-";
+    static final String CMP_OPERATION_PREFIX = "zeroecho-pki-cmp-operation-";
     static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
     private static final ThreadLocal<WorkerType> WORKER_MARKER = new ThreadLocal<>();
 
-    private final ThreadPoolExecutor transport;
+    // Virtual threads handle transport dispatch — no sizing needed; each request gets its own VT.
+    private final ExecutorService transport;
     private final ThreadPoolExecutor operations;
     private final Semaphore admitted;
     private final Set<CancellationToken> cancellations = ConcurrentHashMap.newKeySet();
@@ -85,28 +92,49 @@ final class ServerRuntime implements AutoCloseable {
 
     ServerRuntime(PkiServerConfiguration.Execution configuration, Lane lane) {
         this.configuration = configuration;
-        transport = pool(configuration.transportWorkers(), configuration.transportQueueCapacity(),
-                new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_TRANSPORT_PREFIX
-                        : lane == Lane.ACME ? ACME_TRANSPORT_PREFIX
-                                : lane == Lane.OCSP ? OCSP_TRANSPORT_PREFIX : TRANSPORT_PREFIX,
-                        WorkerType.TRANSPORT));
+        String transportPrefix = lane == Lane.PUBLIC ? PUBLIC_TRANSPORT_PREFIX
+                : lane == Lane.ACME ? ACME_TRANSPORT_PREFIX
+                        : lane == Lane.OCSP ? OCSP_TRANSPORT_PREFIX
+                                : lane == Lane.EST ? "zeroecho-pki-est-https-"
+                                        : lane == Lane.SCEP ? SCEP_TRANSPORT_PREFIX
+                                                : lane == Lane.CMP ? CMP_TRANSPORT_PREFIX
+                                                        : TRANSPORT_PREFIX;
+        // Virtual threads: each incoming HTTP request dispatches on its own VT; no pool sizing needed.
+        transport = Executors.newThreadPerTaskExecutor(
+                new NamedThreadFactory(transportPrefix, WorkerType.TRANSPORT, true));
         operations = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
                 new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_STREAM_PREFIX
                         : lane == Lane.ACME ? ACME_PROTOCOL_PREFIX
-                                : lane == Lane.OCSP ? OCSP_OPERATION_PREFIX : OPERATION_PREFIX,
+                                : lane == Lane.OCSP ? OCSP_OPERATION_PREFIX
+                                        : lane == Lane.EST ? "zeroecho-pki-est-operation-"
+                                                : lane == Lane.SCEP ? SCEP_OPERATION_PREFIX
+                                                        : lane == Lane.CMP ? CMP_OPERATION_PREFIX
+                                                                : OPERATION_PREFIX,
                         WorkerType.OPERATION));
         admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
     }
 
-    ThreadPoolExecutor transportExecutor() {
+    ExecutorService transportExecutor() {
         return transport;
     }
 
-    boolean tryAdmit() {
+    /**
+     * Tries to reserve one request-admission permit without waiting.
+     * A successful caller must invoke {@link #releaseAdmission()} exactly once.
+     * Shutdown may start after this check, so later submission can still fail.
+     *
+     * @return whether a permit was acquired while acceptance was observed enabled
+     */
+    public boolean tryAdmit() {
         return accepting.get() && admitted.tryAcquire();
     }
 
-    void releaseAdmission() {
+    /**
+     * Returns a permit previously acquired by {@link #tryAdmit()}.
+     * Calling without a matching acquisition increases capacity incorrectly;
+     * the caller must enforce pairing even when request processing fails.
+     */
+    public void releaseAdmission() {
         admitted.release();
     }
 
@@ -180,17 +208,17 @@ final class ServerRuntime implements AutoCloseable {
                 await(operations, configuration.forcedShutdown());
             }
         }
-        if (!transportWorker) await(transport, configuration.gracefulShutdown());
+        if (!transportWorker) awaitService(transport, configuration.gracefulShutdown());
         if (!transport.isTerminated()) {
             transport.shutdownNow();
-            if (!transportWorker) await(transport, configuration.forcedShutdown());
+            if (!transportWorker) awaitService(transport, configuration.forcedShutdown());
         }
         if (!operations.isTerminated() || !transport.isTerminated()) {
             throw shutdownTimeout();
         }
     }
 
-    enum Lane { ADMIN, PUBLIC, ACME, OCSP }
+    enum Lane { ADMIN, PUBLIC, ACME, OCSP, EST, SCEP, CMP }
 
     /** One separately admitted bounded challenge-validation execution lane. */
     static final class ChallengeRuntime implements AutoCloseable {
@@ -253,6 +281,10 @@ final class ServerRuntime implements AutoCloseable {
     }
 
     private static void await(ThreadPoolExecutor executor, Duration duration) {
+        awaitService(executor, duration);
+    }
+
+    private static void awaitService(ExecutorService executor, Duration duration) {
         try {
             if (!executor.awaitTermination(duration.toMillis(), TimeUnit.MILLISECONDS)) return;
         } catch (InterruptedException interrupted) {
@@ -336,20 +368,29 @@ final class ServerRuntime implements AutoCloseable {
     private static final class NamedThreadFactory implements ThreadFactory {
         private final String prefix;
         private final WorkerType workerType;
+        private final boolean virtual;
         private final AtomicInteger sequence = new AtomicInteger();
         private NamedThreadFactory(String prefix, WorkerType workerType) {
+            this(prefix, workerType, false);
+        }
+        private NamedThreadFactory(String prefix, WorkerType workerType, boolean virtual) {
             this.prefix = prefix;
             this.workerType = workerType;
+            this.virtual = virtual;
         }
         @Override public Thread newThread(Runnable task) {
-            Thread thread = new Thread(() -> {
+            Runnable marked = () -> {
                 WORKER_MARKER.set(workerType);
                 try {
                     task.run();
                 } finally {
                     WORKER_MARKER.remove();
                 }
-            }, prefix + sequence.incrementAndGet());
+            };
+            if (virtual) {
+                return Thread.ofVirtual().name(prefix + sequence.incrementAndGet()).unstarted(marked);
+            }
+            Thread thread = new Thread(marked, prefix + sequence.incrementAndGet());
             thread.setDaemon(false);
             return thread;
         }

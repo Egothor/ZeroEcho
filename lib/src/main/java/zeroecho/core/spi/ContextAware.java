@@ -97,7 +97,15 @@ public interface ContextAware {
      * created internally by the implementation.
      * </p>
      *
-     * @return the active parameter context
+     * <p>
+     * {@implSpec} Implementations must honour this post-condition: return a
+     * non-null context once one has been established. Implementations that violate
+     * it silently break callers that depend on the non-null guarantee without
+     * triggering a compile-time or early runtime error.
+     * </p>
+     *
+     * @return the active parameter context; never {@code null} after the context
+     *         has been set or created
      */
     CtxInterface context();
 }

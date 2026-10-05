@@ -40,22 +40,34 @@ import zeroecho.pki.spi.ProviderConfig;
 /**
  * Explicit provider for the external administrative-client trust policy used
  * after a trusted proxy forwards a certificate chain.
+ *
+ * <p>Implementations must not expose trust-store secrets, key material,
+ * passwords, or aliases. Providers are activated only when their exact
+ * {@link #id()} is declared in the server configuration.
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; the same provider instance may be
+ * called from multiple threads during server startup.
+ *
+ * @since 1.0
  */
-@SuppressWarnings("PMD.SignatureDeclareThrowsException")
+@SuppressWarnings("PMD.SignatureDeclareThrowsException") // SPI boundary: provider-specific failures are opaque
 public interface PkiServerClientTrustProvider {
     /**
      * Returns the stable, explicitly configured provider identity.
      *
-     * @return provider identity used in configuration
+     * @return provider identity used in configuration; never {@code null}
      */
     String id();
 
     /**
-     * Creates an independent client trust manager without exposing trust-store secrets.
+     * Creates an independent client trust manager without exposing trust-store
+     * secrets.
      *
-     * @param configuration strict provider configuration
-     * @return initialized client trust manager
-     * @throws Exception when configured trust material is unavailable or invalid
+     * @param configuration strict provider configuration; never {@code null}
+     * @return initialized client trust manager; never {@code null}
+     * @throws Exception when configured trust material is unavailable, expired,
+     *                   or invalid
      */
     X509TrustManager create(ProviderConfig configuration) throws Exception;
 }

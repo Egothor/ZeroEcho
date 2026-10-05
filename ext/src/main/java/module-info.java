@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (C) 2025, Leo Galambos
+ * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -41,6 +41,7 @@ module zeroecho.ext {
     requires java.desktop;
     requires java.logging;
 
-    // Only the covert JPEG integration is consumed by downstream modules today.
     exports zeroecho.ext.integrations.covert.jpeg;
+    exports zeroecho.ext.integrations.covert;
+    exports zeroecho.ext.integrations.stegano;
 }

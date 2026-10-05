@@ -1,0 +1,932 @@
+# Copyright (C) 2026, Leo Galambos
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. All advertising materials mentioning features or use of this software must
+#    display the following acknowledgement:
+#    This product includes software developed by the Egothor project.
+#
+# 4. Neither the name of the copyright holder nor the names of its contributors
+#    may be used to endorse or promote products derived from this software without
+#    specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# ZeroEcho PKI Administrative API — OpenAPI Supplement
+#
+# This file provides human-authored descriptions for every registered operation
+# and (optionally) per-argument descriptions. It is consumed at build time by
+# OpenApiGenerator and merged into the generated zeroecho-admin-api.yaml.
+#
+# Rules:
+#   - Every operation listed in OperationSecurityDescriptors MUST have an entry.
+#     Missing entries cause the generateOpenApi Gradle task to fail.
+#   - Keys are the exact operation identifiers, e.g. "ca.create".
+#   - The "summary" is a single sentence shown in API browsers (max ~80 chars).
+#   - The "description" is optional prose for the operation detail view.
+#   - The "arguments" section maps each record-component name to a "description" string.
+
+operations:
+  backup.restore:
+    summary: Restore a backup (currently unavailable)
+    description: Remains subject to authorization and approval, then returns BACKUP_RESTORE_UNAVAILABLE. The descriptor is retained for complete static catalog parity.
+
+  # ---- Backup export and verification ------------------------------------
+
+  backup.export:
+    summary: "Export a backup of PKI state"
+
+  backup.verify:
+    summary: "Verify the structure of a backup artifact"
+
+  # ---- Dashboard metrics --------------------------------------------------
+
+  dashboard.authority:
+    summary: "Query authority inventory metrics for a CA"
+
+  dashboard.certificate:
+    summary: "Query certificate lifecycle metrics for a CA"
+
+  dashboard.publication:
+    summary: "Query publication health metrics for a CA"
+
+  dashboard.revocation:
+    summary: "Query revocation and CRL freshness metrics for a CA"
+
+  dashboard.server:
+    summary: "Query server health and enrollment metrics"
+
+  # ---- Auditor views ------------------------------------------------------
+
+  security.audit-view.inspect-full:
+    summary: "Inspect the authorized full audit view of a server-control object"
+
+  security.audit-view.inspect-pii:
+    summary: "Inspect the authorized PII audit view of a server-control object"
+
+  security.audit-view.inspect-redacted:
+    summary: "Inspect the redacted audit view of a server-control object"
+
+  # ---- Status generation schedules ----------------------------------------
+
+  status.schedule.inspect:
+    summary: "Inspect the generation schedule for one CA status family"
+
+  status.schedule.list:
+    summary: "Page through configured status generation schedules"
+
+  status.schedule.set:
+    summary: "Create or replace the generation schedule for one CA status family"
+
+  # ---- Authority management -----------------------------------------------
+
+  ca.create:
+    summary: "Create a new root certification authority"
+    description: "Generates a new root CA key pair and self-signed certificate using the specified profile and key reference. This is a signing operation and requires an active signing provider. The authority transitions to PENDING state until its first issuance policy is configured."
+    arguments:
+      formatId: "Certificate encoding format (e.g. PEM, DER)"
+      subjectRef: "Subject distinguished name reference resolved against the profile"
+      profileId: "Identifier of the CA issuance profile to apply"
+      keyRef: "Key reference identifying an existing or to-be-generated key"
+
+  ca.inspect:
+    summary: "Retrieve metadata for a single certification authority"
+    arguments:
+      caId: "Stable authority identifier (UUID)"
+
+  ca.list:
+    summary: "Page through all certification authorities in the realm"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum number of results to return (1–1000)"
+
+  ca.transition:
+    summary: "Activate or deactivate a certification authority"
+    description: "Moves a root or intermediate authority between ACTIVE and INACTIVE states. Deactivating an active CA halts new issuance without revoking existing credentials."
+    arguments:
+      caId: "Stable authority identifier (UUID)"
+      enabled: "True to activate, false to deactivate"
+
+  ca.rollover:
+    summary: "Issue a new certificate for an existing CA key (rollover)"
+    description: "Produces a new CA certificate for the same key material with an updated validity window. Useful for routine certificate renewal without a key change."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Updated subject reference (must match the existing CA's subject policy)"
+      profileId: "Issuance profile to apply for the new certificate"
+      keyRef: "Key reference; must match the existing CA key"
+
+  ca.rotate:
+    summary: "Generate a new key pair and issue a replacement CA certificate (rotation)"
+    description: "Creates a new key pair on the signing provider and issues a CA certificate, retiring the previous key. All subsequent issuances will use the new key."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Subject distinguished name reference"
+      profileId: "Issuance profile to apply"
+      keyRef: "Reference for the new key to generate or an existing replacement key"
+
+  ca.intermediate.create:
+    summary: "Create a new intermediate (subordinate) CA"
+    description: "Generates a key pair for a new intermediate CA, submits the CSR to a designated parent CA, and stores the resulting intermediate authority object. Requires a parent CA in ACTIVE state."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Subject reference for the intermediate CA"
+      profileId: "Intermediate CA issuance profile"
+      keyRef: "Key reference for the intermediate CA"
+
+  ca.intermediate.issue:
+    summary: "Issue a certificate for an existing intermediate CA CSR"
+    description: "Signs a previously imported CSR under the parent authority to produce an intermediate CA certificate. Use after ca.intermediate.create when cross-signing or issuing from an offline root."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Subject reference for the intermediate CA certificate"
+      profileId: "Issuance profile controlling extensions and validity"
+      keyRef: "Key reference for the signing operation on the parent CA"
+
+  # ---- Credential lifecycle -----------------------------------------------
+
+  credential.issue:
+    summary: "Issue a new end-entity certificate"
+    description: "Signs a validated certificate request and stores the resulting credential object. The request must be in APPROVED state; issuance is idempotent for the same request."
+    arguments:
+      formatId: "Certificate encoding format (PEM, DER, PKCS12)"
+      subjectRef: "Subject distinguished name reference"
+      profileId: "Issuance profile governing extensions and key policy"
+      keyRef: "Key reference for the end-entity key"
+
+  credential.renew:
+    summary: "Renew an expiring credential with the same key"
+    description: "Reissues a certificate for an existing credential, extending its validity window without changing the key. The original credential is superseded but not revoked."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Subject reference (must match the existing credential's subject)"
+      profileId: "Issuance profile to apply"
+      keyRef: "Existing key reference; must match the credential's enrolled key"
+
+  credential.replace:
+    summary: "Replace a credential with a new key (rekeying)"
+    description: "Issues a new certificate under a freshly generated key, superseding the existing credential. The previous key and certificate are no longer used but remain in the audit trail."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Subject reference for the replacement credential"
+      profileId: "Issuance profile to apply"
+      keyRef: "Reference for the new key"
+
+  credential.reissue:
+    summary: "Reissue a credential to correct extensions or policy (administrative)"
+    description: "Administratively reissues a credential, typically to correct a profile error or add extensions. The original credential may be revoked depending on profile policy. This is a HIGH_RISK operation requiring dual-control approval."
+    arguments:
+      formatId: "Certificate encoding format"
+      subjectRef: "Subject reference"
+      profileId: "Corrected issuance profile"
+      keyRef: "Key reference (may be the existing key)"
+
+  credential.inspect:
+    summary: "Retrieve metadata for a single credential"
+    arguments:
+      credentialId: "Stable credential identifier (UUID)"
+
+  credential.search:
+    summary: "Search credentials by subject, serial, or validity window"
+    arguments:
+      subjectFilter: "Optional subject DN substring filter"
+      serial: "Optional exact certificate serial number (hex)"
+      notBefore: "Optional start of issuance window (ISO-8601)"
+      notAfter: "Optional end of expiry window (ISO-8601)"
+      offset: "Zero-based page offset"
+      limit: "Maximum number of results (1–1000)"
+
+  credential.revoke:
+    summary: "Revoke a credential"
+    description: "Marks a credential as revoked with a CRL reason code and records the revocation event. The revocation entry will appear in the next generated CRL."
+    arguments:
+      credentialId: "Stable credential identifier (UUID)"
+      reason: "CRL reason code (e.g. KEY_COMPROMISE, AFFILIATION_CHANGED, SUPERSEDED)"
+      revocationDate: "Optional explicit revocation date; defaults to now"
+      comment: "Optional operator comment (max 2048 chars)"
+
+  # ---- Credential confirmation flow ---------------------------------------
+
+  credential.confirmation.pending.list:
+    summary: "List pending certificate confirmation challenges"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  credential.confirmation.challenge.issue:
+    summary: "Issue a confirmation challenge for a pending certificate"
+    arguments:
+      credentialId: "Stable credential identifier awaiting confirmation"
+
+  credential.confirmation.proof.complete:
+    summary: "Submit proof of possession to complete confirmation"
+    arguments:
+      credentialId: "Stable credential identifier"
+      proof: "Base64-encoded proof-of-possession response"
+
+  credential.confirmation.pending.revoke:
+    summary: "Revoke a pending credential confirmation request"
+    arguments:
+      credentialId: "Stable credential identifier"
+      reason: "Cancellation reason"
+
+  # ---- Issuance profiles --------------------------------------------------
+
+  profile.list-all:
+    summary: "Page through all registered issuance profiles"
+    arguments:
+      limit: "Maximum results per page (1–1000)"
+      after: "Opaque cursor for continuation (from previous response)"
+
+  profile.list:
+    summary: "List imported versions of a single issuance profile"
+    arguments:
+      profileId: "Logical profile identifier"
+
+  profile.inspect:
+    summary: "Retrieve a specific issuance profile version"
+    arguments:
+      profileId: "Logical profile identifier"
+      profileVersion: "Positive profile version number"
+
+  profile.register:
+    summary: "Import or reconcile an issuance profile version"
+    description: "Imports the profile document as a new version. If the active version already has identical content, returns the active reference without creating a new version. Otherwise imports the new version and, when the profile's approval requirement is NONE, automatically activates it; profiles with an approval requirement remain in DRAFT until explicitly activated with profile.activate. Existing certificates issued under prior versions are unaffected."
+    arguments:
+      profileId: "Logical profile identifier"
+      profileContent: "Profile document content (JSON)"
+
+  profile.activate:
+    summary: "Activate a profile version for new issuances"
+    arguments:
+      profileId: "Logical profile identifier"
+      profileVersion: "Version number to activate"
+
+  profile.validate:
+    summary: "Validate a profile document without storing it"
+    description: "Runs all profile validation checks and returns a validation report without persisting anything. Use to verify a profile before importing it."
+    arguments:
+      profileContent: "Profile document content (JSON)"
+
+  # ---- Issuer generations and chain paths ---------------------------------
+
+  issuer.generation.list:
+    summary: "List issuer generations for a CA"
+    arguments:
+      caId: "Stable authority identifier"
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  issuer.generation.inspect:
+    summary: "Retrieve metadata for a single issuer generation"
+    arguments:
+      issuerId: "Stable issuer generation identifier"
+
+  issuer.path.list:
+    summary: "List issuance chain paths for a CA"
+    arguments:
+      caId: "Stable authority identifier"
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  issuer.path.inspect:
+    summary: "Retrieve a single issuance chain path"
+    arguments:
+      pathId: "Stable chain path identifier"
+
+  issuer.path.select:
+    summary: "Select an issuance chain path as the active path for new issuances (HIGH_RISK)"
+    description: "Switches the active issuance path for a CA. Affects all subsequent certificate issuances. Requires dual-control approval."
+    arguments:
+      caId: "Stable authority identifier"
+      pathId: "Chain path identifier to activate"
+
+  issuer.path.register:
+    summary: "Register a new issuance chain path for a CA"
+    description: "Imports a chain of CA certificates establishing a certification path. The path must be verifiable to a configured trust anchor."
+    arguments:
+      caId: "Stable authority identifier"
+      certificates: "PEM-encoded certificate chain (leaf first)"
+
+  # ---- Requests -----------------------------------------------------------
+
+  request.list:
+    summary: "Page through certificate requests"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  request.inspect:
+    summary: "Retrieve a single certificate request"
+    arguments:
+      requestId: "Stable request identifier"
+
+  request.import:
+    summary: "Import an external certificate request (CSR)"
+    description: "Accepts a PKCS#10 CSR from an external source and creates a pending request record. The request must pass all profile policy checks before issuance can proceed."
+    arguments:
+      csrPem: "PEM-encoded PKCS#10 certificate signing request"
+      profileId: "Issuance profile to validate the CSR against"
+      authorityId: "Target CA authority identifier"
+
+  request.verify:
+    summary: "Verify a certificate request against a profile without storing it"
+    arguments:
+      csrPem: "PEM-encoded PKCS#10 certificate signing request"
+      profileId: "Issuance profile to validate against"
+
+  # ---- Revocation ---------------------------------------------------------
+
+  revocation.history:
+    summary: "Read the revocation event history for a credential"
+    arguments:
+      credentialId: "Stable credential identifier"
+
+  revocation.inspect:
+    summary: "Inspect the current revocation state of a credential"
+    arguments:
+      credentialId: "Stable credential identifier"
+
+  revocation.snapshot:
+    summary: "Snapshot the complete revocation state for a CA at a point in time"
+    arguments:
+      caId: "Stable authority identifier"
+      snapshotAt: "Optional snapshot timestamp (ISO-8601); defaults to now"
+
+  # ---- Status objects (CRLs) ----------------------------------------------
+
+  status.generate:
+    summary: "Generate a new CRL or delta-CRL for a CA"
+    description: "Creates a signed CRL or delta-CRL for the specified authority. The resulting status object is stored and can be published via the publication subsystem."
+    arguments:
+      formatId: "Status object format (CRL, DELTA_CRL)"
+      subjectRef: "Issuer reference identifying the CA"
+      profileId: "Status object profile controlling extensions and validity"
+      keyRef: "Key reference for the signing operation"
+
+  status.inspect:
+    summary: "Retrieve metadata for a single status object"
+    arguments:
+      statusObjectId: "Stable status object identifier"
+
+  inventory.status:
+    summary: "Page through status objects for a CA"
+    arguments:
+      issuerCaId: "Stable authority identifier"
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  # ---- Algorithm bindings -------------------------------------------------
+
+  algorithm.binding.list:
+    summary: "List algorithm bindings registered with the server"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  algorithm.binding.inspect:
+    summary: "Retrieve a single algorithm binding"
+    arguments:
+      bindingId: "Stable algorithm binding identifier"
+
+  algorithm.binding.validate:
+    summary: "Validate an algorithm binding specification without storing it"
+    arguments:
+      bindingContent: "Algorithm binding document content (JSON)"
+
+  # ---- Configuration ------------------------------------------------------
+
+  configuration.validate:
+    summary: "Validate the current or a proposed server configuration"
+    arguments:
+      configurationContent: "Optional JSON configuration document to validate; if absent, validates the running configuration"
+
+  # ---- Publication --------------------------------------------------------
+
+  publication.list:
+    summary: "Page through publications"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  publication.inspect:
+    summary: "Retrieve a single publication record"
+    arguments:
+      publicationId: "Stable publication identifier"
+
+  publication.register:
+    summary: "Register a new publication target"
+    description: "Defines a new publication endpoint (LDAP, HTTP, file) where generated CRLs or OCSP responses will be pushed."
+    arguments:
+      publicationContent: "Publication configuration document (JSON)"
+
+  publication.process:
+    summary: "Trigger immediate publication to a registered target"
+    arguments:
+      publicationId: "Stable publication identifier"
+
+  publication.retry:
+    summary: "Retry a failed publication"
+    arguments:
+      publicationId: "Stable publication identifier"
+
+  publication.reconcile:
+    summary: "Reconcile publication state and re-queue any stale or missing publishes"
+    arguments:
+      publicationId: "Stable publication identifier"
+
+  # ---- Principals and access control -------------------------------------
+
+  security.principal.register:
+    summary: "Register a new administrative principal"
+    description: "Creates a principal record from a client certificate or service account descriptor. The principal is DISABLED until explicitly enabled."
+    arguments:
+      principalContent: "Principal configuration document (JSON)"
+
+  security.principal.inspect:
+    summary: "Retrieve a single administrative principal"
+    arguments:
+      principalId: "Stable principal identifier"
+
+  security.principal.list:
+    summary: "Page through registered administrative principals"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  security.principal.enable:
+    summary: "Enable an administrative principal to allow login"
+    arguments:
+      principalId: "Stable principal identifier"
+      enabled: "Must be true for this operation"
+
+  security.principal.disable:
+    summary: "Disable an administrative principal to block login"
+    arguments:
+      principalId: "Stable principal identifier"
+      enabled: "Must be false for this operation"
+
+  # ---- Role templates and assignments -------------------------------------
+
+  security.role-template.list:
+    summary: "List all registered role templates"
+
+  security.role-template.inspect:
+    summary: "Retrieve a specific role template version"
+    arguments:
+      templateId: "Stable role template identifier"
+      version: "Positive template version number"
+
+  security.role-assignment.create:
+    summary: "Assign a role template to a principal (HIGH_RISK)"
+    description: "Creates a scoped role assignment binding a principal to a role template. Requires dual-control approval."
+    arguments:
+      assignment: "Scoped role assignment document"
+
+  security.role-assignment.inspect:
+    summary: "Retrieve a single role assignment"
+    arguments:
+      assignmentId: "Stable assignment identifier"
+
+  security.role-assignment.list:
+    summary: "Page through role assignments"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  security.role-assignment.revoke:
+    summary: "Revoke a role assignment"
+    arguments:
+      assignmentId: "Stable assignment identifier"
+
+  # ---- Direct grants ------------------------------------------------------
+
+  security.grant.create:
+    summary: "Create a direct permission grant (HIGH_RISK)"
+    description: "Grants a specific permission directly to a principal without a role template. Requires dual-control approval."
+    arguments:
+      grant: "Permission grant document"
+
+  security.grant.inspect:
+    summary: "Retrieve a single permission grant"
+    arguments:
+      grantId: "Stable grant identifier"
+
+  security.grant.list:
+    summary: "Page through direct permission grants"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  security.grant.revoke:
+    summary: "Revoke a direct permission grant"
+    arguments:
+      grantId: "Stable grant identifier"
+
+  # ---- Authorization evaluation -------------------------------------------
+
+  security.authorization.evaluate:
+    summary: "Simulate an authorization decision for a principal and resource"
+    description: "Evaluates the authorization model for a given principal, action, resource, and context without performing the operation. Returns PERMIT or DENY with reasons."
+    arguments:
+      principalId: "Stable principal identifier to evaluate"
+      action: "Permission action to evaluate"
+      resource: "Target resource identifier"
+      relationship: "Requester-to-resource relationship"
+      dataView: "Requested data view"
+      context: "Closed authorization context"
+
+  # ---- Approvals ----------------------------------------------------------
+
+  security.approval.request:
+    summary: "Submit a dual-control approval request for a HIGH_RISK operation"
+    arguments:
+      approvalId: "Stable approval identifier"
+      targetOperation: "The administrative operation awaiting approval"
+      targetResource: "The target resource of the operation"
+
+  security.approval.inspect:
+    summary: "Retrieve a single approval record"
+    arguments:
+      approvalId: "Stable approval identifier"
+
+  security.approval.list:
+    summary: "Page through approval records"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+      state: "Optional approval state filter (PENDING, APPROVED, REJECTED, CANCELLED)"
+      requesterPrincipalId: "Optional filter by requesting principal"
+      targetOperationId: "Optional filter by target operation"
+
+  security.approval.approve:
+    summary: "Approve a pending dual-control request"
+    arguments:
+      approvalId: "Stable approval identifier"
+      choice: "Must be APPROVE"
+      justification: "Operator justification for the approval (max 2048 chars)"
+
+  security.approval.reject:
+    summary: "Reject a pending dual-control request"
+    arguments:
+      approvalId: "Stable approval identifier"
+      choice: "Must be REJECT"
+      justification: "Operator reason for the rejection (max 2048 chars)"
+
+  security.approval.cancel:
+    summary: "Cancel a pending approval request"
+    arguments:
+      approvalId: "Stable approval identifier"
+
+  # ---- Break-glass --------------------------------------------------------
+
+  security.break-glass.create:
+    summary: "Create an emergency break-glass grant (requires pre-approval)"
+    description: "Creates an emergency permission grant for a principal with mandatory expiry. Must be independently approved before activation. This is a HIGH_RISK dual-control operation."
+    arguments:
+      breakGlassId: "Stable break-glass identifier"
+      principalId: "Principal to receive the emergency grant"
+      grant: "Permission grant to activate in emergency"
+      reason: "Operator reason for the break-glass invocation (max 2048 chars)"
+      expiresAt: "Mandatory expiry timestamp (ISO-8601)"
+
+  security.break-glass.activate:
+    summary: "Activate a pre-approved break-glass grant"
+    description: "Brings an approved break-glass record into effect. Requires the record to be in APPROVED state. Activation is logged with full audit evidence."
+    arguments:
+      breakGlassId: "Stable break-glass identifier"
+
+  security.break-glass.inspect:
+    summary: "Retrieve a single break-glass record"
+    arguments:
+      breakGlassId: "Stable break-glass identifier"
+
+  security.break-glass.list:
+    summary: "Page through break-glass records"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  security.break-glass.revoke:
+    summary: "Revoke an active break-glass grant"
+    arguments:
+      breakGlassId: "Stable break-glass identifier"
+
+  # ---- Schema introspection ----------------------------------------------
+
+  operation.schema:
+    summary: "Retrieve the machine-readable operation parameter schema"
+    description: "Returns a JSON document listing all available operations with their field names, types, required flags, and enum choices. Any authenticated principal may call this endpoint without additional permission. Clients use it to validate arguments before submission and to render operation forms dynamically."
+
+  # ---- Configuration and capability disclosure ----------------------------
+
+  configuration.choices:
+    summary: "Retrieve the set of supported configuration choices for the server"
+    description: "Returns the closed set of allowed values for configurable server parameters such as key types, signature algorithms, and supported formats."
+
+  security.disclosure.capability.list:
+    summary: "List capability tokens available to the authenticated principal"
+
+  security.disclosure.inspect:
+    summary: "Retrieve the server's current capability disclosure state"
+
+  security.disclosure.set:
+    summary: "Update the server capability disclosure configuration (HIGH_RISK)"
+    description: "Changes what information the server discloses to unauthenticated callers. Requires dual-control approval."
+    arguments:
+      disclosureContent: "Disclosure configuration document (JSON)"
+
+  security.disclosure.capability.issue:
+    summary: "Issue a capability token to a principal"
+    arguments:
+      principalId: "Stable principal identifier"
+      capabilityContent: "Capability specification document (JSON)"
+
+  security.disclosure.capability.revoke:
+    summary: "Revoke a capability token"
+    arguments:
+      capabilityId: "Stable capability identifier"
+
+  # ---- Certificate publication enrollment ---------------------------------
+
+  certificate.publication.enroll:
+    summary: "Enroll a credential for certificate publication"
+    description: "Registers a credential for automatic publication to configured publication targets whenever the credential is renewed or reissued."
+    arguments:
+      credentialId: "Stable credential identifier"
+      publicationId: "Stable publication target identifier"
+
+  # ---- Audit --------------------------------------------------------------
+
+  security.audit.search:
+    summary: "Search the audit log for events matching the given criteria"
+    description: "Returns audit records matching subject, operation, time range, and outcome filters. Results are paginated and returned in reverse-chronological order."
+    arguments:
+      principalId: "Optional principal filter"
+      operationId: "Optional operation filter"
+      since: "Optional start of time range (ISO-8601)"
+      until: "Optional end of time range (ISO-8601)"
+      outcome: "Optional outcome filter (SUCCESS, FAILURE, PENDING)"
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  security.audit.verify-integrity:
+    summary: "Verify the integrity of the audit chain"
+    description: "Computes and validates the cryptographic chain over all audit records up to the current head. Returns a verification report with the computed head. Optionally accepts an expected head for comparison."
+    arguments:
+      expectedHead: "Optional expected audit chain head for comparison"
+
+  # ---- Repository aliases -------------------------------------------------
+
+  repository.alias.inspect:
+    summary: "Retrieve a repository alias for a CA"
+    arguments:
+      authorityId: "Stable authority identifier"
+      type: "Repository alias type (CDP, AIA, OCSP, CT_LOG)"
+
+  repository.alias.list:
+    summary: "List all repository aliases for a CA"
+    arguments:
+      authorityId: "Stable authority identifier"
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  repository.alias.set:
+    summary: "Create or update a repository alias for a CA"
+    arguments:
+      authorityId: "Stable authority identifier"
+      type: "Repository alias type"
+      uri: "Target URI for the alias"
+
+  repository.alias.remove:
+    summary: "Remove a repository alias from a CA"
+    arguments:
+      authorityId: "Stable authority identifier"
+      type: "Repository alias type to remove"
+
+  # ---- ACME ---------------------------------------------------------------
+
+  acme.directory.register:
+    summary: "Register a new ACME directory for a CA"
+    description: "Creates an ACME directory object that exposes certificate issuance for the specified CA via the ACME protocol. The directory is INACTIVE until explicitly activated."
+    arguments:
+      authorityId: "Stable authority identifier"
+      profileId: "Issuance profile to use for ACME-issued certificates"
+      externalId: "External directory identifier used in the ACME URL path"
+
+  acme.directory.inspect:
+    summary: "Retrieve an ACME directory configuration"
+    arguments:
+      directoryId: "Stable ACME directory identifier"
+
+  acme.directory.list:
+    summary: "Page through registered ACME directories"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  acme.directory.activate:
+    summary: "Activate an ACME directory to accept new accounts and orders"
+    arguments:
+      directoryId: "Stable ACME directory identifier"
+
+  acme.directory.deactivate:
+    summary: "Deactivate an ACME directory to prevent new orders"
+    description: "Prevents new orders on the directory while leaving existing accounts and orders intact."
+    arguments:
+      directoryId: "Stable ACME directory identifier"
+
+  acme.account.inspect:
+    summary: "Retrieve an ACME account"
+    arguments:
+      accountId: "Stable ACME account identifier"
+
+  acme.account.list:
+    summary: "Page through ACME accounts"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  acme.account.deactivate:
+    summary: "Deactivate an ACME account"
+    description: "Deactivates an ACME account, preventing further orders. This is permanent and cannot be reversed."
+    arguments:
+      accountId: "Stable ACME account identifier"
+
+  # ---- OCSP ---------------------------------------------------------------
+
+  ocsp.responder.register:
+    summary: "Register an OCSP responder for a CA"
+    description: "Creates an OCSP responder configuration for the specified authority. The responder is INACTIVE until activated."
+    arguments:
+      authorityId: "Stable authority identifier"
+      responderContent: "OCSP responder configuration document (JSON)"
+
+  ocsp.responder.inspect:
+    summary: "Retrieve an OCSP responder configuration"
+    arguments:
+      responderId: "Stable OCSP responder identifier"
+
+  ocsp.responder.list:
+    summary: "Page through OCSP responder configurations"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  ocsp.responder.activate:
+    summary: "Activate an OCSP responder to begin serving status responses"
+    arguments:
+      responderId: "Stable OCSP responder identifier"
+
+  ocsp.responder.deactivate:
+    summary: "Deactivate an OCSP responder"
+    description: "Stops the responder from serving new OCSP responses. Existing cached responses may still be served until they expire."
+    arguments:
+      responderId: "Stable OCSP responder identifier"
+
+  est.endpoint.register:
+    summary: "Register an EST RFC 7030 enrollment endpoint"
+    description: "Binds a URL-safe label to a CA authority and issuance profile, exposing EST operations under /.well-known/est/{label}/. A registered endpoint is immediately active."
+    arguments:
+      label: "URL-safe endpoint label (1–64 characters, [A-Za-z0-9._-]+)"
+      authorityId: "Stable CA authority identifier whose chain is served"
+      profileId: "Issuance profile applied to enrollment requests"
+      keygenEnabled: "Whether POST /serverkeygen is enabled on this endpoint"
+      keygenAlgorithms: "JCA algorithm names permitted for server-generated keys"
+      keygenMaxKeySizeBits: "Upper bound on server-generated key size in bits"
+      keygenStoreKeys: "Whether the server retains a copy of generated private keys"
+
+  est.endpoint.deregister:
+    summary: "De-register an EST endpoint"
+    description: "Removes the endpoint binding; subsequent EST requests to that label will receive HTTP 404."
+    arguments:
+      label: "URL-safe endpoint label to remove"
+
+  est.endpoint.inspect:
+    summary: "Retrieve an EST endpoint configuration"
+    arguments:
+      label: "URL-safe endpoint label"
+
+  est.endpoint.list:
+    summary: "Page through registered EST endpoints"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  # ---- SCEP enrollment endpoints ------------------------------------------
+
+  scep.endpoint.register:
+    summary: "Register a SCEP RFC 8894 enrollment endpoint"
+    description: "Binds a URL-safe label to a CA authority and issuance profile, exposing SCEP operations under /scep/{label}. Authentication uses the hashed challenge password embedded in PKCSReq. The plaintext password is never stored."
+    arguments:
+      endpoint: "SCEP endpoint document (label, authorityId, profileId, challengePasswordHash)"
+
+  scep.endpoint.deregister:
+    summary: "De-register a SCEP endpoint"
+    description: "Removes the endpoint binding; subsequent SCEP requests to that label will receive HTTP 404."
+    arguments:
+      label: "URL-safe endpoint label to remove"
+
+  scep.endpoint.inspect:
+    summary: "Retrieve a SCEP endpoint configuration"
+    arguments:
+      label: "URL-safe endpoint label"
+
+  scep.endpoint.list:
+    summary: "Page through registered SCEP endpoints"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  # ---- CMP enrollment endpoints -------------------------------------------
+
+  cmp.endpoint.register:
+    summary: "Register a CMP RFC 4210 / RFC 9480 enrollment endpoint"
+    description: "Binds a URL-safe label to a CA authority and issuance profile, exposing CMP operations under /pkix/{label}. Protection may be shared-secret (passwordBasedMac) or signature-based."
+    arguments:
+      endpoint: "CMP endpoint document (label, authorityId, profileId, protectionPolicy)"
+
+  cmp.endpoint.deregister:
+    summary: "De-register a CMP endpoint"
+    description: "Removes the endpoint binding; subsequent CMP requests to that label will receive HTTP 404."
+    arguments:
+      label: "URL-safe endpoint label to remove"
+
+  cmp.endpoint.inspect:
+    summary: "Retrieve a CMP endpoint configuration"
+    arguments:
+      label: "URL-safe endpoint label"
+
+  cmp.endpoint.list:
+    summary: "Page through registered CMP endpoints"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  # ---- Enrollment profiles -------------------------------------------------
+
+  enrollment.profile.register:
+    summary: "Register an enrollment profile"
+    description: "Creates a named profile that governs policy constraints applied to SCEP, CMP, EST, and ACME enrollment requests: allowed CA authorities, certificate profile, subject DN pattern, required SAN domains, and whether human approval is needed before issuance."
+    arguments:
+      id: "Canonical profile identifier ([a-zA-Z0-9][a-zA-Z0-9._:-]{0,255})"
+      displayName: "Human-readable name shown in the admin UI"
+      certificateProfileId: "Certificate profile to apply when issuing under this enrollment profile"
+      allowedAuthorityIds: "Comma-separated set of authority IDs permitted to issue certificates; empty means no restriction"
+      subjectDnPattern: "Optional regular expression the requested subject DN must match; absent means no constraint"
+      requiredSanDomains: "Comma-separated list of DNS domains that must appear in the SAN; empty means no requirement"
+      requireApproval: "Whether requests matching this profile require a durable approval before issuance"
+
+  enrollment.profile.update:
+    summary: "Update an enrollment profile"
+    description: "Replaces the mutable fields of an existing enrollment profile. The profile must already exist; use register to create a new one."
+    arguments:
+      id: "Canonical identifier of the profile to update"
+      displayName: "Replacement display name"
+      state: "Profile state: ACTIVE or SUSPENDED"
+      certificateProfileId: "Replacement certificate profile"
+      allowedAuthorityIds: "Replacement set of allowed authority IDs (comma-separated)"
+      subjectDnPattern: "Replacement subject DN pattern; omit to clear the constraint"
+      requiredSanDomains: "Replacement required SAN domains (comma-separated)"
+      requireApproval: "Whether requests require durable approval"
+
+  enrollment.profile.inspect:
+    summary: "Retrieve an enrollment profile"
+    arguments:
+      id: "Canonical identifier of the profile to retrieve"
+
+  enrollment.profile.list:
+    summary: "Page through registered enrollment profiles"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–1000)"
+
+  enrollment.profile.activate:
+    summary: "Activate a suspended enrollment profile"
+    description: "Transitions the profile from SUSPENDED to ACTIVE, allowing new enrollment requests to match it."
+    arguments:
+      id: "Canonical identifier of the profile to activate"
+
+  enrollment.profile.suspend:
+    summary: "Suspend an active enrollment profile"
+    description: "Transitions the profile from ACTIVE to SUSPENDED. Existing in-flight requests are unaffected; new requests will not match a suspended profile."
+    arguments:
+      id: "Canonical identifier of the profile to suspend"

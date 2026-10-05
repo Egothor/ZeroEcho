@@ -69,6 +69,36 @@ final class RemoteSigningProviderTest {
     private static final Instant UPDATED_AT = Instant.parse("2026-09-10T08:00:00Z");
 
     @Test
+    void rejectsStatefulAlgorithmsBeforeReadingContentOrCallingTransport() {
+        RemoteSigningTransport transport = new FixedTransport(status(RemoteSigningTransport.RemoteSigningState.DENIED)) {
+            @Override public RemoteCapabilities capabilities() {
+                return new RemoteCapabilities(Set.of("SHA256withRSA", "LMS", "XMSS"), new byte[32], 2,
+                        new zeroecho.pki.spi.crypto.SigningInputCapabilities(1024, java.util.Map.of()));
+            }
+            @Override public RemoteSigningStatus submit(RemoteSignRequest request, RemoteCallControl control) {
+                throw new AssertionError("Stateful request must not reach transport");
+            }
+        };
+        try (RemoteSigningProvider provider = provider(transport)) {
+            assertEquals(Set.of("SHA256withRSA"), provider.supportedAlgorithms());
+            for (String algorithm : java.util.List.of("LMS", "XMSS", "OID.1.3.6.1.5.5.7.6.34",
+                    "zealg:2:9:signature6:vendor3:lms12:custom-codec4:AAAA")) {
+                zeroecho.core.io.RepeatableContent content = (zeroecho.core.io.RepeatableContent)
+                        java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                                new Class<?>[] { zeroecho.core.io.RepeatableContent.class }, (proxy, method, args) -> {
+                                    throw new AssertionError("Content must not be used");
+                                });
+                SignRequest request = SignRequest.create(OPERATION_ID, NAMESPACE, provider.configurationCommitment(),
+                        1L, new AccessContext(new Principal("TEST", "owner"), new Purpose("TEST"),
+                                Optional.empty(), Optional.empty()), new KeyRef("zeroecho-remote:key"), algorithm,
+                        ContentCommitment.sha256(new byte[] { 1 }), content, Optional.of(Encoding.BINARY), Optional.empty());
+                assertThrows(zeroecho.core.err.UnsupportedRoleException.class,
+                        () -> provider.dispatch(request, control()));
+            }
+        }
+    }
+
+    @Test
     void rejectsMismatchedOperationIdFromDispatchReconcileAndCancel() {
         MismatchTransport transport = new MismatchTransport();
         try (RemoteSigningProvider provider = provider(transport)) {

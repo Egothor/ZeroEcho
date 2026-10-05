@@ -58,19 +58,19 @@ import org.bouncycastle.cert.X509CertificateHolder;
 final class BcOcspEncoding {
     private BcOcspEncoding() { }
 
-    static ASN1Sequence certificates(List<X509Certificate> chain) throws IOException, CertificateEncodingException {
+    /* default */ static ASN1Sequence certificates(List<X509Certificate> chain) throws IOException, CertificateEncodingException {
         Objects.requireNonNull(chain, "chain");
         if (chain.isEmpty()) {
             return null;
         }
         ASN1EncodableVector certificates = new ASN1EncodableVector(chain.size());
         for (X509Certificate certificate : chain) {
-            certificates.add(new X509CertificateHolder(Objects.requireNonNull(certificate, "certificate").getEncoded()).toASN1Structure());
+            certificates.add(new X509CertificateHolder(Objects.requireNonNull(certificate, "certificate").getEncoded()).toASN1Structure()); // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
         }
         return new DERSequence(certificates);
     }
 
-    static byte[] assemble(ResponseData data, AlgorithmIdentifier algorithm, byte[] signature,
+    /* default */ static byte[] assemble(ResponseData data, AlgorithmIdentifier algorithm, byte[] signature,
             ASN1Sequence certificates) throws IOException {
         BasicOCSPResponse basic = new BasicOCSPResponse(data, algorithm, new DERBitString(signature), certificates);
         ResponseBytes bytes = new ResponseBytes(OCSPObjectIdentifiers.id_pkix_ocsp_basic,

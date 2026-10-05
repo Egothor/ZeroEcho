@@ -48,6 +48,22 @@ const LABELS: Readonly<Record<string, string>> = {
   DER: 'Binary ASN.1 (DER)', PEM: 'PEM text', X509: 'X.509',
   ISSUER_SIGNED: 'Signed by the issuing authority', DELEGATED_RESPONDER: 'Dedicated OCSP responder',
   SHA1: 'SHA-1', SHA256: 'SHA-256',
+  // CMP protection policies
+  SHARED_SECRET: 'Shared secret (password-based)', SIGNATURE: 'Signature (certificate-based)',
+  // EST server-keygen policies
+  DISABLED: 'Disabled (client key only)', OPTIONAL: 'Optional (client or server key)', REQUIRED: 'Required (server key only)',
+  // PQC and hybrid algorithm identifiers
+  'ML-DSA': 'ML-DSA (FIPS 204 — lattice)', 'ML-DSA-44': 'ML-DSA-44 (FIPS 204, ~128-bit)',
+  'ML-DSA-65': 'ML-DSA-65 (FIPS 204, ~192-bit)', 'ML-DSA-87': 'ML-DSA-87 (FIPS 204, ~256-bit)',
+  'SLH-DSA': 'SLH-DSA (FIPS 205 — hash-based)', 'SLH-DSA-SHA2-128s': 'SLH-DSA-SHA2-128s (FIPS 205)',
+  'SLH-DSA-SHA2-128f': 'SLH-DSA-SHA2-128f (FIPS 205)', 'SLH-DSA-SHA2-192s': 'SLH-DSA-SHA2-192s (FIPS 205)',
+  'SLH-DSA-SHA2-192f': 'SLH-DSA-SHA2-192f (FIPS 205)', 'SLH-DSA-SHA2-256s': 'SLH-DSA-SHA2-256s (FIPS 205)',
+  'SLH-DSA-SHA2-256f': 'SLH-DSA-SHA2-256f (FIPS 205)',
+  // Hybrid certificate modes
+  NONE: 'Classic only (no hybrid)', ALT_SIGNATURE: 'Alt-signature (dual-signature hybrid, RFC 9618)',
+  TWIN_CERTIFICATE: 'Twin certificate (dual-certificate hybrid)', COMPOSITE: 'Composite (combined key/signature)',
+  // Enrollment profile states
+  ACTIVE: 'Active', SUSPENDED: 'Suspended',
 };
 
 export function displayLabel(value: string): string {

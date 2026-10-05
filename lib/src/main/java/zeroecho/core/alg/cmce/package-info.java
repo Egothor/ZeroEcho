@@ -58,8 +58,8 @@
  * declares {@code ENCAPSULATE}/{@code DECAPSULATE} KEM roles and wires an
  * {@code AGREEMENT} role through a KEM-based adapter. It also registers
  * asymmetric key builders for generation and import. The provider requirement
- * is the Bouncy Castle PQC provider under the standard name
- * {@code "BCPQC"}.</li>
+ * is the Bouncy Castle provider under the standard name
+ * {@code "BC"}.</li>
  * <li><b>Runtime context:</b> {@link zeroecho.core.alg.cmce.CmceKemContext}
  * holds state for encapsulation or decapsulation depending on which constructor
  * is used.</li>
@@ -73,7 +73,7 @@
  *
  * <h2>Provider requirements</h2>
  * <p>
- * The algorithm expects the Bouncy Castle PQC provider to be installed before
+ * The algorithm expects the Bouncy Castle provider to be installed before
  * use; the descriptor verifies this when generating or importing keys.
  * </p>
  *

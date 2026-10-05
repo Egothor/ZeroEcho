@@ -94,6 +94,14 @@ import zeroecho.core.spi.SymmetricKeyImporter;
  * independently. Lookup returns an interface that guarantees the requested
  * operation.
  *
+ * <h2>Parameter sets</h2> An algorithm may advertise named, discoverable
+ * key-generation configurations via {@link #parameterSets()}. Each entry is
+ * either a {@link ParameterSetDescriptor.Concrete} (a ready-to-use spec with a
+ * fixed security level) or a {@link ParameterSetDescriptor.Template} (a
+ * parameterised family where the caller supplies named values and a factory
+ * produces the spec). Callers such as UIs, provisioning tools, and policy
+ * engines can enumerate these without prior knowledge of the concrete algorithm.
+ *
  * <h2>Provider model</h2> Each algorithm belongs to a {@code providerName},
  * allowing multiple providers (e.g., JCA, BouncyCastle, ZeroEcho-native) to
  * coexist. {@link #priority()} can be used to prefer one provider over another
@@ -626,6 +634,43 @@ public abstract class CryptoAlgorithm { // NOPMD
             throw missing("symmetric-key importer", specType);
         }
         return (SymmetricKeyImporter<S>) importer;
+    }
+
+    /**
+     * Returns the discoverable parameter sets (or parameterized templates)
+     * supported by this algorithm.
+     *
+     * <p>
+     * Callers (UIs, provisioning tools, policy engines) use this list to present
+     * users with valid, named key-generation options without prior knowledge of the
+     * concrete algorithm. Each entry is either a pre-built {@link ParameterSetDescriptor.Concrete}
+     * (ready spec) or a {@link ParameterSetDescriptor.Template} (user-supplied
+     * arguments produce the spec).
+     * </p>
+     *
+     * <p>
+     * The default implementation returns an empty list. Algorithms with finite,
+     * enumerable parameter sets should override this method. Overrides must return
+     * immutable lists in stable order, with unique nonblank descriptor identifiers.
+     * Registry loading validates a snapshot; external providers remain responsible
+     * for maintaining the contract on subsequent calls. Implementations may use
+     * {@link ParameterSetDescriptor#snapshot(List)} to validate and copy their list.
+     * </p>
+     *
+     * @return immutable list of parameter set descriptors; never {@code null}
+     */
+    public List<ParameterSetDescriptor<? extends AlgorithmKeySpec>> parameterSets() {
+        return List.of();
+    }
+
+    /**
+     * Indicates that signing consumes durable private-key state. This declaration
+     * does not enable the ordinary SIGN role: callers need a keyring-owned
+     * {@link zeroecho.core.storage.StatefulSigner} capability.
+     * @return whether durable state ownership is required for signing
+     */
+    public boolean requiresStatefulSigning() {
+        return false;
     }
 
     /**

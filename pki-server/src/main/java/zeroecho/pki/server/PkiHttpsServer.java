@@ -47,8 +47,11 @@ import javax.net.ssl.SSLContext;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.server.http.AdministrativeAuthenticator;
 import zeroecho.pki.server.http.AcmeTransport;
+import zeroecho.pki.server.http.CmpTransport;
+import zeroecho.pki.server.http.EstTransport;
 import zeroecho.pki.server.http.PkiHttpsTransport;
 import zeroecho.pki.server.http.PublicRepositoryTransport;
+import zeroecho.pki.server.http.ScepTransport;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
 
 /**
@@ -82,7 +85,11 @@ public final class PkiHttpsServer implements AutoCloseable {
     private final Optional<PkiServerAuthenticator> publicAuthenticator;
     private final Optional<PublicRepositoryTransport> publicTransport;
     private final Optional<AcmeTransport> acmeTransport;
+    private final Optional<EstTransport> estTransport;
+    private final Optional<ScepTransport> scepTransport;
+    private final Optional<CmpTransport> cmpTransport;
     private final Optional<AuditProjectionWorker> auditProjection;
+    private final StatusScheduleWorker statusSchedule;
     private final AtomicReference<State> state;
     private final RetryableCloseGate closeGate = new RetryableCloseGate();
     private final AtomicBoolean realmClosed = new AtomicBoolean();
@@ -94,7 +101,11 @@ public final class PkiHttpsServer implements AutoCloseable {
             Optional<PkiServerAuthenticator> publicAuthenticator,
             Optional<PublicRepositoryTransport> publicTransport,
             Optional<AcmeTransport> acmeTransport,
+            Optional<EstTransport> estTransport,
+            Optional<ScepTransport> scepTransport,
+            Optional<CmpTransport> cmpTransport,
             Optional<AuditProjectionWorker> auditProjection,
+            StatusScheduleWorker statusSchedule,
             AtomicReference<State> state) {
         this.configuration = configuration;
         this.realm = realm;
@@ -103,7 +114,11 @@ public final class PkiHttpsServer implements AutoCloseable {
         this.publicAuthenticator = publicAuthenticator;
         this.publicTransport = publicTransport;
         this.acmeTransport = acmeTransport;
+        this.estTransport = estTransport;
+        this.scepTransport = scepTransport;
+        this.cmpTransport = cmpTransport;
         this.auditProjection = auditProjection;
+        this.statusSchedule = statusSchedule;
         this.state = state;
     }
 
@@ -135,10 +150,38 @@ public final class PkiHttpsServer implements AutoCloseable {
         PkiServerAuthenticator publicAuthenticator = null;
         PublicRepositoryTransport publicTransport = null;
         AcmeTransport acmeTransport = null;
+        EstTransport estTransport = null;
+        ScepTransport scepTransport = null;
+        CmpTransport cmpTransport = null;
         AuditProjectionWorker auditProjection = null;
+        StatusScheduleWorker statusSchedule = null;
+        AtomicReference<ServerRealmContext> metricsRealm = new AtomicReference<>();
+        AtomicReference<StatusScheduleWorker> metricsWorker = new AtomicReference<>();
+        AtomicBoolean schedulingConfigured = new AtomicBoolean();
         try {
             SSLContext tls = PkiHttpsTransport.resolveTls(exact, loader);
-            realm = ServerRealmContext.open(exact.realm(), runtimeDependencies, clock, random);
+            zeroecho.pki.application.DashboardLiveSource liveSource = new zeroecho.pki.application.DashboardLiveSource() {
+                @Override public long approvalPendingTotal() { return metricsRealm.get().pendingApprovalCount(clock.instant()); }
+                @Override public long auditProjectionFailureTotal() { return metricsRealm.get().auditProjectionFailureTotal(); }
+                @Override public long jvmHeapUsedBytes() {
+                    return java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+                }
+                @Override public long adminRequestsTotal() { return metricsRealm.get().adminRequestsTotal(); }
+                @Override public Map<String, Metric> snapshot() {
+                    Map<String, Metric> result = new java.util.LinkedHashMap<>(zeroecho.pki.application.DashboardLiveSource.super.snapshot());
+                    if (schedulingConfigured.get()) {
+                        result.put("statusScheduleFailureTotal", zeroecho.pki.application.DashboardLiveSource.collect(
+                                () -> metricsRealm.get().scheduleFailureTotal()));
+                        result.put("statusScheduleWorkerRunning", zeroecho.pki.application.DashboardLiveSource.collect(
+                                () -> metricsWorker.get().isRunning() ? 1L : 0L));
+                    }
+                    return Map.copyOf(result);
+                }
+            };
+            PkiSessionRuntimeDependencies resolvedDependencies = runtimeDependencies.withDashboardLiveSource(liveSource);
+            realm = ServerRealmContext.open(exact.realm(), resolvedDependencies, clock, random);
+            metricsRealm.set(realm);
+            schedulingConfigured.set(realm.session().statusSchedules().isPresent());
             realm.auditTransport("SERVER_STARTUP", "system", Map.of("state", "STARTING"));
             if (exact.authentication().mode() == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) {
                 for (String principalId : exact.authentication().trustedProxyPrincipalIds()) {
@@ -181,20 +224,39 @@ public final class PkiHttpsServer implements AutoCloseable {
                         () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN,
                         sharedRealm::signalReconciliation);
             }
+            if (exact.estListener().isPresent()) {
+                estTransport = EstTransport.start(exact.estListener().orElseThrow(), sharedRealm, random, loader,
+                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
+            }
+            if (exact.scepListener().isPresent()) {
+                scepTransport = ScepTransport.start(exact.scepListener().orElseThrow(), sharedRealm, random, loader,
+                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
+            }
+            if (exact.cmpListener().isPresent()) {
+                cmpTransport = CmpTransport.start(exact.cmpListener().orElseThrow(), sharedRealm, random, loader,
+                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
+            }
             auditProjection = new AuditProjectionWorker(realm, exact.auditProjection(),
                     exact.execution().forcedShutdown(), clock);
+            statusSchedule = new StatusScheduleWorker(
+                    new StatusScheduleExecutor(realm.session().statusSchedules(), clock, realm::recordScheduleFailure),
+                    exact.execution().forcedShutdown(), clock, realm::recordScheduleFailure);
+            metricsWorker.set(statusSchedule);
             realm.auditTransport("SERVER_READY", "system", Map.of("state", "READY"));
             PkiHttpsServer server = new PkiHttpsServer(exact, realm, authenticator, transport,
                     Optional.ofNullable(publicAuthenticator), Optional.ofNullable(publicTransport),
-                    Optional.ofNullable(acmeTransport), Optional.ofNullable(auditProjection), state);
+                    Optional.ofNullable(acmeTransport), Optional.ofNullable(estTransport),
+                    Optional.ofNullable(scepTransport), Optional.ofNullable(cmpTransport),
+                    Optional.ofNullable(auditProjection), statusSchedule, state);
             if (auditProjection != null) {
                 auditProjection.start();
             }
+            statusSchedule.start();
             state.set(State.READY);
             return server;
         } catch (RuntimeException | Error primary) {
-            closePartial(auditProjection, acmeTransport, publicTransport, publicAuthenticator, transport, realm,
-                    authenticator, state, primary);
+            closePartial(auditProjection, statusSchedule, cmpTransport, scepTransport, estTransport, acmeTransport,
+                    publicTransport, publicAuthenticator, transport, realm, authenticator, state, primary);
             throw primary;
         }
     }
@@ -242,6 +304,39 @@ public final class PkiHttpsServer implements AutoCloseable {
     }
 
     /**
+     * Returns the actual EST listener address when enabled.
+     *
+     * @return bound EST address, or empty when disabled
+     * @throws IllegalStateException if the server is terminated
+     */
+    public Optional<InetSocketAddress> estAddress() {
+        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        return estTransport.map(EstTransport::address);
+    }
+
+    /**
+     * Returns the actual SCEP listener address when enabled.
+     *
+     * @return bound SCEP address, or empty when disabled
+     * @throws IllegalStateException if the server is terminated
+     */
+    public Optional<InetSocketAddress> scepAddress() {
+        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        return scepTransport.map(ScepTransport::address);
+    }
+
+    /**
+     * Returns the actual CMP listener address when enabled.
+     *
+     * @return bound CMP address, or empty when disabled
+     * @throws IllegalStateException if the server is terminated
+     */
+    public Optional<InetSocketAddress> cmpAddress() {
+        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        return cmpTransport.map(CmpTransport::address);
+    }
+
+    /**
      * Returns the one lifecycle-owned realm context.
      *
      * @return the open realm context
@@ -283,9 +378,13 @@ public final class PkiHttpsServer implements AutoCloseable {
         state.compareAndSet(State.READY, State.QUIESCING);
         state.compareAndSet(State.STARTING, State.QUIESCING);
         auditProjection.ifPresent(AuditProjectionWorker::stopScheduling);
+        statusSchedule.stopScheduling();
         transport.quiesce();
         publicTransport.ifPresent(PublicRepositoryTransport::quiesce);
         acmeTransport.ifPresent(AcmeTransport::quiesce);
+        estTransport.ifPresent(EstTransport::quiesce);
+        scepTransport.ifPresent(ScepTransport::quiesce);
+        cmpTransport.ifPresent(CmpTransport::quiesce);
     }
 
     private Throwable closeAttempt() {
@@ -301,6 +400,30 @@ public final class PkiHttpsServer implements AutoCloseable {
         try {
             if (acmeTransport.isPresent()) {
                 acmeTransport.orElseThrow().shutdown(configuration.acmeListener().orElseThrow()
+                        .execution().gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            primary = suppress(primary, failure);
+        }
+        try {
+            if (estTransport.isPresent()) {
+                estTransport.orElseThrow().shutdown(configuration.estListener().orElseThrow()
+                        .execution().gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            primary = suppress(primary, failure);
+        }
+        try {
+            if (scepTransport.isPresent()) {
+                scepTransport.orElseThrow().shutdown(configuration.scepListener().orElseThrow()
+                        .execution().gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            primary = suppress(primary, failure);
+        }
+        try {
+            if (cmpTransport.isPresent()) {
+                cmpTransport.orElseThrow().shutdown(configuration.cmpListener().orElseThrow()
                         .execution().gracefulShutdown());
             }
         } catch (Throwable failure) {
@@ -326,6 +449,11 @@ public final class PkiHttpsServer implements AutoCloseable {
         } catch (Throwable failure) {
             return preferFailure(failure, primary);
         }
+        try {
+            statusSchedule.awaitStopped();
+        } catch (Throwable failure) {
+            return preferFailure(failure, primary);
+        }
         if (primary != null) {
             return primary;
         }
@@ -343,8 +471,9 @@ public final class PkiHttpsServer implements AutoCloseable {
         return primary;
     }
 
-    private static void closePartial(AuditProjectionWorker auditProjection, AcmeTransport acmeTransport,
-            PublicRepositoryTransport publicTransport,
+    private static void closePartial(AuditProjectionWorker auditProjection, StatusScheduleWorker statusSchedule,
+            CmpTransport cmpTransport, ScepTransport scepTransport, EstTransport estTransport,
+            AcmeTransport acmeTransport, PublicRepositoryTransport publicTransport,
             PkiServerAuthenticator publicAuthenticator, PkiHttpsTransport transport, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, AtomicReference<State> state, Throwable primary) {
         if (auditProjection != null) {
@@ -352,12 +481,33 @@ public final class PkiHttpsServer implements AutoCloseable {
                 auditProjection.close();
             } catch (Throwable failure) {
                 if (primary != failure) primary.addSuppressed(failure);
+                close(statusSchedule, primary);
+                close(cmpTransport, primary);
+                close(scepTransport, primary);
+                close(estTransport, primary);
                 close(acmeTransport, primary);
                 close(publicTransport, primary);
                 close(transport, primary);
                 return;
             }
         }
+        if (statusSchedule != null) {
+            try {
+                statusSchedule.close();
+            } catch (Throwable failure) {
+                if (primary != failure) primary.addSuppressed(failure);
+                close(cmpTransport, primary);
+                close(scepTransport, primary);
+                close(estTransport, primary);
+                close(acmeTransport, primary);
+                close(publicTransport, primary);
+                close(transport, primary);
+                return;
+            }
+        }
+        primary = close(cmpTransport, primary);
+        primary = close(scepTransport, primary);
+        primary = close(estTransport, primary);
         primary = close(acmeTransport, primary);
         primary = close(publicTransport, primary);
         primary = close(publicAuthenticator, primary);
@@ -366,6 +516,7 @@ public final class PkiHttpsServer implements AutoCloseable {
         close(realm, primary);
         state.set(State.TERMINATED);
     }
+
 
     private static void validateTrustedProxies(PkiServerConfiguration.Authentication authentication,
             ServerRealmContext realm) {

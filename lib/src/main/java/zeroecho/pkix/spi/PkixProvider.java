@@ -69,6 +69,19 @@ import zeroecho.pkix.sign.ContentVerifier;
 public interface PkixProvider {
 
     /**
+     * Verifies only the standardized alternative signature using an explicit
+     * issuer alternative key. Missing or malformed alternative extensions fail
+     * closed. This operation performs no path, time or primary-signature checks.
+     * @param certificate nonnull certificate with all three alternative extensions
+     * @param issuerAlternativeKey nonnull trusted issuer alternative public key
+     * @return whether the alternative signature is valid
+     * @throws UnsupportedOperationException if unsupported by this provider
+     */
+    default boolean verifyAlternativeSignature(X509Certificate certificate, PublicKey issuerAlternativeKey) {
+        throw new UnsupportedOperationException("Alternative-signature verification is unavailable");
+    }
+
+    /**
      * Returns the stable provider identifier (for diagnostics and selection).
      *
      * @return the provider id
@@ -141,6 +154,8 @@ public interface PkixProvider {
      * @param privateKey the signing private key
      * @param algorithm the signature algorithm identifier
      * @return a content signer
+     * @throws zeroecho.core.err.UnsupportedRoleException if LMS/XMSS signing is
+     *         requested; implementations must reject before key use
      */
     ContentSigner signer(PrivateKey privateKey, AlgorithmIdentifier algorithm);
 
@@ -331,7 +346,7 @@ public interface PkixProvider {
      * @throws IllegalArgumentException if DER parsing or certificate encoding fails
      */
     byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer, byte[] signature,
-            java.util.List<X509Certificate> chain);
+            List<X509Certificate> chain);
 
     /**
      * Returns the DER encoding of an X.509 {@code AlgorithmIdentifier}.
@@ -349,4 +364,134 @@ public interface PkixProvider {
      * @return the string form of the distinguished name
      */
     String distinguishedNameString(List<RelativeDistinguishedName> relativeNames);
+
+    // -------------------------------------------------------------------------
+    // EST (RFC 7030) encoding operations
+    // -------------------------------------------------------------------------
+
+    /**
+     * Encodes a list of X.509 certificates as a CMS certs-only message
+     * ({@code SignedData} with no signers, only the certificate bag).
+     *
+     * <p>The returned bytes are the DER-encoded {@code ContentInfo} wrapping
+     * the {@code SignedData}. The encoding is suitable for use as the body of
+     * an EST {@code /cacerts} or {@code /simpleenroll} response.</p>
+     *
+     * @param chain ordered certificate list; must not be null or empty
+     * @return DER-encoded CMS certs-only {@code ContentInfo}
+     * @throws IllegalArgumentException if encoding fails
+     */
+    byte[] encodeCertsOnly(List<X509Certificate> chain);
+
+    /**
+     * Encodes a list of CSR attributes as an RFC 7030 {@code CsrAttrs} structure
+     * (DER-encoded ASN.1 sequence of OIDs and optional attribute values).
+     *
+     * @param attributes the CSR attributes to encode; must not be null
+     * @return DER-encoded {@code CsrAttrs} sequence
+     * @throws IllegalArgumentException if encoding fails
+     */
+    byte[] encodeCsrAttrs(List<zeroecho.pkix.csr.CsrAttribute> attributes);
+
+    /**
+     * Builds a new DER-encoded PKCS#10 CSR using the supplied generated key pair,
+     * copying the subject DN and all attributes from the original CSR.
+     *
+     * <p>The self-signature over the rebuilt CSR uses SHA-256withECDSA for EC keys
+     * and SHA-256withRSA for RSA keys, determined from the generated private key type.</p>
+     *
+     * @param originalCsrDer      DER-encoded original PKCS#10 CSR (source of subject and attributes)
+     * @param generatedPublicKey  server-generated public key to embed
+     * @param generatedPrivateKey server-generated private key used to self-sign
+     * @return DER-encoded PKCS#10 CSR signed with the generated key
+     * @throws IllegalArgumentException if CSR construction or signing fails
+     * @throws zeroecho.core.err.UnsupportedRoleException if the private key uses
+     *         LMS/XMSS; implementations must reject before parsing the CSR or using the key
+     */
+    byte[] buildServerKeygenCsr(byte[] originalCsrDer, PublicKey generatedPublicKey, PrivateKey generatedPrivateKey);
+
+    /**
+     * Encrypts a PKCS#8 private key for a single recipient using CMS
+     * {@code EnvelopedData} with AES-256-GCM content encryption.
+     *
+     * <p>The recipient is identified by the public key in the supplied certificate.
+     * The key is wrapped using RSA-OAEP (for RSA keys) or ECDH-KDF (for EC keys)
+     * depending on the recipient certificate's public key algorithm.</p>
+     *
+     * @param pkcs8PrivateKeyDer   DER-encoded PKCS#8 private key to encrypt
+     * @param recipientCertificate the recipient's certificate (public key used for wrap)
+     * @return DER-encoded CMS {@code ContentInfo} wrapping the {@code EnvelopedData}
+     * @throws IllegalArgumentException if encryption fails
+     */
+    byte[] encryptPrivateKeyForRecipient(byte[] pkcs8PrivateKeyDer,
+            X509Certificate recipientCertificate);
+
+    // -------------------------------------------------------------------------
+    // Certificate Transparency (RFC 9162) operations
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a CT pre-certificate from an existing {@code TBSCertificate} by adding
+     * the CT poison extension (OID {@code 1.3.6.1.4.1.11129.2.4.3}) and signing
+     * with the supplied signer.
+     *
+     * <p>The pre-certificate is submitted to CT logs; logs return SCTs that are
+     * later embedded in the final certificate via {@link #embedScts}.</p>
+     *
+     * @param tbsCertificateDer DER-encoded {@code TBSCertificate} without the poison extension
+     * @param issuerChainDer    DER-encoded issuer chain (issuer first, root last)
+     * @param signer            configured signer for the issuing CA key
+     * @return pre-certificate DER and its chain, ready for CT log submission
+     * @throws IllegalArgumentException if pre-certificate construction or signing fails
+     */
+    zeroecho.pkix.ct.PreCertificateResult buildPreCertificate(byte[] tbsCertificateDer,
+            List<byte[]> issuerChainDer,
+            ContentSigner signer);
+
+    /**
+     * Embeds a list of SCTs into a {@code TBSCertificate} as the SCT list extension
+     * (OID {@code 1.3.6.1.4.1.11129.2.4.2}), producing a modified
+     * {@code TBSCertificate} DER ready for final signing.
+     *
+     * <p>If the {@code TBSCertificate} already carries a poison extension
+     * (OID {@code 1.3.6.1.4.1.11129.2.4.3}), it is replaced by the SCT list extension.
+     * Any pre-existing SCT list extension is also replaced.</p>
+     *
+     * @param tbsCertificateDer DER-encoded {@code TBSCertificate}
+     * @param scts              verified SCTs to embed; must contain at least one entry
+     * @return modified DER-encoded {@code TBSCertificate} with the SCT list extension
+     * @throws IllegalArgumentException if embedding fails
+     */
+    byte[] embedScts(byte[] tbsCertificateDer, List<zeroecho.pkix.ct.SignedCertificateTimestamp> scts);
+
+    /**
+     * Parses a Signed Certificate Timestamp from the JSON response body returned by a
+     * CT log's {@code add-pre-chain} or {@code add-chain} endpoint.
+     *
+     * <p>Expected JSON fields: {@code sct_version}, {@code id} (base64 log ID),
+     * {@code timestamp} (epoch milliseconds), {@code extensions} (base64, may be empty),
+     * {@code signature} (base64-encoded TLS {@code DigitallySigned} structure).</p>
+     *
+     * @param jsonResponseBody raw response body bytes; must not be {@code null}
+     * @return the parsed SCT
+     * @throws IllegalArgumentException if the JSON is malformed or the SCT structure is invalid
+     */
+    zeroecho.pkix.ct.SignedCertificateTimestamp parseSct(byte[] jsonResponseBody);
+
+    /**
+     * Verifies an SCT's digital signature against a known CT log public key.
+     *
+     * <p>The signed data covers the SCT fields (version, log ID, timestamp, extensions)
+     * concatenated with a SHA-256 hash of the pre-certificate DER, as a simplified
+     * verification approach. Returns {@code false} if the signature is invalid; throws
+     * only on algorithmic or key errors.</p>
+     *
+     * @param sct             the SCT to verify; must not be {@code null}
+     * @param ctLogPublicKey  EC or RSA public key of the CT log; must not be {@code null}
+     * @param preCertDer      DER-encoded pre-certificate that was submitted; must not be {@code null}
+     * @return {@code true} if the signature is valid
+     * @throws IllegalArgumentException if the algorithm is unsupported or the key is invalid
+     */
+    boolean verifySct(zeroecho.pkix.ct.SignedCertificateTimestamp sct, PublicKey ctLogPublicKey,
+            byte[] preCertDer);
 }

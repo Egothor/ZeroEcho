@@ -108,6 +108,18 @@ public final class SemanticIssuanceFixture {
 
     public static String publicKeyDigest() throws Exception { return digest(KEY_PAIR.getPublic().getEncoded()); }
 
+    /** Creates a real CA certificate with an explicit ordered multi-RDN subject. */
+    public static java.security.cert.X509Certificate caCertificate(javax.security.auth.x500.X500Principal subject,
+            BigInteger serial) {
+        return zeroecho.pkix.Pkix.certificateBuilder().serialNumber(serial)
+                .issuer(new javax.security.auth.x500.X500Principal("CN=Acceptance Issuer")).subject(subject)
+                .validity(BEFORE, AFTER).publicKey(KEY_PAIR.getPublic())
+                .basicConstraints(zeroecho.pkix.BasicConstraints.ca(0), true)
+                .keyUsage(java.util.Set.of(zeroecho.pkix.KeyUsage.KEY_CERT_SIGN, zeroecho.pkix.KeyUsage.CRL_SIGN), true)
+                .build(zeroecho.pkix.Pkix.signer(KEY_PAIR.getPrivate(),
+                        zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
+    }
+
     private static KeyPair keyPair() {
         try {
             KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");

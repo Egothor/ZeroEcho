@@ -52,6 +52,11 @@ application {
 }
 
 sourceSets {
+    metadataBenchmark {
+        java.srcDir 'src/metadataBenchmark/java'
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
     signingPerformance {
         java.srcDir 'src/signingPerformance/java'
         compileClasspath += sourceSets.main.output
@@ -65,38 +70,28 @@ sourceSets {
 }
 
 configurations {
+    metadataBenchmarkImplementation.extendsFrom implementation
+    metadataBenchmarkRuntimeOnly.extendsFrom runtimeOnly
     signingPerformanceImplementation.extendsFrom implementation
     signingPerformanceRuntimeOnly.extendsFrom runtimeOnly
     signingPerformanceTestImplementation.extendsFrom testImplementation, signingPerformanceImplementation
     signingPerformanceTestRuntimeOnly.extendsFrom testRuntimeOnly, signingPerformanceRuntimeOnly
 }
 
-tasks.register('signingPerformanceBenchmark', JavaExec) {
+dependencies {
+    metadataBenchmarkImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    metadataBenchmarkAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+tasks.register('metadataBenchmark', JavaExec) {
     group = 'verification'
-    description = 'Runs the explicitly opt-in open-loop signing persistence macrobenchmark.'
-    dependsOn tasks.named('signingPerformanceClasses')
-    classpath = sourceSets.signingPerformance.runtimeClasspath
-    mainClass = 'zeroecho.pki.performance.SigningPerformanceBenchmark'
-    maxHeapSize = providers.gradleProperty('signingBenchmarkHeap').getOrElse('4g')
-    jvmArgs '-XX:+UseG1GC'
-
-    // Opt-in Java Flight Recorder capture for bottleneck analysis; inert unless requested.
-    providers.gradleProperty('signingBenchmarkJfr').orNull?.with { jfrFile ->
-        jvmArgs "-XX:StartFlightRecording=settings=profile,dumponexit=true,filename=${jfrFile}"
-    }
-
-    def benchmarkProperties = [
-        'profile', 'target', 'cellId', 'cellMode', 'retainedPopulation', 'activePopulation', 'groupSize',
-        'residentIndexBudgetBytes', 'compactionTransientBudgetBytes',
-        'warmupSeconds', 'durationSeconds', 'rate', 'lanes',
-        'queueCapacity', 'providerMeanMillis', 'providerJitterMillis',
-        'payloadBytes', 'sampleCapacity', 'drainSeconds', 'seed', 'output',
-        'workRoot', 'diagnosticEnvironmentOverride'
-    ]
-    benchmarkProperties.each { propertyName ->
-        providers.gradleProperty("signingBenchmark${propertyName.capitalize()}").orNull?.with { value ->
-            args "--${propertyName}=${value}"
-        }
+    description = 'Runs opt-in JMH X.509 resolution and parameter catalog benchmarks.'
+    dependsOn tasks.named('metadataBenchmarkClasses')
+    classpath = sourceSets.metadataBenchmark.runtimeClasspath
+    mainClass = 'org.openjdk.jmh.Main'
+    workingDir = rootProject.projectDir
+    doFirst {
+        java.nio.file.Files.createDirectories(rootProject.layout.buildDirectory.dir('reports/benchmarks').get().asFile.toPath())
     }
 }
 
@@ -169,20 +164,6 @@ tasks.register('signingDirectMaintenanceBenchmark', JavaExec) {
     }
 }
 
-tasks.register('signingPerformanceAggregate', JavaExec) {
-    group = 'verification'
-    description = 'Verifies the fixed Increment-13 signing evidence bundle without running benchmarks.'
-    dependsOn tasks.named('signingPerformanceClasses')
-    classpath = sourceSets.signingPerformance.runtimeClasspath
-    mainClass = 'zeroecho.pki.performance.SigningPerformanceEvidenceAggregator'
-
-    [evidenceRoot: 'signingEvidenceRoot', output: 'signingEvidenceOutput'].each { argumentName, propertyName ->
-        providers.gradleProperty(propertyName).orNull?.with { value ->
-            args "--${argumentName}=${value}"
-        }
-    }
-}
-
 tasks.register('signingPerformanceSmoke', Test) {
     group = 'verification'
     description = 'Runs the fast deterministic contract test for the signing macrobenchmark.'
@@ -206,5 +187,7 @@ jar {
 }
 
 javadoc {
-    options.links("https://www.egothor.org/javadoc/zeroecho/lib")
+    dependsOn ':lib:javadoc'
+    options.linksOffline("https://www.egothor.org/javadoc/zeroecho/lib/",
+            project(':lib').layout.buildDirectory.dir('docs/javadoc').get().asFile.absolutePath)
 }

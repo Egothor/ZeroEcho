@@ -45,6 +45,12 @@ public final class TestKeyringUnlocks {
         return () -> new KeyringPassword(new char[] { 'p', 'k', 'i', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y' });
     }
 
+    public static SigningProvider withClock(java.nio.file.Path keyring, java.time.Clock clock,
+            SigningProvider.ConfigurationCommitment commitment) {
+        return new ZeroEchoLibSigningProvider("zeroecho-lib", keyring, keyring, clock,
+                java.time.Duration.ofDays(90), "zeroecho-lib:", true, provider(), commitment);
+    }
+
     /* default */ static SigningProvider.ConfigurationCommitment configurationCommitment() {
         return new SigningProvider.ConfigurationCommitment(
                 new byte[SigningProvider.ConfigurationCommitment.BYTE_LENGTH]);

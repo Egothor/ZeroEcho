@@ -230,14 +230,31 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
     }
 
     @Override public SigningAcceptanceResult accept(PreparedSigningRequest prepared) {
+        return accept(prepared, Optional.empty());
+    }
+
+    /**
+     * Accepts a prepared status signature under its durable schedule claim.
+     * @param prepared owned unused preparation
+     * @param claim immutable schedule authorization
+     * @return durable acceptance disposition and receipt
+     */
+    public SigningAcceptanceResult acceptScheduled(PreparedSigningRequest prepared,
+            zeroecho.pki.api.schedule.StatusScheduleState.Execution claim) {
+        return accept(prepared, Optional.of(Objects.requireNonNull(claim, "claim")));
+    }
+
+    private SigningAcceptanceResult accept(PreparedSigningRequest prepared,
+            Optional<zeroecho.pki.api.schedule.StatusScheduleState.Execution> claim) {
         requireOpen.run();
         DefaultPreparedSigningRequest exact = requirePrepared(prepared);
         exact.requireUnused();
         SignWorkflowStore.AcceptanceCommand command = validatePrepared(exact);
         provider.inputCapabilities().select(exact.request().signatureAlgorithm().canonicalForm(), exact.candidate().length());
         exact.proofStep().ifPresent(step -> provider.inputCapabilities().select(step.algorithmId(), step.challenge().length()));
-        SignWorkflowStore.AcceptanceResult result = acceptance.accept(
-                command, exact::consumeForAccept);
+        SignWorkflowStore.AcceptanceResult result = claim.isPresent()
+                ? acceptance.acceptScheduled(command, claim.orElseThrow(), exact::consumeForAccept)
+                : acceptance.accept(command, exact::consumeForAccept);
         if (result == SignWorkflowStore.AcceptanceResult.ACCEPTED
                 || result == SignWorkflowStore.AcceptanceResult.ATTACHED_EXISTING) {
             wakeReactor.run();
@@ -532,5 +549,18 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
          */
         SignWorkflowStore.AcceptanceResult accept(
                 SignWorkflowStore.AcceptanceCommand command, Runnable transferCustody);
+
+        /**
+         * Accepts a scheduled signature under the same custody and shutdown boundary.
+         * @param command exact immutable acceptance command
+         * @param claim immutable durable schedule claim
+         * @param transferCustody prepared-candidate custody transfer
+         * @return durable acceptance disposition
+         * @throws UnsupportedOperationException if this adapter does not support scheduling
+         */
+        default SignWorkflowStore.AcceptanceResult acceptScheduled(SignWorkflowStore.AcceptanceCommand command,
+                zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
+            throw new UnsupportedOperationException("Scheduled acceptance unavailable");
+        }
     }
 }

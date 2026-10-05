@@ -54,6 +54,7 @@ export function createDemoState(): DemoState {
       { caId: 'ca-root-01', subject: 'CN=ZeroEcho Root CA, O=ZeroEcho', state: 'ACTIVE', kind: 'ROOT', profileId: 'root-ca-v1' },
       { caId: 'ca-tls-issuing-01', subject: 'CN=ZeroEcho TLS Issuing CA', state: 'ACTIVE', kind: 'INTERMEDIATE', profileId: 'tls-issuing-v2' },
       { caId: 'ca-devices-01', subject: 'CN=ZeroEcho Device CA', state: 'ACTIVE', kind: 'INTERMEDIATE', profileId: 'device-v1' },
+      { caId: 'ca-pqc-root-01', subject: 'CN=ZeroEcho PQC Root CA, O=ZeroEcho', state: 'ACTIVE', kind: 'ROOT', profileId: 'pqc-root-v1', displayName: 'PQC Root CA (ML-DSA-65)' },
       { caId: 'ca-legacy-01', subject: 'CN=ZeroEcho Legacy CA', state: 'RETIRED', kind: 'INTERMEDIATE', profileId: 'tls-issuing-v1' },
     ],
     generations: [
@@ -121,6 +122,20 @@ export function createDemoState(): DemoState {
     acmeAccounts: [{ accountId: 'acct-01', state: 'valid', contact: 'mailto:ops@example.org' }],
     ocspResponders: [
       { responderId: 'ocsp-tls', alias: 'tls', authorityId: 'ca-tls-issuing-01', state: 'ACTIVE', signingMode: 'DELEGATED_RESPONDER' },
+    ],
+    scepEndpoints: [
+      { label: 'devices', authorityId: 'ca-devices-01', profileId: 'device-v1', challengePasswordHash: 'e3b0c44298fc1c149afb' },
+    ],
+    cmpEndpoints: [
+      { label: 'tls-servers', authorityId: 'ca-tls-issuing-01', profileId: 'tls-server-v3', protectionPolicy: 'SHARED_SECRET' },
+    ],
+    estEndpoints: [
+      { label: 'tls-clients', authorityId: 'ca-tls-issuing-01', profileId: 'tls-client-v2', keygenEnabled: false, keygenAlgorithms: [], keygenMaxKeySizeBits: 0, keygenStoreKeys: false },
+    ],
+    enrollmentProfiles: [
+      { id: 'device-enroll-v1', displayName: 'Device enrollment (v1)', state: 'ACTIVE', certificateProfileId: 'device-v1', allowedAuthorityIds: ['ca-devices-01'], subjectDnPattern: 'CN=device-.+', requiredSanDomains: [], requireApproval: false },
+      { id: 'tls-server-enroll-v1', displayName: 'TLS server enrollment (v1)', state: 'ACTIVE', certificateProfileId: 'tls-server-v3', allowedAuthorityIds: [], subjectDnPattern: '', requiredSanDomains: ['example.org'], requireApproval: true },
+      { id: 'pqc-enroll-v1', displayName: 'PQC device enrollment (v1)', state: 'SUSPENDED', certificateProfileId: 'pqc-root-v1', allowedAuthorityIds: ['ca-pqc-root-01'], subjectDnPattern: '', requiredSanDomains: [], requireApproval: false },
     ],
     algorithmBindings: [
       { bindingId: 'sha256-ecdsa', origin: 'default', role: 'signing', bindingCommitment: 'a'.repeat(64), algorithmId: 'SHA256withECDSA' },

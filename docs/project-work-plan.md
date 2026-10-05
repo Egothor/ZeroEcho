@@ -1,30 +1,40 @@
-# Outstanding work
+# Implemented capabilities and future work
 
-This is the sole implementation plan. Completed milestones are not retained here;
-current behavior is documented in the architecture, API and deployment references.
+Current contracts live in the maintained [documentation](../documentation/index.md),
+source and behavior tests. Historical design documents are not a release checklist.
 
-## Future proposals — not approved implementation scope
+## Implemented
 
-These are retained product ideas, not current release acceptance criteria or an undertaking to
-match every feature of another PKI product. Each requires an owner scope decision
-before design or implementation. The existing selection APIs already supply known
-PKI identities to the frontend.
+- HTTPS server, administration frontend, local synchronous CLI and remote
+  submit/poll transport; generated operation schemas and OpenAPI.
+- Configured enrollment and publication protocols, authorization and approvals.
+- Credential search with bounded pagination: subject/serial case-insensitive
+  substring, fingerprint prefix, and exact status/profile filters. SAN search
+  is not part of the implemented search contract.
+- Durable CRL/delta schedules with stable execution identity and crash
+  reconciliation. OCSP and non-X.509 schedules are rejected. Failed executions
+  and publication failures need explicit operator follow-up.
+- Realm/authority operational metrics and dashboard operations. The SPA's home
+  dashboard supplies navigation cards; aggregate graphical charts are not claimed.
+- Configured publisher endpoints and content-aware profile reconciliation.
+- Consistent logical backups, bounded local streaming and cold staged restore.
+- Durable local LMS/XMSS authority and supported PQC/hybrid certificate lifecycle.
 
-| Proposal | Decision/dependency | Acceptance to define if approved |
-| --- | --- | --- |
-| Advanced certificate search | Select required subject, SAN, serial and status filters; establish authorized data exposure and indexing/resource costs. | Bounded, authorized queries with explicit pagination and failure behavior. |
-| Machine-readable operation parameter schema | Choose an API representation and frontend migration scope. | Server schema and decoder agree on types, required fields and constraints; frontend contract drift is tested. |
-| Enrollment profiles | Define allowed issuers, certificate profiles, subject/SAN constraints and approval rules. | Issuance enforces the selected enrollment policy without weakening certificate-profile validation. |
-| EST, SCEP or CMP | Select protocols and target deployments; do not assume all are required. | Protocol, authentication and authorization conformance for the selected listeners. |
-| Recurring status generation | Choose documented external scheduling or an in-product scheduler. | Defined CRL/delta cadence, ownership and failure handling; no duplicate signing on retry. |
-| Publisher endpoint administration | Decide whether endpoints remain deployment configuration or become managed data. | Authorized endpoint lifecycle and safe secret references; preserve publication semantics. |
-| Content-aware profile reconciliation | Define explicit update/activation policy for changed profiles. | Unchanged content is a no-op; changed content creates and activates only the intended version. Current bootstrap deliberately skips known IDs. |
-| Aggregate dashboard metrics | Define useful counts, authorization and computational bounds. | Realm-scoped summaries expose only authorized data and document freshness/cost. |
+## Deferred or unapproved extensions
 
-## Maintenance proposal — not approved implementation scope
+The publisher-secrets PBKDF2 integration defect is resolved. CLASSIC/HYBRID
+creation and password unlocking enforce the existing 600,000-iteration policy.
+Command tests cover all profiles, including independent password and BIKE
+unlocking of HYBRID stores, and reject incorrect passwords.
 
-The existing `pki` tasks `signingPerformanceBenchmark` and
-`signingPerformanceAggregate` refer to absent entry-point classes. Decide whether
-to remove those obsolete task registrations or supply a separately scoped benchmark.
-Acceptance: every retained advertised task has a runnable entry point. Signing measurements
-use their own current-runtime harness and do not rely on these tasks.
+| Extension | Disposition and boundary |
+|---|---|
+| HTTP streaming backup transfer and complete frontend backup workflow | Accepted deferral, unscheduled. Current byte-array server adapters remain bounded; remote restore is unavailable. |
+| Carry-forward restore merge (Option B) | Future alternative to the implemented conservative no-regression checks (Option A). Requires explicit safety-authority merge and recovery design. |
+| Independently hosted stateful-signing authority (Option B) | Future administrator-selected alternative to the default local authority (Option A). Requires a separate availability, durability and trust contract. |
+| SAN search and additional search indexes | Unapproved scope; define authorization, pagination and resource budgets before implementation. |
+| Graphical aggregate metrics dashboard | Unapproved UI extension over existing bounded metrics operations. |
+
+Backup integrity is not authentication, and a historical backup is not permission
+to roll back signing or revocation authority. See [backup and restore](../documentation/admin/backup-restore.md)
+and [stateful signing](../documentation/developer/stateful-signing.md).

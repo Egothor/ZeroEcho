@@ -119,6 +119,10 @@ Resource types (`REALM`, `AUTHORITY`, `ISSUER`, `PROFILE`, `CERTIFICATE`,
 distinct from PKI authority ownership: possessing an object reference is never
 authorization to act on it.
 
+The complete mapping from every operation ID to its required action, resource type,
+and whether high-risk approval applies is in the
+[Operation permissions reference](operation-permissions.md).
+
 ### Grant conditions
 
 A grant may attach closed, non-programmable conditions that must all be satisfied

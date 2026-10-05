@@ -215,5 +215,40 @@ Beyond the seams above, `zeroecho.pki.spi` also defines audit sinks
 (`AuditSinkProvider` — filesystem, in-memory, and stdout defaults), an async bus
 (`AsyncBusProvider`), a credential framework (`CredentialFrameworkProvider`), and
 key-possession-proof confirmation providers. The server module adds its own SPIs
-for ACME challenges and TLS/trust. Each follows the same `ServiceLoader` plus
-`provides`/`uses` model described here.
+for ACME challenges and TLS/trust through the exported
+`zeroecho.pki.server.spi.v2` package:
+
+- `AcmeChallengeProvider` validates a bounded challenge attempt. Its nested
+  identifier, challenge type, context and result types are the public boundary.
+- `AcmeExternalAccountBindingProvider` verifies external account binding without
+  exposing HMAC keys. Requests defensively copy the bounded nested JWS.
+- `PkiServerTlsProvider` creates an initialized JSSE `SSLContext`.
+- `PkiServerClientTrustProvider` creates an administrative-client `X509TrustManager`.
+
+Named-module providers declare `requires zeroecho.pki.server` and a `provides`
+directive for each implemented interface. Providers using core types directly
+also declare `requires zeroecho.lib`. Classpath providers publish the corresponding
+`META-INF/services/zeroecho.pki.server.spi.v2.<Interface>` resource. Every provider
+needs a public no-argument constructor. Discovery alone does not activate a
+provider: its exact, nonblank `id()` must be selected in server configuration.
+Duplicate IDs across the new and legacy provider families are rejected before
+selection; a failed selected provider never falls back to another provider.
+
+The original unexported `zeroecho.pki.server.spi` interfaces and their DTOs remain
+available for existing classpath provider binaries. New providers should use
+`spi.v2`; no command-line exports of server implementation packages are required.
+Internal adapters preserve complete challenge timing, attempt and cancellation
+inputs, and the server still validates provider results before authorizing or
+persisting evidence. Contexts and protocol material must never be logged.
+
+The existing exported `zeroecho.pki.server.ct.CtLogClient` remains an explicitly
+composed CT client contract, rather than a ServiceLoader discovery contract.
+Server authentication is an internal composition boundary; it is not a public
+pluggable provider SPI. The external named-module regression fixture implements
+all four provider interfaces and the CT client without `--add-exports`.
+
+Run `:pki-server:test --tests '*ServerSpiCompatibilityTest'` to check module
+compilation, service discovery, actual configured selection and legacy source
+compatibility. To additionally compile the legacy fixture against an earlier
+server binary and run that bytecode against the current server, pass
+`-PserverSpiLegacyBaseline=/absolute/path/to/earlier-pki-server.jar`.

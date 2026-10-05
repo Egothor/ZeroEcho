@@ -150,7 +150,22 @@ public final class ZeroEchoLibSigningProviderFactory
                 BootstrapAlgorithmIdentities.RSA_PSS_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA256,
                 BootstrapAlgorithmIdentities.ECDSA_SHA384, BootstrapAlgorithmIdentities.ECDSA_SHA512,
                 BootstrapAlgorithmIdentities.ED25519_SIGNATURE, BootstrapAlgorithmIdentities.ED448_SIGNATURE,
-                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE);
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE,
+                BootstrapAlgorithmIdentities.ML_DSA_44_SIGNATURE,
+                BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE,
+                BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128S_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128F_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192S_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192F_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256S_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256F_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128S_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_128F_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192S_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_192F_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256S_SIGNATURE,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256F_SIGNATURE);
         return java.util.List.of(new AlgorithmExecutionCapability() {
             @Override
             public String implementationId() {
@@ -159,7 +174,7 @@ public final class ZeroEchoLibSigningProviderFactory
 
             @Override
             public String domainFingerprint() {
-                return "zeroecho-lib-signature-v1:bootstrap-classic:sign,verify";
+                return "zeroecho-lib-signature-v2:bootstrap-classic+pqc:sign,verify";
             }
 
             @Override
@@ -234,11 +249,15 @@ public final class ZeroEchoLibSigningProviderFactory
         if (provider == null) {
             throw new PkiException(DC_KEYRING_UNLOCK_PROVIDER_REQUIRED);
         }
-        return allocate(config, provider);
+        return allocate(config, provider, dependencies.clock());
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+
     private SigningProvider allocate(final ProviderConfig config, KeyringUnlockProvider unlockProvider) {
+        return allocate(config, unlockProvider, Clock.systemUTC());
+    }
+
+    private SigningProvider allocate(final ProviderConfig config, KeyringUnlockProvider unlockProvider, Clock clock) {
         validateConfig(config);
         String keyringPath = config.require(KEY_KEYRING_PATH);
         Duration operationHorizon = config.get(KEY_OPERATION_HORIZON).map(Duration::parse).orElse(Duration.ofDays(90));
@@ -248,9 +267,13 @@ public final class ZeroEchoLibSigningProviderFactory
         KeyringStore keyring = openKeyring(Path.of(keyringPath), unlockProvider);
         try {
             return new ZeroEchoLibSigningProvider(id(), Path.of(keyringPath), Path.of(keyringPath),
-                    Clock.systemUTC(), operationHorizon, prefix, requireSuffix, unlockProvider, keyring);
-        } catch (RuntimeException | Error failure) {
-            keyring.close();
+                    clock, operationHorizon, prefix, requireSuffix, unlockProvider, keyring);
+        } catch (RuntimeException | Error failure) { // NOPMD AvoidCatchingGenericException - Construction failure must release transferred keyring ownership and retain the original failure.
+            try {
+                keyring.close();
+            } catch (RuntimeException cleanup) { // NOPMD AvoidCatchingGenericException - Cleanup must not mask the original construction failure.
+                if (cleanup != failure) { failure.addSuppressed(cleanup); } // NOPMD CompareObjectsWithEquals - Throwable self-suppression requires identity comparison.
+            }
             throw failure;
         }
     }

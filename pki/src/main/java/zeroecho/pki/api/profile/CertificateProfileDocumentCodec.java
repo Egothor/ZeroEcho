@@ -64,6 +64,7 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
 import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
 import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
+import zeroecho.pki.api.hybrid.HybridCertificateMode;
 
 /**
  * Strict JSON parser and canonical writer for version 4 certificate-profile
@@ -77,8 +78,9 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 // The closed streaming grammar intentionally keeps all bounded field handlers in one codec.
 @SuppressWarnings({ "PMD.AvoidDuplicateLiterals", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.AvoidUncheckedExceptionsInSignatures", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace",
-        "PMD.TooManyMethods" })
+        "PMD.TooManyMethods", "PMD.CouplingBetweenObjects" })
 public final class CertificateProfileDocumentCodec {
+    private static final String TWIN_CERTIFICATE = "TWIN_CERTIFICATE";
 
     /** Maximum accepted encoded document size. */
     public static final int MAXIMUM_DOCUMENT_BYTES = 262_144;
@@ -301,6 +303,10 @@ public final class CertificateProfileDocumentCodec {
             case "subjectAlternativeNames" -> readDocumentSan(parser, document);
             case "leafCertificate" -> readDocumentLeaf(parser, document);
             case "caCertificate" -> readDocumentCa(parser, document);
+            case "hybridMode" -> {
+                document.seen = mark(document.seen, 14, "$.hybridMode");
+                document.hybridMode = readHybridMode(parser, "$.hybridMode");
+            }
             default -> throw failure("UNKNOWN_FIELD", "$.?");
         }
     }
@@ -401,7 +407,7 @@ public final class CertificateProfileDocumentCodec {
             return new CertificateProfileDefinition(document.certificateType, document.profileId,
                     document.profileVersion, new FormatId(document.formatId), document.displayName,
                     document.maximumValidity, document.approvalRequirement, subjectPolicy, policy,
-                    document.algorithmBindings, confirmationPolicy);
+                    document.algorithmBindings, confirmationPolicy, document.hybridMode);
         } catch (IllegalArgumentException | ArithmeticException ex) {
             throw failure("SEMANTIC_INVALID", "$");
         }
@@ -960,6 +966,9 @@ public final class CertificateProfileDocumentCodec {
         } else {
             writeCa(generator, definition.caPolicy());
         }
+        if (!(definition.hybridMode() instanceof HybridCertificateMode.None)) {
+            writeHybridMode(generator, definition.hybridMode());
+        }
         generator.writeEndObject();
     }
 
@@ -1079,6 +1088,64 @@ public final class CertificateProfileDocumentCodec {
             generator.writeString(value);
         }
         generator.writeEndArray();
+    }
+
+    private static HybridCertificateMode readHybridMode(JsonParser parser, String path)
+            throws JacksonException {
+        requireToken(parser.currentToken(), JsonToken.START_OBJECT, path);
+        long seen = 0;
+        String type = null;
+        String altAlgorithmId = null;
+        String altKeyRef = null;
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            requireToken(parser.currentToken(), JsonToken.PROPERTY_NAME, path);
+            String field = parser.currentName();
+            requireValue(parser, path + "." + field);
+            switch (field) {
+                case "type" -> {
+                    seen = mark(seen, 0, path + ".type");
+                    type = readBoundedString(parser, path + ".type", 64);
+                }
+                case "altSignatureAlgorithmId" -> {
+                    seen = mark(seen, 1, path + ".altSignatureAlgorithmId");
+                    altAlgorithmId = readBoundedString(parser, path + ".altSignatureAlgorithmId",
+                            MAXIMUM_STRING_UTF8_BYTES);
+                }
+                case "altKeyRef" -> {
+                    seen = mark(seen, 2, path + ".altKeyRef");
+                    altKeyRef = readBoundedString(parser, path + ".altKeyRef", MAXIMUM_STRING_UTF8_BYTES);
+                }
+                default -> throw failure("UNKNOWN_FIELD", path + ".?");
+            }
+        }
+        if (!isSeen(seen, 0)) {
+            throw failure("MISSING_FIELD", path + ".type");
+        }
+        if (TWIN_CERTIFICATE.equals(type)) {
+            return HybridCertificateMode.TwinCertificate.INSTANCE;
+        }
+        if (!"ALT_SIGNATURE".equals(type)) {
+            throw failure("TOKEN_INVALID", path + ".type");
+        }
+        requireAll(seen, 3, path);
+        try {
+            return new HybridCertificateMode.AltSignature(altAlgorithmId, altKeyRef);
+        } catch (IllegalArgumentException ex) {
+            throw failure("SEMANTIC_INVALID", path);
+        }
+    }
+
+    private static void writeHybridMode(JsonGenerator generator, HybridCertificateMode hybridMode)
+            throws JacksonException {
+        generator.writeObjectPropertyStart("hybridMode");
+        if (hybridMode instanceof HybridCertificateMode.TwinCertificate) {
+            generator.writeStringProperty("type", TWIN_CERTIFICATE);
+        } else if (hybridMode instanceof HybridCertificateMode.AltSignature altSig) {
+            generator.writeStringProperty("type", "ALT_SIGNATURE");
+            generator.writeStringProperty("altSignatureAlgorithmId", altSig.altSignatureAlgorithmId());
+            generator.writeStringProperty("altKeyRef", altSig.altKeyRef());
+        }
+        generator.writeEndObject();
     }
 
     private static void validateDefinition(CertificateProfileDefinition definition) {
@@ -1311,7 +1378,8 @@ public final class CertificateProfileDocumentCodec {
 
     private static boolean isAllowedAlgorithm(String value) {
         return "RSA".equals(value) || "ECDSA".equals(value) || "Ed25519".equals(value) || "Ed448".equals(value)
-                || "SPHINCS+".equals(value);
+                || "SPHINCS+".equals(value) || "ML-DSA".equals(value) || "SLH-DSA".equals(value)
+                || "LMS".equals(value) || "XMSS".equals(value);
     }
 
     private static boolean hasUtf8Bom(byte[] value) {
@@ -1348,6 +1416,7 @@ public final class CertificateProfileDocumentCodec {
         private SanSection san;
         private LeafSection leaf;
         private CaSection ca;
+        private HybridCertificateMode hybridMode = HybridCertificateMode.None.INSTANCE;
     }
 
     private record ConfirmationSection(ConfirmationDisclosurePolicy disclosurePolicy,

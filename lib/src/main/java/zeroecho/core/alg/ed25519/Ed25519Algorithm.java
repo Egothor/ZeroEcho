@@ -37,6 +37,11 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -82,6 +87,9 @@ import zeroecho.core.spec.VoidSpec;
  * @since 1.0
  */
 public final class Ed25519Algorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs the Ed25519 algorithm definition and registers its roles and key
      * builders.
@@ -127,4 +135,16 @@ public final class Ed25519Algorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(Ed25519PublicKeySpec.class, new Ed25519PublicKeyBuilder());
         registerPrivateKeyImporter(Ed25519PrivateKeySpec.class, new Ed25519PrivateKeyBuilder());
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("Ed25519", "Ed25519 (128-bit)", SecurityLevel.classical(128), Ed25519KeyGenSpec.defaultSpec())
+        );
+    }
+
 }

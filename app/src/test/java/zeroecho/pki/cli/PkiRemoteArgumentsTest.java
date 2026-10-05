@@ -80,11 +80,17 @@ class PkiRemoteArgumentsTest {
         assertThrows(PkiRemoteEnvelope.RequestTooLargeException.class, () -> PkiRemoteEnvelope.encodeRequest(
                 Optional.empty(), Optional.empty(), Optional.empty(), arguments));
         ByteArrayOutputStream output = new ByteArrayOutputStream();
+        java.util.concurrent.atomic.AtomicBoolean exchangeOpened = new java.util.concurrent.atomic.AtomicBoolean();
         int exit = PkiCli.execute(new String[] { "profile.inspect", "--url", "https://pki.example", "--client-keystore",
-                "client.p12", "--arg", "a=" + large, "--arg", "b=" + large, "--output", "json" }, output,
+                "client.p12", "--profile-id", "profile-1", "--profile-version", "1",
+                "--arg", "a=" + large, "--arg", "b=" + large, "--output", "json" }, output,
                 configuration -> { throw new AssertionError("No local fallback"); }, () -> false,
-                target -> request -> { throw new AssertionError("Oversized request was submitted"); });
+                target -> {
+                    exchangeOpened.set(true);
+                    return request -> { throw new AssertionError("Oversized request was submitted"); };
+                });
         assertEquals(2, exit);
+        assertTrue(exchangeOpened.get(), "Complete required fields must reach bounded envelope encoding");
         assertTrue(output.toString(java.nio.charset.StandardCharsets.UTF_8).contains("INVOCATION_INVALID"));
     }
 

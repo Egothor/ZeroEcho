@@ -36,6 +36,7 @@ import { describe, expect, it } from 'vitest';
 import { createDemoTransport } from '@/demo/demoBackend';
 import { discoverableOperations, type DemoRole } from '@/demo/roles';
 import type { TransportResponse } from '@/api/transport';
+import { OPERATIONS } from '@/api/operationCatalog';
 
 function backend(role: DemoRole) {
   const t = createDemoTransport(() => role);
@@ -58,14 +59,16 @@ describe('demo backend', () => {
   });
 
   it('filters the operation catalog by persona', async () => {
-    const admin = parse(await backend('ADMINISTRATOR').get('/admin/v1/operations'));
-    expect(admin['count']).toBe(107);
+    const admin = parse(await backend('ADMINISTRATOR').get('/admin/v1/operations'))['result'] as Record<string, unknown>;
+    const expected = OPERATIONS.filter((operation) => operation.available).map((operation) => operation.id).sort();
+    expect((admin['operations'] as { operation: string }[]).map((operation) => operation.operation).sort()).toEqual(expected);
+    expect(admin['count']).toBe(expected.length);
 
-    const publicUser = parse(await backend('PUBLIC_USER').get('/admin/v1/operations'));
+    const publicUser = parse(await backend('PUBLIC_USER').get('/admin/v1/operations'))['result'] as Record<string, unknown>;
     expect(publicUser['count']).toBe(discoverableOperations('PUBLIC_USER').length);
     expect(publicUser['count']).toBeLessThan(10);
 
-    const auditor = parse(await backend('AUDITOR').get('/admin/v1/operations'));
+    const auditor = parse(await backend('AUDITOR').get('/admin/v1/operations'))['result'] as Record<string, unknown>;
     expect(auditor['count']).toBe(discoverableOperations('AUDITOR').length);
   });
 

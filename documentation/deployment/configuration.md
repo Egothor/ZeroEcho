@@ -1,5 +1,11 @@
 # Configuration
 
+The store volume mounts at `/var/lib/zeroecho/store-container`, with PKI state
+under `store/` and server-control state under `server-control/`. The writable
+parent also retains cold-restore journals and rollback roots. Existing volumes
+need the explicit [offline layout migration](operations.md#offline-layout-migration);
+never point a new child configuration at an unmigrated old root.
+
 The PKI server keeps no secrets and no storage locations baked into its image.
 Everything it needs at run time arrives through three channels: persistent data
 volumes, read-only configuration mounts, and environment variables for secrets.
@@ -15,7 +21,7 @@ placed on stricter, separately backed storage.
 
 | In-container path | Purpose | Permissions | Persistence guidance |
 |---|---|---|---|
-| `/var/lib/zeroecho/store` | Main PKI store — authorities, requests, credentials, revocations, the metadata log, staged content, and the control log | dir `0700` | The system of record. Back it up consistently. Never share it between two running servers. |
+| `/var/lib/zeroecho/store-container` | Main PKI store — authorities, requests, credentials, revocations, the metadata log, staged content, and the control log | dir `0700` | The system of record. Back it up consistently. Never share it between two running servers. |
 | `/var/lib/zeroecho/keyring` | CA signing keyring (private-key material) | dir `0700`, keys `0600` | A separate, stricter volume from the store. Restrict access and backups; apply separate key management if available. |
 | `/var/lib/zeroecho/artifacts` | Published objects written by the filesystem publisher (CA certificates, leaf certificates, CRLs) | dir `0750` | Durable but reconstructible — it can be republished from the store. |
 | `/var/lib/zeroecho/audit` | Durable audit sink | dir `0750` | Retain per your audit-retention policy. Append-heavy. |
@@ -31,6 +37,11 @@ by the runtime user.
     directory `fsync`, and advisory locking. A non-POSIX bind mount silently drops
     those guarantees, and the keyring refuses to start without owner-only
     permission support. See [Requirements](requirements.md#filesystem-guarantees-for-the-store-and-keyring).
+
+!!! tip "Backup and restore procedures"
+    The paths and permissions listed here are the source of truth for volume
+    layout. For backup strategies, snapshot guidance, and step-by-step restore
+    and disaster-recovery procedures, see [Operations](operations.md#backup-and-restore).
 
 ## Read-only configuration mounts
 
@@ -73,11 +84,11 @@ mapping used by the reference artifacts is:
 
 | Configuration field | In-container path |
 |---|---|
-| store `root` | `/var/lib/zeroecho/store` |
+| store `root` | `/var/lib/zeroecho/store-container/store` |
 | audit `root` | `/var/lib/zeroecho/audit` |
 | publisher `root` | `/var/lib/zeroecho/artifacts` |
 | signing `keyringPath` | `/var/lib/zeroecho/keyring/ca-keyring.zek` |
-| `controlLog` | `/var/lib/zeroecho/store/server-control.log` |
+| `controlLog` | `/var/lib/zeroecho/store-container/server-control/server-control.log` |
 | TLS PKCS#12 stores | `/var/lib/zeroecho/tls/...` (Compose) or `/etc/zeroecho/tls/...` (Kubernetes) |
 
 !!! tip "Prefer absolute in-container paths"
@@ -109,6 +120,7 @@ any file on disk. The variable name must match the pattern `[A-Z][A-Z0-9_]{0,127
 | `ZEROECHO_TLS_KEYSTORE_PASSWORD` | listener `tlsProvider.keyStorePasswordEnvironment` | Password for the server's own identity PKCS#12 store. |
 | `ZEROECHO_PROXY_TRUSTSTORE_PASSWORD` | listener `tlsProvider.trustStorePasswordEnvironment` | Password for the trust store that admits the reverse proxy's transport certificate. |
 | `ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD` | `administrativeClientTrust.trustStorePasswordEnvironment` | Password for the trust store that validates the forwarded administrator leaf. |
+| `ZEROECHO_PUBLISHER_SECRETS_PASSWORD` | `runtime.publisherSecretsEnvironmentVariable` | Unlocks the publisher secrets store for CLASSIC and HYBRID protection profiles. |
 
 In Compose these come from `deploy/.env`; on Kubernetes they come from a Secret
 projected with `envFrom`. The environment template also carries the host paths and
@@ -160,14 +172,15 @@ start-up. To change one:
 2. Restart the server. The entrypoint registers and activates any profile whose
    identifier is not already present in the store.
 
-!!! warning "Editing an existing profile requires a new version"
-    The start-up reconcile is idempotent at profile-identity granularity: it does
-    not re-import an identifier that already exists. Editing an existing profile's
-    content and restarting does **not** update it. To change an active profile,
-    register a new version through the console or the
-    [command line](../admin/command-line.md). Set `ZEROECHO_PROFILE_RECONCILE=off`
-    to disable the start-up reconcile if a separate process owns profile
-    lifecycle.
+!!! warning "Editing an existing profile requires changed content"
+    The bootstrap skips a profile when its active version already has identical
+    content (SHA-256 of the canonical document matches); changed content is always
+    re-registered and activated. Restarting with an unmodified profile document
+    is a no-op for that profile. To change an active profile, update the document
+    content in the profiles source before restarting, or register a new version
+    through the console or the [command line](../admin/command-line.md). Set
+    `ZEROECHO_PROFILE_RECONCILE=off` to disable the start-up reconcile if a
+    separate process owns profile lifecycle.
 
 ## Pointing the store at a persistent volume without rebuilding
 
@@ -177,23 +190,23 @@ underlying storage freely without touching the image or the configuration.
 
 === "Compose"
 
-    The named volume `store` maps to `/var/lib/zeroecho/store`. To use a specific
+    The named volume `store` maps to `/var/lib/zeroecho/store-container`. To use a specific
     host path, replace the named volume with a bind mount — after setting its
     ownership to uid `10001` and mode `0700` — or declare the named volume as
     `external: true`. No rebuild is needed; the configuration's store `root`
-    already points at `/var/lib/zeroecho/store`.
+    already points at `/var/lib/zeroecho/store-container/store`.
 
     ```yaml
     volumes:
       - type: bind
         source: /data/zeroecho/store
-        target: /var/lib/zeroecho/store
+        target: /var/lib/zeroecho/store-container
     ```
 
 === "Kubernetes"
 
     The `store` volume-claim template binds a PersistentVolumeClaim to
-    `/var/lib/zeroecho/store`. Set `storageClassName` to a POSIX class, or
+    `/var/lib/zeroecho/store-container`. Set `storageClassName` to a POSIX class, or
     pre-provision the PersistentVolume. The configuration ConfigMap points the
     store `root` at the same in-container path.
 
@@ -207,6 +220,14 @@ underlying storage freely without touching the image or the configuration.
     ```
 
 The same pattern applies to the keyring, artifacts, and audit volumes.
+
+## Signing provider
+
+The `realm.pkiSession.signing` block selects the provider that performs CA signing
+operations. The default provider (`zeroecho-lib`) keeps private keys in the local encrypted
+keyring. When keys must stay outside the PKI server process — for HSM integration, a
+separate signing node, or an operator-approval flow — use the
+[remote signing provider](remote-signing-provider.md) instead.
 
 Continue to [Kubernetes](kubernetes.md) for a full manifest walkthrough, or to
 [Security hardening](security-hardening.md) for the trust model these mounts

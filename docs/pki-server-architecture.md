@@ -1,10 +1,18 @@
 # ZeroEcho PKI Server Architecture and Authorization Model
 
-**Status:** Normative architecture decision  
+**Status:** Historical design record; superseded by implemented guidance.
 **Version:** 1.0  
 **Target location:** `docs/pki-server-architecture.md`  
-**Applies to:** `pki`, planned `pki-server`, future ACME and public repository interfaces  
-**Change authority:** Project owner approval is required for any semantic change to this document.
+**Original scope:** Early PKI server, ACME and public repository design.
+
+The original text below, including its MUST/SHOULD language and future tense,
+records historical decisions rather than current implementation requirements.
+The server, frontend, remote transport and supported protocols now exist. Use the
+[current architecture](../documentation/overview/architecture.md),
+[security model](../documentation/reference/security-model.md),
+[protocol guide](../documentation/admin/protocols.md) and
+[deployment/CLI contracts](pki-deployment-cli-contracts.md) for current behavior.
+This archival classification does not authorize weakening implemented security.
 
 ## 1. Purpose
 

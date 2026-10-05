@@ -421,6 +421,22 @@ final class DomainContinuationPublisherRecoveryTest {
                 new java.security.SecureRandom()).id();
         DomainCommandEncoding.Decoded decoded = DomainCommandEncoding.decode(template.command());
         boolean root = "CREATE_ROOT".equals(decoded.operation()) || "ROLLOVER_ROOT".equals(decoded.operation());
+        if (root) {
+            zeroecho.pki.api.profile.CertificateProfileDefinition definition = zeroecho.pki.testkit.RootCreationFixture.definition(
+                    decoded.field(4), zeroecho.pki.api.profile.CertificateProfileKind.ROOT_CA, java.time.Duration.ofDays(365),
+                    zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.standardOnly());
+            byte[] canonical = zeroecho.pki.api.profile.CertificateProfileDocumentCodec.writeCanonical(definition);
+            zeroecho.pki.api.profile.CertificateProfileRef profile = new zeroecho.pki.api.profile.CertificateProfileRef(
+                    definition.profileId(), definition.profileVersion(), java.security.MessageDigest.getInstance("SHA-256").digest(canonical));
+            if (store.getProfileVersion(definition.profileId(), definition.profileVersion()).isEmpty()) {
+                store.importProfileVersion(new zeroecho.pki.api.profile.ImportedCertificateProfileVersion(profile,
+                        zeroecho.pki.api.profile.CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical, NOT_BEFORE));
+            }
+            java.util.List<String> fields = new java.util.ArrayList<>(decoded.fields());
+            fields.set(6, java.util.HexFormat.of().formatHex(profile.canonicalSha256()));
+            template = DomainCommandEncoding.template(template.kind(), decoded.operation(), fields.toArray(String[]::new));
+            decoded = DomainCommandEncoding.decode(template.command());
+        }
         if ("CREATE_ROOT".equals(decoded.operation())) {
             java.util.List<String> fields = new java.util.ArrayList<>(decoded.fields());
             fields.add(DomainCommandEncoding.rootAuthorityId(operation).value());

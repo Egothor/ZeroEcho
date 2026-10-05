@@ -35,6 +35,7 @@
 package zeroecho.pki.impl.fs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.math.BigInteger;
@@ -219,6 +220,128 @@ class FilesystemSignScopeAcceptanceTest {
             assertTrue(reservations(store).findReservation(child, BigInteger.valueOf(42)).isEmpty());
             assertTrue(reservations(store).findReservation(scope(store, issuer), BigInteger.valueOf(42)).isPresent());
         }
+    }
+
+    @Test void legacyIntermediateDnRecoversFromRetainedCandidateAndCompletedCertificate(@TempDir Path root) throws Exception {
+        PkiId operation;
+        java.security.cert.X509Certificate certificate = SemanticIssuanceFixture.caCertificate(
+                new javax.security.auth.x500.X500Principal("CN=Legacy Child,O=ZeroEcho,C=CZ"), BigInteger.valueOf(42));
+        String legacy = zeroecho.pkix.Pkix.distinguishedNameString(zeroecho.pkix.Pkix.parseDistinguishedName(
+                certificate.getSubjectX500Principal().getEncoded()));
+        assertFalse(legacy.equals(certificate.getSubjectX500Principal().getName()));
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            SignWorkflowStore.AcceptanceCommand accepted = legacyIntermediateCommand(store, certificate, legacy);
+            assertEquals(SignWorkflowStore.AcceptanceResult.ACCEPTED, store.acceptSign(accepted));
+            operation = accepted.operationId();
+        }
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            SignWorkflowStore.Workflow claim = store.claimSignStep(operation, 0, java.time.Duration.ofSeconds(10)).orElseThrow();
+            store.transitionSign(operation, claim.revision(), claim.fence(), SignWorkflowStore.State.SUCCEEDED, Optional.of("SIGNED"),
+                    Optional.of(new zeroecho.pki.api.EncodedObject(Encoding.BINARY, certificate.getSignature())), Optional.of(store.signingNow())).orElseThrow();
+            new zeroecho.pki.impl.core.continuation.SigningOuterTerminalDriver(store)
+                    .advance(store.getSignWorkflow(operation).orElseThrow());
+            assertEquals(DomainContinuationStore.State.COMPLETED, store.getDomainContinuation(operation).orElseThrow().state());
+        }
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            assertEquals(DomainContinuationStore.State.COMPLETED, store.getDomainContinuation(operation).orElseThrow().state());
+            assertEquals(legacy, store.getCa(new PkiId("legacy-child")).orElseThrow().subjectRef().value());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void legacyIntermediateRecoveryRejectsChangedRetainedEvidence(boolean changeSignature, @TempDir Path root) throws Exception {
+        java.security.cert.X509Certificate certificate = SemanticIssuanceFixture.caCertificate(
+                new javax.security.auth.x500.X500Principal("CN=Legacy Child,O=ZeroEcho,C=CZ"), BigInteger.valueOf(42));
+        String legacy = zeroecho.pkix.Pkix.distinguishedNameString(zeroecho.pkix.Pkix.parseDistinguishedName(
+                certificate.getSubjectX500Principal().getEncoded()));
+        String expected = changeSignature ? "Retained intermediate signature differs from its accepted workflow"
+                : "Retained intermediate candidate commitment differs";
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            SignWorkflowStore.AcceptanceCommand accepted = legacyIntermediateCommand(store, certificate, legacy);
+            assertEquals(SignWorkflowStore.AcceptanceResult.ACCEPTED, store.acceptSign(accepted));
+            SignWorkflowStore.Workflow claim = store.claimSignStep(accepted.operationId(), 0,
+                    java.time.Duration.ofSeconds(10)).orElseThrow();
+            store.transitionSign(accepted.operationId(), claim.revision(), claim.fence(), SignWorkflowStore.State.SUCCEEDED,
+                    Optional.of("SIGNED"), Optional.of(new zeroecho.pki.api.EncodedObject(Encoding.BINARY, certificate.getSignature())),
+                    Optional.of(store.signingNow())).orElseThrow();
+            new zeroecho.pki.impl.core.continuation.SigningOuterTerminalDriver(store)
+                    .advance(store.getSignWorkflow(accepted.operationId()).orElseThrow());
+            DomainContinuationStore.Record domain = store.getDomainContinuation(accepted.operationId()).orElseThrow();
+            assertEquals(DomainContinuationStore.State.COMPLETED, domain.state());
+            byte[] signature = certificate.getSignature();
+            byte[] tbs = certificate.getTBSCertificate();
+            if (changeSignature) {
+                signature[0] ^= 1;
+            } else {
+                tbs = SemanticIssuanceFixture.caCertificate(certificate.getSubjectX500Principal(), BigInteger.valueOf(43))
+                        .getTBSCertificate();
+            }
+            byte[] changed = zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, signature, false);
+            DomainContinuationStore.Record replacement = new DomainContinuationStore.Record(domain.operationId(), domain.version(),
+                    domain.kind(), domain.correlationId(), domain.state(), domain.revision(), domain.createdAt(), domain.deadline(),
+                    domain.command(), domain.commandCommitment(), domain.signingContent(),
+                    Optional.of(new zeroecho.pki.api.EncodedObject(Encoding.DER, changed)), domain.detailCode());
+            zeroecho.pki.spi.store.MetadataKey key = new zeroecho.pki.spi.store.MetadataKey(
+                    "io.zeroecho.pki.domain-continuation", accepted.operationId().value());
+            long revision;
+            try (zeroecho.pki.spi.store.MetadataSnapshot snapshot = store.metadataStore().snapshot();
+                    zeroecho.pki.spi.store.MetadataSnapshot.Record record = snapshot.get(key).orElseThrow()) {
+                revision = record.recordRevision();
+            }
+            assertEquals(zeroecho.pki.spi.store.MetadataCommitResult.Outcome.COMMITTED,
+                    store.metadataStore().directCommit(List.of(new SigningTransactionPayloadCodec.Mutation(
+                            SigningTransactionPayloadCodec.MutationKind.REPLACE, key, revision,
+                            FsCodec.encode(FsCodec.DOMAIN_CONTINUATION, replacement)))).outcome());
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> CrlScopeRecovery.validate(store, reservations(store)));
+            assertEquals(expected, failure.getMessage());
+        }
+        assertThrows(IllegalStateException.class, () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"CN=Unrelated,O=ZeroEcho,C=CZ", "O=ZeroEcho,CN=Legacy Child,C=CZ"})
+    void legacyIntermediateSubjectCannotSelectUnrelatedOrPermutedScope(String subject, @TempDir Path root) throws Exception {
+        java.security.cert.X509Certificate certificate = SemanticIssuanceFixture.caCertificate(
+                new javax.security.auth.x500.X500Principal("CN=Legacy Child,O=ZeroEcho,C=CZ"), BigInteger.valueOf(42));
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            CrlScope other = CrlScope.of(new javax.security.auth.x500.X500Principal(subject).getEncoded(),
+                    certificate.getPublicKey().getEncoded());
+            CrlScopeOwner otherOwner = new CrlScopeOwner(other, new PkiId("unrelated-child"));
+            reservations(store).claim(otherOwner);
+            SignWorkflowStore.AcceptanceCommand invalid = legacyIntermediateCommand(store, certificate, subject);
+            CrlScope candidate = candidateScope(invalid, store);
+            assertThrows(IllegalArgumentException.class, () -> store.acceptSign(invalid));
+            assertTrue(store.getSignWorkflow(invalid.operationId()).isEmpty());
+            assertTrue(store.getDomainContinuation(invalid.operationId()).isEmpty());
+            assertTrue(reservations(store).findOwner(candidate).isEmpty());
+            assertEquals(otherOwner, reservations(store).findOwner(other).orElseThrow());
+            assertTrue(reservations(store).findReservation(scope(store, SemanticIssuanceFixture.issuer(store, 1)),
+                    BigInteger.valueOf(42)).isEmpty());
+        }
+    }
+
+    private static SignWorkflowStore.AcceptanceCommand legacyIntermediateCommand(FilesystemPkiStore store,
+            java.security.cert.X509Certificate certificate, String subject) throws Exception {
+        SignWorkflowStore.AcceptanceCommand base = command(store, 1, 42, -1, "", null);
+        Credential issuer = SemanticIssuanceFixture.issuer(store, 1);
+        DurableContentReference candidate = PkiTestRuntime.operationReference(store.stagedContent(), Encoding.DER,
+                certificate.getTBSCertificate());
+        DomainContinuationTemplate template = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, "CREATE_INTERMEDIATE",
+                "x509", SemanticIssuanceFixture.AUTHORITY.value(), "legacy-child", SemanticIssuanceFixture.issuerId(1).value(),
+                SemanticIssuanceFixture.path(1).pathId().value(), SemanticIssuanceFixture.path(1).pathCommitment(), "child-key",
+                "profile", "1", "1".repeat(64), subject, SemanticIssuanceFixture.BEFORE.toString(), SemanticIssuanceFixture.AFTER.toString(),
+                "42", SemanticIssuanceFixture.KEY.value(), issuer.content().contentId(), issuer.content().sha256(),
+                SemanticIssuanceFixture.publicKeyDigest(), "", "", "");
+        template = zeroecho.pki.testkit.IntermediateProofProvenanceFixture.withProof(template,
+                base.providerNamespace(), base.providerConfigurationCommitment(), candidate.length(), candidate.sha256());
+        store.stagedContent().retireUnownedContent(base.candidate());
+        return new SignWorkflowStore.AcceptanceCommand(base.operationId(), base.providerNamespace(),
+                base.providerConfigurationCommitment(), base.accessContext(), base.keyRef(), base.fairnessAuthorityId(), base.algorithmId(),
+                base.signatureEncoding(), base.createdAt(), base.deadline(), candidate, Optional.of(new SignWorkflowStore.OuterCommand(
+                        template.kind(), base.operationId().value(), template.command(), template.commandCommitment())),
+                SignWorkflowStore.Mode.NORMAL, Optional.empty());
     }
 
     @Test void extraIntegerInsideCanonicalTbsRejectsWithoutAnyClaim(@TempDir Path root) throws Exception {

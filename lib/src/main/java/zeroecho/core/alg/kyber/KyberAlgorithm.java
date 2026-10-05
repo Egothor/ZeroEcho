@@ -47,8 +47,13 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
-import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
-import org.bouncycastle.pqc.jcajce.spec.KyberParameterSpec;
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
+import org.bouncycastle.jcajce.spec.MLKEMParameterSpec;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -100,7 +105,7 @@ import zeroecho.core.spi.PublicKeyImporter;
  *
  * <h2>Provider dependency</h2> All operations require the Bouncy Castle PQC
  * provider to be present and registered in java.security.Security under the
- * name provided by BouncyCastlePQCProvider. The helper ensureProvider()
+ * name provided by BouncyCastleProvider. The helper ensureProvider()
  * validates availability before key generation or import.
  *
  * <h2>Thread-safety</h2> Instances of KyberAlgorithm are immutable and safe to
@@ -109,7 +114,7 @@ import zeroecho.core.spi.PublicKeyImporter;
  *
  * <h2>Usage examples</h2> <pre>{@code
  * // Register provider once during bootstrap:
- * Security.addProvider(new BouncyCastlePQCProvider());
+ * Security.addProvider(new BouncyCastleProvider());
  *
  * // Construct the algorithm:
  * KyberAlgorithm kyber = new KyberAlgorithm();
@@ -134,8 +139,11 @@ import zeroecho.core.spi.PublicKeyImporter;
  * }</pre>
  */
 public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
-     * Provides ML-KEM (Kyber) integration backed by the Bouncy Castle PQC provider
+     * Provides ML-KEM (Kyber) integration backed by the Bouncy Castle provider
      * and registers capabilities and key builders required for KEM usage and
      * message agreement.
      *
@@ -154,7 +162,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
      * </ul>
      *
      * <h4>Example</h4> <pre>{@code
-     * Security.addProvider(new BouncyCastlePQCProvider());
+     * Security.addProvider(new BouncyCastleProvider());
      * KyberAlgorithm alg = new KyberAlgorithm();
      *
      * KeyPair kp = alg.asymmetricKeyPairGenerator(KyberKeyGenSpec.class)
@@ -162,7 +170,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
      * }</pre>
      */
     public KyberAlgorithm() {
-        super("ML-KEM", "Kyber (ML-KEM)", BouncyCastlePQCProvider.PROVIDER_NAME);
+        super("ML-KEM", "Kyber (ML-KEM)", BouncyCastleProvider.PROVIDER_NAME);
 
         capability(AlgorithmFamily.KEM, KeyUsage.ENCAPSULATE, KemContext.class, PublicKey.class, VoidSpec.class,
                 (PublicKey k, VoidSpec s) -> new KyberKemContext(this, k), () -> VoidSpec.INSTANCE);
@@ -191,7 +199,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
                             .build();
                 }, () -> VoidSpec.INSTANCE);
 
-        // Keypair builder via BCPQC
+        // Keypair builder via BC
         registerAsymmetricKeyPairGenerator(KyberKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             /**
              * Generates a Kyber key pair for the variant defined by the provided spec.
@@ -204,8 +212,8 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
             @Override
             public KeyPair generateKeyPair(KyberKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
-                KeyPairGenerator kpg = KeyPairGenerator.getInstance("Kyber", providerName());
-                KyberParameterSpec params = toParams(spec);
+                KeyPairGenerator kpg = KeyPairGenerator.getInstance("ML-KEM", providerName());
+                MLKEMParameterSpec params = toParams(spec);
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
@@ -226,7 +234,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
             public PublicKey importPublic(KyberPublicKeySpec spec) throws GeneralSecurityException {
                 ensureProvider(); // your existing helper
                 // Pick the same algorithm/provider you use for keygen
-                KeyFactory kf = KeyFactory.getInstance("Kyber", providerName());
+                KeyFactory kf = KeyFactory.getInstance("ML-KEM", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
         });
@@ -245,7 +253,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
             @Override
             public PrivateKey importPrivate(KyberPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
-                KeyFactory kf = KeyFactory.getInstance("Kyber", providerName());
+                KeyFactory kf = KeyFactory.getInstance("ML-KEM", providerName());
                 byte[] encoded = spec.pkcs8();
                 try {
                     return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
@@ -268,16 +276,16 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
      * @return the provider parameter set that matches the requested variant.
      * @throws IllegalArgumentException if the variant is not recognized.
      */
-    private static KyberParameterSpec toParams(KyberKeyGenSpec s) {
+    private static MLKEMParameterSpec toParams(KyberKeyGenSpec s) {
         return switch (s.variant()) {
-            case KYBER512 -> KyberParameterSpec.kyber512;
-            case KYBER768 -> KyberParameterSpec.kyber768;
-            case KYBER1024 -> KyberParameterSpec.kyber1024;
+            case KYBER512 -> MLKEMParameterSpec.ml_kem_512;
+            case KYBER768 -> MLKEMParameterSpec.ml_kem_768;
+            case KYBER1024 -> MLKEMParameterSpec.ml_kem_1024;
         };
     }
 
     /**
-     * Ensures that the Bouncy Castle PQC provider is registered before accessing
+     * Ensures that the Bouncy Castle provider is registered before accessing
      * JCA primitives.
      *
      * <p>
@@ -286,20 +294,34 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
      * </p>
      *
      * <h2>Example</h2> <pre>{@code
-     * Security.addProvider(new BouncyCastlePQCProvider());
+     * Security.addProvider(new BouncyCastleProvider());
      * KyberAlgorithm.ensureProvider(); // returns silently if available
      * }</pre>
      *
-     * @throws NoSuchProviderException if the Bouncy Castle PQC provider is not
+     * @throws NoSuchProviderException if the Bouncy Castle provider is not
      *                                 present.
      */
     private static void ensureProvider() throws NoSuchProviderException {
-        // Ensure BCPQC is registered; caller can add Security.addProvider in bootstrap
+        // Ensure BC is registered; caller can add Security.addProvider in bootstrap
         // if desired.
-        Provider p = Security.getProvider(BouncyCastlePQCProvider.PROVIDER_NAME);
+        Provider p = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
         if (p == null) {
             throw new NoSuchProviderException(
-                    "BouncyCastle PQC provider not found. Add bcpqc-jdk18on to classpath and register provider.");
+                    "BouncyCastle provider not found. Add bcprov-jdk18on to classpath and register provider.");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("ML-KEM-512",  "ML-KEM-512 (NIST Level 1)",  SecurityLevel.nist(1, 128), KyberKeyGenSpec.kyber512()),
+            new ParameterSetDescriptor.Concrete<>("ML-KEM-768",  "ML-KEM-768 (NIST Level 3)",  SecurityLevel.nist(3, 192), KyberKeyGenSpec.kyber768()),
+            new ParameterSetDescriptor.Concrete<>("ML-KEM-1024", "ML-KEM-1024 (NIST Level 5)", SecurityLevel.nist(5, 256), KyberKeyGenSpec.kyber1024())
+        );
+    }
+
 }

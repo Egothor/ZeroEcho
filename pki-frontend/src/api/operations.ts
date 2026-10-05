@@ -33,7 +33,7 @@
  ******************************************************************************/
 
 import { useQuery } from '@tanstack/react-query';
-import { ApiRequestError, api, getRaw, postRaw, type RawResult } from '@/api/client';
+import { ApiRequestError, getRaw, postRaw, type RawResult } from '@/api/client';
 import type { OperationCatalogResponse, OperationDescriptor, OperationEnvelope, OperationRequest } from '@/api/types';
 import type { FieldSpec, OperationSpec } from '@/api/operationSchema';
 
@@ -41,9 +41,33 @@ import type { FieldSpec, OperationSpec } from '@/api/operationSchema';
 export function useOperationDescriptors() {
   return useQuery({
     queryKey: ['operations'],
-    queryFn: () => api.get<OperationCatalogResponse>('/admin/v1/operations'),
+    queryFn: loadOperationDescriptors,
     staleTime: 5 * 60_000,
   });
+}
+
+/** Reads the successful discovery envelope without substituting static permissions. */
+export async function loadOperationDescriptors(): Promise<OperationCatalogResponse> {
+  const raw = await getRaw('/admin/v1/operations');
+  const outcome = classify(raw);
+  if (outcome.kind !== 'succeeded' || outcome.envelope.operation !== 'operation.list') return protocolError(raw.status);
+  const result = outcome.envelope.result;
+  if (!object(result) || !Array.isArray(result.operations) || result.count !== result.operations.length) {
+    return protocolError(raw.status);
+  }
+  const ids = new Set<string>();
+  const operations: OperationDescriptor[] = [];
+  for (const value of result.operations) {
+    if (!object(value) || typeof value.operation !== 'string' || !value.operation
+        || ids.has(value.operation) || typeof value.mutating !== 'boolean'
+        || typeof value.family !== 'string'
+        || !['PKI_OPERATION', 'SIGNING_OPERATION', 'SERVER_CONTROL_OPERATION'].includes(value.family)
+        || typeof value.resourceType !== 'string' || typeof value.approval !== 'string'
+        || typeof value.dataView !== 'string') return protocolError(raw.status);
+    ids.add(value.operation);
+    operations.push(value as unknown as OperationDescriptor);
+  }
+  return { count: operations.length, operations };
 }
 
 /** Index descriptors by operation id for quick lookup and discoverability checks. */
@@ -87,6 +111,7 @@ export function buildRequest(spec: OperationSpec, values: Record<string, FieldVa
   path: string;
   request: OperationRequest;
 } {
+  if (!spec.available) throw new Error('This operation is currently unavailable.');
   const args: Record<string, unknown> = {};
   for (const field of spec.fields) {
     const coerced = coerce(field, values[field.name]);

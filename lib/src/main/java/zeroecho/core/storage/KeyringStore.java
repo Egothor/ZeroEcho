@@ -46,6 +46,7 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -57,6 +58,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.UserPrincipal;
 import java.security.GeneralSecurityException;
 import java.security.Key;
+import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -65,6 +67,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +85,12 @@ import javax.security.auth.Destroyable;
 
 import zeroecho.core.storage.KeyringException.Code;
 import zeroecho.core.storage.KeyringFileOperations.Target;
+import zeroecho.core.CryptoAlgorithm;
+import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.storage.LocalStatefulSigningAuthority.Binding;
+import zeroecho.core.storage.LocalStatefulSigningAuthority.State;
 import zeroecho.core.util.RandomSupport;
 
 /**
@@ -121,7 +130,8 @@ import zeroecho.core.util.RandomSupport;
  * and is not migrated.
  * </p>
  */
-public final class KeyringStore implements AutoCloseable, Destroyable {
+@SuppressWarnings("PMD.CouplingBetweenObjects") // Persistence and key-lifecycle facade intentionally joins these domain contracts.
+public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     /* default */ static final byte[] MAGIC = { 'Z', 'E', 'K', 'R', 'I', 'N', 'G', '2' };
     /* default */ static final int FORMAT_VERSION = 2;
     /* default */ static final int ENTRY_FORMAT_VERSION = 1;
@@ -430,6 +440,273 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
     }
 
     /**
+     * Generates and enrolls a new default LMS or XMSS key under an independently
+     * preserved local authority. Existing aliases and imported keys cannot enroll.
+     * The caller owns the authority; the keyring never closes it. Enrollment is
+     * fenced before key insertion and becomes usable only after both key entries
+     * and the READY authority record are durable. Partial enrollment fails closed.
+     * Keep the authority outside the keyring directory and every backup root.
+     * Only the algorithm's default key-generation parameters are supported by
+     * this enrollment API. Exhaustion durably removes the private entry while
+     * preserving the public key for verification; private-key retrieval then
+     * becomes unavailable. Existing imported keys cannot be enrolled.
+     * @param alias unused logical alias without a key-type suffix
+     * @param algorithmId registered stateful algorithm identifier
+     * @param authority open independent local authority
+     * @return generated public key; the private key is retained by the keyring
+     * @throws IOException if enrollment or durable persistence fails
+     * @throws GeneralSecurityException if generation or authentication fails
+     * @throws IllegalArgumentException if the alias already exists or is invalid
+     * @throws NullPointerException if authority is null
+     */
+    public PublicKey generateStatefulKey(String alias, String algorithmId, LocalStatefulSigningAuthority authority)
+            throws IOException, GeneralSecurityException {
+        Objects.requireNonNull(authority, "authority");
+        SecuritySupport.validateString(alias, MAX_ALIAS_BYTES);
+        if (!alias.equals(SecuritySupport.stripKnownSuffix(alias))) {
+            throw new IllegalArgumentException("Stateful enrollment requires an unsuffixed alias");
+        }
+        CryptoAlgorithm algorithm = CryptoAlgorithms.require(algorithmId);
+        lifecycleLock.writeLock().lock();
+        try {
+            ensureOpen();
+            synchronized (authority) { // NOPMD AvoidSynchronizedStatement - Shares the authority monitor across read/save and keyring mutation as one atomic transaction.
+                authority.ensureUsable(path);
+                if (contains(alias)) {
+                    throw new IllegalArgumentException("Stateful enrollment requires an unused alias");
+                }
+                KeyPair pair = StatefulKeySupport.generate(algorithm);
+                byte[] macKey = null;
+                byte[] digest = null;
+                try {
+                    long capacity = StatefulKeySupport.remaining(pair.getPrivate());
+                    if (capacity <= 0 || StatefulKeySupport.index(pair.getPrivate(), capacity) != 0) {
+                        throw LocalStatefulSigningAuthority.recovery();
+                    }
+                    Binding binding = statefulBinding(alias, algorithmId, pair.getPublic());
+                    macKey = statefulMacKey();
+                    digest = statefulDigest(pair.getPrivate());
+                    authority.enroll(new State(binding, 0, capacity, false, digest), macKey);
+                    putPublic(alias, algorithmId, pair.getPublic());
+                    putPrivate(alias, algorithmId, pair.getPrivate());
+                    authority.save(new State(binding, 0, capacity, true, digest), macKey);
+                    return pair.getPublic();
+                } finally {
+                    wipe(macKey);
+                    wipe(digest);
+                    StatefulKeySupport.destroy(pair.getPrivate());
+                }
+            }
+        } finally {
+            lifecycleLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Resolves an explicit durable signing capability for an enrolled key. No
+     * missing authority record is created or reconstructed. Each future operation
+     * revalidates the current state under both ownership locks.
+     * @param alias enrolled logical alias
+     * @param authority same independently preserved authority used for generation
+     * @return handle borrowing this keyring and authority
+     * @throws IOException if enrollment is missing, stale, pending or mismatched
+     * @throws GeneralSecurityException if key import/authentication fails
+     */
+    public StatefulSigner statefulSigner(String alias, LocalStatefulSigningAuthority authority)
+            throws IOException, GeneralSecurityException {
+        statefulSignatureLength(alias, authority);
+        return new StatefulSigner(this, authority, alias);
+    }
+
+    /* default */ int statefulSignatureLength(String alias, LocalStatefulSigningAuthority authority)
+            throws IOException, GeneralSecurityException {
+        Objects.requireNonNull(authority, "authority");
+        lifecycleLock.writeLock().lock();
+        byte[] macKey = null;
+        try {
+            ensureOpen();
+            synchronized (authority) { // NOPMD AvoidSynchronizedStatement - Shares the authority monitor across read/save and keyring mutation as one atomic transaction.
+                macKey = statefulMacKey();
+                PublicWithId publicEntry = getPublicWithId(alias);
+                State current = readStateful(alias, authority, publicEntry, macKey);
+                if (current.next() != current.capacity()) {
+                    PrivateWithId privateEntry = getPrivateWithId(alias);
+                    try {
+                        validateStateful(privateEntry, publicEntry, current);
+                    } finally {
+                        StatefulKeySupport.destroy(privateEntry.key());
+                    }
+                }
+                return StatefulKeySupport.signatureLength(CryptoAlgorithms.require(publicEntry.algorithm()), publicEntry.key());
+            }
+        } finally {
+            wipe(macKey);
+            lifecycleLock.writeLock().unlock();
+        }
+    }
+
+    /* default */ byte[] signStateful(String alias, LocalStatefulSigningAuthority authority, RepeatableContent content,
+            CancellationSignal cancellation, int maximumMessageBytes) throws IOException, GeneralSecurityException {
+        Objects.requireNonNull(content, "content");
+        Objects.requireNonNull(cancellation, "cancellation");
+        if (maximumMessageBytes < 0) {
+            throw new IllegalArgumentException("Message bound must not be negative");
+        }
+        cancellation.throwIfCancelled();
+        if (content.length().isPresent() && content.length().getAsLong() > maximumMessageBytes) {
+            throw new IOException("Stateful signing content limit exceeded");
+        }
+        lifecycleLock.writeLock().lock();
+        byte[] macKey = null;
+        byte[] advancedDigest = null;
+        PrivateKey parent = null;
+        PrivateKey shard = null;
+        try {
+            ensureOpen();
+            synchronized (authority) { // NOPMD AvoidSynchronizedStatement - Shares the authority monitor across read/save and keyring mutation as one atomic transaction.
+                cancellation.throwIfCancelled();
+                macKey = statefulMacKey();
+                PublicWithId publicEntry = getPublicWithId(alias);
+                State current = readStateful(alias, authority, publicEntry, macKey);
+                if (current.next() == current.capacity()) {
+                    throw new KeyringException(Code.KEYRING_STATEFUL_EXHAUSTED);
+                }
+                PrivateWithId privateEntry = getPrivateWithId(alias);
+                parent = privateEntry.key();
+                validateStateful(privateEntry, publicEntry, current);
+                int length = StatefulKeySupport.signatureLength(CryptoAlgorithms.require(privateEntry.algorithm()), publicEntry.key());
+                long next = Math.addExact(current.next(), 1);
+                authority.save(new State(current.binding(), next, current.capacity(), false, current.digest()), macKey);
+                shard = StatefulKeySupport.reserve(privateEntry.key());
+                if (StatefulKeySupport.remaining(shard) != 1
+                        || StatefulKeySupport.remaining(privateEntry.key()) != current.capacity() - next
+                        || StatefulKeySupport.index(privateEntry.key(), current.capacity()) != next) {
+                    throw LocalStatefulSigningAuthority.recovery();
+                }
+                if (next == current.capacity()) {
+                    advancedDigest = terminalStatefulDigest();
+                    removeExhaustedPrivate(alias);
+                } else {
+                    advancedDigest = statefulDigest(privateEntry.key());
+                    putPrivate(alias, privateEntry.algorithm(), privateEntry.key());
+                }
+                authority.save(new State(current.binding(), next, current.capacity(), true, advancedDigest), macKey);
+                return StatefulKeySupport.sign(shard, content, cancellation, maximumMessageBytes, length);
+            }
+        } finally {
+            wipe(macKey);
+            wipe(advancedDigest);
+            StatefulKeySupport.destroy(shard);
+            StatefulKeySupport.destroy(parent);
+            lifecycleLock.writeLock().unlock();
+        }
+    }
+
+    private State readStateful(String alias, LocalStatefulSigningAuthority authority,
+            PublicWithId publicEntry, byte[] macKey)
+            throws IOException, GeneralSecurityException {
+        if (!CryptoAlgorithms.require(publicEntry.algorithm()).requiresStatefulSigning()) {
+            throw LocalStatefulSigningAuthority.recovery();
+        }
+        State state = authority.read(statefulBinding(alias, publicEntry.algorithm(), publicEntry.key()), macKey);
+        if (!state.ready()) {
+            throw LocalStatefulSigningAuthority.recovery();
+        }
+        if (state.next() == state.capacity()
+                && (entries.containsKey(SecuritySupport.withPrivateSuffix(alias))
+                    || !MessageDigest.isEqual(state.digest(), terminalStatefulDigest()))) {
+            throw LocalStatefulSigningAuthority.recovery();
+        }
+        return state;
+    }
+
+    private void validateStateful(PrivateWithId privateEntry, PublicWithId publicEntry, State state)
+            throws IOException, GeneralSecurityException {
+        if (!privateEntry.algorithm().equals(publicEntry.algorithm())
+                || !CryptoAlgorithms.require(privateEntry.algorithm()).requiresStatefulSigning()) {
+            throw LocalStatefulSigningAuthority.recovery();
+        }
+        byte[] digest = statefulDigest(privateEntry.key());
+        try {
+            if (!state.ready() || !MessageDigest.isEqual(state.digest(), digest)
+                    || StatefulKeySupport.remaining(privateEntry.key()) != state.capacity() - state.next()
+                    || StatefulKeySupport.index(privateEntry.key(), state.capacity()) != state.next()) {
+                throw LocalStatefulSigningAuthority.recovery();
+            }
+        } finally {
+            wipe(digest);
+        }
+    }
+
+    private static byte[] terminalStatefulDigest() throws KeyringException {
+        return KeyringSecuritySupport.digest("ZeroEcho.StatefulKey.exhausted.v1".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void removeExhaustedPrivate(String alias) throws IOException, GeneralSecurityException {
+        String removed = SecuritySupport.withPrivateSuffix(alias);
+        Map<String, EncryptedEntry> candidate = new LinkedHashMap<>();
+        for (EncryptedEntry entry : entries.values()) {
+            if (entry.alias.equals(removed)) {
+                continue;
+            }
+            int position = candidate.size();
+            if (position == entry.position) {
+                candidate.put(entry.alias, entry);
+                continue;
+            }
+            byte[] plaintext = null;
+            byte[] nonce = null;
+            byte[] ciphertext = null;
+            try {
+                plaintext = KeyringSecuritySupport.crypt(Cipher.DECRYPT_MODE, masterKey, entry.nonce,
+                        formatCodec.entryAad(entry.entryId, entry.position), entry.ciphertext);
+                nonce = nextNonce();
+                ciphertext = KeyringSecuritySupport.crypt(Cipher.ENCRYPT_MODE, masterKey, nonce,
+                        formatCodec.entryAad(entry.entryId, position), plaintext);
+                candidate.put(entry.alias, new EncryptedEntry(entry.entryId, position, entry.alias, // NOPMD AvoidInstantiatingObjectsInLoops - Each persisted entry owns distinct AEAD nonce, ciphertext and digest values.
+                        entry.algorithm, entry.kind, entry.encoding, entry.hmacVariant, nonce,
+                        ciphertext, KeyringSecuritySupport.digest(ciphertext)));
+            } finally {
+                wipe(plaintext);
+                wipe(nonce);
+                wipe(ciphertext);
+            }
+        }
+        persistence.persistSnapshot(candidate);
+        entries = candidate;
+    }
+
+    private Binding statefulBinding(String alias, String algorithm, PublicKey publicKey) throws IOException {
+        byte[] encoded = publicKey.getEncoded();
+        if (encoded == null) {
+            throw LocalStatefulSigningAuthority.recovery();
+        }
+        byte[] domain = ("ZeroEcho.StatefulKey.v1:" + algorithm + ":").getBytes(StandardCharsets.UTF_8);
+        byte[] identity = KeyringSecuritySupport.digest(ByteBuffer.allocate(domain.length + encoded.length)
+                .put(domain).put(encoded).array());
+        return new Binding(HexFormat.of().formatHex(identity), HexFormat.of().formatHex(storeId),
+                path.toRealPath().toString(), alias, algorithm);
+    }
+
+    private byte[] statefulMacKey() throws GeneralSecurityException {
+        byte[] domain = "ZeroEcho.StatefulAuthority.v1".getBytes(StandardCharsets.UTF_8);
+        return KeyringSecuritySupport.hmac(masterKey, ByteBuffer.allocate(domain.length + storeId.length)
+                .put(domain).put(storeId).array());
+    }
+
+    private static byte[] statefulDigest(PrivateKey key) throws IOException {
+        byte[] encoded = key.getEncoded();
+        if (encoded == null) {
+            throw LocalStatefulSigningAuthority.recovery();
+        }
+        try {
+            return KeyringSecuritySupport.digest(encoded);
+        } finally {
+            wipe(encoded);
+        }
+    }
+
+    /**
      * Adds or replaces an encoded public key and persists the mutation.
      *
      * @param alias       logical alias
@@ -440,7 +717,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
      */
     public void putPublic(String alias, String algorithmId, PublicKey key)
             throws IOException, GeneralSecurityException {
-        put(SecuritySupport.withPublicSuffix(alias), algorithmId, Kind.PUBLIC_KEY, Encoding.X509, key,
+        Encoding encoding = KeyringImportRegistry.encodingFor(algorithmId, Kind.PUBLIC_KEY);
+        put(SecuritySupport.withPublicSuffix(alias), algorithmId, Kind.PUBLIC_KEY, encoding, key,
                 KeyringImportRegistry.HmacVariant.NONE);
     }
 
@@ -455,7 +733,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
      */
     public void putPrivate(String alias, String algorithmId, PrivateKey key)
             throws IOException, GeneralSecurityException {
-        put(SecuritySupport.withPrivateSuffix(alias), algorithmId, Kind.PRIVATE_KEY, Encoding.PKCS8, key,
+        Encoding encoding = KeyringImportRegistry.encodingFor(algorithmId, Kind.PRIVATE_KEY);
+        put(SecuritySupport.withPrivateSuffix(alias), algorithmId, Kind.PRIVATE_KEY, encoding, key,
                 KeyringImportRegistry.HmacVariant.NONE);
     }
 
@@ -861,7 +1140,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
     }
 
     /** Coordinates durable image and nonce-reservation persistence. */
-    private final class Persistence {
+    private final class Persistence { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
         private void persistSnapshot(Map<String, EncryptedEntry> candidate) throws IOException, GeneralSecurityException {
             byte[] manifestNonce = null;
             byte[] manifestPlain = null;
@@ -909,7 +1188,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
                 fileOperations.writeTemporary(target, temporary, image);
                 fileOperations.forceTemporary(target, temporary);
                 try {
-                    fileOperations.atomicReplace(target, temporary, destination);
+                    atomicReplaceWithWindowsRetry(target, temporary, destination);
                 } catch (AtomicMoveNotSupportedException exception) {
                     throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
                 }
@@ -946,6 +1225,30 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
                 return failure;
             }
             return new KeyringException(Code.KEYRING_IO_FAILED);
+        }
+
+
+        private void atomicReplaceWithWindowsRetry(Target target, Path temporary, Path destination)
+                throws IOException {
+            KeyringAtomicMoveRetryPolicy retry = fileOperations.atomicMoveRetryPolicy();
+            AccessDeniedException lastDenied = null;
+            for (int attempt = 0; attempt < retry.attempts(); attempt++) {
+                try {
+                    fileOperations.atomicReplace(target, temporary, destination);
+                    return;
+                } catch (AccessDeniedException denied) {
+                    lastDenied = denied;
+                    if (attempt < retry.attempts() - 1) {
+                        try {
+                            retry.pause().await(retry.delayMillis());
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
+                            throw denied; // NOPMD PreserveStackTrace - Expose stable redacted failure codes; provider and persisted-state details must not escape.
+                        }
+                    }
+                }
+            }
+            throw lastDenied;
         }
 
         private void destroyPoisonedStore(Throwable primaryFailure) {

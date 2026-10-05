@@ -35,6 +35,7 @@ package zeroecho.pki.cli;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -65,6 +66,8 @@ import zeroecho.pki.application.PkiOperationValue;
 // A single closed registry keeps every stable external operation name visibly bound to its typed parser.
 @SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.TooManyMethods", "PMD.UnusedFormalParameter"})
 final class PkiOperationRegistry {
+    private static final String TEXT_CA_ID = "caId";
+
     private static final String AFTER = "after";
     private static final String SCOPE_AUTHORITY_ID = "authorityId";
 
@@ -79,7 +82,7 @@ final class PkiOperationRegistry {
     private static final String PROFILE_VERSION = "profileVersion";
     private static final String REQUEST_ID = "requestId";
     private static final String BINDING_ID = "bindingId";
-    private static final String AUTHORITY_ID = "caId";
+    private static final String AUTHORITY_ID = TEXT_CA_ID;
     private static final String FAILURE_REASON = "reason";
     private static final String ISSUER_ID = "issuerId";
     private static final String INVALID_ARGUMENTS = "PKI operation arguments are invalid";
@@ -89,6 +92,18 @@ final class PkiOperationRegistry {
 
     /* default */ PkiOperationRegistry() {
         Map<String, Binding> configured = new LinkedHashMap<>();
+        registerAuthorityBindings(configured);
+        registerCredentialBindings(configured);
+        registerStatusBindings(configured);
+        registerPublicationBindings(configured);
+        registerInventoryBindings(configured);
+        registerMonitoringBindings(configured);
+        configured.put(PkiLocalCommand.INSPECT, (arguments, base) -> new PkiLocalCommand.Inspect(operationId(arguments)));
+        configured.put(PkiLocalCommand.COMPLETE, (arguments, base) -> new PkiLocalCommand.Complete(operationId(arguments)));
+        bindings = Map.copyOf(configured);
+    }
+
+    private void registerAuthorityBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.ListAlgorithmBindings.NAME, this::listAlgorithmBindings);
         add(configured, PkiOperation.InspectAlgorithmBinding.NAME, this::inspectAlgorithmBinding);
         add(configured, PkiOperation.ValidateAlgorithmBindings.NAME, this::validateAlgorithmBindings);
@@ -102,6 +117,9 @@ final class PkiOperationRegistry {
         add(configured, PkiOperation.ListAuthorities.NAME, this::listAuthorities);
         addSigning(configured, PkiSigningOperation.CreateAuthority.NAME, this::createAuthority);
         add(configured, PkiOperation.TransitionAuthority.NAME, this::transitionAuthority);
+    }
+
+    private void registerCredentialBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.InspectRequest.NAME, this::inspectRequest);
         add(configured, PkiOperation.ImportRequest.NAME, this::importRequest);
         add(configured, PkiOperation.VerifyRequest.NAME, this::verifyRequest);
@@ -119,6 +137,9 @@ final class PkiOperationRegistry {
         add(configured, PkiOperation.ListIssuerChainPaths.NAME, this::listIssuerChainPaths);
         add(configured, PkiOperation.RegisterIssuerChainPath.NAME, this::registerIssuerChainPath);
         add(configured, PkiOperation.SelectIssuancePath.NAME, this::selectIssuancePath);
+    }
+
+    private void registerStatusBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.RevokeCredential.NAME, this::revoke);
         add(configured, PkiOperation.InspectRevocation.NAME, this::inspectRevocation);
         add(configured, PkiOperation.ReadRevocationHistory.NAME, this::history);
@@ -126,12 +147,18 @@ final class PkiOperationRegistry {
         add(configured, PkiOperation.InspectStatus.NAME, this::inspectStatus);
         add(configured, PkiOperation.ListStatus.NAME, this::listStatus);
         addSigning(configured, PkiSigningOperation.GenerateStatus.NAME, this::generateStatus);
+    }
+
+    private void registerPublicationBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.InspectPublication.NAME, this::publication);
         add(configured, PkiOperation.ListPublications.NAME, this::listPublications);
         add(configured, PkiOperation.RegisterPublication.NAME, this::registerPublication);
         add(configured, PkiOperation.ProcessPublication.NAME, this::processPublication);
         add(configured, PkiOperation.RetryPublication.NAME, this::retryPublication);
         add(configured, PkiOperation.ReconcilePublication.NAME, this::reconcilePublication);
+    }
+
+    private void registerInventoryBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.ListProfiles.NAME, this::allProfiles);
         add(configured, PkiOperation.ListRequests.NAME, this::listRequests);
         add(configured, PkiOperation.SearchCredentials.NAME, this::searchCredentials);
@@ -140,9 +167,17 @@ final class PkiOperationRegistry {
         add(configured, PkiOperation.IssueCredentialConfirmationChallenge.NAME, this::confirmationChallenge);
         add(configured, PkiOperation.CompleteCredentialConfirmationProof.NAME, this::confirmationProof);
         add(configured, PkiOperation.RevokePendingCredentialConfirmation.NAME, this::revokePending);
-        configured.put(PkiLocalCommand.INSPECT, (arguments, base) -> new PkiLocalCommand.Inspect(operationId(arguments)));
-        configured.put(PkiLocalCommand.COMPLETE, (arguments, base) -> new PkiLocalCommand.Complete(operationId(arguments)));
-        bindings = Map.copyOf(configured);
+    }
+
+    private void registerMonitoringBindings(Map<String, Binding> configured) {
+        add(configured, PkiOperation.SetStatusSchedule.NAME, this::statusScheduleRequest);
+        add(configured, PkiOperation.InspectStatusSchedule.NAME, this::inspectStatusSchedule);
+        add(configured, PkiOperation.ListStatusSchedules.NAME, this::listStatusSchedules);
+        add(configured, PkiOperation.QueryAuthorityMetrics.NAME, this::queryAuthorityMetrics);
+        add(configured, PkiOperation.QueryCertificateMetrics.NAME, this::queryCertificateMetrics);
+        add(configured, PkiOperation.QueryRevocationMetrics.NAME, this::queryRevocationMetrics);
+        add(configured, PkiOperation.QueryPublicationMetrics.NAME, this::queryPublicationMetrics);
+        add(configured, PkiOperation.QueryServerMetrics.NAME, this::queryServerMetrics);
     }
 
     /* default */ Set<String> names() {
@@ -424,6 +459,63 @@ final class PkiOperationRegistry {
         return new PkiOperation.ReconcilePublication(publicationId(arguments));
     }
 
+    private PkiOperation statusScheduleRequest(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        Set<String> required = Set.of(TEXT_CA_ID, "statusType", FORMAT_ID, "interval", "graceSeconds", "enabled");
+        Set<String> allowed = new java.util.HashSet<>(required);
+        allowed.add("targetType");
+        allowed.add("targetId");
+        allowedFields(arguments, required, allowed);
+        java.util.Optional<PublicationTarget> target =
+                optionalText(arguments, "targetType").map(t ->
+                        new PublicationTarget(
+                                PublicationTargetType.valueOf(t),
+                                text(arguments, "targetId")));
+        return new PkiOperation.SetStatusSchedule(
+                new PkiId(text(arguments, TEXT_CA_ID)),
+                StatusObjectType.valueOf(text(arguments, "statusType")),
+                new FormatId(text(arguments, FORMAT_ID)),
+                Duration.parse(text(arguments, "interval")),
+                integer(arguments, "graceSeconds"),
+                bool(arguments, "enabled"),
+                target);
+    }
+
+    private PkiOperation inspectStatusSchedule(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(TEXT_CA_ID, "statusType"));
+        return new PkiOperation.InspectStatusSchedule(new PkiId(text(arguments, TEXT_CA_ID)),
+                StatusObjectType.valueOf(text(arguments, "statusType")));
+    }
+
+    private PkiOperation listStatusSchedules(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        pageFields(arguments, Set.of());
+        return new PkiOperation.ListStatusSchedules(limit(arguments), optionalText(arguments, AFTER));
+    }
+
+    private PkiOperation queryAuthorityMetrics(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(TEXT_CA_ID));
+        return new PkiOperation.QueryAuthorityMetrics(new PkiId(text(arguments, TEXT_CA_ID)));
+    }
+
+    private PkiOperation queryCertificateMetrics(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(TEXT_CA_ID));
+        return new PkiOperation.QueryCertificateMetrics(new PkiId(text(arguments, TEXT_CA_ID)));
+    }
+
+    private PkiOperation queryRevocationMetrics(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(TEXT_CA_ID));
+        return new PkiOperation.QueryRevocationMetrics(new PkiId(text(arguments, TEXT_CA_ID)));
+    }
+
+    private PkiOperation queryPublicationMetrics(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(TEXT_CA_ID));
+        return new PkiOperation.QueryPublicationMetrics(new PkiId(text(arguments, TEXT_CA_ID)));
+    }
+
+    private PkiOperation queryServerMetrics(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of());
+        return new PkiOperation.QueryServerMetrics();
+    }
+
     private static PkiId publicationId(PkiOperationValue.ObjectValue arguments) {
         requireFields(arguments, Set.of(PUBLICATION_ID));
         return new PkiId(text(arguments, PUBLICATION_ID));
@@ -462,9 +554,14 @@ final class PkiOperationRegistry {
     }
 
     private PkiOperation searchCredentials(PkiOperationValue.ObjectValue arguments, Path base) {
-        pageFields(arguments, Set.of(SCOPE_AUTHORITY_ID));
+        allowedFields(arguments, Set.of(SCOPE_AUTHORITY_ID, LIMIT),
+                Set.of(SCOPE_AUTHORITY_ID, LIMIT, AFTER, "subjectFilter", "serialFilter",
+                        "fingerprintFilter", "statusFilter", "profileIdFilter"));
         return new PkiOperation.SearchCredentials(new PkiId(text(arguments, SCOPE_AUTHORITY_ID)),
-                limit(arguments), optionalText(arguments, AFTER));
+                limit(arguments), optionalText(arguments, AFTER),
+                optionalText(arguments, "subjectFilter"), optionalText(arguments, "serialFilter"),
+                optionalText(arguments, "fingerprintFilter"), optionalText(arguments, "statusFilter"),
+                optionalText(arguments, "profileIdFilter"));
     }
 
     private PkiOperation listGenerations(PkiOperationValue.ObjectValue arguments, Path base) {
@@ -570,6 +667,14 @@ final class PkiOperationRegistry {
 
     private static int limit(PkiOperationValue.ObjectValue arguments) {
         return Math.toIntExact(integer(arguments, LIMIT));
+    }
+
+    private static boolean bool(PkiOperationValue.ObjectValue arguments, String name) {
+        PkiOperationValue value = PkiCliConfiguration.required(arguments, name);
+        if (value instanceof PkiOperationValue.BooleanValue b) {
+            return b.value();
+        }
+        throw new IllegalArgumentException(INVALID_ARGUMENTS);
     }
 
     private static Path resolve(Path baseDirectory, String value) {

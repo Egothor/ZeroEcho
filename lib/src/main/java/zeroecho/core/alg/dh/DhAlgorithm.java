@@ -41,6 +41,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -108,6 +113,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class DhAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates a Diffie-Hellman algorithm registration with standard defaults.
      *
@@ -165,4 +173,20 @@ public final class DhAlgorithm extends AbstractCryptoAlgorithm {
         });
 
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("FFDHE-2048", "FFDHE-2048 (~112-bit)", SecurityLevel.classical(112), DhSpec.ffdhe2048()),
+            new ParameterSetDescriptor.Concrete<>("FFDHE-3072", "FFDHE-3072 (~128-bit)", SecurityLevel.classical(128), DhSpec.ffdhe3072()),
+            new ParameterSetDescriptor.Concrete<>("FFDHE-4096", "FFDHE-4096 (~140-bit)", SecurityLevel.classical(140), DhSpec.ffdhe4096()),
+            new ParameterSetDescriptor.Concrete<>("FFDHE-6144", "FFDHE-6144 (~152-bit)", SecurityLevel.classical(152), DhSpec.ffdhe6144()),
+            new ParameterSetDescriptor.Concrete<>("FFDHE-8192", "FFDHE-8192 (~192-bit)", SecurityLevel.classical(192), DhSpec.ffdhe8192())
+        );
+    }
+
 }

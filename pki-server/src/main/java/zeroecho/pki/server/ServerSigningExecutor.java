@@ -53,6 +53,7 @@ import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.core.io.CancellationSignal;
+import zeroecho.pki.server.jfr.SigningOperationEvent;
 
 /** Stateless authorized-command adapter; the existing session owns every resource. */
 final class ServerSigningExecutor implements ServerOperationGateway.SigningExecutor {
@@ -66,12 +67,19 @@ final class ServerSigningExecutor implements ServerOperationGateway.SigningExecu
     public PkiOperationOutcome execute(ServerOperationGateway.Request request,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         PkiSigningOperation operation = ((AdministrativeOperation.Signing) request.operation()).operation();
+        SigningOperationEvent jfrEvent = new SigningOperationEvent();
+        jfrEvent.operationId = operation.name();
+        jfrEvent.authorityId = request.resource().scope().authorityId()
+                .map(Object::toString).orElse("");
+        jfrEvent.begin();
         boolean acceptanceInvoked = false;
+        PkiOperationOutcome outcome = null;
         try {
             cancellation.throwIfCancelled();
             if (operation instanceof PkiSigningOperation.GenerateStatus status
                     && status.type() == zeroecho.pki.api.status.StatusObjectType.OCSP) {
-                return failed(operation, PkiOperationFailure.VALIDATION_FAILURE, "OCSP_TARGET_REQUIRED");
+                outcome = failed(operation, PkiOperationFailure.VALIDATION_FAILURE, "OCSP_TARGET_REQUIRED");
+                return outcome;
             }
             SemanticSigningService service = session.semanticSigning().orElseThrow(UnsupportedOperationException::new);
             AccessContext access = new AccessContext(new Principal("ADMIN_PRINCIPAL", request.principalId()),
@@ -82,33 +90,56 @@ final class ServerSigningExecutor implements ServerOperationGateway.SigningExecu
             requireActivePreparation(service, prepared, cancellation);
             // This flag records crossing the same accept boundary, even when the result is uncertain.
             acceptanceInvoked = true;
-            return accept(service, prepared, operation);
+            outcome = accept(service, prepared, operation);
+            return outcome;
         } catch (java.io.InterruptedIOException cancelled) {
-            return failed(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+            outcome = failed(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+            return outcome;
         } catch (UnsupportedOperationException missingCapability) {
-            return failed(operation, PkiOperationFailure.VALIDATION_FAILURE, "CAPABILITY_NOT_CONFIGURED");
+            outcome = failed(operation, PkiOperationFailure.VALIDATION_FAILURE, "CAPABILITY_NOT_CONFIGURED");
+            return outcome;
         } catch (NoSuchElementException missing) {
-            return failed(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
+            outcome = failed(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
+            return outcome;
         } catch (IllegalArgumentException invalid) {
-            return failed(operation, PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_INPUT_INVALID");
+            outcome = failed(operation, PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_INPUT_INVALID");
+            return outcome;
         } catch (SigningExecutionException execution) {
-            return failed(operation, execution.classification() == SigningExecutionException.Classification.OVERLOADED
+            outcome = failed(operation, execution.classification() == SigningExecutionException.Classification.OVERLOADED
                     ? PkiOperationFailure.OVERLOADED : PkiOperationFailure.RESOURCE_FAILURE,
                     execution.classification() == SigningExecutionException.Classification.OVERLOADED
                             ? "SIGNING_OVERLOADED" : "PKI_RESOURCE_FAILED");
+            return outcome;
         } catch (PkiException rejected) {
             if (rejected.failureReason().orElse(null) == PkiFailureReason.STORE_DURABILITY_UNCONFIRMED) {
-                return failed(operation, PkiOperationFailure.RECOVERY_REQUIRED, "RECOVERY_REQUIRED");
+                outcome = failed(operation, PkiOperationFailure.RECOVERY_REQUIRED, "RECOVERY_REQUIRED");
+                return outcome;
             }
             if (!acceptanceInvoked && cancelledPreparation(rejected, cancellation)) {
-                return failed(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+                outcome = failed(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+                return outcome;
             }
-            return failed(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+            outcome = failed(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+            return outcome;
         } catch (IllegalStateException unavailable) {
             if (!acceptanceInvoked && cancelledPreparation(unavailable, cancellation)) {
-                return failed(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+                outcome = failed(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+                return outcome;
             }
-            return failed(operation, PkiOperationFailure.RESOURCE_FAILURE, "PKI_RESOURCE_FAILED");
+            outcome = failed(operation, PkiOperationFailure.RESOURCE_FAILURE, "PKI_RESOURCE_FAILED");
+            return outcome;
+        } finally {
+            commitEvent(jfrEvent, outcome);
+        }
+    }
+
+    private static void commitEvent(SigningOperationEvent event, PkiOperationOutcome outcome) {
+        if (event.shouldCommit()) {
+            event.succeeded = !(outcome instanceof PkiOperationOutcome.Failed);
+            if (outcome instanceof PkiOperationOutcome.Failed failed) {
+                event.failureReason = failed.code();
+            }
+            event.commit();
         }
     }
 

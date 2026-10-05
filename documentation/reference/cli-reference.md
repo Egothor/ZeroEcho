@@ -1,5 +1,17 @@
 # Command-line reference
 
+Examples use `zeroecho` as a shell shorthand for the built CLI. From the repository
+root, build and define it before running commands:
+
+```bash
+./gradlew :app:installDist
+zeroecho() { ./app/build/install/app/bin/app "$@"; }
+```
+
+An installation may provide its own wrapper; the Gradle launcher is named `app`.
+The server distribution instead provides `zeroecho-pki-server` under
+`pki-server/build/install/zeroecho-pki-server/bin/`.
+
 The `zeroecho pki` utility runs certificate-authority operations from the command
 line. It has two modes, selected purely by the parameters you pass:
 
@@ -19,8 +31,8 @@ cannot observe a difference in exit semantics between them.
 ## Synopsis
 
 ```text
-zeroecho pki <operation> --config <file> [--output human|json] [--pending-wait <seconds>] [arguments]
-zeroecho pki run <plan-file> --config <file> [--output human|json] [--pending-wait <seconds>]
+zeroecho pki <operation> --config <file> [--output human|json] [arguments]
+zeroecho pki run <plan-file> --config <file> [--output human|json]
 
 zeroecho pki <operation.id> --url <https-base-url>
     ( --client-keystore <p12> [--client-keystore-password-env <ENV>]
@@ -36,7 +48,7 @@ zeroecho pki <operation.id> --url <https-base-url>
 | Option | Applies to | Description |
 | --- | --- | --- |
 | `--output human\|json` | both | Output rendering. Defaults to `human`. |
-| `--pending-wait <seconds>` | both | Bounded wait (default `3`, range `0`–`3600`) for an asynchronously-signed operation to finish before a clean pending exit (code `7`). |
+| `--pending-wait <seconds>` | remote submission only | Bounded wait (default `3`, range `0`–`3600`) for an asynchronously-signed operation to finish before a pending exit (code `7`). Invalid locally and for explicit remote inspection. |
 | `--help`, `-h` | both | Print usage and the local operation catalog. |
 
 ## Local mode
@@ -58,17 +70,21 @@ It is distinct from the server configuration; see the
 
 ```json
 {
-  "version": 2,
+  "version": 1,
+  "mode": "local",
+  "operatorId": "local-admin",
   "store":  { "provider": "fs",     "properties": { "root": "state/pki" } },
-  "audit":  { "provider": "file",   "properties": { "root": "state/audit" } },
-  "publishers": []
+  "audit":  { "provider": "memory", "properties": { "size": "512" } },
+  "publishers": [],
+  "bindingProviders": []
 }
 ```
 
 !!! note
     In the local CLI configuration each provider block uses the key `provider`
     (the server configuration file uses `id`). The audit provider may not be
-    `stdout`.
+    `stdout`. This example uses an in-memory audit sink. The CLI wrapper is version
+    1; the backend session contract is version 6 and server configuration is version 8.
 
 Run `zeroecho pki --help` for the full catalog of local typed operations, which
 includes `ca.*`, `credential.*`, `profile.*`, `request.*`, `revocation.*`,
@@ -109,7 +125,7 @@ directly to the [operation API](admin-api.md). Operation arguments are given wit
 `--arg-bool name=true|false` (boolean), in addition to the known `--option`
 spellings.
 
-Remote mode ignores `--config`; no local backend providers are opened. Supplying
+Remote mode rejects `--config`; no local backend providers are opened. Supplying
 `--url` with missing or partial client material, or client material without
 `--url`, is an invalid invocation (exit `2`).
 
@@ -148,17 +164,18 @@ identical operation with `--approval-id`.
     export ZEROECHO_CLIENT_P12_PW=…
     export ZEROECHO_TRUST_P12_PW=…
 
-    # List the operations this client may use
-    zeroecho pki operation.list \
+    # List authorities this client may inspect
+    zeroecho pki ca.list \
         --url https://pki.example.com:8443 \
         --client-keystore ./admin-client.p12 \
         --client-keystore-password-env ZEROECHO_CLIENT_P12_PW \
         --trust ./server-ca.p12 \
         --trust-password-env ZEROECHO_TRUST_P12_PW \
+        --limit 100 \
         --output json
 
     # Issue a certificate against a specific authority (PEM client identity)
-    zeroecho pki certificate.issue \
+    zeroecho pki credential.issue \
         --url https://pki.example.com:8443 \
         --client-cert ./admin-client.pem \
         --client-key ./admin-client-key.pem \
@@ -187,6 +204,82 @@ remote mode.
 | `130` | Cancelled | The operation was cancelled. |
 
 !!! tip "Exit code 7 is a clean, resumable state"
-    Code `7` does not mean the operation failed. It means the utility completed
-    its bounded wait without a terminal answer. Re-run the same command (remotely,
-    with the pending signing identifier the server reported) to resume it.
+    Code `7` means the outcome is not yet known; it does not prove that an uncertain
+    submission was accepted. Never blindly resubmit a mutation. When a signing
+    operation ID is available, use `signing.operation.inspect --operation-id ID`
+    with the same remote TLS connection options. Inspection uses GET and rejects
+    `--pending-wait`, `--authority-id`, `--approval-id` and `--deadline`.
+
+## `zeroecho-pki-publisher-secrets`
+
+The `zeroecho-pki-publisher-secrets` utility manages the encrypted publisher
+secrets store. The store holds credentials — for example HTTP `Authorization`
+header values — that publisher providers reference by alias using a `keyring:`
+prefix in their configuration. The store is separate from the CA signing keyring
+and is unlocked independently at server start-up.
+
+Three protection profiles are supported: `CLASSIC` (password recipient), `PQC`
+(BIKE-256 recipient), and `HYBRID` (both recipients). HYBRID encryption needs both
+recipient inputs, but decryption accepts either independently; it is not a
+two-factor unlocking requirement.
+
+Password recipients use PBKDF2-HMAC-SHA256 with 600,000 iterations. The helper
+configures the same 600,000-iteration ceiling for creation and password unlocking;
+decoded counts below the library minimum or above that ceiling are rejected.
+CLASSIC, PQC and both independent HYBRID unlocking paths pass command smoke tests. See
+[publisher setup](../admin/publication.md#publisher-secrets-store) before deployment.
+
+### Commands
+
+#### `generate-bike-key`
+
+```text
+zeroecho-pki-publisher-secrets generate-bike-key --pub bike-public.der --priv bike-private.der
+```
+
+Generates a BIKE-256 key pair, writing X.509 DER public and PKCS#8 DER private
+files. Protect the private file independently of the encrypted secrets store.
+
+#### `write-store`
+
+```text
+zeroecho-pki-publisher-secrets write-store \
+    --store FILE --secrets secrets.json \
+    --protection CLASSIC|PQC|HYBRID \
+    [ --password-env VAR ] [ --bike-pub bike-public.der ]
+```
+
+Creates or rewrites the encrypted store from a flat JSON object mapping secret
+identifiers to values. There is no interactive prompt or standard-input mode.
+Keep plaintext input in protected operator storage and remove it using the
+storage platform's appropriate procedure after verification.
+
+| Option | Description |
+| --- | --- |
+| `--store FILE` | Path to the secrets store file to create or rewrite. |
+| `--secrets FILE` | Protected flat JSON input. |
+| `--protection CLASSIC\|PQC\|HYBRID` | Recipient selection. |
+| `--password-env VAR` | Password environment variable for CLASSIC/HYBRID writing. |
+| `--bike-pub FILE` | X.509 DER public key for PQC/HYBRID writing. |
+
+The publisher manager has no inline password option. The server's separate
+`--publisher-secrets-dev-password` switch is development-only and must never be
+used for production secrets.
+
+#### `verify-store`
+
+```text
+zeroecho-pki-publisher-secrets verify-store \
+    --store FILE \
+    [ --password-env VAR ] [ --bike-priv bike-private.der ]
+```
+
+Opens the store and prints the list of alias names it contains. Secret values are
+never printed. Exits non-zero if the store cannot be opened (wrong password, wrong
+key, or a corrupt file).
+
+| Option | Description |
+| --- | --- |
+| `--store FILE` | Path to the secrets store file to verify. |
+| `--password-env VAR` | Password environment variable for password unlocking. |
+| `--bike-priv FILE` | PKCS#8 DER private key for BIKE unlocking. |

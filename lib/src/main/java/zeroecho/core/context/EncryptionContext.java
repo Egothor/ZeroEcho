@@ -54,8 +54,10 @@ import java.io.InputStream;
  * <li>Call {@link #attach(InputStream)} to obtain a wrapped stream.</li>
  * <li>Read from the returned stream; data is encrypted or decrypted on demand
  * until end-of-file.</li>
- * <li>Call {@link #close()} to release underlying resources and finalize any
- * state (e.g., authentication tags in AEAD modes).</li>
+ * <li>Consume the returned stream through end-of-file to complete the transform
+ * and observe finalization or authentication errors, then close that stream.</li>
+ * <li>Close the context separately. Context closure is not a substitute for
+ * completing or closing the returned stream.</li>
  * </ul>
  *
  * <h2>Security considerations</h2>
@@ -77,8 +79,12 @@ public non-sealed interface EncryptionContext extends CryptoContext {
      *
      * <p>
      * The returned stream applies encryption or decryption as bytes are read.
-     * Implementations may buffer internally, and callers should always close the
-     * stream (or the context) to ensure all data is flushed and state is finalized.
+     * Implementations may buffer internally. Callers must read the stream through
+     * end-of-file and handle any final authentication error before treating a
+     * decrypted message as valid. Closing a partially consumed stream is cleanup,
+     * not proof that the complete message was authenticated. Close the returned
+     * stream separately from the context; upstream ownership follows the concrete
+     * implementation's stream contract.
      * </p>
      *
      * @param upstream the source stream supplying plaintext (for encryption) or

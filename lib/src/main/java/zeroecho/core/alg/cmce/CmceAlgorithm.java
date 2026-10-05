@@ -47,8 +47,13 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
-import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
-import org.bouncycastle.pqc.jcajce.spec.CMCEParameterSpec;
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
+import org.bouncycastle.jcajce.spec.CMCEParameterSpec;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -94,16 +99,16 @@ import zeroecho.core.spi.PublicKeyImporter;
  * </ul>
  *
  * <p>
- * <b>Provider requirement:</b> the Bouncy Castle PQC provider must be
- * registered under the standard name {@code "BCPQC"} before use.
+ * <b>Provider requirement:</b> the Bouncy Castle provider must be
+ * registered under the standard name {@code "BC"} before use.
  * </p>
  *
  * <p>
  * Usage example:
  * </p>
  * <pre>{@code
- * // Register BCPQC once at startup.
- * Security.addProvider(new BouncyCastlePQCProvider());
+ * // Register BC once at startup.
+ * Security.addProvider(new BouncyCastleProvider());
  *
  * // Obtain contexts using the CMCE algorithm id.
  * CmceAlgorithm alg = new CmceAlgorithm();
@@ -123,6 +128,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs and registers CMCE capabilities and key builders.
      *
@@ -140,11 +148,11 @@ public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
      * <p>
      * The algorithm id is {@code "CMCE"}, the display name is
      * {@code "Classic McEliece (CMCE)"}, and the provider name is taken from the
-     * Bouncy Castle PQC provider.
+     * Bouncy Castle provider.
      * </p>
      */
     public CmceAlgorithm() {
-        super("CMCE", "Classic McEliece (CMCE)", BouncyCastlePQCProvider.PROVIDER_NAME);
+        super("CMCE", "Classic McEliece (CMCE)", BouncyCastleProvider.PROVIDER_NAME);
 
         capability(AlgorithmFamily.KEM, KeyUsage.ENCAPSULATE, KemContext.class, PublicKey.class, VoidSpec.class,
                 (PublicKey k, VoidSpec s) -> new CmceKemContext(this, k), () -> VoidSpec.INSTANCE);
@@ -178,8 +186,8 @@ public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
                 ensureProvider();
                 KeyPairGenerator kpg = KeyPairGenerator.getInstance("CMCE", providerName());
                 CMCEParameterSpec params = switch (spec.variant()) {
-                    case MCELIECE_348864 -> CMCEParameterSpec.mceliece348864;
-                    case MCELIECE_348864F -> CMCEParameterSpec.mceliece348864f;
+                    case MCELIECE_348864, MCELIECE_348864F ->
+                        throw new GeneralSecurityException("McEliece-348864 removed in BC 1.86; use 460896 or larger");
                     case MCELIECE_460896 -> CMCEParameterSpec.mceliece460896;
                     case MCELIECE_460896F -> CMCEParameterSpec.mceliece460896f;
                     case MCELIECE_6688128 -> CMCEParameterSpec.mceliece6688128;
@@ -221,9 +229,29 @@ public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
     }
 
     private static void ensureProvider() throws NoSuchProviderException {
-        Provider p = Security.getProvider(BouncyCastlePQCProvider.PROVIDER_NAME);
+        Provider p = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
         if (p == null) {
-            throw new NoSuchProviderException("BCPQC provider not registered");
+            throw new NoSuchProviderException("BC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        // MCELIECE_348864 and MCELIECE_348864F are excluded: removed in BC 1.86.
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("CMCE-460896",   "McEliece 460896",   SecurityLevel.classical(192), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_460896)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-460896F",  "McEliece 460896f",  SecurityLevel.classical(192), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_460896F)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-6688128",  "McEliece 6688128",  SecurityLevel.classical(256), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_6688128)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-6688128F", "McEliece 6688128f", SecurityLevel.classical(256), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_6688128F)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-6960119",  "McEliece 6960119",  SecurityLevel.classical(256), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_6960119)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-6960119F", "McEliece 6960119f", SecurityLevel.classical(256), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_6960119F)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-8192128",  "McEliece 8192128",  SecurityLevel.classical(256), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_8192128)),
+            new ParameterSetDescriptor.Concrete<>("CMCE-8192128F", "McEliece 8192128f", SecurityLevel.classical(256), CmceKeyGenSpec.of(CmceKeyGenSpec.Variant.MCELIECE_8192128F))
+        );
+    }
+
 }

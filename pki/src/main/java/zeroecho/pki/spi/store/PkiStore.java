@@ -61,7 +61,10 @@ import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationRecord;
+import zeroecho.pki.api.schedule.StatusSchedule;
+import zeroecho.pki.api.schedule.StatusScheduleState;
 import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.api.status.StatusObjectType;
 
 /**
  * Persistence boundary for PKI state.
@@ -103,6 +106,29 @@ import zeroecho.pki.api.status.StatusObject;
  */
 @SuppressWarnings("PMD.ExcessivePublicCount")
 public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, AutoCloseable { // NOPMD - TooManyMethods: one cohesive strict-schema or store-transaction ownership contract.
+
+    /**
+     * Stages a verified replacement for cold activation on the next open.
+     * The source remains caller-owned; known live safety authority cannot regress.
+     * @param source bounded archive source
+     * @return staged status, never premature activation success
+     * @throws java.io.IOException if verification or durable publication fails
+     * @throws UnsupportedOperationException if local restore staging is unsupported
+     */
+    default zeroecho.pki.api.backup.RestoreStatus stageRestore(
+            zeroecho.pki.api.backup.BackupSource source) throws java.io.IOException {
+        throw new UnsupportedOperationException("Local restore staging is unsupported");
+    }
+
+    /**
+     * Returns the latest local restore status without activating a candidate.
+     * An uncertain publication requires cold reconciliation, not resubmission.
+     * @return latest status, or empty when none exists
+     * @throws java.io.IOException if the coordinator record is unreadable or corrupt
+     */
+    default Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws java.io.IOException {
+        return Optional.empty();
+    }
 
     /**
      * Returns the runtime-owned durable streaming-content store.
@@ -951,6 +977,243 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @throws IllegalStateException if listing fails
      */
     List<WorkflowStateRecord> listWorkflowStates();
+
+    // -------------------------------------------------------------------------
+    // Status-generation schedules
+    // -------------------------------------------------------------------------
+
+    /**
+     * Retrieves one status-generation schedule.
+     *
+     * @param caId exact authority identifier
+     * @param statusType kind of status object
+     * @return schedule, or empty when none is configured
+     */
+    Optional<StatusSchedule> getStatusSchedule(PkiId caId, StatusObjectType statusType);
+
+    /**
+     * Lists all enabled status-generation schedules in ascending caId+statusType order.
+     *
+     * @param after exclusive opaque composite cursor from {@link #statusScheduleCursor}; empty starts at the beginning
+     * @param limit maximum rows, 1 through 1001
+     * @param cancellation cooperative cancellation signal checked for every scanned candidate
+     * @return immutable bounded page
+     */
+    List<StatusSchedule> listActiveStatusSchedulesPage(Optional<String> after, int limit,
+            zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Creates or unconditionally replaces one status-generation schedule.
+     *
+     * <p>Implementations must assign revision 1 to a new schedule and increment
+     * the revision on each replacement. Use {@link #replaceStatusSchedule} for CAS updates.</p>
+     *
+     * @param schedule schedule to store; revision field is ignored
+     * @return stored schedule with assigned revision
+     */
+    StatusSchedule putStatusSchedule(StatusSchedule schedule);
+
+    /**
+     * Conditionally replaces one status-generation schedule using optimistic concurrency.
+     *
+     * @param expected schedule with the currently stored revision
+     * @param replacement schedule to store
+     * @return true if replaced; false if the revision did not match (concurrent change)
+     */
+    boolean replaceStatusSchedule(StatusSchedule expected, StatusSchedule replacement);
+
+    /** Reports support for atomic schedule claims, signing acceptance and effects.
+     * @return true only when the complete durable protocol is supported
+     */
+    default boolean supportsStatusScheduling() { return false; }
+
+    private static UnsupportedOperationException schedulingUnavailable() {
+        return new UnsupportedOperationException("Durable scheduling unavailable");
+    }
+
+    /** Reads worker progress separately from operator configuration.
+     * @param caId authority identity
+     * @param type status family
+     * @return durable state or empty
+     * @throws UnsupportedOperationException if scheduling is unsupported
+     */
+    default Optional<StatusScheduleState> getStatusScheduleState(PkiId caId, StatusObjectType type) {
+        throw schedulingUnavailable();
+    }
+
+    /** Lists enabled schedules and unfinished claims, including claims subsequently disabled.
+     * @param after exclusive cursor returned by {@link #statusScheduleCursor}
+     * @param limit maximum rows, from 1 through 1001
+     * @param cancellation cooperative cancellation
+     * @return bounded ordered progress page
+     * @throws UnsupportedOperationException if scheduling is unsupported
+     */
+    default List<StatusScheduleState> listStatusScheduleWork(Optional<String> after, int limit,
+            zeroecho.core.io.CancellationSignal cancellation) {
+        throw schedulingUnavailable();
+    }
+
+    /** Encodes an unambiguous configuration pagination cursor.
+     * @param schedule row whose successor is requested
+     * @return opaque cursor
+     */
+    static String statusScheduleCursor(StatusSchedule schedule) {
+        try {
+            byte[] identity = ("status-schedule-key:v1:" + schedule.caId().value())
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(identity)) + "." + schedule.statusType().name();
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    /** Claims a due occurrence through compare-and-replace.
+     * @param expected complete previously read state
+     * @return new claim or empty on conflict, disablement or an unexpired due time
+     * @throws UnsupportedOperationException if scheduling is unsupported
+     */
+    default Optional<StatusScheduleState.Execution> claimStatusSchedule(StatusScheduleState expected) {
+        throw schedulingUnavailable();
+    }
+
+    /** Co-commits a claim's receipt with ordinary signing acceptance and reservations.
+     * @param command validated signing acceptance
+     * @param claim immutable authorized schedule claim
+     * @return acceptance disposition
+     * @throws UnsupportedOperationException if scheduling is unsupported
+     */
+    default SignWorkflowStore.AcceptanceResult acceptScheduledSign(SignWorkflowStore.AcceptanceCommand command,
+            StatusScheduleState.Execution claim) {
+        throw schedulingUnavailable();
+    }
+
+    /** Publishes a canonical status and any scheduled execution marker atomically.
+     * @param object canonical signed status object
+     * @param operationId durable signing operation identity
+     * @param commandCommitment exact continuation command commitment
+     */
+    default void putStatusObjectFromSigning(StatusObject object, PkiId operationId, String commandCommitment) {
+        putStatusObject(object);
+    }
+
+    /** Advances a committed occurrence without regenerating its effect.
+     * @param expected exact committed execution
+     * @return true if advanced, false on a concurrent progress change
+     * @throws UnsupportedOperationException if scheduling is unsupported
+     */
+    default boolean advanceStatusSchedule(StatusScheduleState.Execution expected) {
+        throw schedulingUnavailable();
+    }
+
+    /** Records a stable failure of accepted scheduled work, prohibiting automatic reacceptance.
+     * @param expected exact accepted execution
+     * @param detailCode stable non-sensitive failure code
+     * @return true if recorded, false on a concurrent progress change
+     * @throws UnsupportedOperationException if scheduling is unsupported
+     */
+    default boolean failStatusSchedule(StatusScheduleState.Execution expected, String detailCode) {
+        throw schedulingUnavailable();
+    }
+
+    /**
+     * Reports whether this store supports backup export and verification.
+     * This does not imply restoration support; restoration is currently unavailable.
+     *
+     * @return {@code true} when {@link #createBackup} and {@link #verifyBackup}
+     *         are available; {@code false} by default
+     */
+    default boolean supportsBackup() { return false; }
+
+    /**
+     * Creates a bounded file-backed backup. The caller owns and closes the result.
+     * Existing implementations must opt in; the default never buffers a legacy archive.
+     * @param request backup request
+     * @return owned repeatable source
+     * @throws UnsupportedOperationException if streaming backup is unsupported
+     * @throws java.io.IOException if backup creation or cleanup fails
+     */
+    default zeroecho.pki.api.backup.BackupSource createBackupSource(
+            zeroecho.pki.api.backup.BackupRequest request) throws java.io.IOException {
+        throw new UnsupportedOperationException("Streaming backup is unsupported");
+    }
+
+    /**
+     * Checks an untrusted streaming archive after bounded file-backed ingestion.
+     * The source remains caller-owned; only streams opened by verification are closed.
+     * @param source untrusted input and its claimed commitment
+     * @return integrity and offline-recovery report, not proof of authenticity
+     * @throws UnsupportedOperationException if streaming verification is unsupported
+     */
+    default zeroecho.pki.api.backup.BackupVerificationReport verifyBackupSource(
+            zeroecho.pki.api.backup.BackupSource source) {
+        throw new UnsupportedOperationException("Streaming verification is unsupported");
+    }
+
+    /**
+     * Prepares verified staging without activating it or changing the live store.
+     * @param source caller-owned input
+     * @return caller-owned verified candidate
+     * @throws java.io.IOException if verification, staging or cleanup fails
+     * @throws UnsupportedOperationException if preparation is unsupported
+     */
+    default zeroecho.pki.api.backup.BackupPreparation prepareBackup(
+            zeroecho.pki.api.backup.BackupSource source) throws java.io.IOException {
+        throw new UnsupportedOperationException("Backup preparation is unsupported");
+    }
+
+
+
+    /**
+     * Creates a backup of PKI state, excluding private keys.
+     *
+     * <p>Private keys are referenced via {@code KeyRef} and must never appear in
+     * the returned archive.</p>
+     *
+     * @param request backup request carrying the operator label and optional metadata
+     * @return bounded legacy artifact containing a versioned logical snapshot
+     * @throws UnsupportedOperationException if backup is not supported by this store
+     * @throws NullPointerException if {@code request} is {@code null}
+     * @throws IllegalStateException if the store is closed or backup creation fails
+     */
+    default zeroecho.pki.api.backup.BackupArtifact createBackup(
+            zeroecho.pki.api.backup.BackupRequest request) {
+        throw new UnsupportedOperationException("Backup is not supported by this store");
+    }
+
+    /**
+     * Verifies integrity and offline recoverability of a bounded legacy backup.
+     *
+     * <p>The built-in verifier reads the archive and opens an isolated disposable
+     * copy. It does not modify live state or prove artifact authenticity.</p>
+     *
+     * @param artifact backup artifact to verify
+     * @return verification report listing any structural issues found
+     * @throws UnsupportedOperationException if backup is not supported by this store
+     * @throws NullPointerException if {@code artifact} is {@code null}
+     */
+    default zeroecho.pki.api.backup.BackupVerificationReport verifyBackup(
+            zeroecho.pki.api.backup.BackupArtifact artifact) {
+        throw new UnsupportedOperationException("Backup is not supported by this store");
+    }
+
+    /**
+     * Restores PKI state from a backup artifact.
+     *
+     * <p>The built-in filesystem adapter only stages a bounded archive. It returns
+     * {@code success=false} with a restart-required warning until cold activation;
+     * callers inspect {@link #latestRestoreStatus()} after reopening.</p>
+     *
+     * @param request restore request carrying the artifact and optional hints
+     * @return restore report describing the staged outcome and any warnings or errors
+     * @throws UnsupportedOperationException if restore is not supported by this store
+     * @throws NullPointerException if {@code request} is {@code null}
+     * @throws IllegalStateException if the store is closed
+     */
+    default zeroecho.pki.api.backup.RestoreReport restoreBackup(
+            zeroecho.pki.api.backup.RestoreRequest request) {
+        throw new UnsupportedOperationException("Restore is not supported by this store");
+    }
 
     /**
      * Closes this store and releases all lifecycle-owned resources.

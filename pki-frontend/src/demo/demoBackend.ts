@@ -72,6 +72,10 @@ const LIST_MAP: Record<string, string> = {
   'acme.directory.list': 'acmeDirectories',
   'acme.account.list': 'acmeAccounts',
   'ocsp.responder.list': 'ocspResponders',
+  'scep.endpoint.list': 'scepEndpoints',
+  'cmp.endpoint.list': 'cmpEndpoints',
+  'est.endpoint.list': 'estEndpoints',
+  'enrollment.profile.list': 'enrollmentProfiles',
   'algorithm.binding.list': 'algorithmBindings',
 };
 
@@ -89,6 +93,11 @@ const CREATE_MAP: Record<string, string> = {
   'security.break-glass.create': 'breakGlass',
   'acme.directory.register': 'acmeDirectories',
   'ocsp.responder.register': 'ocspResponders',
+  'scep.endpoint.register': 'scepEndpoints',
+  'cmp.endpoint.register': 'cmpEndpoints',
+  'est.endpoint.register': 'estEndpoints',
+  'enrollment.profile.register': 'enrollmentProfiles',
+  'enrollment.profile.update': 'enrollmentProfiles',
   'publication.register': 'publications',
 };
 
@@ -124,7 +133,7 @@ function hexCommitment(): string {
 function idField(args: Record<string, unknown>): string {
   for (const key of ['caId', 'credentialId', 'requestId', 'publicationId', 'statusObjectId', 'pathId', 'issuerId',
     'principalId', 'grantId', 'assignmentId', 'approvalId', 'breakGlassId', 'directoryId', 'accountId',
-    'responderId', 'authorityId', 'objectId', 'profileId', 'bindingId']) {
+    'responderId', 'authorityId', 'objectId', 'profileId', 'bindingId', 'label', 'id']) {
     if (typeof args[key] === 'string') return args[key] as string;
   }
   return demoId('obj');
@@ -142,8 +151,25 @@ function dispatch(spec: OperationSpec, args: Record<string, unknown>, state: Dem
     formats: [{ formatId: 'x509', displayName: 'X.509 certificate' }],
     signingProviders: [{ providerId: 'local', displayName: 'Local signing provider' }],
     publicationTargets: [{ targetType: 'FILESYSTEM', targetId: 'public-repository', displayName: 'Public repository' }],
-    keys: cursorPage([{ keyRef: 'local:root.prv', displayName: 'Root authority key' }, { keyRef: 'local:issuing.prv', displayName: 'Issuing authority key' }], 'keyRef', args),
-    algorithms: [{ algorithmId: 'SHA256withECDSA', displayName: 'ECDSA with SHA-256' }],
+    keys: cursorPage([
+      { keyRef: 'local:root.prv', displayName: 'Root CA key (EC P-384)' },
+      { keyRef: 'local:issuing.prv', displayName: 'Issuing CA key (EC P-256)' },
+      { keyRef: 'local:root-mldsa.prv', displayName: 'Root CA PQC key (ML-DSA-65)' },
+      { keyRef: 'local:issuing-mldsa.prv', displayName: 'Issuing CA PQC key (ML-DSA-44)' },
+      { keyRef: 'local:alt-slhdsa.prv', displayName: 'Alt-signature PQC key (SLH-DSA-SHA2-128s)' },
+    ], 'keyRef', args),
+    algorithms: [
+      { algorithmId: 'SHA256withECDSA', displayName: 'ECDSA with SHA-256 (classic)' },
+      { algorithmId: 'SHA384withECDSA', displayName: 'ECDSA with SHA-384 (classic)' },
+      { algorithmId: 'SHA256withRSA', displayName: 'RSA PKCS#1 with SHA-256 (classic)' },
+      { algorithmId: 'SHA256withRSAandMGF1', displayName: 'RSA-PSS with SHA-256 (classic)' },
+      { algorithmId: 'ML-DSA-44', displayName: 'ML-DSA-44 (FIPS 204, ~128-bit)' },
+      { algorithmId: 'ML-DSA-65', displayName: 'ML-DSA-65 (FIPS 204, ~192-bit)' },
+      { algorithmId: 'ML-DSA-87', displayName: 'ML-DSA-87 (FIPS 204, ~256-bit)' },
+      { algorithmId: 'SLH-DSA-SHA2-128s', displayName: 'SLH-DSA-SHA2-128s (FIPS 205)' },
+      { algorithmId: 'SLH-DSA-SHA2-192s', displayName: 'SLH-DSA-SHA2-192s (FIPS 205)' },
+      { algorithmId: 'SLH-DSA-SHA2-256s', displayName: 'SLH-DSA-SHA2-256s (FIPS 205)' },
+    ],
     acmeChallengeProviders: [{ providerId: 'dns', displayName: 'DNS challenge service', challengeTypes: ['DNS_01'] }],
     acmeEabProviders: [{ providerId: 'accounts', displayName: 'External account service' }],
   } };
@@ -229,7 +255,7 @@ export function createDemoTransport(getRole: () => DemoRole): Transport {
 
     if (req.method === 'GET' && path === '/admin/v1/operations') {
       const ops = discoverableOperations(role).map(descriptorOf);
-      return json(200, { count: ops.length, operations: ops });
+      return json(200, envelope('operation.list', 'SUCCEEDED', { count: ops.length, operations: ops }));
     }
 
     if (req.method === 'GET' && path.startsWith('/admin/v1/operations/')) {

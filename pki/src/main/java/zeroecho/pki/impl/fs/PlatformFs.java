@@ -34,6 +34,8 @@
 package zeroecho.pki.impl.fs;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.CopyOption;
 import java.nio.file.FileStore;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -59,6 +61,12 @@ import java.util.Set;
 final class PlatformFs {
 
     private static final PlatformFsOps OPS = resolve();
+    // Windows Defender / indexer can transiently lock a just-written file during MoveFileEx.
+    // The retry is Windows-only; on POSIX, rename(2) is unconditionally atomic and non-blocking.
+    private static final boolean ON_WINDOWS = System.getProperty("os.name", "")
+            .toLowerCase(java.util.Locale.ROOT).startsWith("windows");
+    private static final int ATOMIC_MOVE_MAX_ATTEMPTS = 5;
+    private static final long ATOMIC_MOVE_RETRY_DELAY_MS = 10L;
 
     private PlatformFs() {
     }
@@ -97,6 +105,42 @@ final class PlatformFs {
         if (!posix && !acl) {
             throw new IOException("store volume cannot enforce owner-only protection (neither POSIX nor ACL): " + path);
         }
+    }
+
+    /**
+     * Atomically moves {@code source} to {@code destination} with Windows-specific retry
+     * on transient {@link AccessDeniedException} (AV / indexer file lock during MoveFileEx).
+     * On POSIX, delegates directly to {@link Files#move} with no retry.
+     *
+     * @param source source path
+     * @param destination destination path
+     * @param options copy options (e.g. {@code ATOMIC_MOVE}, {@code REPLACE_EXISTING})
+     * @throws IOException on non-transient failure or after exhausting the retry budget
+     */
+
+    /* default */ static Path atomicMove(final Path source, final Path destination,
+            final CopyOption... options) throws IOException {
+        if (!ON_WINDOWS) {
+            return Files.move(source, destination, options);
+        }
+        AccessDeniedException lastDenied = null;
+        for (int attempt = 0; attempt < ATOMIC_MOVE_MAX_ATTEMPTS; attempt++) {
+            try {
+                return Files.move(source, destination, options);
+            } catch (AccessDeniedException denied) {
+                lastDenied = denied;
+                if (attempt < ATOMIC_MOVE_MAX_ATTEMPTS - 1) {
+                    try {
+                        Thread.sleep(ATOMIC_MOVE_RETRY_DELAY_MS); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
+                    } catch (InterruptedException interrupted) {
+                        denied.addSuppressed(interrupted);
+                        Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
+                        throw denied;
+                    }
+                }
+            }
+        }
+        throw lastDenied;
     }
 
     private static PlatformFsOps resolve() {

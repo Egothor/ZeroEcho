@@ -442,7 +442,7 @@ final class LocalPkiSessionTest {
         return accepted.receipt();
     }
 
-    private static PkiSigningOperation rootCommand() {
+    static PkiSigningOperation rootCommand() {
         return new PkiSigningOperation.CreateAuthority(X509, new SubjectRef("CN=Local Root,C=CZ"), "root-test", ROOT_KEY);
     }
 
@@ -463,14 +463,14 @@ final class LocalPkiSessionTest {
         @Override public Instant instant() { return now; }
     }
 
-    private static final class Fixture implements DefaultPkiSession.Bootstrap {
+    static final class Fixture implements DefaultPkiSession.Bootstrap {
         private final Path root;
         private final Path keyring;
         private final MutableClock clock = new MutableClock();
-        private final AtomicInteger dispatches = new AtomicInteger();
+        final AtomicInteger dispatches = new AtomicInteger();
         private final List<AuditEvent> events = new ArrayList<>();
         private final AtomicBoolean cancellation = new AtomicBoolean();
-        private PkiStore store;
+        PkiStore store;
         private SigningProvider provider;
         private boolean loseAcceptance;
         private boolean failPublication;
@@ -478,6 +478,7 @@ final class LocalPkiSessionTest {
         private boolean failReadAfterClaim;
         private boolean providerCancelled;
         private boolean cancelAfterDispatch;
+        private boolean controlledProviderClock;
 
         Fixture(Path root) throws Exception {
             this.root = root;
@@ -492,6 +493,8 @@ final class LocalPkiSessionTest {
             }
         }
 
+        void time(Instant instant) { clock.now = instant; controlledProviderClock = true; }
+
         PkiSession open(String operator) {
             return DefaultPkiSession.openLocal(new LocalPkiSessionConfiguration(new ProviderConfig("fs", Map.of("root", root.resolve("store").toString())),
                     new ProviderConfig("memory", Map.of()), operator, Optional.of(signingConfiguration()), List.of(), List.of()),
@@ -502,7 +505,7 @@ final class LocalPkiSessionTest {
             return new LocalSigningConfiguration(new ProviderConfig("zeroecho-lib", Map.of(
                     "keyringPath", keyring.toString(), "operationHorizon", "P90D", "keyRefPrefix", "zeroecho-lib:",
                     "requireComponentSuffix", "true")), RootCreationFixture.ALGORITHM, Duration.ofMinutes(5),
-                    Optional.empty(), Duration.ofSeconds(10), Duration.ofSeconds(5), OptionalLong.empty());
+                    Optional.empty(), Duration.ofSeconds(30), Duration.ofSeconds(20), OptionalLong.empty());
         }
 
         @Override public void validateStore(ProviderConfig configuration) { PkiBootstrap.validateStoreConfiguration(configuration); }
@@ -547,6 +550,13 @@ final class LocalPkiSessionTest {
         @Override public PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,
                 SigningProviderRuntimeDependencies dependencies) {
             PkiBootstrap.SigningComposition allocation = PkiBootstrap.openConfiguredSigningComposition(configuration, dependencies);
+            SigningProvider effective = allocation.provider();
+            if (controlledProviderClock) {
+                SigningProvider.ConfigurationCommitment commitment = effective.configurationCommitment();
+                effective.close();
+                effective = TestKeyringUnlocks.withClock(keyring, clock, commitment);
+            }
+            SigningProvider selected = effective;
             Thread caller = Thread.currentThread();
             SigningProvider counted = (SigningProvider) Proxy.newProxyInstance(SigningProvider.class.getClassLoader(),
                     new Class<?>[] { SigningProvider.class, PublicKeyInfoSource.class }, (proxy, method, arguments) -> {
@@ -558,7 +568,7 @@ final class LocalPkiSessionTest {
                                     clock.instant(), SigningProvider.DetailCode.CANCELLED, Optional.empty());
                         }
                         try {
-                            Object result = method.invoke(allocation.provider(), arguments);
+                            Object result = method.invoke(selected, arguments);
                             if (method.getName().equals("dispatch") && cancelAfterDispatch) cancellation.set(true);
                             return result;
                         }

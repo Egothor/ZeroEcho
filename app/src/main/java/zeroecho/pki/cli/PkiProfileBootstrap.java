@@ -39,8 +39,11 @@ import java.io.PrintStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiException;
@@ -56,9 +59,10 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
 /**
  * Deployment-only profile initializer executed before the permanent server starts.
- * Existing profile identities are skipped; newly registered profiles are activated
- * at the version declared in their document. The local session exclusively owns
- * the configured store until initialization finishes.
+ * Profiles whose active content matches the incoming document are skipped; profiles
+ * with changed or absent content are registered and activated at the version declared
+ * in their document. The local session exclusively owns the configured store until
+ * initialization finishes.
  */
 public final class PkiProfileBootstrap {
     private PkiProfileBootstrap() { }
@@ -112,11 +116,18 @@ public final class PkiProfileBootstrap {
                 } catch (PkiException invalid) {
                     throw new IllegalArgumentException("Invalid profile document");
                 }
-                PkiOperationResult known = execute(session, new PkiOperation.ListProfileVersions(definition.profileId()));
-                long count = ((PkiOperationValue.IntegerValue) known.fields().get("count")).value();
-                if (count > 0) {
-                    skipped++;
-                    continue;
+                byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
+                String incomingShaHex = bootstrapSha256Hex(canonical);
+                PkiOperationResult listResult = execute(session, new PkiOperation.ListProfileVersions(definition.profileId()));
+                PkiOperationValue activeVersionValue = listResult.fields().get("activeVersion");
+                if (activeVersionValue instanceof PkiOperationValue.IntegerValue activeVersionInt) {
+                    PkiOperationResult inspectResult = execute(session,
+                            new PkiOperation.InspectProfile(definition.profileId(), activeVersionInt.value()));
+                    String activeShaHex = ((PkiOperationValue.Text) inspectResult.fields().get("canonicalSha256")).value();
+                    if (incomingShaHex.equals(activeShaHex)) {
+                        skipped++;
+                        continue;
+                    }
                 }
                 execute(session, new PkiOperation.RegisterProfile(document));
                 execute(session, new PkiOperation.ActivateProfile(definition.profileId(), definition.profileVersion()));
@@ -142,6 +153,14 @@ public final class PkiProfileBootstrap {
         PkiOperationOutcome outcome = session.operations().execute(operation, CancellationSignal.NONE);
         if (outcome instanceof PkiOperationOutcome.Completed completed) { return completed.result(); }
         throw new IllegalStateException("Profile bootstrap operation did not complete");
+    }
+
+    private static String bootstrapSha256Hex(byte[] data) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
     }
 
     private static void requireBootstrapConfiguration(LocalPkiSessionConfiguration configuration, String storeDirectory) {

@@ -73,6 +73,8 @@ tasks.named('npmInstall') {
 }
 
 def npmTypecheck = tasks.register('npmTypecheck', com.github.gradle.node.npm.task.NpmTask) {
+    dependsOn ':pki-server:generateSchema'
+    inputs.dir(project(':pki-server').layout.buildDirectory.dir('generated/schema'))
     dependsOn tasks.named('npmInstall')
     args = ['run', 'typecheck']
     inputs.dir('src')
@@ -88,6 +90,8 @@ def npmLint = tasks.register('npmLint', com.github.gradle.node.npm.task.NpmTask)
 }
 
 def npmUnitTest = tasks.register('npmUnitTest', com.github.gradle.node.npm.task.NpmTask) {
+    dependsOn ':pki-server:generateSchema'
+    inputs.dir(project(':pki-server').layout.buildDirectory.dir('generated/schema'))
     dependsOn tasks.named('npmInstall')
     args = ['run', 'test:ci']
     inputs.dir('src')
@@ -95,6 +99,8 @@ def npmUnitTest = tasks.register('npmUnitTest', com.github.gradle.node.npm.task.
 }
 
 def npmBuild = tasks.register('npmBuild', com.github.gradle.node.npm.task.NpmTask) {
+    dependsOn ':pki-server:generateSchema'
+    inputs.dir(project(':pki-server').layout.buildDirectory.dir('generated/schema'))
     dependsOn tasks.named('npmInstall'), npmTypecheck
     args = ['run', 'build']
     inputs.dir('src')

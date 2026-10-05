@@ -57,7 +57,7 @@ Two modes are selected purely by which options are present.
     Supplying `--url <https-base-url>` together with client certificate material
     (`--client-keystore`, or `--client-cert` and `--client-key`) selects remote
     mode. The command speaks the `pki-server` administrative API over mutual TLS;
-    `--config` is ignored because no local backend is opened.
+    `--config` is rejected because it conflicts with remote mode.
 
     ```console
     $ zeroecho pki ca.inspect \
@@ -142,14 +142,14 @@ marks not-yet-run steps skipped.
 
 ## Bounded wait for asynchronous signing
 
-Some operations (notably issuance routed to an asynchronous or remote signer) can
-finish after the command's synchronous window. `--pending-wait <seconds>`
-(default `3`, `0` to disable) bounds how long a step waits for such an operation
-to terminalize. If the wait elapses with the operation still pending, the command
-exits cleanly on the distinct `EXTERNAL_OUTCOME_UNKNOWN` classification (exit code
-`7`) without fabricating a result, so an operator or script can resume the
-operation later. With the default local synchronous signer, the first execution
-already terminalizes and the wait loop never runs.
+Remote submission may return a pending signing receipt. Remote-only
+`--pending-wait <seconds>` (default `3`, range `0`–`3600`) bounds polling after
+that submission. A still-pending or uncertain outcome exits `7` without
+fabricating a result. Inspect an available receipt using
+`signing.operation.inspect --operation-id ID` and the TLS connection options;
+do not blindly resubmit the mutation. Explicit inspection rejects the wait
+option. Local commands and plans execute synchronously and reject
+`--pending-wait` before opening the session.
 
 ## Output modes
 

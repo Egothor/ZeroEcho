@@ -50,6 +50,68 @@ import zeroecho.pki.api.backup.RestoreRequest;
 public interface BackupService {
 
     /**
+     * Durably stages a verified local replacement for activation on the next store open.
+     * Live safety authority must not regress. The caller retains ownership of the source.
+     * @param source bounded archive source
+     * @return staged status; never an activation acknowledgement
+     * @throws java.io.IOException if preparation or durable publication fails
+     * @throws UnsupportedOperationException if local staging is unsupported
+     */
+    default zeroecho.pki.api.backup.RestoreStatus stageRestore(
+            zeroecho.pki.api.backup.BackupSource source) throws java.io.IOException {
+        throw new UnsupportedOperationException("Local restore staging is unsupported");
+    }
+
+    /**
+     * Returns the latest local restore status without attempting activation.
+     * An uncertain publication requires cold reconciliation, not resubmission.
+     * @return latest status, or empty when none exists
+     * @throws java.io.IOException if the coordinator record is unreadable or corrupt
+     */
+    default java.util.Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws java.io.IOException {
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * Creates a bounded file-backed backup. The caller owns and closes the result.
+     * Existing implementations must opt in; the default never buffers a legacy archive.
+     * @param request backup request
+     * @return owned repeatable source
+     * @throws UnsupportedOperationException if streaming backup is unsupported
+     * @throws java.io.IOException if backup creation or cleanup fails
+     */
+    default zeroecho.pki.api.backup.BackupSource createBackupSource(
+            BackupRequest request) throws java.io.IOException {
+        throw new UnsupportedOperationException("Streaming backup is unsupported");
+    }
+
+    /**
+     * Checks an untrusted streaming archive after bounded file-backed ingestion.
+     * The source remains caller-owned; only streams opened by verification are closed.
+     * @param source untrusted input and its claimed commitment
+     * @return integrity and offline-recovery report, not proof of authenticity
+     * @throws UnsupportedOperationException if streaming verification is unsupported
+     */
+    default BackupVerificationReport verifyBackupSource(
+            zeroecho.pki.api.backup.BackupSource source) {
+        throw new UnsupportedOperationException("Streaming verification is unsupported");
+    }
+
+    /**
+     * Prepares verified staging without activating it or changing the live store.
+     * @param source caller-owned input
+     * @return caller-owned verified candidate
+     * @throws java.io.IOException if verification, staging or cleanup fails
+     * @throws UnsupportedOperationException if preparation is unsupported
+     */
+    default zeroecho.pki.api.backup.BackupPreparation prepareBackup(
+            zeroecho.pki.api.backup.BackupSource source) throws java.io.IOException {
+        throw new UnsupportedOperationException("Backup preparation is unsupported");
+    }
+
+
+
+    /**
      * Creates a backup of PKI state.
      *
      * @param request backup request
@@ -61,11 +123,14 @@ public interface BackupService {
 
     /**
      * Restores PKI state from a backup artifact.
+     * The built-in service rejects this legacy entry point without invoking a
+     * legacy store override. Use {@link #stageRestore} for explicit local staging.
      *
      * @param request restore request
      * @return restore report
      * @throws IllegalArgumentException if {@code request} is invalid
      * @throws PkiException             if restore fails
+     * @throws UnsupportedOperationException if safe restoration is unavailable
      */
     RestoreReport restoreBackup(RestoreRequest request);
 

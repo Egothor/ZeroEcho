@@ -95,7 +95,8 @@ public final class PkiServerConfigurationCodec {
     public static PkiServerConfiguration decode(byte[] document) {
         Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
         root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
-                "runtime", "publicListener", "acmeListener", "auditProjection"));
+                "runtime", "publicListener", "acmeListener", "estListener", "scepListener", "cmpListener",
+                "auditProjection"));
         int encodedVersion = root.integer("version");
         if (encodedVersion != PkiServerConfiguration.CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported server schema version");
@@ -104,7 +105,8 @@ public final class PkiServerConfigurationCodec {
                 root.text("serverName"), realm(root.object("realm")), listener(root.object("listener")),
                 authentication(root.object("authentication")), execution(root.object("execution")),
                 runtime(root.object("runtime")), publicListener(root.object("publicListener")),
-                acmeListener(root.object("acmeListener")),
+                acmeListener(root.object("acmeListener")), estListener(root.object("estListener")),
+                scepListener(root.object("scepListener")), cmpListener(root.object("cmpListener")),
                 auditProjection(root.object("auditProjection")));
         root.complete();
         return configuration;
@@ -428,6 +430,45 @@ public final class PkiServerConfigurationCodec {
         value.complete(); return Optional.of(result);
     }
 
+    private static Optional<PkiServerConfiguration.EstListener> estListener(Fields value) {
+        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
+                "execution", "maximumHeaderBytes", "maximumBodyBytes"));
+        if (!value.bool("enabled")) {
+            value.exact("enabled"); value.complete(); return Optional.empty();
+        }
+        PkiServerConfiguration.EstListener result = new PkiServerConfiguration.EstListener(
+                value.text("listenerId"), address(value.text("address")), value.integer("port"),
+                provider(value.object("tlsProvider")), execution(value.object("execution")),
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"));
+        value.complete(); return Optional.of(result);
+    }
+
+    private static Optional<PkiServerConfiguration.ScepListener> scepListener(Fields value) {
+        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
+                "execution", "maximumHeaderBytes", "maximumBodyBytes"));
+        if (!value.bool("enabled")) {
+            value.exact("enabled"); value.complete(); return Optional.empty();
+        }
+        PkiServerConfiguration.ScepListener result = new PkiServerConfiguration.ScepListener(
+                value.text("listenerId"), address(value.text("address")), value.integer("port"),
+                provider(value.object("tlsProvider")), execution(value.object("execution")),
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"));
+        value.complete(); return Optional.of(result);
+    }
+
+    private static Optional<PkiServerConfiguration.CmpListener> cmpListener(Fields value) {
+        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
+                "execution", "maximumHeaderBytes", "maximumBodyBytes"));
+        if (!value.bool("enabled")) {
+            value.exact("enabled"); value.complete(); return Optional.empty();
+        }
+        PkiServerConfiguration.CmpListener result = new PkiServerConfiguration.CmpListener(
+                value.text("listenerId"), address(value.text("address")), value.integer("port"),
+                provider(value.object("tlsProvider")), execution(value.object("execution")),
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"));
+        value.complete(); return Optional.of(result);
+    }
+
     private static List<ProviderConfig> providers(List<PkiOperationValue> source) {
         List<ProviderConfig> result = new ArrayList<>();
         for (PkiOperationValue item : source) result.add(provider(Fields.of(item)));
@@ -435,9 +476,12 @@ public final class PkiServerConfigurationCodec {
     }
 
     private static PkiServerConfiguration.RuntimeCapabilities runtime(Fields value) {
-        value.allowed(Set.of("keyUnlockEnvironmentVariable"));
+        value.allowed(Set.of("keyUnlockEnvironmentVariable",
+                "publisherSecretsStore", "publisherSecretsEnvironmentVariable"));
         PkiServerConfiguration.RuntimeCapabilities result = new PkiServerConfiguration.RuntimeCapabilities(
-                value.optionalText("keyUnlockEnvironmentVariable"));
+                value.optionalText("keyUnlockEnvironmentVariable"),
+                value.optionalText("publisherSecretsStore"),
+                value.optionalText("publisherSecretsEnvironmentVariable"));
         value.complete();
         return result;
     }

@@ -35,6 +35,9 @@ package zeroecho.pki.application;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -46,10 +49,10 @@ import java.util.Optional;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.PkiException;
-import zeroecho.pki.api.PkiFailureReason;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.api.schedule.StatusSchedule;
 import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.api.ca.CaRecord;
@@ -58,6 +61,8 @@ import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.ca.IssuerGenerationState;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.PkiFailureReason;
+import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
@@ -90,7 +95,8 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
 
 /** Explicit non-reflective executor for synchronous non-signing operations. */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.TooManyMethods" })
-final class DefaultPkiOperationExecutor implements PkiOperationExecutor, RevocationEvidenceExecutor, PkiSelectionExecutor, PkiConfigurationChoicesSource { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
+final class DefaultPkiOperationExecutor implements PkiOperationExecutor, RevocationEvidenceExecutor, PkiSelectionExecutor, PkiConfigurationChoicesSource { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
+    private static final String TEXT_CA_ID = "caId";
     private static final String PROFILE_ID = "profileId";
     private static final String ISSUER_ID = "issuerId";
     private static final String AUTHORITY_ID = "authorityId";
@@ -110,6 +116,12 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     private final X509AlgorithmBindingRegistry algorithmBindings;
     private final Runnable openCheck;
     private final PkiConfigurationChoicesSource configurationChoices;
+    private final Clock clock;
+    private final DashboardLiveSource liveSource;
+
+    // Cap credential scan at 100K to bound heap; countCapped=true signals the caller that the result was truncated.
+    private static final int CREDENTIAL_SCAN_CAP = 100_000;
+    private static final int DASHBOARD_PAGE_SIZE = 100;
 
     /** Only the diagnostic configuration facts used by the core operation catalog. */
     /* default */ record ConfigurationSummary(int version, String storeProvider, String auditProvider) {
@@ -125,7 +137,8 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
             ProfileService profiles, RevocationService revocations,
             Optional<CertificationRequestService> requests, Optional<PublicationService> publications,
             CredentialConfirmationService confirmations, X509AlgorithmBindingRegistry algorithmBindings,
-            Runnable openCheck, PkiConfigurationChoicesSource configurationChoices) {
+            Runnable openCheck, PkiConfigurationChoicesSource configurationChoices, Clock clock,
+            DashboardLiveSource liveSource) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
         this.store = Objects.requireNonNull(store, "store");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
@@ -136,6 +149,8 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
         this.openCheck = Objects.requireNonNull(openCheck, "openCheck");
         this.configurationChoices = Objects.requireNonNull(configurationChoices, "configurationChoices");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.liveSource = Objects.requireNonNull(liveSource, "liveSource");
     }
 
     @Override
@@ -152,54 +167,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         CancellationSignal signal = Objects.requireNonNull(cancellation, "cancellation");
         try {
             signal.throwIfCancelled();
-            PkiOperationResult result = switch (exact) {
-                case PkiOperation.ListAlgorithmBindings request -> selection(request, row -> true, signal);
-                case PkiOperation.ListProfiles request -> selection(request, row -> true, signal);
-                case PkiOperation.ListRequests request -> selection(request, row -> true, signal);
-                case PkiOperation.SearchCredentials request -> selection(request, row -> true, signal);
-                case PkiOperation.ListIssuerGenerations request -> selection(request, row -> true, signal);
-                case PkiOperation.InspectAlgorithmBinding request -> inspectAlgorithmBinding(request);
-                case PkiOperation.ValidateAlgorithmBindings request -> validateAlgorithmBindings(request);
-                case PkiOperation.ValidateConfiguration ignored -> validateConfiguration();
-                case PkiOperation.ValidateProfile request -> validateProfile(request);
-                case PkiOperation.RegisterProfile request -> registerProfile(request);
-                case PkiOperation.InspectProfile request -> inspectProfile(request);
-                case PkiOperation.ListProfileVersions request -> listProfileVersions(request);
-                case PkiOperation.ActivateProfile request -> activateProfile(request);
-                case PkiOperation.InspectAuthority request -> inspectAuthority(request);
-                case PkiOperation.InspectCredential request -> inspectCredential(request);
-                case PkiOperation.InspectIssuerGeneration request -> inspectIssuerGeneration(request);
-                case PkiOperation.InspectIssuerChainPath request -> inspectIssuerChainPath(request);
-                case PkiOperation.InspectStatus request -> inspectStatus(request);
-                case PkiOperation.ListAuthorities request -> selection(request, row -> true, signal);
-                case PkiOperation.ListStatus request -> selection(request, row -> true, signal);
-                case PkiOperation.ListIssuerChainPaths request -> listIssuerChainPaths(request);
-                case PkiOperation.TransitionAuthority request -> transitionAuthority(request);
-                case PkiOperation.SelectIssuancePath request -> selectIssuancePath(request);
-                case PkiOperation.RegisterIssuerChainPath request -> registerIssuerChainPath(request);
-                case PkiOperation.InspectRequest request -> inspectRequest(request);
-                case PkiOperation.ImportRequest request -> importRequest(request);
-                case PkiOperation.VerifyRequest request -> verifyRequest(request);
-                case PkiOperation.ListPendingCredentialConfirmations request -> listPendingConfirmations(request);
-                case PkiOperation.IssueCredentialConfirmationChallenge request -> issueChallenge(request);
-                case PkiOperation.CompleteCredentialConfirmationProof request -> completeProof(request);
-                case PkiOperation.RevokePendingCredentialConfirmation request -> revokePending(request,
-                        zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
-                case PkiOperation.RevokeCredential request -> revoke(request,
-                        zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
-                case PkiOperation.InspectRevocation request -> inspectRevocation(request);
-                case PkiOperation.ReadRevocationHistory request -> readHistory(request, signal);
-                case PkiOperation.SnapshotRevocations request -> snapshotRevocations(request, signal);
-                case PkiOperation.InspectPublication request -> inspectPublication(request);
-                case PkiOperation.ListPublications request -> selection(request, row -> true, signal);
-                case PkiOperation.RegisterPublication request -> registerPublication(request);
-                case PkiOperation.ProcessPublication request -> publicationResult(request.name(),
-                        requirePublication().process(request.publicationId()));
-                case PkiOperation.RetryPublication request -> publicationResult(request.name(),
-                        requirePublication().retry(request.publicationId()));
-                case PkiOperation.ReconcilePublication request -> publicationResult(request.name(),
-                        requirePublication().reconcile(request.publicationId()));
-            };
+            PkiOperationResult result = dispatch(exact, signal);
             return new PkiOperationOutcome.Completed(result);
         } catch (InterruptedIOException failure) {
             return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
@@ -266,7 +234,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     private PkiOperationResult selection(PkiOperation operation,
             java.util.function.Predicate<PkiOperationValue.ObjectValue> include, CancellationSignal cancellation) {
         return switch (operation) {
-            case PkiOperation.ListAuthorities query -> page(query.name(), "authorities", "caId", query.limit(),
+            case PkiOperation.ListAuthorities query -> page(query.name(), "authorities", TEXT_CA_ID, query.limit(),
                     store.selectAuthoritiesPage(query.after(), query.limit() + 1,
                             value -> include.test(object(authorityFields(value))), cancellation).stream()
                             .map(value -> object(authorityFields(value))).toList());
@@ -422,7 +390,19 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     }
 
     private PkiOperationResult registerProfile(PkiOperation.RegisterProfile request) {
-        return profileReferenceResult(request.name(), profiles.importProfile(request.document()));
+        CertificateProfileDefinition definition = CertificateProfileDocumentCodec.parse(request.document());
+        byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
+        byte[] incomingHash = sha256(canonical);
+        Optional<CertificateProfileRef> activeRef = profiles.getActiveReference(definition.profileId());
+        if (activeRef.isPresent() && MessageDigest.isEqual(activeRef.get().canonicalSha256(), incomingHash)) {
+            return profileReferenceResult(request.name(), activeRef.get());
+        }
+        CertificateProfileRef imported = profiles.importProfile(request.document());
+        if (!definition.approvalRequirement().requiresApproval()) {
+            return profileReferenceResult(request.name(),
+                    profiles.activateProfile(definition.profileId(), definition.profileVersion()));
+        }
+        return profileReferenceResult(request.name(), imported);
     }
 
     private PkiOperationResult inspectProfile(PkiOperation.InspectProfile request) {
@@ -456,7 +436,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
 
     private static Map<String, PkiOperationValue> authorityFields(CaRecord authority) {
         Map<String, PkiOperationValue> result = fields();
-        result.put("caId", text(authority.caId().value()));
+        result.put(TEXT_CA_ID, text(authority.caId().value()));
         result.put("kind", text(authority.kind().name()));
         result.put("state", text(authority.state().name()));
         result.put("issuerGenerationCount", integer(authority.issuerIds().size()));
@@ -480,12 +460,45 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         result.put(AUTHORITY_ID, text(credential.issuerRef().caId().value()));
         result.put(ISSUER_ID, text(credential.issuerRef().issuerId().value()));
         result.put("publicKeyId", text(credential.publicKeyId().value()));
+        result.put("subjectRef", text(credential.subjectRef().value()));
+        result.put("serialOrUniqueId", text(credential.serialOrUniqueId()));
         result.put(PROFILE_ID, text(profile.profileId()));
         result.put("profileVersion", integer(profile.profileVersion()));
         result.put(STATUS, text(credential.status().name()));
         result.put("notBefore", text(credential.validity().notBefore().toString()));
         result.put("notAfter", text(credential.validity().notAfter().toString()));
         return result;
+    }
+
+    private static java.util.function.Predicate<PkiOperationValue.ObjectValue> credentialSearchFilter(
+            PkiOperation.SearchCredentials q) {
+        java.util.function.Predicate<PkiOperationValue.ObjectValue> p = row -> true;
+        if (q.subjectFilter().isPresent()) {
+            String sub = q.subjectFilter().get().toLowerCase(java.util.Locale.ROOT);
+            p = p.and(row -> textField(row, "subjectRef").toLowerCase(java.util.Locale.ROOT).contains(sub));
+        }
+        if (q.serialFilter().isPresent()) {
+            String ser = q.serialFilter().get().toLowerCase(java.util.Locale.ROOT);
+            p = p.and(row -> textField(row, "serialOrUniqueId").toLowerCase(java.util.Locale.ROOT).contains(ser));
+        }
+        if (q.fingerprintFilter().isPresent()) {
+            String fp = q.fingerprintFilter().get().toLowerCase(java.util.Locale.ROOT);
+            p = p.and(row -> textField(row, CREDENTIAL_ID).toLowerCase(java.util.Locale.ROOT).startsWith(fp));
+        }
+        if (q.statusFilter().isPresent()) {
+            String status = q.statusFilter().get();
+            p = p.and(row -> textField(row, STATUS).equals(status));
+        }
+        if (q.profileIdFilter().isPresent()) {
+            String profile = q.profileIdFilter().get();
+            p = p.and(row -> textField(row, PROFILE_ID).equals(profile));
+        }
+        return p;
+    }
+
+    private static String textField(PkiOperationValue.ObjectValue row, String key) {
+        PkiOperationValue val = row.fields().get(key);
+        return val instanceof PkiOperationValue.Text t ? t.value() : "";
     }
 
     private PkiOperationResult inspectIssuerGeneration(PkiOperation.InspectIssuerGeneration request) {
@@ -574,7 +587,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 current.subjectRef(), current.issuerIds(), generation.issuerId(), path.pathId());
         if (!store.replaceCa(current, replacement)) { throw new Conflict(); }
         Map<String, PkiOperationValue> result = fields();
-        result.put("caId", text(request.caId().value()));
+        result.put(TEXT_CA_ID, text(request.caId().value()));
         result.put(ISSUER_ID, text(request.issuerId().value()));
         result.put("pathId", text(request.pathId().value()));
         return result(request.name(), result);
@@ -587,7 +600,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         if (!current.issuerIds().contains(request.issuerId()) || !current.caId().equals(generation.authorityId())) {
             throw new PkiException("Issuer generation is outside the authority");
         }
-        List<zeroecho.pki.api.PkiId> credentials = new ArrayList<>(parent.orderedCredentialIds().size() + 1);
+        List<PkiId> credentials = new ArrayList<>(parent.orderedCredentialIds().size() + 1);
         credentials.add(generation.credentialId());
         credentials.addAll(parent.orderedCredentialIds());
         IssuerChainPath path = IssuerChainPath.create(current.caId(), generation.issuerId(), credentials);
@@ -610,7 +623,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         CertificationRequestService service = requireRequests();
         ParsedCertificationRequest parsed = service.parse(new CertificationRequest(request.formatId(),
                 request.encoded()));
-        zeroecho.pki.api.PkiId id = service.store(parsed, RequestStorePolicy.STORE_ALWAYS);
+        PkiId id = service.store(parsed, RequestStorePolicy.STORE_ALWAYS);
         Map<String, PkiOperationValue> result = fields();
         result.put("requestId", text(id.value()));
         result.put(FORMAT_ID, text(parsed.formatId().value()));
@@ -772,6 +785,67 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return result(operation, result);
     }
 
+    private PkiOperationResult updateStatusSchedule(PkiOperation.SetStatusSchedule request) {
+        if (!store.supportsStatusScheduling()) { throw new CapabilityMissing(); }
+        java.time.Instant now = clock.instant();
+        StatusSchedule schedule = new StatusSchedule(request.caId(), request.statusType(), request.formatId(),
+                request.interval(), request.graceSeconds(), request.enabled(), request.publicationTarget(),
+                now, now, 0L);
+        StatusSchedule stored = store.putStatusSchedule(schedule);
+        return result(request.name(), scheduleFields(stored));
+    }
+
+    private PkiOperationResult inspectStatusSchedule(PkiOperation.InspectStatusSchedule request) {
+        StatusSchedule schedule = store.getStatusSchedule(request.caId(), request.statusType())
+                .orElseThrow(Missing::new);
+        Map<String, PkiOperationValue> result = scheduleFields(schedule);
+        if (store.supportsStatusScheduling()) {
+            zeroecho.pki.api.schedule.StatusScheduleState state = store.getStatusScheduleState(request.caId(), request.statusType()).orElseThrow(Missing::new);
+            result = scheduleFields(state.configuration());
+            result.put("nextDue", text(state.nextDue().toString()));
+            result.put("workerRevision", integer(state.workerRevision()));
+            result.put("executionState", text(state.execution().map(value -> value.phase().name()).orElse("IDLE")));
+            if (state.execution().isPresent()) {
+                zeroecho.pki.api.schedule.StatusScheduleState.Execution execution = state.execution().orElseThrow();
+                addScheduleExecution(result, execution);
+            }
+        }
+        return result(request.name(), result);
+    }
+
+    private static void addScheduleExecution(Map<String, PkiOperationValue> result,
+            zeroecho.pki.api.schedule.StatusScheduleState.Execution execution) {
+        result.put("executionId", text(execution.executionId()));
+        if (!execution.detailCode().isEmpty()) { result.put("failureCode", text(execution.detailCode())); }
+        execution.signingOperationId().ifPresent(id -> result.put("signingOperationId", text(id.value())));
+    }
+
+    private PkiOperationResult listStatusSchedules(PkiOperation.ListStatusSchedules request,
+            CancellationSignal signal) {
+        return page(request.name(), "schedules", "cursor", request.limit(),
+                store.listActiveStatusSchedulesPage(request.after(), request.limit() + 1, signal).stream()
+                        .map(s -> object(scheduleFields(s))).toList());
+    }
+
+    private static Map<String, PkiOperationValue> scheduleFields(StatusSchedule schedule) {
+        Map<String, PkiOperationValue> result = fields();
+        result.put("cursor", text(PkiStore.statusScheduleCursor(schedule)));
+        result.put(TEXT_CA_ID, text(schedule.caId().value()));
+        result.put("statusType", text(schedule.statusType().name()));
+        result.put("formatId", text(schedule.formatId().value()));
+        result.put("interval", text(schedule.interval().toString()));
+        result.put("graceSeconds", integer(schedule.graceSeconds()));
+        result.put("enabled", bool(schedule.enabled()));
+        schedule.publicationTarget().ifPresent(target -> {
+            result.put("publicationTargetType", text(target.type().name()));
+            result.put("publicationTargetId", text(target.targetId()));
+        });
+        result.put("createdAt", text(schedule.createdAt().toString()));
+        result.put("updatedAt", text(schedule.updatedAt().toString()));
+        result.put("revision", integer(schedule.revision()));
+        return result;
+    }
+
     private CertificationRequestService requireRequests() {
         return requests.orElseThrow(CapabilityMissing::new);
     }
@@ -858,6 +932,66 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return object(fields);
     }
 
+    private PkiOperationResult dispatch(PkiOperation exact, CancellationSignal signal) throws IOException {
+        return switch (exact) {
+            case PkiOperation.ListAlgorithmBindings request -> selection(request, row -> true, signal);
+            case PkiOperation.ListProfiles request -> selection(request, row -> true, signal);
+            case PkiOperation.ListRequests request -> selection(request, row -> true, signal);
+            case PkiOperation.SearchCredentials request -> selection(request, credentialSearchFilter(request), signal);
+            case PkiOperation.ListIssuerGenerations request -> selection(request, row -> true, signal);
+            case PkiOperation.InspectAlgorithmBinding request -> inspectAlgorithmBinding(request);
+            case PkiOperation.ValidateAlgorithmBindings request -> validateAlgorithmBindings(request);
+            case PkiOperation.ValidateConfiguration ignored -> validateConfiguration();
+            case PkiOperation.ValidateProfile request -> validateProfile(request);
+            case PkiOperation.RegisterProfile request -> registerProfile(request);
+            case PkiOperation.InspectProfile request -> inspectProfile(request);
+            case PkiOperation.ListProfileVersions request -> listProfileVersions(request);
+            case PkiOperation.ActivateProfile request -> activateProfile(request);
+            case PkiOperation.InspectAuthority request -> inspectAuthority(request);
+            case PkiOperation.InspectCredential request -> inspectCredential(request);
+            case PkiOperation.InspectIssuerGeneration request -> inspectIssuerGeneration(request);
+            case PkiOperation.InspectIssuerChainPath request -> inspectIssuerChainPath(request);
+            case PkiOperation.InspectStatus request -> inspectStatus(request);
+            case PkiOperation.ListAuthorities request -> selection(request, row -> true, signal);
+            case PkiOperation.ListStatus request -> selection(request, row -> true, signal);
+            case PkiOperation.ListIssuerChainPaths request -> listIssuerChainPaths(request);
+            case PkiOperation.TransitionAuthority request -> transitionAuthority(request);
+            case PkiOperation.SelectIssuancePath request -> selectIssuancePath(request);
+            case PkiOperation.RegisterIssuerChainPath request -> registerIssuerChainPath(request);
+            case PkiOperation.InspectRequest request -> inspectRequest(request);
+            case PkiOperation.ImportRequest request -> importRequest(request);
+            case PkiOperation.VerifyRequest request -> verifyRequest(request);
+            case PkiOperation.ListPendingCredentialConfirmations request -> listPendingConfirmations(request);
+            case PkiOperation.IssueCredentialConfirmationChallenge request -> issueChallenge(request);
+            case PkiOperation.CompleteCredentialConfirmationProof request -> completeProof(request);
+            case PkiOperation.RevokePendingCredentialConfirmation request -> revokePending(request,
+                    zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
+            case PkiOperation.RevokeCredential request -> revoke(request,
+                    zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
+            case PkiOperation.InspectRevocation request -> inspectRevocation(request);
+            case PkiOperation.ReadRevocationHistory request -> readHistory(request, signal);
+            case PkiOperation.SnapshotRevocations request -> snapshotRevocations(request, signal);
+            case PkiOperation.InspectPublication request -> inspectPublication(request);
+            case PkiOperation.ListPublications request -> selection(request, row -> true, signal);
+            case PkiOperation.RegisterPublication request -> registerPublication(request);
+            case PkiOperation.ProcessPublication request -> publicationResult(request.name(),
+                    requirePublication().process(request.publicationId()));
+            case PkiOperation.RetryPublication request -> publicationResult(request.name(),
+                    requirePublication().retry(request.publicationId()));
+            case PkiOperation.ReconcilePublication request -> publicationResult(request.name(),
+                    requirePublication().reconcile(request.publicationId()));
+            case PkiOperation.SetStatusSchedule request -> updateStatusSchedule(request);
+            case PkiOperation.InspectStatusSchedule request -> inspectStatusSchedule(request);
+            case PkiOperation.ListStatusSchedules request -> listStatusSchedules(request, signal);
+            case PkiOperation.QueryAuthorityMetrics request -> queryAuthorityMetrics(request, signal);
+            case PkiOperation.QueryCertificateMetrics request -> queryCertificateMetrics(request, signal);
+            case PkiOperation.QueryRevocationMetrics request -> queryRevocationMetrics(request, signal);
+            case PkiOperation.QueryPublicationMetrics request -> queryPublicationMetrics(request, signal);
+            case PkiOperation.QueryServerMetrics request -> queryServerMetrics(request);
+        };
+    }
+
+
     private static PkiOperationOutcome classify(String operation, RuntimeException exception) {
         if (exception instanceof java.util.concurrent.CancellationException) {
             return failure(operation, PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
@@ -878,16 +1012,33 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
             return failure(operation, PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_INPUT_INVALID");
         }
         if (exception instanceof PkiException pkiFailure) {
-            if (pkiFailure.failureReason().orElse(null) == PkiFailureReason.STORE_DURABILITY_UNCONFIRMED) {
-                return failure(operation, PkiOperationFailure.RECOVERY_REQUIRED, "RECOVERY_REQUIRED");
-            }
-            return failure(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+            return classifyPki(operation, pkiFailure);
         }
         if (exception instanceof IllegalStateException) {
             return failure(operation, PkiOperationFailure.RESOURCE_FAILURE, "PKI_RESOURCE_FAILED");
         }
         return failure(operation, PkiOperationFailure.INTERNAL_FAILURE, "INTERNAL_FAILURE");
     }
+
+    private static PkiOperationOutcome classifyPki(String operation, PkiException pkiFailure) {
+        Optional<PkiFailureReason> reason = pkiFailure.failureReason();
+        if (reason.isPresent()) {
+            return switch (reason.get().classification()) {
+                case RECOVERY_REQUIRED -> failure(operation, PkiOperationFailure.RECOVERY_REQUIRED, "RECOVERY_REQUIRED");
+                case NOT_FOUND -> failure(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
+                case CONFLICT -> failure(operation, PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT");
+                case RESOURCE_FAILURE -> failure(operation, PkiOperationFailure.RESOURCE_FAILURE, "PKI_RESOURCE_FAILED");
+                case EXTERNAL_OUTCOME_UNKNOWN -> failure(operation, PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN, "EXTERNAL_OUTCOME_UNKNOWN");
+                case VALIDATION_FAILURE -> failure(operation, PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_INPUT_INVALID");
+                case CANCELLED -> failure(operation, PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+                case OVERLOADED -> failure(operation, PkiOperationFailure.OVERLOADED, "PKI_OVERLOADED");
+                case INTERNAL_FAILURE -> failure(operation, PkiOperationFailure.INTERNAL_FAILURE, "INTERNAL_FAILURE");
+                default -> failure(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+            };
+        }
+        return failure(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+    }
+
 
     private static PkiOperationOutcome failure(String operation, PkiOperationFailure classification, String code) {
         return new PkiOperationOutcome.Failed(operation, classification, code);
@@ -901,6 +1052,225 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     private static PkiOperationValue text(String value) { return new PkiOperationValue.Text(value); }
     private static PkiOperationValue integer(long value) { return new PkiOperationValue.IntegerValue(value); }
     private static PkiOperationValue bool(boolean value) { return new PkiOperationValue.BooleanValue(value); }
+
+    private static byte[] sha256(byte[] value) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(value);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private PkiOperationResult queryAuthorityMetrics(PkiOperation.QueryAuthorityMetrics request,
+            CancellationSignal signal) throws IOException {
+        CaRecord ca = store.getCa(request.caId()).orElseThrow(Missing::new);
+        long totalGenerations = 0L;
+        long activeGenerations = 0L;
+        Optional<String> after = Optional.empty();
+        while (true) {
+            signal.throwIfCancelled();
+            List<IssuerGeneration> page = store.listIssuerGenerationsPage(
+                    request.caId(), after, DASHBOARD_PAGE_SIZE + 1, g -> true, signal);
+            boolean hasMore = page.size() > DASHBOARD_PAGE_SIZE;
+            List<IssuerGeneration> batch = hasMore ? page.subList(0, DASHBOARD_PAGE_SIZE) : page;
+            totalGenerations += batch.size();
+            activeGenerations += batch.stream().filter(g -> g.state() == IssuerGenerationState.ACTIVE).count();
+            if (!hasMore) { break; }
+            after = Optional.of(batch.get(batch.size() - 1).issuerId().value());
+        }
+        int chainDepth = store.getIssuerChainPath(ca.issuanceChainPathId())
+                .map(path -> path.orderedCredentialIds().size()).orElse(0);
+        Map<String, PkiOperationValue> result = fields();
+        result.put(TEXT_CA_ID, text(ca.caId().value()));
+        result.put("caState", text(ca.state().name()));
+        result.put("issuerGenerationsTotal", integer(totalGenerations));
+        result.put("issuerGenerationsActive", integer(activeGenerations));
+        result.put("issuanceChainDepth", integer(chainDepth));
+        result.put("computedAt", text(clock.instant().toString()));
+        return result(request.name(), result);
+    }
+
+    private PkiOperationResult queryCertificateMetrics(PkiOperation.QueryCertificateMetrics request,
+            CancellationSignal signal) throws IOException {
+        java.time.Instant now = clock.instant();
+        java.time.Instant in7d = now.plus(java.time.Duration.ofDays(7));
+        java.time.Instant in30d = now.plus(java.time.Duration.ofDays(30));
+        java.time.Instant in90d = now.plus(java.time.Duration.ofDays(90));
+        long total = 0L;
+        long activeTotal = 0L;
+        long expiring7d = 0L;
+        long expiring30d = 0L;
+        long expiring90d = 0L;
+        long revokedTotal = 0L;
+        long expiredTotal = 0L;
+        boolean countCapped = false;
+        Optional<String> after = Optional.empty();
+        while (total < CREDENTIAL_SCAN_CAP) {
+            signal.throwIfCancelled();
+            List<Credential> page = store.listCredentialsPage(
+                    request.caId(), after, DASHBOARD_PAGE_SIZE + 1, c -> true, signal);
+            boolean hasMore = page.size() > DASHBOARD_PAGE_SIZE;
+            List<Credential> batch = hasMore ? page.subList(0, DASHBOARD_PAGE_SIZE) : page;
+            for (Credential c : batch) {
+                zeroecho.pki.api.credential.CredentialStatus status = c.status();
+                java.time.Instant notAfter = c.validity().notAfter();
+                if (status == zeroecho.pki.api.credential.CredentialStatus.ISSUED && notAfter.isAfter(now)) {
+                    activeTotal++;
+                    if (notAfter.isBefore(in7d)) { expiring7d++; }
+                    if (notAfter.isBefore(in30d)) { expiring30d++; }
+                    if (notAfter.isBefore(in90d)) { expiring90d++; }
+                } else if (status == zeroecho.pki.api.credential.CredentialStatus.REVOKED) {
+                    revokedTotal++;
+                } else if (status == zeroecho.pki.api.credential.CredentialStatus.EXPIRED
+                        || status == zeroecho.pki.api.credential.CredentialStatus.ISSUED && !notAfter.isAfter(now)) {
+                    expiredTotal++;
+                }
+            }
+            total += batch.size();
+            if (!hasMore) { break; }
+            if (total >= CREDENTIAL_SCAN_CAP) { countCapped = true; break; }
+            after = Optional.of(batch.get(batch.size() - 1).credentialId().value());
+        }
+        Map<String, PkiOperationValue> result = fields();
+        result.put(TEXT_CA_ID, text(request.caId().value()));
+        result.put("certificatesTotal", integer(total));
+        result.put("countCapped", bool(countCapped));
+        result.put("activeTotal", integer(activeTotal));
+        result.put("expiring7dTotal", integer(expiring7d));
+        result.put("expiring30dTotal", integer(expiring30d));
+        result.put("expiring90dTotal", integer(expiring90d));
+        result.put("revokedTotal", integer(revokedTotal));
+        result.put("expiredTotal", integer(expiredTotal));
+        result.put("metricStates", object(Map.of("pendingRequestsTotal", metricState(
+                DashboardLiveSource.Metric.unavailable("CA_REQUEST_LIFECYCLE_UNAVAILABLE")))));
+        result.put("computedAt", text(now.toString()));
+        return result(request.name(), result);
+    }
+
+    private PkiOperationResult queryRevocationMetrics(PkiOperation.QueryRevocationMetrics request,
+            CancellationSignal signal) throws IOException {
+        long revokedTotal = 0L;
+        Optional<String> after = Optional.empty();
+        while (true) {
+            signal.throwIfCancelled();
+            List<Credential> page = store.listCredentialsPage(request.caId(), after, DASHBOARD_PAGE_SIZE + 1,
+                    c -> c.status() == zeroecho.pki.api.credential.CredentialStatus.REVOKED, signal);
+            boolean hasMore = page.size() > DASHBOARD_PAGE_SIZE;
+            List<Credential> batch = hasMore ? page.subList(0, DASHBOARD_PAGE_SIZE) : page;
+            revokedTotal += batch.size();
+            if (!hasMore) { break; }
+            after = Optional.of(batch.get(batch.size() - 1).credentialId().value());
+        }
+        Optional<StatusObject> latestCrl = Optional.empty();
+        after = Optional.empty();
+        while (true) {
+            signal.throwIfCancelled();
+            List<StatusObject> page = store.listStatusObjectsPage(request.caId(), after, DASHBOARD_PAGE_SIZE + 1,
+                    s -> s.type() == zeroecho.pki.api.status.StatusObjectType.CRL, signal);
+            boolean hasMore = page.size() > DASHBOARD_PAGE_SIZE;
+            List<StatusObject> batch = hasMore ? page.subList(0, DASHBOARD_PAGE_SIZE) : page;
+            for (StatusObject s : batch) {
+                if (latestCrl.isEmpty() || s.thisUpdate().isAfter(latestCrl.get().thisUpdate())) {
+                    latestCrl = Optional.of(s);
+                }
+            }
+            if (!hasMore) { break; }
+            after = Optional.of(batch.get(batch.size() - 1).statusObjectId().value());
+        }
+        java.time.Instant now = clock.instant();
+        Map<String, PkiOperationValue> result = fields();
+        result.put(TEXT_CA_ID, text(request.caId().value()));
+        result.put("revokedTotal", integer(revokedTotal));
+        if (latestCrl.isPresent()) {
+            StatusObject crl = latestCrl.get();
+            result.put("crlLastGeneratedEpoch", integer(crl.thisUpdate().getEpochSecond()));
+            result.put("crlFreshnessSeconds", integer(now.getEpochSecond() - crl.thisUpdate().getEpochSecond()));
+            crl.nextUpdate().ifPresent(next -> result.put("crlNextUpdateEpoch", integer(next.getEpochSecond())));
+            result.put("crlSizeBytes", integer(crl.content().length()));
+        }
+        result.put("computedAt", text(now.toString()));
+        return result(request.name(), result);
+    }
+
+    private PkiOperationResult queryPublicationMetrics(PkiOperation.QueryPublicationMetrics request,
+            CancellationSignal signal) throws IOException {
+        Optional<StatusObject> latestCrl = latestCrl(request.caId(), signal);
+        long pendingPublications = 0L;
+        long terminalFailures = 0L;
+        Optional<String> after = Optional.empty();
+        while (true) {
+            signal.throwIfCancelled();
+            List<PublicationRecord> page = store.listPublicationsPage(after, DASHBOARD_PAGE_SIZE + 1,
+                    publication -> publicationAuthority(publication).filter(request.caId()::equals).isPresent(), signal);
+            boolean hasMore = page.size() > DASHBOARD_PAGE_SIZE;
+            List<PublicationRecord> batch = hasMore ? page.subList(0, DASHBOARD_PAGE_SIZE) : page;
+            for (PublicationRecord p : batch) {
+                if (p.status() == PublicationStatus.PENDING) { pendingPublications++; }
+                if (p.status() == PublicationStatus.TERMINAL_FAILURE) { terminalFailures++; }
+            }
+            if (!hasMore) { break; }
+            after = Optional.of(batch.get(batch.size() - 1).publicationId().value());
+        }
+        java.time.Instant now = clock.instant();
+        Map<String, PkiOperationValue> result = fields();
+        result.put(TEXT_CA_ID, text(request.caId().value()));
+        result.put("publicationsPendingTotal", integer(pendingPublications));
+        result.put("publicationsTerminalFailureTotal", integer(terminalFailures));
+        if (latestCrl.isPresent()) {
+            StatusObject crl = latestCrl.get();
+            result.put("crlLastGeneratedEpoch", integer(crl.thisUpdate().getEpochSecond()));
+            crl.nextUpdate().ifPresent(next -> result.put("crlNextUpdateEpoch", integer(next.getEpochSecond())));
+        }
+        result.put("computedAt", text(now.toString()));
+        return result(request.name(), result);
+    }
+
+    private Optional<StatusObject> latestCrl(PkiId authorityId, CancellationSignal signal) throws IOException {
+        Optional<StatusObject> latestCrl = Optional.empty();
+        Optional<String> after = Optional.empty();
+        while (true) {
+            signal.throwIfCancelled();
+            List<StatusObject> page = store.listStatusObjectsPage(authorityId, after, DASHBOARD_PAGE_SIZE + 1,
+                    s -> s.type() == zeroecho.pki.api.status.StatusObjectType.CRL, signal);
+            boolean hasMore = page.size() > DASHBOARD_PAGE_SIZE;
+            List<StatusObject> batch = hasMore ? page.subList(0, DASHBOARD_PAGE_SIZE) : page;
+            for (StatusObject s : batch) {
+                if (latestCrl.isEmpty() || s.thisUpdate().isAfter(latestCrl.get().thisUpdate())) {
+                    latestCrl = Optional.of(s);
+                }
+            }
+            if (!hasMore) { break; }
+            after = Optional.of(batch.get(batch.size() - 1).statusObjectId().value());
+        }
+        return latestCrl;
+    }
+
+
+    private PkiOperationResult queryServerMetrics(PkiOperation.QueryServerMetrics request) {
+        Map<String, PkiOperationValue> result = fields();
+        Map<String, PkiOperationValue> states = fields();
+        liveSource.snapshot().forEach((name, metric) -> {
+            metric.value().ifPresent(value -> result.put(name, integer(value)));
+            states.put(name, metricState(metric));
+        });
+        result.put("metricStates", object(states));
+        result.put("computedAt", text(clock.instant().toString()));
+        return result(request.name(), result);
+    }
+
+    private Optional<PkiId> publicationAuthority(PublicationRecord publication) {
+        return switch (publication.sourceType()) {
+            case STATUS_OBJECT -> store.getStatusObject(publication.sourceId()).map(StatusObject::issuerCaId);
+            case CREDENTIAL -> store.getCredential(publication.sourceId()).map(value -> value.issuerRef().caId());
+        };
+    }
+
+    private static PkiOperationValue metricState(DashboardLiveSource.Metric metric) {
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put("state", text(metric.state().name()));
+        if (!metric.reason().isEmpty()) { fields.put("reason", text(metric.reason())); }
+        return object(fields);
+    }
 
     /** Internal control signal for a missing authoritative object. */
     private static final class Missing extends RuntimeException { private static final long serialVersionUID = 1L; }

@@ -276,6 +276,7 @@ public final class DefaultProfileService implements ProfileService {
     }
 
     private void validateBindings(CertificateProfileDefinition definition) {
+        definition.requireSupportedIssuance();
         X509AlgorithmBindingPolicy policy = definition.algorithmBindingPolicy();
         if (policy.mode() == X509AlgorithmBindingPolicy.Mode.STANDARD_ONLY) {
             return;

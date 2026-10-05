@@ -106,6 +106,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
     private final Optional<PkiSigningCommands> signingCommands;
     private final AtomicReference<Lifecycle> lifecycle;
     private final Optional<LocalSigningExecutor> localSigning;
+    private final Optional<zeroecho.pki.api.schedule.StatusScheduleCoordinator> statusSchedules;
     private final ReentrantLock closeLock = new ReentrantLock();
 
     private DefaultPkiSession(DefaultPkiOperationExecutor.ConfigurationSummary configuration, PkiStore store, AuditSink audit,
@@ -115,7 +116,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             ServiceGraph graph, SigningGraph signingGraph, List<zeroecho.pki.api.KeyRef> configuredKeys,
             Optional<LocalSigningConfiguration> localConfiguration, Optional<zeroecho.pki.api.audit.Principal> operator,
             zeroecho.pki.impl.core.signing.SigningStepExecutor.OuterTerminalDriver localDriver,
-            AtomicReference<Lifecycle> lifecycle) {
+            AtomicReference<Lifecycle> lifecycle, DashboardLiveSource liveSource) {
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
         this.store = Objects.requireNonNull(store, "store");
         this.audit = Objects.requireNonNull(audit, "audit");
@@ -134,7 +135,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         DefaultPkiConfigurationChoices choices = new DefaultPkiConfigurationChoices(configuredKeys, store,
                 Optional.ofNullable(signingGraph.provider()), graph.targets(), this::requireOpen);
         PkiOperationExecutor coreOperations = new DefaultPkiOperationExecutor(configuration, store, profiles, revocations,
-                requests, publications, confirmations, algorithmBindings, this::requireOpen, choices);
+                requests, publications, confirmations, algorithmBindings, this::requireOpen, choices, clock,
+                liveSource);
         Optional<LocalInvocationAudit> localAudit = operator.map(value -> new LocalInvocationAudit(audit, clock, value));
         this.operations = localAudit.<PkiOperationExecutor>map(value ->
                 new LocalPkiOperationExecutor(coreOperations, choices, value, this::requireOpen)).orElse(coreOperations);
@@ -142,6 +144,9 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                 signingGraph.provider(), signingGraph.semanticService().orElseThrow(), signingCommands.orElseThrow(),
                 value, localDriver,
                 localAudit.orElseThrow(), this::requireOpen));
+        this.statusSchedules = store.supportsStatusScheduling() ? signingGraph.semanticService()
+                .map(service -> new DefaultStatusScheduleCoordinator(store, (DefaultSemanticSigningService) service,
+                        localSigning, publications, this::requireOpen)) : Optional.empty();
     }
 
     /* default */ static PkiSession open(PkiSessionConfiguration configuration) {
@@ -202,7 +207,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                     runtime.credentialConfirmationProofPolicy(), exactClock, graph, signingGraph,
                     exact.signing().stream().flatMap(value -> value.topology().exactGroups().stream())
                             .flatMap(group -> group.keyRefs().stream()).toList(),
-                    Optional.empty(), Optional.empty(), null, new AtomicReference<>(Lifecycle.OPEN));
+                    Optional.empty(), Optional.empty(), null, new AtomicReference<>(Lifecycle.OPEN),
+                    runtime.dashboardLiveSource());
             signingGraph.start();
             return session;
         } catch (RuntimeException | Error primary) {
@@ -263,7 +269,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                     store, audit, profiles, revocations, bindings.registry(), proofProviders,
                     runtime.credentialConfirmationProofPolicy(), exactClock, graph, signingGraph, List.of(),
                     exact.signing(), Optional.of(new zeroecho.pki.api.audit.Principal("LOCAL_OPERATOR", exact.operatorId())),
-                    driver, lifecycle);
+                    driver, lifecycle, runtime.dashboardLiveSource());
         } catch (RuntimeException | Error primary) {
             closeResource(signingGraph, primary);
             closeGraphAfterConstructionFailure(graph, primary);
@@ -282,8 +288,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         if (configured.isEmpty()) { return SigningGraph.empty(); }
         LocalSigningConfiguration signing = configured.orElseThrow();
         SigningProviderRuntimeDependencies providerDependencies = runtime.keyringUnlockProvider()
-                .map(SigningProviderRuntimeDependencies::withKeyringUnlockProvider)
-                .orElseGet(SigningProviderRuntimeDependencies::none);
+                .map(provider -> SigningProviderRuntimeDependencies.withKeyringUnlockProvider(provider, clock))
+                .orElseGet(() -> SigningProviderRuntimeDependencies.withClock(clock));
         PkiBootstrap.SigningComposition allocation = bootstrap.openSigningComposition(signing.provider(), providerDependencies);
         SigningProvider provider = allocation.provider();
         try {
@@ -292,10 +298,16 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             long pureEdDsaMaximum = signing.resolvePureEdDsaMaximumTbsBytes(Runtime.getRuntime().maxMemory());
             DefaultSigningService service = new DefaultSigningService(store, provider,
                     defaultSignature, signing.signingTtl(), new SecureRandom(), requireOpen,
-                    (command, transferCustody) -> {
-                        requireOpen.run();
-                        transferCustody.run();
-                        return store.acceptSign(command);
+                    new DefaultSigningService.AcceptanceOperation() {
+                        @Override public zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceResult accept(
+                                zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommand command, Runnable transferCustody) {
+                            requireOpen.run(); transferCustody.run(); return store.acceptSign(command);
+                        }
+                        @Override public zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceResult acceptScheduled(
+                                zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommand command,
+                                zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
+                            requireOpen.run(); transferCustody.run(); return store.acceptScheduledSign(command, claim);
+                        }
                     }, () -> { }, (operationId, cancellation) -> {
                         throw new UnsupportedOperationException("Local signing does not support bounded observation waits");
                     });
@@ -318,8 +330,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         }
         PkiSessionConfiguration.SigningConfiguration signing = configuration.signing().orElseThrow();
         SigningProviderRuntimeDependencies providerDependencies = runtime.keyringUnlockProvider()
-                .map(SigningProviderRuntimeDependencies::withKeyringUnlockProvider)
-                .orElseGet(SigningProviderRuntimeDependencies::none);
+                .map(provider -> SigningProviderRuntimeDependencies.withKeyringUnlockProvider(provider, clock))
+                .orElseGet(() -> SigningProviderRuntimeDependencies.withClock(clock));
         PkiBootstrap.SigningComposition allocation = bootstrap.openSigningComposition(signing.provider(), providerDependencies);
         SigningProvider provider = allocation.provider();
         try {
@@ -330,7 +342,17 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                     signing.topology(), new SigningOuterTerminalDriver(store, authority, verification, pureEdDsaMaximum));
             DefaultSigningService service = new DefaultSigningService(store, provider,
                     defaultSignature, signing.signingTtl(), new SecureRandom(),
-                    reactor::requireAccepting, reactor::acceptSign, reactor::wake, reactor::awaitBoundedObservation);
+                    reactor::requireAccepting, new DefaultSigningService.AcceptanceOperation() {
+                        @Override public zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceResult accept(
+                                zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommand command, Runnable transferCustody) {
+                            return reactor.acceptSign(command, transferCustody);
+                        }
+                        @Override public zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceResult acceptScheduled(
+                                zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommand command,
+                                zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
+                            return reactor.acceptScheduledSign(command, claim, transferCustody);
+                        }
+                    }, reactor::wake, reactor::awaitBoundedObservation);
             DefaultSemanticSigningService semantic = composeSemantic(store, clock, authority, verification,
                     bindings, signing.signatureAlgorithm(), provider, signingAuthority, pureEdDsaMaximum, service);
             return new SigningGraph(Optional.of(service), Optional.of(semantic),
@@ -537,6 +559,11 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         return localSigning;
     }
 
+    @Override public Optional<zeroecho.pki.api.schedule.StatusScheduleCoordinator> statusSchedules() {
+        requireOpen();
+        return statusSchedules;
+    }
+
     @Override public Optional<OcspResponseService> ocsp() {
         requireOpen();
         return signingGraph.ocspService();
@@ -594,6 +621,15 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
     public zeroecho.pki.spi.store.AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         requireOpen();
         return store.openPublicationEvidenceFeed(afterSequenceExclusive);
+    }
+
+    @Override
+    public Optional<zeroecho.pki.api.BackupService> backup() {
+        requireOpen();
+        if (!store.supportsBackup()) {
+            return Optional.empty();
+        }
+        return Optional.of(new StoreBackedBackupService(store));
     }
 
     @Override

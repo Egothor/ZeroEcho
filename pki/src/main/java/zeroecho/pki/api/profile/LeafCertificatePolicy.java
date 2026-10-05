@@ -55,7 +55,7 @@ public record LeafCertificatePolicy(SubjectAlternativeNamePolicy subjectAlternat
         implements CertificatePolicy {
 
     private static final Set<String> SUPPORTED_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
-            "SPHINCS+");
+            "SPHINCS+", "ML-DSA", "SLH-DSA", "LMS", "XMSS");
 
     /**
      * Validates and constructs the policy.

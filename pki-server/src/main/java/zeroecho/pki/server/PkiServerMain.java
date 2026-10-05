@@ -35,22 +35,43 @@ package zeroecho.pki.server;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.impl.secrets.PublisherSecretResolver;
+import zeroecho.pki.impl.secrets.PublisherSecretsStore;
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.sdk.guard.UnlockMaterial;
 
 /** Production command-line entry point for the administrative HTTPS server. */
 @SuppressWarnings("PMD")
 public final class PkiServerMain {
+    private static final Logger LOG = Logger.getLogger(PkiServerMain.class.getName());
+    private static final String DEV_PASSWORD_FLAG = "--publisher-secrets-dev-password";
+
     private static final String HELP = """
             Usage: zeroecho-pki-server --config <server-config.json>
                    zeroecho-pki-server --validate-config --config <server-config.json>
                    zeroecho-pki-server --help
                    zeroecho-pki-server --version
+
+            Optional (development/debug only — MUST NOT be used in production):
+                   zeroecho-pki-server --config <...> --publisher-secrets-dev-password <password>
+
+            WARNING: --publisher-secrets-dev-password exposes the secrets store password in the
+            process argument list and system logs. It is visible to all users on the system.
+            Use publisherSecretsEnvironmentVariable in the server configuration for production.
             """;
 
     private PkiServerMain() {
@@ -78,13 +99,16 @@ public final class PkiServerMain {
                 System.out.println("zeroecho-pki-server " + version);
                 return 0;
             }
-            boolean validate = Arrays.asList(arguments).contains("--validate-config");
-            Path path = configurationPath(arguments, validate);
+            char[] devPassword = extractDevPassword(arguments);
+            String[] remaining = stripDevPasswordFlag(arguments);
+            boolean validate = Arrays.asList(remaining).contains("--validate-config");
+            Path path = configurationPath(remaining, validate);
             PkiServerConfiguration configuration = PkiServerConfigurationCodec.read(path);
             if (validate) {
                 System.out.println("configuration valid");
                 return 0;
             }
+            configuration = resolvePublisherSecrets(configuration, devPassword);
             PkiSessionRuntimeDependencies dependencies = runtimeDependencies(configuration);
             PkiHttpsServer server = PkiHttpsServer.start(configuration, dependencies);
             server.installShutdownHook();
@@ -93,7 +117,7 @@ public final class PkiServerMain {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             return 0;
-        } catch (IOException | IllegalArgumentException failure) {
+        } catch (IOException | IllegalArgumentException | GeneralSecurityException failure) {
             System.err.println("Server configuration is invalid");
             return 2;
         } catch (RuntimeException failure) {
@@ -127,5 +151,106 @@ public final class PkiServerMain {
             }
         };
         return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(provider);
+    }
+
+    // --- publisher secrets resolution ---
+
+    private static PkiServerConfiguration resolvePublisherSecrets(
+            PkiServerConfiguration configuration, char[] devPassword)
+            throws IOException, GeneralSecurityException {
+        List<ProviderConfig> publishers = configuration.realm().pkiSessionConfiguration().publishers();
+        Optional<String> storePath = configuration.runtime().publisherSecretsStore();
+
+        boolean hasKeyringRef = publishers.stream()
+                .flatMap(p -> p.properties().values().stream())
+                .anyMatch(v -> v.startsWith("keyring:"));
+        if (hasKeyringRef && storePath.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Publisher configuration references 'keyring:' secrets but "
+                    + "runtime.publisherSecretsStore is not configured");
+        }
+
+        Map<String, String> secrets = Map.of();
+        if (storePath.isPresent()) {
+            char[] password = resolveStorePassword(configuration, devPassword);
+            try {
+                secrets = PublisherSecretsStore.open(Path.of(storePath.get()),
+                        new UnlockMaterial.Password(password));
+            } finally {
+                Arrays.fill(password, '\0');
+            }
+        }
+
+        PublisherSecretResolver resolver = new PublisherSecretResolver(secrets);
+        List<ProviderConfig> resolved = new ArrayList<>(publishers.size());
+        for (ProviderConfig publisher : publishers) {
+            resolved.add(resolver.resolve(publisher));
+        }
+        return withResolvedPublishers(configuration, List.copyOf(resolved));
+    }
+
+    private static char[] resolveStorePassword(PkiServerConfiguration configuration,
+            char[] devPassword) throws IOException {
+        if (devPassword != null) {
+            return devPassword.clone();
+        }
+        String envVar = configuration.runtime().publisherSecretsEnvironmentVariable()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Publisher secrets store is configured but neither "
+                        + "publisherSecretsEnvironmentVariable nor "
+                        + "--publisher-secrets-dev-password is provided"));
+        String value = System.getenv(envVar);
+        if (value == null || value.isEmpty()) {
+            throw new IOException(
+                    "Publisher secrets password environment variable is not set: " + envVar);
+        }
+        return value.toCharArray();
+    }
+
+    private static PkiServerConfiguration withResolvedPublishers(
+            PkiServerConfiguration configuration, List<ProviderConfig> resolvedPublishers) {
+        PkiSessionConfiguration session = configuration.realm().pkiSessionConfiguration();
+        PkiSessionConfiguration newSession = new PkiSessionConfiguration(
+                session.version(), session.store(), session.audit(), session.signing(),
+                resolvedPublishers, session.bindingProviders());
+        ServerRealmConfiguration realm = configuration.realm();
+        ServerRealmConfiguration newRealm = new ServerRealmConfiguration(
+                realm.realmId(), realm.displayName(), realm.confirmationProofPolicy(),
+                newSession, realm.authorityExposure(), realm.authorizationCommitment(),
+                realm.approvalCommitment(), realm.extendedApprovalCommitment(),
+                realm.disclosureCommitment(), realm.disclosureDefaults(),
+                realm.controlLogPath(), realm.controlStoreId(), realm.approvalPolicies());
+        return new PkiServerConfiguration(
+                configuration.version(), configuration.serverName(), newRealm,
+                configuration.listener(), configuration.authentication(), configuration.execution(),
+                configuration.runtime(), configuration.publicListener(), configuration.acmeListener(),
+                configuration.estListener(), configuration.scepListener(), configuration.cmpListener(),
+                configuration.auditProjection());
+    }
+
+    // --- argument parsing helpers ---
+
+    private static char[] extractDevPassword(String[] arguments) {
+        List<String> list = Arrays.asList(arguments);
+        int idx = list.indexOf(DEV_PASSWORD_FLAG);
+        if (idx < 0) return null;
+        if (idx + 1 >= list.size()) {
+            throw new IllegalArgumentException("Missing value for " + DEV_PASSWORD_FLAG);
+        }
+        LOG.log(Level.SEVERE,
+                "SECURITY WARNING: --publisher-secrets-dev-password is active. "
+                + "The secrets store password is exposed in the process argument list. "
+                + "This MUST NOT be used in production environments.");
+        return list.get(idx + 1).toCharArray();
+    }
+
+    private static String[] stripDevPasswordFlag(String[] arguments) {
+        List<String> list = new ArrayList<>(Arrays.asList(arguments));
+        int idx = list.indexOf(DEV_PASSWORD_FLAG);
+        if (idx >= 0) {
+            if (idx + 1 < list.size()) list.remove(idx + 1);
+            list.remove(idx);
+        }
+        return list.toArray(String[]::new);
     }
 }

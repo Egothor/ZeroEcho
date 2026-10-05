@@ -61,6 +61,7 @@ public final class CryptoAlgorithms {
     private static Map<String, CryptoAlgorithm> loadRegistry() {
         Map<String, CryptoAlgorithm> algorithms = new TreeMap<>();
         for (CryptoAlgorithm algorithm : ServiceLoader.load(CryptoAlgorithm.class)) {
+            ParameterSetDescriptor.snapshot(algorithm.parameterSets());
             CryptoAlgorithm previous = algorithms.put(algorithm.id(), algorithm);
             if (previous != null) {
                 throw new IllegalStateException("Duplicate algorithm id: " + algorithm.id());

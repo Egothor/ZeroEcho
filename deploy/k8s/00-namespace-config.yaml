@@ -43,7 +43,7 @@ kind: Namespace
 metadata:
   name: zeroecho-pki
 ---
-# Strict versioned server configuration (schema version 7), trusted-proxy /
+# Strict versioned server configuration (schema version 8), trusted-proxy /
 # RFC 9440 topology. Replace commitments and mappings with your realm's values;
 # this is the shape, sourced from docs/pki-server-trusted-proxy-rfc9440-example.json.
 apiVersion: v1
@@ -54,7 +54,7 @@ metadata:
 data:
   server-config.json: |
     {
-      "version": 7,
+      "version": 8,
       "serverName": "zeroecho-admin",
       "realm": {
         "realmId": "production",
@@ -65,12 +65,12 @@ data:
         "approvalCommitment": "96f85d99cb556b16af9b963833a832f905010681f437a757d94aab4a22e4c29c",
         "disclosureCommitment": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "disclosureDefaults": {"rootCa": "PUBLIC", "intermediateCa": "PUBLIC", "caChain": "PUBLIC", "crl": "PUBLIC", "leaf": "OWNER_ONLY", "sensitiveLeaf": "RESTRICTED"},
-        "controlLog": "/var/lib/zeroecho/store/server-control.log",
+        "controlLog": "/var/lib/zeroecho/store-container/server-control/server-control.log",
         "controlStoreId": "0123456789abcdef0123456789abcdef",
         "approvalPolicy": {"policyId": "high-risk", "threshold": 1, "eligibleApprovers": ["bootstrap-approver"], "requiredRoleTemplateIds": [], "requesterSeparation": true, "lifetimeMillis": 3600000, "justificationRequired": true},
         "pkiSession": {
           "version": 6,
-          "store": {"id": "fs", "properties": {"root": "/var/lib/zeroecho/store"}},
+          "store": {"id": "fs", "properties": {"root": "/var/lib/zeroecho/store-container/store"}},
           "audit": {"id": "file", "properties": {"root": "/var/lib/zeroecho/audit"}},
           "signing": {
             "provider": {"id": "zeroecho-lib", "properties": {"keyringPath": "/var/lib/zeroecho/keyring/ca-keyring.zek"}},
@@ -112,6 +112,9 @@ data:
       "auditProjection": {"maxRecords": 256, "maxSinkCalls": 64, "idleIntervalMillis": 2000},
       "publicListener": {"enabled": false},
       "acmeListener": {"enabled": false},
+      "estListener": {"enabled": false},
+      "scepListener": {"enabled": false},
+      "cmpListener": {"enabled": false},
       "runtime": {"keyUnlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"}
     }
   profile-bootstrap.json: |
@@ -119,7 +122,7 @@ data:
       "version": 1,
       "mode": "local",
       "operatorId": "deployment-profile-bootstrap",
-      "store": {"provider": "fs", "properties": {"root": "/var/lib/zeroecho/store"}},
+      "store": {"provider": "fs", "properties": {"root": "/var/lib/zeroecho/store-container/store"}},
       "audit": {"provider": "file", "properties": {"root": "/var/lib/zeroecho/audit"}},
       "publishers": [],
       "bindingProviders": []

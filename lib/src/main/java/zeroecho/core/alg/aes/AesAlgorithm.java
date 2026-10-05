@@ -40,6 +40,11 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -79,6 +84,9 @@ import zeroecho.core.util.RandomSupport;
  * @since 1.0
  */
 public final class AesAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs the AES algorithm descriptor and performs capability registration.
      */
@@ -128,4 +136,18 @@ public final class AesAlgorithm extends AbstractCryptoAlgorithm {
             }
         });
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("AES-128", "AES-128", SecurityLevel.classical(128), AesKeyGenSpec.aes128()),
+            new ParameterSetDescriptor.Concrete<>("AES-192", "AES-192", SecurityLevel.classical(192), AesKeyGenSpec.aes192()),
+            new ParameterSetDescriptor.Concrete<>("AES-256", "AES-256", SecurityLevel.classical(256), AesKeyGenSpec.aes256())
+        );
+    }
+
 }

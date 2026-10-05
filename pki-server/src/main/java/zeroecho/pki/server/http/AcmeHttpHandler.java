@@ -509,6 +509,7 @@ final class AcmeHttpHandler implements HttpHandler {
         catch (RuntimeException unavailable) { /* Capacity failure is already represented by the response. */ }
         exchange.getResponseHeaders().set(RequestIds.HEADER, requestId);
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Content-Type", response.contentType());
         response.headers().forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
         boolean delivered = false;
@@ -805,7 +806,8 @@ final class AcmeHttpHandler implements HttpHandler {
         return value == null ? "" : value.split(";", 2)[0].trim();
     }
     private static String escape(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
     record Response(int status, String contentType, byte[] body, Optional<BodyWriter> writer,

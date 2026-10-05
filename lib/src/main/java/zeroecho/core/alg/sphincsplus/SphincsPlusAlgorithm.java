@@ -37,6 +37,11 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -47,8 +52,8 @@ import zeroecho.core.spec.VoidSpec;
  * SPHINCS+ signature algorithm binding for the ZeroEcho framework.
  *
  * <p>
- * {@code SphincsPlusAlgorithm} integrates the SPHINCS+ stateless hash-based
- * signature scheme as defined in the NIST PQC standardization process. It
+ * {@code SphincsPlusAlgorithm} retains the SPHINCS+ identifier as a compatibility
+ * binding for pure SLH-DSA; legacy SPHINCS+ keys and ROBUST are unsupported. It
  * registers signing and verification roles, along with asymmetric key builders
  * for generation and import of SPHINCS+ key material.
  * </p>
@@ -71,7 +76,7 @@ import zeroecho.core.spec.VoidSpec;
  * <h2>Key builders</h2>
  * <ul>
  * <li>{@link SphincsPlusKeyGenSpec}: generate new key pairs with parameter set
- * selection (e.g., SPHINCS+-SHAKE-256s, fast/robust variants).</li>
+ * selection (e.g., SHAKE-256s, SIMPLE mode with fast/small variants).</li>
  * <li>{@link SphincsPlusPublicKeySpec}: import X.509-encoded public keys.</li>
  * <li>{@link SphincsPlusPrivateKeySpec}: import PKCS#8-encoded private
  * keys.</li>
@@ -80,7 +85,7 @@ import zeroecho.core.spec.VoidSpec;
  * <h2>Example</h2> <pre>{@code
  * CryptoAlgorithm alg = new SphincsPlusAlgorithm();
  * KeyPair kp = alg.asymmetricKeyPairGenerator(SphincsPlusKeyGenSpec.class)
- *                 .generateKeyPair(SphincsPlusKeyGenSpec.sphincsPlusSha256_128s());
+ *                 .generateKeyPair(SphincsPlusKeyGenSpec.defaultSpec());
  *
  * try (SignatureContext signer =
  *          alg.createContext(KeyUsage.SIGN, kp.getPrivate(), null)) {
@@ -102,6 +107,9 @@ import zeroecho.core.spec.VoidSpec;
  * @since 1.0
  */
 public final class SphincsPlusAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates a new SPHINCS+ algorithm instance and registers its capabilities.
      *
@@ -156,4 +164,27 @@ public final class SphincsPlusAlgorithm extends AbstractCryptoAlgorithm {
         registerPublicKeyImporter(SphincsPlusPublicKeySpec.class, new SphincsPlusPublicKeyBuilder());
         registerPrivateKeyImporter(SphincsPlusPrivateKeySpec.class, new SphincsPlusPrivateKeyBuilder());
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHA2-128f",  "SPHINCS+-SHA2-128f (L1)",  SecurityLevel.nist(1, 128), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,  SphincsPlusKeyGenSpec.Security.L1_128, SphincsPlusKeyGenSpec.Variant.FAST,  SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHA2-128s",  "SPHINCS+-SHA2-128s (L1)",  SecurityLevel.nist(1, 128), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,  SphincsPlusKeyGenSpec.Security.L1_128, SphincsPlusKeyGenSpec.Variant.SMALL, SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHA2-192f",  "SPHINCS+-SHA2-192f (L3)",  SecurityLevel.nist(3, 192), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,  SphincsPlusKeyGenSpec.Security.L3_192, SphincsPlusKeyGenSpec.Variant.FAST,  SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHA2-192s",  "SPHINCS+-SHA2-192s (L3)",  SecurityLevel.nist(3, 192), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,  SphincsPlusKeyGenSpec.Security.L3_192, SphincsPlusKeyGenSpec.Variant.SMALL, SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHA2-256f",  "SPHINCS+-SHA2-256f (L5)",  SecurityLevel.nist(5, 256), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,  SphincsPlusKeyGenSpec.Security.L5_256, SphincsPlusKeyGenSpec.Variant.FAST,  SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHA2-256s",  "SPHINCS+-SHA2-256s (L5)",  SecurityLevel.nist(5, 256), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHA2,  SphincsPlusKeyGenSpec.Security.L5_256, SphincsPlusKeyGenSpec.Variant.SMALL, SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHAKE-128f", "SPHINCS+-SHAKE-128f (L1)", SecurityLevel.nist(1, 128), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHAKE, SphincsPlusKeyGenSpec.Security.L1_128, SphincsPlusKeyGenSpec.Variant.FAST,  SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHAKE-128s", "SPHINCS+-SHAKE-128s (L1)", SecurityLevel.nist(1, 128), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHAKE, SphincsPlusKeyGenSpec.Security.L1_128, SphincsPlusKeyGenSpec.Variant.SMALL, SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHAKE-192f", "SPHINCS+-SHAKE-192f (L3)", SecurityLevel.nist(3, 192), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHAKE, SphincsPlusKeyGenSpec.Security.L3_192, SphincsPlusKeyGenSpec.Variant.FAST,  SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHAKE-192s", "SPHINCS+-SHAKE-192s (L3)", SecurityLevel.nist(3, 192), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHAKE, SphincsPlusKeyGenSpec.Security.L3_192, SphincsPlusKeyGenSpec.Variant.SMALL, SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHAKE-256f", "SPHINCS+-SHAKE-256f (L5)", SecurityLevel.nist(5, 256), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHAKE, SphincsPlusKeyGenSpec.Security.L5_256, SphincsPlusKeyGenSpec.Variant.FAST,  SphincsPlusKeyGenSpec.Mode.SIMPLE)),
+            new ParameterSetDescriptor.Concrete<>("SPHINCS+-SHAKE-256s", "SPHINCS+-SHAKE-256s (L5)", SecurityLevel.nist(5, 256), SphincsPlusKeyGenSpec.of("BC", SphincsPlusKeyGenSpec.Hash.SHAKE, SphincsPlusKeyGenSpec.Security.L5_256, SphincsPlusKeyGenSpec.Variant.SMALL, SphincsPlusKeyGenSpec.Mode.SIMPLE))
+        );
+    }
+
 }

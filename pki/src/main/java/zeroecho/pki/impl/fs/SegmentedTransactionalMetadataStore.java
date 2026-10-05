@@ -450,6 +450,17 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         SigningLedgerSnapshotExporter.export(engine, exact.snapshot, targetRoot, excludedNamespaces);
     }
 
+    /** Copies every namespace and preserves authoritative revisions in a bounded backup checkpoint. */
+    /* default */ void exportBackupSnapshotTo(MetadataSnapshot snapshot, Path targetRoot, long maximumCheckpointBytes)
+            throws IOException {
+        requireOpen();
+        if (!(snapshot instanceof SnapshotImpl exact) || !snapshots.contains(exact)) {
+            throw new IllegalArgumentException("Metadata snapshot is closed or foreign");
+        }
+        exact.requireSnapshotOpen();
+        SigningLedgerSnapshotExporter.exportBackup(engine, exact.snapshot, targetRoot, maximumCheckpointBytes);
+    }
+
     /** Copies one pinned logical revision into a fresh target, excluding rebuilt namespaces. */
     /* default */ void copySnapshotTo(SegmentedTransactionalMetadataStore target,
             Set<String> excludedNamespaces) throws IOException {

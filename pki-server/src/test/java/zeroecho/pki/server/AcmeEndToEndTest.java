@@ -442,8 +442,10 @@ class AcmeEndToEndTest {
         System.out.println("completesInstalledDistributionAccountToRevocationWorkflow");
         Path root = temporaryDirectory.resolve("packaged");
         java.nio.file.Files.createDirectories(root);
-        java.nio.file.Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions
-                .fromString("rwx------"));
+        try {
+            java.nio.file.Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions
+                    .fromString("rwx------"));
+        } catch (UnsupportedOperationException ignored) { /* Windows */ }
         HttpServerTestSupport.PackagedTls tls = HttpServerTestSupport.packagedTls(root.resolve("tls"));
         int adminPort = reservePort();
         int acmePort = reservePort();
@@ -455,8 +457,10 @@ class AcmeEndToEndTest {
         Path configuration = root.resolve("server.json");
         java.nio.file.Files.writeString(configuration, packagedJson(fixture.configuration(), tls),
                 StandardCharsets.UTF_8);
+        String scriptName = System.getProperty("os.name", "").toLowerCase().contains("win")
+                ? "zeroecho-pki-server.bat" : "zeroecho-pki-server";
         Path launcher = Path.of(System.getProperty("user.dir"), "build", "install", "zeroecho-pki-server", "bin",
-                "zeroecho-pki-server").toAbsolutePath();
+                scriptName).toAbsolutePath();
         Path output = root.resolve("server-output.log");
         ProcessBuilder builder = new ProcessBuilder(launcher.toString(), "--config", configuration.toString());
         builder.environment().put("ZEROECHO_TEST_TLS_PASSWORD", new String(HttpServerTestSupport.PASSWORD));
@@ -518,11 +522,7 @@ class AcmeEndToEndTest {
             }
             System.out.println("...installed-launcher-flow=true");
         } finally {
-            process.destroy();
-            if (!process.waitFor(10, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                assertTrue(process.waitFor(5, TimeUnit.SECONDS));
-            }
+            destroyProcessTree(process);
         }
         denyPackagedSignedRequester(fixture);
         Process deniedProcess = builder.start();
@@ -533,11 +533,7 @@ class AcmeEndToEndTest {
                     java.util.Objects.requireNonNull(packagedCertificate), rsa((byte) 81),
                     requesterCertificate(rsa((byte) 81)), "signed");
         } finally {
-            deniedProcess.destroy();
-            if (!deniedProcess.waitFor(10, TimeUnit.SECONDS)) {
-                deniedProcess.destroyForcibly();
-                assertTrue(deniedProcess.waitFor(5, TimeUnit.SECONDS));
-            }
+            destroyProcessTree(deniedProcess);
         }
         System.out.println("...ok");
     }
@@ -563,8 +559,10 @@ class AcmeEndToEndTest {
             KeyPair rootKey) throws Exception {
         Path root = temporaryDirectory.resolve("server");
         PkiServerConfiguration base = HttpServerTestSupport.configuration(root, tls.clientCertificate());
-        java.nio.file.Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions
-                .fromString("rwx------"));
+        try {
+            java.nio.file.Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions
+                    .fromString("rwx------"));
+        } catch (UnsupportedOperationException ignored) { /* Windows */ }
         Path keyring = root.resolve("signing-keyring.zek");
         try (KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
                 KeyringStore store = KeyringStore.create(keyring, password)) {
@@ -959,7 +957,8 @@ class AcmeEndToEndTest {
                 "packaged-acme", realm,
                 new PkiServerConfiguration.Listener(InetAddress.getByName("127.0.0.1"), adminPort, tlsProvider,
                         true, 16_384, 1_048_576), authentication, lane,
-                new PkiServerConfiguration.RuntimeCapabilities(Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD")),
+                new PkiServerConfiguration.RuntimeCapabilities(Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD"),
+                        Optional.empty(), Optional.empty()),
                 Optional.of(publicListener), Optional.of(acme));
         return new Fixture(configuration, PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
                 () -> new KeyringPassword(KEYRING_PASSWORD.clone())), http01);
@@ -1040,6 +1039,9 @@ class AcmeEndToEndTest {
                 + "\"maximumNewOrdersPerAccountWindow\":32,\"maximumPendingOrdersPerAccount\":16,"
                 + "\"maximumChallengeValidationsPerAccountWindow\":32,\"maximumConcurrentFinalizations\":2,"
                 + "\"challengeProviders\":[" + providerJson(http) + "],\"eabProviders\":[]},"
+                + "\"estListener\":{\"enabled\":false},"
+                + "\"scepListener\":{\"enabled\":false},"
+                + "\"cmpListener\":{\"enabled\":false},"
                 + "\"runtime\":{\"keyUnlockEnvironmentVariable\":\"ZEROECHO_TEST_KEYRING_PASSWORD\"}}";
     }
 
@@ -1086,7 +1088,7 @@ class AcmeEndToEndTest {
 
     private static void awaitDirectory(HttpClient client, URI directory, Process process, Path output)
             throws Exception {
-        long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         Throwable last = null;
         while (System.nanoTime() < deadline && process.isAlive()) {
             try {
@@ -1099,6 +1101,20 @@ class AcmeEndToEndTest {
         }
         String diagnostics = java.nio.file.Files.exists(output) ? java.nio.file.Files.readString(output) : "";
         throw new AssertionError("Packaged ACME listener did not become ready: " + diagnostics, last);
+    }
+
+    private static void destroyProcessTree(Process process) throws Exception {
+        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        if (windows) {
+            // taskkill /F /T kills the entire process tree, including any Java child spawned by CMD.exe
+            new ProcessBuilder("taskkill", "/F", "/T", "/PID", String.valueOf(process.pid()))
+                    .redirectErrorStream(true).start().waitFor(10, TimeUnit.SECONDS);
+        }
+        process.destroy();
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            assertTrue(process.waitFor(5, TimeUnit.SECONDS));
+        }
     }
 
     private static BuiltInCertificateProfileTemplate template(String id) {

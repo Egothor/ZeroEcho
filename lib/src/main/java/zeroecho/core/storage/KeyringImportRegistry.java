@@ -89,8 +89,14 @@ import zeroecho.core.alg.slhdsa.SlhDsaPrivateKeySpec;
 import zeroecho.core.alg.slhdsa.SlhDsaPublicKeySpec;
 import zeroecho.core.alg.sphincsplus.SphincsPlusPrivateKeySpec;
 import zeroecho.core.alg.sphincsplus.SphincsPlusPublicKeySpec;
+import zeroecho.core.alg.lms.LmsPrivateKeySpec;
+import zeroecho.core.alg.lms.LmsPublicKeySpec;
 import zeroecho.core.alg.xdh.XdhPrivateKeySpec;
 import zeroecho.core.alg.xdh.XdhPublicKeySpec;
+import zeroecho.core.alg.xmss.XmssPrivateKeySpec;
+import zeroecho.core.alg.xmss.XmssPublicKeySpec;
+import zeroecho.core.alg.xwing.XWingPrivateKeySpec;
+import zeroecho.core.alg.xwing.XWingPublicKeySpec;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spi.PrivateKeyImporter;
 import zeroecho.core.spi.PublicKeyImporter;
@@ -235,6 +241,15 @@ final class KeyringImportRegistry {
         return List.copyOf(MAPPINGS.values());
     }
 
+    /* default */ static KeyringStore.Encoding encodingFor(String algorithmId, KeyringStore.Kind kind)
+            throws KeyringException {
+        return MAPPINGS.values().stream()
+                .filter(m -> m.algorithmId().equals(algorithmId) && m.kind() == kind
+                        && m.hmacVariant() == HmacVariant.NONE)
+                .map(PersistentMapping::encoding).findFirst()
+                .orElseThrow(() -> new KeyringException(KeyringException.Code.KEYRING_IMPORT_MAPPING_INVALID));
+    }
+
     private static PersistentMapping requireMapping(String algorithmId, KeyringStore.Kind kind,
             KeyringStore.Encoding encoding, HmacVariant hmacVariant) throws KeyringException {
         PersistentMapping mapping = MAPPINGS.get(new Tuple(algorithmId, kind, encoding, hmacVariant));
@@ -374,7 +389,13 @@ final class KeyringImportRegistry {
                 Map.entry(SphincsPlusPublicKeySpec.class, SphincsPlusPublicKeySpec::new),
                 Map.entry(SphincsPlusPrivateKeySpec.class, SphincsPlusPrivateKeySpec::new),
                 Map.entry(XdhPublicKeySpec.class, XdhPublicKeySpec::new),
-                Map.entry(XdhPrivateKeySpec.class, XdhPrivateKeySpec::new));
+                Map.entry(XdhPrivateKeySpec.class, XdhPrivateKeySpec::new),
+                Map.entry(LmsPublicKeySpec.class, LmsPublicKeySpec::new),
+                Map.entry(LmsPrivateKeySpec.class, LmsPrivateKeySpec::new),
+                Map.entry(XmssPublicKeySpec.class, XmssPublicKeySpec::new),
+                Map.entry(XmssPrivateKeySpec.class, XmssPrivateKeySpec::new),
+                Map.entry(XWingPublicKeySpec.class, XWingPublicKeySpec::new),
+                Map.entry(XWingPrivateKeySpec.class, XWingPrivateKeySpec::new));
     }
 
     private static Map<Tuple, PersistentMapping> createMappings() {
@@ -398,6 +419,13 @@ final class KeyringImportRegistry {
         addAsymmetric(mappings, "SLH-DSA", SlhDsaPublicKeySpec.class, SlhDsaPrivateKeySpec.class);
         addAsymmetric(mappings, "SPHINCS+", SphincsPlusPublicKeySpec.class, SphincsPlusPrivateKeySpec.class);
         addAsymmetric(mappings, "Xdh", XdhPublicKeySpec.class, XdhPrivateKeySpec.class);
+        addAsymmetric(mappings, "LMS", LmsPublicKeySpec.class, LmsPrivateKeySpec.class);
+        addAsymmetric(mappings, "XMSS", XmssPublicKeySpec.class, XmssPrivateKeySpec.class);
+        // X-Wing uses RAW encoding for both keys (no standard JCA KeyFactory).
+        add(mappings, "X-Wing", KeyringStore.Kind.PUBLIC_KEY, KeyringStore.Encoding.RAW, HmacVariant.NONE,
+                XWingPublicKeySpec.class);
+        add(mappings, "X-Wing", KeyringStore.Kind.PRIVATE_KEY, KeyringStore.Encoding.RAW, HmacVariant.NONE,
+                XWingPrivateKeySpec.class);
         add(mappings, ALGORITHM_AES, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.NONE,
                 AesKeyImportSpec.class);
         add(mappings, ALGORITHM_CHACHA20, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.NONE,

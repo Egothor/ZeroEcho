@@ -48,9 +48,14 @@ import java.nio.file.StandardOpenOption;
 interface KeyringFileOperations {
     KeyringFileOperations NIO = new NioKeyringFileOperations();
 
+    /** Supplies the platform retry policy; tests may inject a deterministic pause. */
+    default KeyringAtomicMoveRetryPolicy atomicMoveRetryPolicy() {
+        return KeyringAtomicMoveRetryPolicy.PLATFORM;
+    }
+
     /** Atomic persistence destination. */
     enum Target {
-        MAIN_IMAGE, NONCE_RESERVATION
+        MAIN_IMAGE, NONCE_RESERVATION, STATEFUL_AUTHORITY
     }
 
     /** Creates one owner-only temporary file beside its destination. */
@@ -89,14 +94,15 @@ final class NioKeyringFileOperations implements KeyringFileOperations {
             while (buffer.hasRemaining()) {
                 channel.write(buffer);
             }
+            // Force before closing so atomicReplace never races a re-open against
+            // a transient OS file lock (e.g. AV scan triggered on close).
+            channel.force(true);
         }
     }
 
     @Override
     public void forceTemporary(Target target, Path temporary) throws IOException {
-        try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
-            channel.force(true);
-        }
+        // Data was already forced at the end of writeTemporary; this is a no-op.
     }
 
     @Override

@@ -185,6 +185,25 @@ public final class SigningReactor implements AutoCloseable {
         }
     }
 
+    /**
+     * Co-commits scheduled acceptance under the existing shutdown and custody gate.
+     * @param command exact acceptance command
+     * @param claim durable scheduled authorization
+     * @param transferCustody candidate custody transfer
+     * @return authoritative acceptance disposition
+     */
+    public SignWorkflowStore.AcceptanceResult acceptScheduledSign(SignWorkflowStore.AcceptanceCommand command,
+            zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
+        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(claim, "claim");
+        Objects.requireNonNull(transferCustody, "transferCustody");
+        acquireAcceptancePermit();
+        try {
+            transferCustody.run();
+            return store.acceptScheduledSign(command, claim);
+        } finally { releaseAcceptancePermit(); }
+    }
+
     /** Coalesces a nonblocking durable-work notification. */
     public void wake() {
         synchronized (monitor) {

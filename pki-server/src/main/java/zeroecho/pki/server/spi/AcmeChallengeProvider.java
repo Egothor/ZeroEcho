@@ -44,12 +44,18 @@ import zeroecho.pki.spi.ProviderConfig;
 /**
  * Explicit evidence-producing ACME challenge-provider SPI.
  *
- * <p>A provider receives no persistence or order-mutation authority. It may only
- * evaluate the exact immutable attempt and return a finite result. The ACME
- * service constructs and persists authoritative evidence after verifying every
- * returned binding.</p>
+ * <p>A provider receives no persistence or order-mutation authority. It may
+ * only evaluate the exact immutable attempt and return a finite result. The
+ * ACME service constructs and persists authoritative evidence after verifying
+ * every returned binding.
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; {@link #validate} may be called
+ * concurrently for independent authorization attempts.
+ *
+ * @since 1.0
  */
-@SuppressWarnings("PMD.ControlStatementBraces")
+@SuppressWarnings("PMD.ControlStatementBraces") // compact record compact constructors are intentionally terse
 public interface AcmeChallengeProvider {
     /**
      * Returns the stable provider identity.

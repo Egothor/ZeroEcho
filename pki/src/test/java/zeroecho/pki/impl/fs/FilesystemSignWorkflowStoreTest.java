@@ -63,6 +63,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -424,7 +425,11 @@ final class FilesystemSignWorkflowStoreTest {
                     symlink ? "symlink-metadata-target" : "non-directory-metadata-backup");
             Files.move(metadata, retained);
             if (symlink) {
-                Files.createSymbolicLink(metadata, retained.toAbsolutePath());
+                try {
+                    Files.createSymbolicLink(metadata, retained.toAbsolutePath());
+                } catch (java.nio.file.FileSystemException e) {
+                    Assumptions.assumeTrue(false, "Symlink creation not supported on this platform: " + e.getMessage());
+                }
             } else {
                 Files.write(metadata, "sensitive-metadata-type".getBytes(
                         java.nio.charset.StandardCharsets.US_ASCII));

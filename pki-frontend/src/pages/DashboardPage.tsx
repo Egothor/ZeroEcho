@@ -36,19 +36,52 @@ import { Alert, Box, Card, CardActionArea, CardContent, Stack, Typography } from
 import { Link as RouterLink } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
 import { NAV_ITEMS } from '@/app/navigation';
+import type { NavItem } from '@/app/navigation';
 import { useRealm } from '@/hooks/useRealm';
 
-const QUICK_LINKS = ['authorities', 'issuance', 'requests', 'revocation', 'approvals', 'audit'];
+const SECTIONS: { label: string; ids: string[] }[] = [
+  { label: 'Certificate Management', ids: ['authorities', 'issuance', 'requests', 'revocation', 'approvals', 'audit'] },
+  { label: 'Enrollment Protocols & Services', ids: ['scep', 'cmp', 'est', 'ocsp', 'acme', 'enrollment', 'configuration'] },
+];
+
+function NavGrid({ items }: { items: NavItem[] }) {
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gap: 2,
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' },
+      }}
+    >
+      {items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <Card key={item.id} variant="outlined">
+            <CardActionArea component={RouterLink} to={item.path}>
+              <CardContent>
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <Icon color="primary" />
+                  <Typography variant="h3" component="h2">
+                    {item.label}
+                  </Typography>
+                </Stack>
+              </CardContent>
+            </CardActionArea>
+          </Card>
+        );
+      })}
+    </Box>
+  );
+}
 
 export function DashboardPage() {
   const realm = useRealm();
-  const cards = NAV_ITEMS.filter((i) => QUICK_LINKS.includes(i.id));
 
   return (
     <>
       <PageHeader
         title="Dashboard"
-        description="Administer certificate authorities, issuance, lifecycle, and trust for this realm."
+        description="Administer certificate authorities, issuance, lifecycle, enrollment protocols, and trust for this realm."
       />
 
       {realm.isError && (
@@ -67,31 +100,19 @@ export function DashboardPage() {
         </Stack>
       )}
 
-      <Box
-        sx={{
-          display: 'grid',
-          gap: 2,
-          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' },
-        }}
-      >
-        {cards.map((item) => {
-          const Icon = item.icon;
+      <Stack spacing={4}>
+        {SECTIONS.map((section) => {
+          const items = NAV_ITEMS.filter((i) => section.ids.includes(i.id));
           return (
-            <Card key={item.id} variant="outlined">
-              <CardActionArea component={RouterLink} to={item.path}>
-                <CardContent>
-                  <Stack direction="row" spacing={1.5} alignItems="center">
-                    <Icon color="primary" />
-                    <Typography variant="h3" component="h2">
-                      {item.label}
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </CardActionArea>
-            </Card>
+            <Stack key={section.label} spacing={1.5}>
+              <Typography variant="overline" color="text.secondary">
+                {section.label}
+              </Typography>
+              <NavGrid items={items} />
+            </Stack>
           );
         })}
-      </Box>
+      </Stack>
     </>
   );
 }

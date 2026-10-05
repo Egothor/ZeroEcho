@@ -53,9 +53,9 @@
  * </ul>
  *
  * <h2>Typical usage</h2> <pre>{@code
- * // Use the built-in English distribution to create a short cover text.
+ * // Use the built-in English distribution (factory creates a fresh, non-shared instance).
  * zeroecho.ext.integrations.covert.TextualCodec.Generator gen =
- *     zeroecho.ext.integrations.covert.TextualCodec.Generator.EN;
+ *     zeroecho.ext.integrations.covert.TextualCodec.Generator.english();
  * String sample = gen.getText(256);
  *
  * // Or construct a custom distribution.

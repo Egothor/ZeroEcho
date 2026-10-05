@@ -43,6 +43,7 @@ import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.server.jfr.AuditWriteEvent;
 
 /** Package-private safe server audit producer. */
 @SuppressWarnings("PMD.CommentDefaultAccessModifier")
@@ -57,6 +58,11 @@ final class SafeAudit {
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink defines RuntimeException as its failure boundary.
     void record(String action, String principalId, Optional<PkiId> objectId, Map<String, String> details) {
+        AuditWriteEvent jfrEvent = new AuditWriteEvent();
+        jfrEvent.category = "SERVER_SECURITY";
+        jfrEvent.recordCount = 1;
+        jfrEvent.fsync = false;
+        jfrEvent.begin();
         try {
             AuditEvent event = new AuditEvent(clock.instant(), "SERVER_SECURITY", action,
                     new Principal("SERVER_PRINCIPAL", principalId), new Purpose("SERVER_CONTROL"),
@@ -64,6 +70,10 @@ final class SafeAudit {
             sink.record(event);
         } catch (RuntimeException ignored) {
             // Immediate server telemetry is best effort; authoritative state remains the source of truth.
+        } finally {
+            if (jfrEvent.shouldCommit()) {
+                jfrEvent.commit();
+            }
         }
     }
 }

@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.core.alg.chacha;
 
+
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
 import zeroecho.core.util.RandomSupport;
 
 /**
@@ -74,6 +79,9 @@ import zeroecho.core.util.RandomSupport;
  * @since 1.0
  */
 public final class ChaChaAlgorithm extends AbstractChaChaAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Creates and registers the ChaCha20 stream cipher, declaring encryption and
      * decryption capabilities for {@link ChaChaSpec} and
@@ -107,4 +115,16 @@ public final class ChaChaAlgorithm extends AbstractChaChaAlgorithm {
                         ChaChaSpec.builder().initialCounter(1).header(null).build(), RandomSupport.getRandom()),
                 () -> zeroecho.core.spec.VoidSpec.INSTANCE);
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("ChaCha20-256", "ChaCha20-256", SecurityLevel.classical(256), ChaChaKeyGenSpec.chacha256())
+        );
+    }
+
 }

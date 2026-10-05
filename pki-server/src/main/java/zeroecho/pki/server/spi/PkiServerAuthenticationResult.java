@@ -38,7 +38,20 @@ import java.util.Optional;
 
 import zeroecho.pki.server.AdministrativeAuthenticationMode;
 
-/** Safe closed mutual-TLS authentication result. */
+/**
+ * Safe closed mutual-TLS authentication result.
+ *
+ * <p>This sealed type has exactly two permitted subtypes: {@link Authenticated}
+ * when the peer principal was resolved, and {@link Rejected} when authentication
+ * failed. Callers use an exhaustive {@code switch} or {@code instanceof} pattern
+ * to distinguish the two outcomes.
+ *
+ * <h2>Thread safety</h2>
+ * <p>All permitted subtypes are immutable records; safe for concurrent access
+ * without additional synchronization.
+ *
+ * @since 1.0
+ */
 public sealed interface PkiServerAuthenticationResult permits PkiServerAuthenticationResult.Authenticated,
         PkiServerAuthenticationResult.Rejected {
     /**

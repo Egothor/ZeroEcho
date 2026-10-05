@@ -38,8 +38,16 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 
 import javax.crypto.KeyGenerator;
+import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.ParameterConstraint;
+import zeroecho.core.SecurityLevel;
+import zeroecho.core.TemplateParameter;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -106,6 +114,9 @@ import zeroecho.core.spi.SymmetricKeyImporter;
  * @since 1.0
  */
 public final class HmacAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs and registers the HMAC algorithm.
      *
@@ -164,4 +175,41 @@ public final class HmacAlgorithm extends AbstractCryptoAlgorithm {
             }
         });
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("HMAC-SHA256", "HMAC-SHA256 (256-bit key)", SecurityLevel.classical(256), new HmacKeyGenSpec("HmacSHA256", 256)),
+            new ParameterSetDescriptor.Concrete<>("HMAC-SHA384", "HMAC-SHA384 (384-bit key)", SecurityLevel.classical(384), new HmacKeyGenSpec("HmacSHA384", 384)),
+            new ParameterSetDescriptor.Concrete<>("HMAC-SHA512", "HMAC-SHA512 (512-bit key)", SecurityLevel.classical(512), new HmacKeyGenSpec("HmacSHA512", 512)),
+            new ParameterSetDescriptor.Template<>("hmac-custom", "HMAC (custom MAC and key size)",
+                SecurityLevel.classical(256),
+                List.of(
+                    new TemplateParameter("macName",     "MAC algorithm name", String.class,  "JCA MAC algorithm name (e.g., HmacSHA256, HmacSHA512)"),
+                    new TemplateParameter("keySizeBits", "Key size (bits)",    Integer.class, "Key size in bits; must be a positive multiple of 8")
+                ),
+                List.of(
+                    new ParameterConstraint("macName", ParameterConstraint.ValueKind.STRING,
+                        true, null, List.of(), null, null, 1, 0),
+                    new ParameterConstraint("keySizeBits", ParameterConstraint.ValueKind.INTEGER,
+                        true, null, List.of(), 8L, null, 8, 0)
+                ),
+                args -> {
+                    String name = (String) args.get("macName");
+                    try {
+                        Mac.getInstance(name);
+                        KeyGenerator.getInstance(name);
+                    } catch (GeneralSecurityException exception) {
+                        throw new IllegalArgumentException("Unsupported MAC algorithm", exception);
+                    }
+                    return new HmacKeyGenSpec(name, (Integer) args.get("keySizeBits"));
+                }
+            )
+        );
+    }
+
 }

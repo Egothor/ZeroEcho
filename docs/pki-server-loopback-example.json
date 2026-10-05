@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -121,5 +121,8 @@
     "authorityListExposed": true
   },
   "acmeListener": {"enabled": false},
+  "estListener": {"enabled": false},
+  "scepListener": {"enabled": false},
+  "cmpListener": {"enabled": false},
   "runtime": {}
 }

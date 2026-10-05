@@ -95,8 +95,8 @@ class KeyringAlgorithmCoverageTest {
     @Test
     void persistentImporterUniverseHasAcceptedCardinality() {
         List<KeyringImportRegistry.PersistentMapping> mappings = KeyringImportRegistry.mappings();
-        assertEquals(19, count(mappings, KeyringStore.Kind.PUBLIC_KEY));
-        assertEquals(19, count(mappings, KeyringStore.Kind.PRIVATE_KEY));
+        assertEquals(22, count(mappings, KeyringStore.Kind.PUBLIC_KEY));
+        assertEquals(22, count(mappings, KeyringStore.Kind.PRIVATE_KEY));
         assertEquals(6, count(mappings, KeyringStore.Kind.SECRET_KEY));
     }
 
@@ -199,6 +199,22 @@ class KeyringAlgorithmCoverageTest {
         CryptoAlgorithm algorithm = CryptoAlgorithms.require(algorithmId);
         if (algorithm.roles().contains(KeyUsage.SIGN) && algorithm.roles().contains(KeyUsage.VERIFY)) {
             proveSignature(algorithmId, publicKey, privateKey);
+        } else if (algorithmId.equals("LMS") || algorithmId.equals("XMSS")) {
+            ZeroEchoSession session = new ZeroEchoSession();
+            byte[] before = privateKey.getEncoded();
+            org.junit.jupiter.api.Assertions.assertThrows(zeroecho.core.err.UnsupportedRoleException.class,
+                    () -> session.createContext(algorithmId, KeyUsage.SIGN, privateKey));
+            assertArrayEquals(before, privateKey.getEncoded());
+            java.security.Signature provider = java.security.Signature.getInstance(algorithmId, "BCPQC");
+            provider.initSign(privateKey);
+            provider.update(MESSAGE);
+            byte[] signature = provider.sign();
+            try (SignatureContext verifier = session.createContext(algorithmId, KeyUsage.VERIFY, publicKey)) {
+                verifier.setExpectedTag(signature);
+                try (InputStream stream = verifier.wrap(new ByteArrayInputStream(MESSAGE))) {
+                    assertArrayEquals(MESSAGE, stream.readAllBytes());
+                }
+            }
         } else if (algorithm.roles().contains(KeyUsage.ENCAPSULATE)
                 && algorithm.roles().contains(KeyUsage.DECAPSULATE)) {
             proveKem(algorithmId, publicKey, privateKey);

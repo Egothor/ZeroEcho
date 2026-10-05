@@ -72,7 +72,8 @@ public final class X509SuiteCompatibility {
             case "ed25519" -> "ed25519".equals(keyFamily);
             case "ed448" -> "ed448".equals(keyFamily);
             case "sphincs-plus" -> "sphincs-plus".equals(keyFamily);
-            default -> false;
+            default -> (signatureFamily.startsWith("ml-dsa-") || signatureFamily.startsWith("slh-dsa-"))
+                    && signatureFamily.equals(keyFamily);
         };
         if (!compatible) {
             throw new IllegalArgumentException("Incompatible signature and public-key identities");

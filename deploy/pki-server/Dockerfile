@@ -101,7 +101,7 @@ RUN chmod 0555 /opt/zeroecho/entrypoint.sh
 # created (empty) Docker named volume inherits this ownership on first mount.
 # BIND mounts do NOT inherit it — the host path must already be owned by uid
 # ${APP_UID} and mode 0700 (store/keyring) — see deploy/README.md.
-RUN install -d -o zeroecho -g zeroecho -m 0700 /var/lib/zeroecho/store   && \
+RUN install -d -o zeroecho -g zeroecho -m 0700 /var/lib/zeroecho/store-container && \
     install -d -o zeroecho -g zeroecho -m 0700 /var/lib/zeroecho/keyring && \
     install -d -o zeroecho -g zeroecho -m 0750 /var/lib/zeroecho/artifacts && \
     install -d -o zeroecho -g zeroecho -m 0750 /var/lib/zeroecho/audit    && \
@@ -113,7 +113,7 @@ ENV PATH="/opt/zeroecho/server/bin:/opt/zeroecho/app/bin:${PATH}" \
     ZEROECHO_SERVER_CONFIG=/etc/zeroecho/server-config.json \
     ZEROECHO_PROFILE_BOOTSTRAP_CONFIG=/etc/zeroecho/profile-bootstrap.json \
     ZEROECHO_PROFILES_DIR=/etc/zeroecho/profiles \
-    ZEROECHO_STORE_DIR=/var/lib/zeroecho/store \
+    ZEROECHO_STORE_DIR=/var/lib/zeroecho/store-container/store \
     ZEROECHO_AUDIT_DIR=/var/lib/zeroecho/audit \
     ZEROECHO_ADMIN_PORT=8443 \
     ZEROECHO_HEALTH_CLIENT_CERT=/etc/zeroecho/health/health-client.pem \
@@ -123,7 +123,7 @@ ENV PATH="/opt/zeroecho/server/bin:/opt/zeroecho/app/bin:${PATH}" \
 # Persisted state. Store and keyring are DELIBERATELY separate volumes so the
 # keyring (private-key material) can be placed on a stricter, separately backed
 # volume. See deploy/README.md for the data/config contract.
-VOLUME ["/var/lib/zeroecho/store", "/var/lib/zeroecho/keyring", \
+VOLUME ["/var/lib/zeroecho/store-container", "/var/lib/zeroecho/keyring", \
         "/var/lib/zeroecho/artifacts", "/var/lib/zeroecho/audit"]
 
 # Administrative mutual-TLS listener (browser cert is terminated at nginx; in the

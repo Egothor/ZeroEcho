@@ -100,6 +100,27 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
  * </ul>
  */
 public final class OidAlgorithmMapper {
+    private static final java.util.Set<String> ABSENT_SIGNATURE_OIDS = java.util.Set.of(
+            StandardX509Bindings.OID_ECDSA_SHA256,
+            StandardX509Bindings.OID_ECDSA_SHA384,
+            StandardX509Bindings.OID_ECDSA_SHA512,
+            StandardX509Bindings.OID_ED25519,
+            StandardX509Bindings.OID_ED448,
+            StandardX509Bindings.OID_ML_DSA_44,
+            StandardX509Bindings.OID_ML_DSA_65,
+            StandardX509Bindings.OID_ML_DSA_87,
+            StandardX509Bindings.OID_SLH_DSA_SHA2_128S,
+            StandardX509Bindings.OID_SLH_DSA_SHA2_128F,
+            StandardX509Bindings.OID_SLH_DSA_SHA2_192S,
+            StandardX509Bindings.OID_SLH_DSA_SHA2_192F,
+            StandardX509Bindings.OID_SLH_DSA_SHA2_256S,
+            StandardX509Bindings.OID_SLH_DSA_SHA2_256F,
+            StandardX509Bindings.OID_SLH_DSA_SHAKE_128S,
+            StandardX509Bindings.OID_SLH_DSA_SHAKE_128F,
+            StandardX509Bindings.OID_SLH_DSA_SHAKE_192S,
+            StandardX509Bindings.OID_SLH_DSA_SHAKE_192F,
+            StandardX509Bindings.OID_SLH_DSA_SHAKE_256S,
+            StandardX509Bindings.OID_SLH_DSA_SHAKE_256F);
 
     /**
      * Immutable mapping from signature algorithm OID string to the corresponding
@@ -170,11 +191,7 @@ public final class OidAlgorithmMapper {
                 || StandardX509Bindings.OID_RSA_SHA384.equals(oid)
                 || StandardX509Bindings.OID_RSA_SHA512.equals(oid)) {
             identifier = X509AlgorithmIdentifier.derNull(oid);
-        } else if (StandardX509Bindings.OID_ECDSA_SHA256.equals(oid)
-                || StandardX509Bindings.OID_ECDSA_SHA384.equals(oid)
-                || StandardX509Bindings.OID_ECDSA_SHA512.equals(oid)
-                || StandardX509Bindings.OID_ED25519.equals(oid)
-                || StandardX509Bindings.OID_ED448.equals(oid)) {
+        } else if (ABSENT_SIGNATURE_OIDS.contains(oid)) {
             identifier = X509AlgorithmIdentifier.absent(oid);
         }
         if (identifier == null) {

@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -61,6 +62,9 @@ import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.ca.CaCreateCommand;
+import zeroecho.pki.api.hybrid.HybridCertificateMode;
+import zeroecho.pki.impl.hybrid.AltSignatureExtensions;
+import zeroecho.pki.spi.crypto.AltSigningCapability;
 import zeroecho.pki.api.ca.CaRolloverCommand;
 import zeroecho.pki.api.ca.CaKeyRotationCommand;
 import zeroecho.pki.api.ca.CaRecord;
@@ -101,14 +105,15 @@ import zeroecho.pkix.Pkix;
 
 /**
  * Validates and stages one self-issued root TBS using borrowed session dependencies.
- * Preparation neither signs nor accepts work, reserves serials, proves possession,
- * or publishes CA metadata. The eventual fresh self-signature is verified by the
+ * Preparation does not accept primary-signing work or publish CA metadata.
+ * AltSignature preparation synchronously obtains and verifies the alternative
+ * signature before staging the primary-signing candidate. The eventual primary self-signature is verified by the
  * existing terminal publisher against the public key frozen in this TBS.
  * Local time and auxiliary memory are O(K + S + T + E) for bounded public-key,
  * subject, TBS and command bytes, plus existing provider/planning/store work;
  * staging writes O(T) bytes and performs no authority inventory scan.
  */
-public final class RootSigningPreparation {
+public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private final PkiStore store;
     private final Clock clock;
     private final SigningProvider provider;
@@ -184,10 +189,8 @@ public final class RootSigningPreparation {
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(approved);
         X500Principal subject = BcX509ProfileSupport.subject(approved.subjectRdns());
-        byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(subject).subject(subject).publicKeyInfo(spki)
-                .validity(validity.notBefore(), validity.notAfter())
-                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
-                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
+        byte[] tbs = buildTbs(input.altKeyRef(), profile.definition().hybridMode(), approved, algorithm, subject, spki,
+                validity, cancellation);
         if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
         provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
         FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
@@ -228,7 +231,8 @@ public final class RootSigningPreparation {
      * Prepares root rotation with the supplied managed key and authoritative active
      * profile. Reusing the current key reference is permitted. The fresh candidate
      * must subsequently obtain a valid self-signature against its frozen public key.
-     * No old-key proof, chain walk, signing dispatch or CA mutation is performed.
+     * No old-key proof, chain walk, primary-signing dispatch or CA mutation is performed.
+     * An AltSignature root retains its alternative key and signs a fresh pre-TBS.
      * @param access separately authorized invocation context
      * @param input root identifier and explicitly provisioned replacement key
      * @param submission fresh internally allocated submission identity
@@ -265,6 +269,7 @@ public final class RootSigningPreparation {
         if (!profile.reference().profileId().equals(historical.reference().profileId())
                 || !selected.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
         CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.ROOT_CA, selected.formatId());
+        requireHybridContinuity(selected, historical, profile, cancellation);
         KeyRef keyRef = replacementKey.orElse(root.issuerKeyRef());
         byte[] spki = publicKeyInfo(keyRef, cancellation);
         EncodedObject exactKey = new EncodedObject(Encoding.DER, spki);
@@ -277,10 +282,8 @@ public final class RootSigningPreparation {
                 Optional.empty(), serial, authority);
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(approved);
-        byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(subject).subject(subject).publicKeyInfo(spki)
-                .validity(validity.notBefore(), validity.notAfter())
-                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
-                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
+        byte[] tbs = buildTbs(Optional.empty(), profile.definition().hybridMode(), approved, algorithm, subject,
+                spki, validity, cancellation);
         if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
         provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
         FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
@@ -294,6 +297,105 @@ public final class RootSigningPreparation {
                 validity.notAfter().toString(), serial.toString(), canonicalSubject,
                 approved.policy().toString(), approved.algorithmBindingPolicy().toString(), caId.value());
         return stage(access, keyRef, submission, ttl, template, tbs, cancellation);
+    }
+
+
+    private byte[] buildTbs(Optional<KeyRef> alternativeKey, HybridCertificateMode hybridMode,
+            ValidatedCaCertificateRequest approved,
+            AlgorithmIdentifier algorithm, X500Principal subject, byte[] spki, Validity validity,
+            CancellationSignal cancellation) throws IOException {
+        if (!(hybridMode instanceof HybridCertificateMode.AltSignature altSig)) {
+            return Pkix.certificateBuilder()
+                    .serialNumber(approved.serial()).issuer(subject).subject(subject).publicKeyInfo(spki)
+                    .validity(validity.notBefore(), validity.notAfter())
+                    .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()),
+                            approved.policy().basicConstraintsCritical())
+                    .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN),
+                            approved.policy().keyUsageCritical())
+                    .buildTbs(algorithm);
+        }
+        // Hybrid: AltSignature mode — build pre-TBS, sign with alt key, build final TBS.
+        KeyRef altKeyRef = alternativeKey.orElseGet(() -> new KeyRef(altSig.altKeyRef()));
+        byte[] altSpki = publicKeyInfo(altKeyRef, cancellation);
+        AlgorithmIdentity altIdentity = authority.resolveIdentity(altSig.altSignatureAlgorithmId());
+        if (altIdentity.kind() != AlgorithmIdentity.Kind.SIGNATURE) { throw reject("ALT_ALGORITHM_INVALID"); }
+        X509SecurityFloor.requirePermitted(altIdentity);
+        X509AlgorithmBinding altSigBinding = bindings.standard(altIdentity,
+                X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE)
+                .orElseThrow(() -> reject("ALT_ALGORITHM_BINDING_MISSING"));
+        AlgorithmIdentifier altAlgId = toAltAlgorithmIdentifier(altSigBinding);
+        byte[] preTbs = Pkix.certificateBuilder()
+                .serialNumber(approved.serial()).issuer(subject).subject(subject).publicKeyInfo(spki)
+                .validity(validity.notBefore(), validity.notAfter())
+                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()),
+                        approved.policy().basicConstraintsCritical())
+                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN),
+                        approved.policy().keyUsageCritical())
+                .addExtension(AltSignatureExtensions.subjectAltPublicKeyInfo(altSpki))
+                .addExtension(AltSignatureExtensions.altSignatureAlgorithm(altAlgId))
+                .buildAlternativeSignatureTbs();
+        if (preTbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
+        if (!(provider instanceof AltSigningCapability altSigner)) { throw reject("ALT_SIGNING_CAPABILITY_UNAVAILABLE"); }
+        cancellation.throwIfCancelled();
+        byte[] altSignatureBytes;
+        try {
+            altSignatureBytes = altSigner.sign(altKeyRef, altSig.altSignatureAlgorithmId(), preTbs);
+        } catch (GeneralSecurityException e) {
+            throw new PkiException("Alt signature failed: code=ALT_SIGNING_FAILED", e);
+        }
+        if (altSignatureBytes == null || altSignatureBytes.length == 0
+                || altSignatureBytes.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("ALT_SIGNATURE_INVALID"); }
+        zeroecho.pkix.sign.ContentVerifier verifier = Pkix.verifier(altSpki, altAlgId);
+        try (OutputStream output = verifier.contentStream()) { output.write(preTbs); }
+        if (!verifier.verify(altSignatureBytes)) { throw reject("ALT_SIGNATURE_INVALID"); }
+        return Pkix.certificateBuilder()
+                .serialNumber(approved.serial()).issuer(subject).subject(subject).publicKeyInfo(spki)
+                .validity(validity.notBefore(), validity.notAfter())
+                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()),
+                        approved.policy().basicConstraintsCritical())
+                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN),
+                        approved.policy().keyUsageCritical())
+                .addExtension(AltSignatureExtensions.subjectAltPublicKeyInfo(altSpki))
+                .addExtension(AltSignatureExtensions.altSignatureAlgorithm(altAlgId))
+                .addExtension(AltSignatureExtensions.altSignatureValue(altSignatureBytes))
+                .buildTbs(algorithm);
+    }
+
+    private void requireHybridContinuity(Credential selected, CaProfileBinding historical,
+            ActiveCertificateProfile active, CancellationSignal cancellation) throws IOException {
+        zeroecho.pki.api.profile.ImportedCertificateProfileVersion previous = store.getProfileVersion(
+                historical.reference().profileId(), historical.reference().profileVersion())
+                .orElseThrow(() -> reject("ROOT_PROFILE_MISSING"));
+        if (!previous.reference().equals(historical.reference())) { throw reject("ROOT_PROFILE_BINDING_INVALID"); }
+        HybridCertificateMode oldMode = previous.definition().hybridMode();
+        HybridCertificateMode newMode = active.definition().hybridMode();
+        if (!oldMode.getClass().equals(newMode.getClass())) { throw reject("HYBRID_MODE_CHANGE_UNSUPPORTED"); }
+        if (newMode instanceof HybridCertificateMode.AltSignature alternative) {
+            byte[] encoded = CredentialContent.materializeForBc(store, selected.content());
+            java.security.cert.X509Certificate certificate = Pkix.parseCertificate(encoded);
+            byte[] expected = AltSignatureExtensions.requiredValue(certificate,
+                    AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO);
+            byte[] configured = publicKeyInfo(new KeyRef(alternative.altKeyRef()), cancellation);
+            AlgorithmIdentifier algorithm = toAltAlgorithmIdentifier(bindings.standard(
+                    authority.resolveIdentity(alternative.altSignatureAlgorithmId()),
+                    X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE)
+                    .orElseThrow(() -> reject("ALT_ALGORITHM_BINDING_MISSING")));
+            if (!java.util.Arrays.equals(expected, configured)
+                    || !java.util.Arrays.equals(Pkix.encodeAlgorithmIdentifier(algorithm),
+                            AltSignatureExtensions.requiredValue(certificate,
+                                    AltSignatureExtensions.OID_ALT_SIGNATURE_ALGORITHM))
+                    || !Pkix.verifyAlternativeSignature(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(expected))) {
+                throw reject("ALT_KEY_CONTINUITY_INVALID");
+            }
+        }
+    }
+
+    private static AlgorithmIdentifier toAltAlgorithmIdentifier(X509AlgorithmBinding binding) {
+        return switch (binding.parameterRule()) {
+            case ABSENT -> AlgorithmIdentifier.absent(binding.oid());
+            case DER_NULL -> AlgorithmIdentifier.derNull(binding.oid());
+            case STRUCTURED_DER -> throw reject("ALT_ALGORITHM_PARAMETER_RULE_UNSUPPORTED");
+        };
     }
 
     // Overflow and identifier representability are checked before staging or provider access.

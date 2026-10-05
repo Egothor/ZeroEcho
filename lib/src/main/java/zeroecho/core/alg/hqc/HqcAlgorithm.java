@@ -47,6 +47,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 
+import java.util.List;
+
+import zeroecho.core.ParameterSetDescriptor;
+import zeroecho.core.SecurityLevel;
+
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.pqc.jcajce.spec.HQCParameterSpec;
 
@@ -140,6 +145,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  * @since 1.0
  */
 public final class HqcAlgorithm extends AbstractCryptoAlgorithm {
+
+    private static final List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> PARAMETER_SETS =
+            ParameterSetDescriptor.snapshot(createParameterSets());
     /**
      * Constructs and registers the HQC algorithm with the BouncyCastle PQC
      * provider.
@@ -251,4 +259,18 @@ public final class HqcAlgorithm extends AbstractCryptoAlgorithm {
             throw new NoSuchProviderException("BCPQC provider not registered");
         }
     }
+
+    @Override
+    public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
+        return PARAMETER_SETS;
+    }
+
+    private static List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> createParameterSets() {
+        return List.of(
+            new ParameterSetDescriptor.Concrete<>("HQC-128", "HQC-128 (NIST Level 1)", SecurityLevel.nist(1, 128), HqcKeyGenSpec.hqc128()),
+            new ParameterSetDescriptor.Concrete<>("HQC-192", "HQC-192 (NIST Level 3)", SecurityLevel.nist(3, 192), HqcKeyGenSpec.hqc192()),
+            new ParameterSetDescriptor.Concrete<>("HQC-256", "HQC-256 (NIST Level 5)", SecurityLevel.nist(5, 256), HqcKeyGenSpec.hqc256())
+        );
+    }
+
 }

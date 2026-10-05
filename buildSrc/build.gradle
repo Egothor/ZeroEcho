@@ -47,3 +47,18 @@ dependencies {
     // can be placed on the module path for JPMS compilation of the main sources.
     implementation 'org.gradlex:extra-java-module-info:1.13'
 }
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

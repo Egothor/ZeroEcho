@@ -105,6 +105,7 @@ import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
+import zeroecho.pki.server.jfr.AcmeChallengeEvent;
 import zeroecho.pki.spi.ProviderConfig;
 
 /**
@@ -823,7 +824,11 @@ public final class AcmeService {
         validateFrozenOrder(order, directory);
         String keyAuthorization = current.token() + "." + accountKeyAuthorizationThumbprint(accountKeyThumbprint);
         AcmeChallengeProvider provider = providers.get(current.providerId());
-        AcmeChallengeProvider.Result result;
+        AcmeChallengeEvent jfrChallenge = new AcmeChallengeEvent();
+        jfrChallenge.challengeType = current.type().name();
+        jfrChallenge.identifier = authorization.identifier().value();
+        jfrChallenge.begin();
+        AcmeChallengeProvider.Result result = null;
         try {
             result = provider.validate(new AcmeChallengeProvider.Context(directory.directoryId(),
                     authorization.authorizationId(), authorization.identifier(), current.type(), current.token(),
@@ -831,6 +836,14 @@ public final class AcmeService {
                     providerConfigurations.get(provider.id()), cancellation);
         } catch (RuntimeException failure) {
             result = new AcmeChallengeProvider.Result(false, "PROVIDER_FAILURE", clock.instant(), clock.instant().plus(Duration.ofMinutes(5)));
+        } finally {
+            if (jfrChallenge.shouldCommit() && result != null) {
+                jfrChallenge.succeeded = result.valid();
+                if (!result.valid()) {
+                    jfrChallenge.failureReason = result.classification();
+                }
+                jfrChallenge.commit();
+            }
         }
         if (cancellation.isCancelled()) throw new IllegalStateException("ACME validation was cancelled");
         return completeChallenge(current, authorization, order, directory, accountId, expectedAccountCommitment,

@@ -33,19 +33,41 @@
  ******************************************************************************/
 package zeroecho.pki.server.spi;
 
-/** Transport-neutral server authentication boundary. */
+/**
+ * Internal transport-neutral server authentication composition boundary.
+ * This unexported interface is not a public ServiceLoader extension contract.
+ *
+ * <p>Implementations resolve one per-request principal identity from a TLS
+ * peer without inspecting operation arguments or request bodies. The result
+ * is a closed, safe value that the authorization engine can act on without
+ * further I/O.
+ *
+ * <h2>Thread safety</h2>
+ * <p>Implementations must be thread-safe; the server calls
+ * {@link #authenticate(PkiServerAuthenticationContext)} from multiple threads
+ * concurrently for independent requests.
+ *
+ * @since 1.0
+ */
 @FunctionalInterface
 public interface PkiServerAuthenticator extends AutoCloseable {
     /**
      * Authenticates one already TLS-validated peer without inspecting operation
      * arguments.
      *
-     * @param context bounded trusted TLS context
-     * @return safe authentication result
+     * @param context bounded trusted TLS context; never {@code null}
+     * @return safe authentication result; never {@code null}
+     * @throws NullPointerException if {@code context} is {@code null}
      */
     PkiServerAuthenticationResult authenticate(PkiServerAuthenticationContext context);
 
-    /** Releases optional provider resources. Default authenticators own none. */
+    /**
+     * Releases optional provider resources.
+     *
+     * <p>The default implementation owns no closeable resources. Stateful
+     * implementations may override this; repeated close calls should be
+     * harmless.
+     */
     @Override
     default void close() throws Exception {
         // No resource by default.

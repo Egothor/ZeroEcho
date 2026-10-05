@@ -48,7 +48,7 @@ dependencies {
     implementation project(':lib')
     implementation platform('tools.jackson:jackson-bom:3.1.5')
     implementation 'tools.jackson.core:jackson-core'
-    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
+    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.86'
     testImplementation 'org.mockito:mockito-core:5.23.0'
     mockitoAgent('org.mockito:mockito-core:5.23.0') {
         transitive = false
@@ -63,6 +63,17 @@ application {
 tasks.named('test') {
     useJUnitPlatform { excludeTags 'frontend-integration', 'packaged-integration' }
     dependsOn tasks.named('installDist')
+    def maintainedExamples = ['docs', 'documentation', 'deploy'].collect { directory ->
+        rootProject.fileTree(directory) {
+            include '**/*.json', '**/*.yaml', '**/*.yml', '**/*.md'
+            exclude 'codex/**'
+        }
+    }
+    inputs.files(maintainedExamples).withPropertyName('maintainedConfigurationExamples')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty 'configurationExamples.repository', rootProject.projectDir.absolutePath
+    systemProperty 'serverSpi.distributionLib', layout.buildDirectory.dir('install/zeroecho-pki-server/lib').get().asFile.absolutePath
+    systemProperty 'serverSpi.legacyBaseline', providers.gradleProperty('serverSpiLegacyBaseline').getOrElse('')
     jvmArgs("-javaagent:${configurations.mockitoAgent.singleFile}")
 }
 
@@ -77,8 +88,24 @@ jar {
 }
 
 javadoc {
-    options.links("https://www.egothor.org/javadoc/zeroecho/lib")
-    options.links("https://www.egothor.org/javadoc/zeroecho/pki")
+    dependsOn ':lib:javadoc', ':pki:javadoc'
+    options.linksOffline("https://www.egothor.org/javadoc/zeroecho/lib/",
+            project(':lib').layout.buildDirectory.dir('docs/javadoc').get().asFile.absolutePath)
+    options.linksOffline("https://www.egothor.org/javadoc/zeroecho/pki/",
+            project(':pki').layout.buildDirectory.dir('docs/javadoc').get().asFile.absolutePath)
+}
+
+tasks.register('generateSchema', JavaExec) {
+    description = 'Generates the machine-readable operation parameter schema JSON and TypeScript artefact.'
+    group = 'build'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'zeroecho.pki.server.schema.GenerateOperationSchema'
+    def jsonOut = layout.buildDirectory.file('generated/schema/operationSchema.json').get().asFile
+    def tsOut = layout.buildDirectory.file('generated/schema/operationSchema.generated.ts').get().asFile
+    args jsonOut.absolutePath, tsOut.absolutePath
+    inputs.files(sourceSets.main.output)
+    outputs.files(jsonOut, tsOut)
 }
 
 // Explicit browser gate: ordinary JVM tests never require Node or a browser.

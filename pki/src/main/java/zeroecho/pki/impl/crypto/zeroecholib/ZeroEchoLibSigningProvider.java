@@ -34,12 +34,13 @@
 
 package zeroecho.pki.impl.crypto.zeroecholib;
 
+import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.GeneralSecurityException;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
@@ -52,6 +53,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
@@ -72,6 +74,7 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.spi.crypto.AltSigningCapability;
 import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
 import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.sdk.ZeroEchoSession;
@@ -87,7 +90,7 @@ import zeroecho.sdk.ZeroEchoSession;
  * observation and never repeats cryptography.</p>
  */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidCatchingGenericException" })
-public final class ZeroEchoLibSigningProvider implements SigningProvider, PublicKeyInfoSource {
+public final class ZeroEchoLibSigningProvider implements SigningProvider, PublicKeyInfoSource, AltSigningCapability {
     private static final long NO_FENCE = 0L;
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSigningProvider.class.getName());
 
@@ -326,6 +329,49 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
     }
 
     @Override
+    public byte[] sign(KeyRef keyRef, String algorithmId, byte[] content)
+            throws IOException, GeneralSecurityException {
+        Objects.requireNonNull(keyRef, "keyRef");
+        Objects.requireNonNull(algorithmId, "algorithmId");
+        Objects.requireNonNull(content, "content");
+        try {
+            KeyRefParts parts = parseKeyRef(keyRef);
+            Optional<AlgorithmIdentity> algorithm = BootstrapAlgorithmIdentities.resolve(algorithmId);
+            if (algorithm.isEmpty() || algorithm.orElseThrow().kind() != AlgorithmIdentity.Kind.SIGNATURE) {
+                throw new GeneralSecurityException(
+                        "Alt signing algorithm not found or not a signature algorithm");
+            }
+            KeyringSignatureExecutor executor = new KeyringSignatureExecutor(requireKeyring(), session);
+            byte[] contentCopy = content.clone();
+            RepeatableContent repeatableContent = new RepeatableContent() {
+                @Override
+                public InputStream openStream() {
+                    return new ByteArrayInputStream(contentCopy);
+                }
+                @Override
+                public OptionalLong length() {
+                    return OptionalLong.of(contentCopy.length);
+                }
+                @Override
+                public String contentId() {
+                    return "alt-sign:" + contentCopy.length;
+                }
+                @Override
+                public void close() {
+                    // content is owned by caller
+                }
+            };
+            return executor.sign(parts.privateAlias, algorithm.orElseThrow(), repeatableContent, () -> false);
+        } catch (InvalidRequestException e) {
+            throw new GeneralSecurityException("Alt signing key reference invalid", e);
+        } catch (KeyringSignatureExecutor.Failure e) {
+            throw new GeneralSecurityException("Alt signing failed: " + e.code(), e);
+        } catch (KeyringSignatureExecutor.Cancellation e) {
+            throw new GeneralSecurityException("Alt signing was cancelled", e);
+        }
+    }
+
+    @Override
     @SuppressWarnings("PMD.CloseResource")
     public void close() {
         KeyringStore keyring;
@@ -511,8 +557,8 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
 
         @Override
-        public java.util.OptionalLong length() {
-            return java.util.OptionalLong.of(commitment.length());
+        public OptionalLong length() {
+            return OptionalLong.of(commitment.length());
         }
 
         @Override

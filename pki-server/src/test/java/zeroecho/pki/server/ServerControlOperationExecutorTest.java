@@ -77,22 +77,44 @@ class ServerControlOperationExecutorTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void restoreRejectsBeforeInvokingCustomBackupService() throws Exception {
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            ServerControlOperationExecutor executor = executor(opened);
+            zeroecho.pki.api.BackupService backup = mock(zeroecho.pki.api.BackupService.class);
+            executor.installBackup(backup);
+            zeroecho.pki.api.backup.BackupArtifact artifact = new zeroecho.pki.api.backup.BackupArtifact(
+                    new PkiId("backup-test"), new zeroecho.pki.api.EncodedObject(
+                            zeroecho.pki.api.Encoding.BINARY, new byte[] { 0, 1, 2 }));
+            ServerControlOperation.ExecuteRestore operation = new ServerControlOperation.ExecuteRestore(
+                    new zeroecho.pki.api.backup.RestoreRequest(artifact, mock(zeroecho.pki.api.attr.AttributeSet.class)));
+            ServerControlOperationOutcome.Ordinary result = assertInstanceOf(ServerControlOperationOutcome.Ordinary.class,
+                    executor.execute(operation, "operator-a", resource(Permission.ResourceType.RESTORE, realmScope()),
+                            Optional.of("approved"), CancellationSignal.NONE));
+            zeroecho.pki.application.PkiOperationOutcome.Failed failed = assertInstanceOf(
+                    zeroecho.pki.application.PkiOperationOutcome.Failed.class, result.outcome());
+            assertEquals(zeroecho.pki.application.PkiOperationFailure.POLICY_REJECTION, failed.classification());
+            assertEquals("BACKUP_RESTORE_UNAVAILABLE", failed.code());
+            org.mockito.Mockito.verifyNoInteractions(backup);
+        }
+    }
+
+    @Test
     void catalogContainsAllExplicitOperationFamilies() {
         System.out.println("catalogContainsAllExplicitOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(107, catalog.descriptors().size());
-        assertEquals(41, catalog.descriptors().values().stream()
+        assertEquals(136, catalog.descriptors().size());
+        assertEquals(49, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
         assertEquals(10, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
-        assertEquals(56, catalog.descriptors().values().stream()
+        assertEquals(77, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());
         assertEquals(catalog.descriptors().size(), catalog.descriptors().values().stream()
                 .map(OperationSecurityDescriptors.Descriptor::operationId).distinct().count());
         assertEquals(OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION,
                 catalog.require(ServerControlOperation.IssueCapability.NAME).family());
-        System.out.println("...control-operations=56");
+        System.out.println("...control-operations=77");
         System.out.println("...ok");
     }
 

@@ -69,13 +69,15 @@ import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
-import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import zeroecho.sdk.util.BouncyCastleActivator;
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.alg.mldsa.MldsaKeyGenSpec;
 import zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
@@ -102,6 +104,11 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
  */
 public final class X509BindingPhaseATest {
 
+    @BeforeAll
+    static void registerProviders() {
+        BouncyCastleActivator.init();
+    }
+
     @Test
     void zeroEchoPrivateAssignmentsAreExactAndLocked() {
         System.out.println("zeroEchoPrivateAssignmentsAreExactAndLocked");
@@ -120,7 +127,6 @@ public final class X509BindingPhaseATest {
     @Test
     void productionSphincsPrivateBindingSignsAndVerifies() throws Exception {
         System.out.println("productionSphincsPrivateBindingSignsAndVerifies");
-        Security.addProvider(new BouncyCastlePQCProvider());
         KeyPair keyPair = new ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
                 SphincsPlusKeyGenSpec.defaultSpec());
         BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
@@ -140,7 +146,7 @@ public final class X509BindingPhaseATest {
         AlgorithmIdentifier identifier = toBc(authority.bindings().resolve(signatureBinding,
                 BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
         byte[] payload = "ZeroEcho private X.509 binding".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Signature signer = Signature.getInstance("SPHINCS+", new BouncyCastlePQCProvider());
+        Signature signer = Signature.getInstance("SLH-DSA", "BC");
         signer.initSign(keyPair.getPrivate());
         signer.update(payload);
         byte[] signature = signer.sign();
@@ -231,6 +237,87 @@ public final class X509BindingPhaseATest {
                     certificate.getSignature()));
         }
         System.out.println("...oid=" + identifier.getAlgorithm().getId());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void bootstrapMatrixIncludesMlDsaAndSlhDsaBindings() {
+        System.out.println("bootstrapMatrixIncludesMlDsaAndSlhDsaBindings");
+        X509BindingCatalog catalog = StandardX509Bindings.catalog();
+        Map<AlgorithmIdentity, String> pqcSignatureOids = Map.of(
+                BootstrapAlgorithmIdentities.ML_DSA_44_SIGNATURE, StandardX509Bindings.OID_ML_DSA_44,
+                BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE, StandardX509Bindings.OID_ML_DSA_65,
+                BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE, StandardX509Bindings.OID_ML_DSA_87,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128S_SIGNATURE, StandardX509Bindings.OID_SLH_DSA_SHA2_128S,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_128F_SIGNATURE, StandardX509Bindings.OID_SLH_DSA_SHA2_128F,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192S_SIGNATURE, StandardX509Bindings.OID_SLH_DSA_SHA2_192S,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_192F_SIGNATURE, StandardX509Bindings.OID_SLH_DSA_SHA2_192F,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256S_SIGNATURE, StandardX509Bindings.OID_SLH_DSA_SHA2_256S,
+                BootstrapAlgorithmIdentities.SLH_DSA_SHA2_256F_SIGNATURE, StandardX509Bindings.OID_SLH_DSA_SHA2_256F);
+        for (Map.Entry<AlgorithmIdentity, String> entry : pqcSignatureOids.entrySet()) {
+            X509AlgorithmIdentifier encoded = catalog.resolve(entry.getKey(), X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            assertEquals(entry.getValue(), encoded.oid(),
+                    "signature OID mismatch for " + entry.getKey().canonicalForm());
+            assertEquals(entry.getKey(),
+                    catalog.reverse(encoded, X509AlgorithmRole.SIGNATURE_ALGORITHM),
+                    "reverse signature mapping failed for OID " + entry.getValue());
+        }
+        Map<AlgorithmIdentity, String> pqcSpkiOids = Map.of(
+                BootstrapAlgorithmIdentities.ML_DSA_44_PUBLIC_KEY, StandardX509Bindings.OID_ML_DSA_44,
+                BootstrapAlgorithmIdentities.ML_DSA_65_PUBLIC_KEY, StandardX509Bindings.OID_ML_DSA_65,
+                BootstrapAlgorithmIdentities.ML_DSA_87_PUBLIC_KEY, StandardX509Bindings.OID_ML_DSA_87);
+        for (Map.Entry<AlgorithmIdentity, String> entry : pqcSpkiOids.entrySet()) {
+            X509AlgorithmIdentifier encoded = catalog.resolve(entry.getKey(),
+                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            assertEquals(entry.getValue(), encoded.oid(),
+                    "SPKI OID mismatch for " + entry.getKey().canonicalForm());
+            assertEquals(entry.getKey(),
+                    catalog.reverse(encoded, X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM),
+                    "reverse SPKI mapping failed for OID " + entry.getValue());
+        }
+        System.out.println("...pqc-signature-oids=" + pqcSignatureOids.size() + ", pqc-spki-oids=" + pqcSpkiOids.size());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void mlDsa65BindingSignsAndVerifiesEndToEnd() throws Exception {
+        System.out.println("mlDsa65BindingSignsAndVerifiesEndToEnd");
+        BouncyCastleActivator.init();
+        KeyPair keyPair = new ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-DSA",
+                MldsaKeyGenSpec.defaultSpec());
+        BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
+        X509AuthoritySnapshot authority = X509AuthoritySnapshot.compose(List.of(), List.of(verifier),
+                List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                        AlgorithmExecutionCapability.Direction.VERIFY, verifier)), policy(true, "ml-dsa-test-v1"));
+        AlgorithmIdentifier signatureAlgId = toBc(authority.bindings().resolve(
+                BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
+        // BC encodes the ML-DSA-65 public key using the standard NIST OID
+        // (2.16.840.1.101.3.4.3.18), which is the same OID registered in StandardX509Bindings.
+        // Using it directly avoids re-wrapping and exercises the binding catalog resolver.
+        SubjectPublicKeyInfo wrapped = SubjectPublicKeyInfo.getInstance(keyPair.getPublic().getEncoded());
+
+        Instant notBefore = Instant.parse("2026-08-04T00:00:00Z");
+        X500Name issuer = new X500Name("CN=ML-DSA Root CA");
+        X509CertificateHolder certificate = new X509v3CertificateBuilder(issuer, BigInteger.ONE,
+                Date.from(notBefore), Date.from(notBefore.plusSeconds(87600 * 3600L)), issuer, wrapped)
+                .build(contentSigner(keyPair.getPrivate(), signatureAlgId, "ML-DSA"));
+        try (RepeatableContent certificateContent = content(certificate.getEncoded())) {
+            BcX509SignedObjectValidator.CertificateBindings validated = new BcX509SignedObjectValidator(authority)
+                    .validateCertificate(certificateContent,
+                            Optional.of(BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE),
+                            zeroecho.core.io.CancellationSignal.NONE);
+            assertEquals(BootstrapAlgorithmIdentities.ML_DSA_65_PUBLIC_KEY, validated.subjectPublicKey());
+        }
+        X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(
+                BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE, BootstrapAlgorithmIdentities.ML_DSA_65_PUBLIC_KEY,
+                AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit",
+                BcX509VerificationExecutor.class);
+        try (RepeatableContent tbs = content(certificate.toASN1Structure().getTBSCertificate().getEncoded())) {
+            assertTrue(verifier.verify(authority, plan, wrapped.getEncoded(), lib(signatureAlgId), tbs,
+                    certificate.getSignature()));
+        }
+        System.out.println("...oid=" + signatureAlgId.getAlgorithm().getId()
+                + ", signature-bytes=" + certificate.getSignature().length);
         System.out.println("...ok");
     }
 
@@ -586,7 +673,7 @@ public final class X509BindingPhaseATest {
     }
 
     private static ContentSigner contentSigner(PrivateKey privateKey, AlgorithmIdentifier identifier) {
-        return contentSigner(privateKey, identifier, "SPHINCS+");
+        return contentSigner(privateKey, identifier, "SLH-DSA");
     }
 
     private static ContentSigner contentSigner(PrivateKey privateKey, AlgorithmIdentifier identifier,
@@ -607,9 +694,13 @@ public final class X509BindingPhaseATest {
             @Override
             public byte[] getSignature() {
                 try {
-                    Signature signature = "SPHINCS+".equals(jcaAlgorithm)
-                            ? Signature.getInstance(jcaAlgorithm, new BouncyCastlePQCProvider())
-                            : Signature.getInstance(jcaAlgorithm);
+                    boolean isMainBcPqc = "SLH-DSA".equals(jcaAlgorithm) || "ML-DSA".equals(jcaAlgorithm);
+                    Signature signature;
+                    if (isMainBcPqc) {
+                        signature = Signature.getInstance(jcaAlgorithm, "BC");
+                    } else {
+                        signature = Signature.getInstance(jcaAlgorithm);
+                    }
                     signature.initSign(privateKey);
                     signature.update(output.toByteArray());
                     return signature.sign();

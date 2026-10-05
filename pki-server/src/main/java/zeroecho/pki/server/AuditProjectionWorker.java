@@ -57,7 +57,7 @@ final class AuditProjectionWorker implements AutoCloseable {
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final AtomicBoolean wakeRequested = new AtomicBoolean();
     private volatile AutoCloseable realmWakeRegistration;
-    private volatile boolean started;
+    private final AtomicBoolean started = new AtomicBoolean();
 
     /* default */ AuditProjectionWorker(ServerRealmContext realm,
             PkiServerConfiguration.AuditProjection configuration, Duration forcedShutdown, Clock clock) {
@@ -95,10 +95,9 @@ final class AuditProjectionWorker implements AutoCloseable {
 
     @SuppressWarnings({ "PMD.CloseResource", "PMD.AvoidCatchingGenericException" })
     /* default */ void start() {
-        if (cancelled.get() || started) {
+        if (cancelled.get() || !started.compareAndSet(false, true)) {
             throw new IllegalStateException("Audit projection worker cannot start");
         }
-        started = true;
         AutoCloseable realmRegistration = null;
         try {
             realmRegistration = realmWake.register(this::wake);
@@ -107,6 +106,7 @@ final class AuditProjectionWorker implements AutoCloseable {
         } catch (RuntimeException | Error failure) {
             closeRegistration(realmRegistration);
             realmWakeRegistration = null;
+            started.set(false);
             throw failure;
         }
     }

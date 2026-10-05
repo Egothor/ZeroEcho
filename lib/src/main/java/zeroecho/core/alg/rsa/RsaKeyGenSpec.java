@@ -75,10 +75,14 @@ public final class RsaKeyGenSpec implements AlgorithmKeySpec, Describable {
      * @param keySize        modulus size in bits; must be at least 1024
      * @param publicExponent RSA public exponent, usually 65537
      * @throws IllegalArgumentException if {@code keySize} is smaller than 1024
+     *                                  or the exponent is not odd and at least 3
      */
     public RsaKeyGenSpec(int keySize, int publicExponent) {
         if (keySize < 1024) { // NOPMD
             throw new IllegalArgumentException("keySize too small");
+        }
+        if (publicExponent < 3 || (publicExponent & 1) == 0) {
+            throw new IllegalArgumentException("publicExponent must be odd and at least 3");
         }
         this.keySize = keySize;
         this.publicExponent = publicExponent;

@@ -53,6 +53,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.KeyUsage;
@@ -122,6 +123,15 @@ import zeroecho.core.spec.ContextSpec;
  */
 public final class AuditedContexts {
     private static final String UNKNOWN = "unknown";
+    private static final AtomicLong AUDIT_CALLBACK_FAILURES = new AtomicLong();
+
+    private static void noteAuditFailure(Throwable t) {
+        long n = AUDIT_CALLBACK_FAILURES.incrementAndGet();
+        if (n == 1 || n % 10 == 0) {
+            System.getLogger(AuditedContexts.class.getName()).log(System.Logger.Level.WARNING,
+                    "Audit callback failed (total: " + n + "); a broken listener may silence audit events", t);
+        }
+    }
 
     /**
      * Prevents instantiation.
@@ -362,6 +372,7 @@ public final class AuditedContexts {
                             String peerFingerprint = fingerprint((Key) args[0]);
                             audit.onAgreementPeerSet(ctxId, peerFingerprint);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                         return result;
                     }
@@ -372,6 +383,7 @@ public final class AuditedContexts {
                         try {
                             audit.onAgreementDerived(ctxId, secret == null ? -1 : secret.length);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                         return secret;
                     }
@@ -387,6 +399,7 @@ public final class AuditedContexts {
                             int length = ((byte[]) args[0]).length;
                             audit.onAgreementPeerMessageSet(ctxId, length);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                         return result;
                     }
@@ -397,6 +410,7 @@ public final class AuditedContexts {
                         try {
                             audit.onAgreementPeerMessageGet(ctxId, message == null ? -1 : message.length);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                         return message;
                     }
@@ -410,6 +424,7 @@ public final class AuditedContexts {
                             audit.onKemEncapsulated(r == null || r.ciphertext() == null ? -1 : r.ciphertext().length,
                                     r == null || r.sharedSecret() == null ? -1 : r.sharedSecret().length);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                         return r;
                     }
@@ -418,6 +433,7 @@ public final class AuditedContexts {
                         try {
                             audit.onKemDecapsulated(secret == null ? -1 : secret.length);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                         return secret;
                     }
@@ -432,6 +448,7 @@ public final class AuditedContexts {
                         try {
                             audit.onContextClosed(ctxId, bodyBytes, trailerBytes, durationMs);
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                     }
                 }
@@ -443,6 +460,7 @@ public final class AuditedContexts {
                 try {
                     audit.onFailure(ctxId, "invoke:" + name, role.name(), cause);
                 } catch (Throwable ignore) { // NOPMD
+                    noteAuditFailure(ignore);
                 }
                 throw cause;
             }
@@ -465,6 +483,7 @@ public final class AuditedContexts {
                             audit.onBytes(role, count); // legacy
                             audit.onProgress(ctxId, h.bodyBytes, h.trailerBytes); // new
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                     }
                     return r;
@@ -472,6 +491,7 @@ public final class AuditedContexts {
                     try {
                         audit.onFailure(ctxId, "read", role.name(), ioe);
                     } catch (Throwable ignore) { // NOPMD
+                        noteAuditFailure(ignore);
                     }
                     throw ioe;
                 }
@@ -488,6 +508,7 @@ public final class AuditedContexts {
                             audit.onBytes(role, count); // legacy
                             audit.onProgress(ctxId, h.bodyBytes, h.trailerBytes); // new
                         } catch (Throwable ignore) { // NOPMD
+                            noteAuditFailure(ignore);
                         }
                     }
                     return n;
@@ -495,6 +516,7 @@ public final class AuditedContexts {
                     try {
                         audit.onFailure(ctxId, "read", role.name(), ioe);
                     } catch (Throwable ignore) { // NOPMD
+                        noteAuditFailure(ignore);
                     }
                     throw ioe;
                 }

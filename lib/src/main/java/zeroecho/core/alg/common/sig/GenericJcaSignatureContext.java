@@ -224,9 +224,12 @@ public final class GenericJcaSignatureContext implements SignatureContext {
          *                     highest-priority provider
          * @return resolver that initializes a {@code Signature} for signing and returns
          *         {@code sign().length}
+         * @implNote Resolving LMS/XMSS keys or algorithms throws
+         * {@link zeroecho.core.err.UnsupportedRoleException} before provider lookup or key use.
          */
         static SignLengthResolver probeWith(final String jcaAlg, final String providerName) {
             return privateKey -> {
+                StatefulSigningGuard.requireStateless(jcaAlg, privateKey);
                 final Signature s = (providerName == null) ? Signature.getInstance(jcaAlg)
                         : Signature.getInstance(jcaAlg, providerName);
                 s.initSign(privateKey);
@@ -294,9 +297,12 @@ public final class GenericJcaSignatureContext implements SignatureContext {
      *                 highest-priority provider
      * @return factory creating initialized {@code Signature} engines for the
      *         specified algorithm/provider
+     * @implNote In signing mode, the returned factory rejects LMS/XMSS with
+     * {@link zeroecho.core.err.UnsupportedRoleException} before provider lookup or key use.
      */
     public static EngineFactory jcaFactory(final String jcaAlg, final String provider) {
         return (key, signMode) -> {
+            if (signMode) { StatefulSigningGuard.requireStateless(jcaAlg, key); }
             final Signature s = (provider == null) ? Signature.getInstance(jcaAlg)
                     : Signature.getInstance(jcaAlg, provider);
             if (signMode) {
@@ -327,12 +333,15 @@ public final class GenericJcaSignatureContext implements SignatureContext {
      * @throws GeneralSecurityException if length resolution or engine
      *                                  initialization fails
      * @throws NullPointerException     if any required argument is {@code null}
+     * @throws zeroecho.core.err.UnsupportedRoleException if the algorithm or key is
+     *         LMS/XMSS; rejection precedes resolver and factory invocation
      */
     public GenericJcaSignatureContext(final CryptoAlgorithm algorithm, final PrivateKey privateKey,
             final EngineFactory engineFactory, final SignLengthResolver lengthResolver)
             throws GeneralSecurityException {
         this.algorithm = Objects.requireNonNull(algorithm, "algorithm");
         this.key = Objects.requireNonNull(privateKey, "privateKey");
+        StatefulSigningGuard.requireStateless(algorithm.id(), privateKey);
         Objects.requireNonNull(engineFactory, "engineFactory");
         Objects.requireNonNull(lengthResolver, "lengthResolver");
         // compute trailer length first (with an independent probe if needed)
