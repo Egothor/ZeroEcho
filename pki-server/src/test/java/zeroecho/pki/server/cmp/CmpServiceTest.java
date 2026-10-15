@@ -42,65 +42,54 @@ import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 
 import java.util.Optional;
-import java.lang.reflect.Method;
+import java.util.List;
+import java.nio.file.Path;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
+import zeroecho.pki.server.EnrollmentTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.application.PkiSession;
-import zeroecho.pki.api.SemanticSigningService;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.signing.SigningAcceptanceResult;
-import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
-import zeroecho.pki.api.signing.SigningAcceptanceDisposition;
-import zeroecho.pkix.cmp.CmpCodec;
-import zeroecho.pkix.cmp.CmpPkiMessage;
 
 /** Unit coverage for the CMP endpoint registry. */
 class CmpServiceTest {
 
     @Test
-    void interruptedSigningPollPreservesInterruptAndReturnsProtocolError() throws Exception {
-        ServerRealmContext realm = mock(ServerRealmContext.class);
+    void unprotectedRequestsFailBeforeSigningOrDurableAdmission() throws Exception {
+        ServerRealmContext realm = fixture.realm();
         PkiSession session = mock(PkiSession.class);
-        SemanticSigningService signing = mock(SemanticSigningService.class);
         when(realm.session()).thenReturn(session);
-        when(session.semanticSigning()).thenReturn(Optional.of(signing));
-        SigningAcceptanceReceipt receipt = mock(SigningAcceptanceReceipt.class);
-        PkiId operationId = new PkiId("operation:interrupted");
-        when(receipt.operationId()).thenReturn(operationId);
-        when(signing.accept(any())).thenReturn(new SigningAcceptanceResult(SigningAcceptanceDisposition.ACCEPTED, receipt));
-        when(signing.find(operationId)).thenAnswer(call -> {
-            Thread.currentThread().interrupt();
-            return Optional.empty();
-        });
         CmpService cmp = new CmpService(realm);
-        CmpEndpoint endpoint = new CmpEndpoint("test", "ca:root", "profile", CmpProtectionPolicy.SIGNATURE_BASED);
-        CmpPkiMessage request = new CmpPkiMessage(CmpCodec.BODY_IR, new byte[16], new byte[16],
-                null, null, null, null, false);
-        Method handler = CmpService.class.getDeclaredMethod("handleCertRequest", CmpEndpoint.class,
-                CmpPkiMessage.class, boolean.class);
-        handler.setAccessible(true);
-        try {
-            byte[] response = (byte[]) handler.invoke(cmp, endpoint, request, true);
-            assertTrue(Thread.currentThread().isInterrupted());
-            assertEquals(CmpCodec.BODY_ERROR, CmpCodec.parseMessage(response).bodyType());
-        } finally {
-            Thread.interrupted();
-        }
+        CmpEndpoint endpoint = new CmpEndpoint("test", "ca:root", "profile", "enrollment-profile", CmpProtectionPolicy.SIGNATURE_BASED);
+        cmp.register(endpoint);
+        org.bouncycastle.asn1.x509.GeneralName name = new org.bouncycastle.asn1.x509.GeneralName(new org.bouncycastle.asn1.x500.X500Name("CN=Requester"));
+        byte[] request = new org.bouncycastle.asn1.cmp.PKIMessage(new org.bouncycastle.asn1.cmp.PKIHeaderBuilder(2, name, name)
+                .setTransactionID(new byte[16]).setSenderNonce(new byte[16]).build(),
+                new org.bouncycastle.asn1.cmp.PKIBody(21, new org.bouncycastle.asn1.cmp.GenMsgContent(
+                        new org.bouncycastle.asn1.cmp.InfoTypeAndValue(org.bouncycastle.asn1.cmp.CMPObjectIdentifiers.id_it_caCerts)))).getEncoded();
+        assertEquals(400, assertThrows(CmpProtocolException.class, () -> cmp.processMessage(endpoint, request)).httpStatus());
+        org.mockito.Mockito.verifyNoInteractions(session);
     }
 
+    @TempDir Path directory;
+    private EnrollmentTestSupport fixture;
     private CmpService service;
 
     @BeforeEach
-    void setUp() {
-        service = new CmpService(mock(ServerRealmContext.class));
+    void setUp() throws Exception {
+        fixture = new EnrollmentTestSupport(directory, List.of("profile", "cmp-enroll", "profile-v1", "profile-v2", "profile-a", "profile-b"));
+        service = new CmpService(fixture.realm());
     }
+
+    @AfterEach
+    void closeFixture() throws Exception { fixture.close(); }
 
     @Test
     void registersAndFindsEndpoint() {
-        CmpEndpoint endpoint = new CmpEndpoint("enterprise-cmp", "ca:root", "cmp-enroll",
+        CmpEndpoint endpoint = new CmpEndpoint("enterprise-cmp", "ca:root", "cmp-enroll", "enrollment-cmp-enroll",
                 CmpProtectionPolicy.SIGNATURE_BASED);
         service.register(endpoint);
         Optional<CmpEndpoint> found = service.find("enterprise-cmp");
@@ -115,7 +104,7 @@ class CmpServiceTest {
 
     @Test
     void deregistersExistingEndpoint() {
-        CmpEndpoint endpoint = new CmpEndpoint("enterprise-cmp", "ca:root", "cmp-enroll",
+        CmpEndpoint endpoint = new CmpEndpoint("enterprise-cmp", "ca:root", "cmp-enroll", "enrollment-cmp-enroll",
                 CmpProtectionPolicy.SIGNATURE_BASED);
         service.register(endpoint);
         Optional<CmpEndpoint> removed = service.deregister("enterprise-cmp");
@@ -131,9 +120,9 @@ class CmpServiceTest {
 
     @Test
     void registerReplacesExistingWithSameLabel() {
-        CmpEndpoint first = new CmpEndpoint("iot-cmp", "ca:iot", "profile-v1",
+        CmpEndpoint first = new CmpEndpoint("iot-cmp", "ca:iot", "profile-v1", "enrollment-profile-v1",
                 CmpProtectionPolicy.SHARED_SECRET_MAC);
-        CmpEndpoint second = new CmpEndpoint("iot-cmp", "ca:iot", "profile-v2",
+        CmpEndpoint second = new CmpEndpoint("iot-cmp", "ca:iot", "profile-v2", "enrollment-profile-v2",
                 CmpProtectionPolicy.SIGNATURE_BASED);
         service.register(first);
         service.register(second);
@@ -145,9 +134,9 @@ class CmpServiceTest {
 
     @Test
     void listReturnsAllRegisteredEndpoints() {
-        CmpEndpoint a = new CmpEndpoint("endpoint-a", "ca:root", "profile-a",
+        CmpEndpoint a = new CmpEndpoint("endpoint-a", "ca:root", "profile-a", "enrollment-profile-a",
                 CmpProtectionPolicy.SIGNATURE_BASED);
-        CmpEndpoint b = new CmpEndpoint("endpoint-b", "ca:iot", "profile-b",
+        CmpEndpoint b = new CmpEndpoint("endpoint-b", "ca:iot", "profile-b", "enrollment-profile-b",
                 CmpProtectionPolicy.SHARED_SECRET_MAC);
         service.register(a);
         service.register(b);

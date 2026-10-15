@@ -61,6 +61,7 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
  */
 @SuppressWarnings("PMD.DataClass")
 public final class VerifiedIssuanceCandidate {
+    private static final int ORIGINAL_REQUEST_ATTRIBUTE = 1;
 
     private final ParsedCertificationRequest request;
     private final PkiId fingerprint;
@@ -183,13 +184,21 @@ public final class VerifiedIssuanceCandidate {
     }
 
     private static AttributeSet snapshotCsrAttribute(AttributeSet source) {
-        AttributeValue value = source.get(BcX509Attributes.CSR_DER)
+        if (source.ids().size() != ORIGINAL_REQUEST_ATTRIBUTE) {
+            throw new IllegalArgumentException("Noncanonical enrollment attributes");
+        }
+        AttributeId id = source.ids().iterator().next();
+        if ((!id.equals(BcX509Attributes.CSR_DER) && !id.equals(BcX509Attributes.CRMF_DER))
+                || source.getAll(id).size() != 1) {
+            throw new IllegalArgumentException("Noncanonical enrollment attributes");
+        }
+        AttributeValue value = source.get(id)
                 .orElseThrow(() -> new IllegalArgumentException("Missing canonical CSR attribute"));
         if (!(value instanceof AttributeValue.BytesValue bytesValue)) {
             throw new IllegalArgumentException("Canonical CSR attribute has the wrong type");
         }
-        return new SimpleAttributeSet(List.of(new SimpleAttributeSet.Entry(BcX509Attributes.CSR_DER,
-                List.of(new AttributeValue.BytesValue(bytesValue.value())))));
+        return new SimpleAttributeSet(List.of(new SimpleAttributeSet.Entry(id,
+                List.of(new AttributeValue.BytesValue(bytesValue.value().clone())))));
     }
 
     /* default */ static AttributeSet snapshotAttributes(AttributeSet source) {

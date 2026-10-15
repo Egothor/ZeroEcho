@@ -437,6 +437,174 @@ final class EndEntitySigningLifecycleTest {
     }
 
     @Test
+    void correlatedRenewalRetainsPredecessorAndFrozenSelectionAcrossUncertainAcceptance(@TempDir Path root) throws Exception {
+        MutableClock clock = new MutableClock(NOW);
+        zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest input;
+        SigningAcceptanceReceipt receipt;
+        try (FilesystemPkiStore store = fixture(root, clock)) {
+            Credential predecessor = lifecyclePredecessor(store, clock);
+            CaRecord ca = store.getCa(CA).orElseThrow();
+            IssuerChainPath path = store.getIssuerChainPath(ca.issuanceChainPathId()).orElseThrow();
+            input = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(CA,
+                    new EndEntityRenewalRequest(predecessor.credentialId(), Optional.empty()), predecessor.content().sha256(),
+                    new IssuanceIntent("est-renewal-1", "2".repeat(64), store.getActiveProfileRef("h7-dns").orElseThrow(),
+                            ca.currentIssuanceIssuerId(), path.pathId(), path.pathCommitment()));
+            try (RuntimeGraph graph = graph(store, clock, new RealProvider(clock, Mode.SIGN), new SigningOuterTerminalDriver(store), true)) {
+                assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedRenewal(ACCESS,
+                        new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(CA, input.request(),
+                                "0".repeat(64), input.intent()), Optional.empty(), CancellationSignal.NONE));
+                store.transitionRevocation(new RevocationCommand.Hold(predecessor.credentialId(), new SimpleAttributeSet()), clock.instant());
+                assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedRenewal(ACCESS,
+                        input, Optional.empty(), CancellationSignal.NONE));
+                store.transitionRevocation(new RevocationCommand.Unhold(predecessor.credentialId(), new SimpleAttributeSet()), clock.instant());
+                IssuanceIntent stale = new IssuanceIntent(input.intent().issuanceId(), input.intent().commandCommitment(),
+                        input.intent().expectedProfile(), new PkiId("issuer:stale"), input.intent().expectedChainPathId(),
+                        input.intent().expectedChainPathCommitment());
+                assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedRenewal(ACCESS,
+                        new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(CA, input.request(),
+                                input.predecessorSha256(), stale), Optional.empty(), CancellationSignal.NONE));
+                PreparedSemanticSigningRequest prepared = ((CorrelatedIssuancePreparation.Prepared)
+                        graph.service.prepareCorrelatedRenewal(ACCESS, input, Optional.empty(), CancellationSignal.NONE)).prepared();
+                receipt = prepared.receipt();
+                assertThrows(IllegalStateException.class, () -> graph.service.accept(prepared));
+                assertEquals(SigningAcceptanceResolution.MATCHED, graph.service.resolve(receipt));
+                replaceCurrentSelections(store, clock);
+            }
+        }
+        try (FilesystemPkiStore store = open(root, clock)) {
+            CountDownLatch terminal = new CountDownLatch(1);
+            SigningOuterTerminalDriver outer = new SigningOuterTerminalDriver(store);
+            RealProvider provider = new RealProvider(clock, Mode.SIGN);
+            try (RuntimeGraph graph = graph(store, clock, provider, workflow -> {
+                outer.advance(workflow); terminal.countDown();
+            }, false)) {
+                assertEquals(receipt.operationId(), ((CorrelatedIssuancePreparation.Existing)
+                        graph.service.prepareCorrelatedRenewal(ACCESS, input, Optional.empty(), CancellationSignal.NONE))
+                        .operation().submissionId().id());
+                assertThrows(PkiException.class, () -> graph.service.findRenewal(
+                        new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(CA,
+                                new EndEntityRenewalRequest(new PkiId("x509:" + "0".repeat(64)), Optional.empty()),
+                                input.predecessorSha256(), input.intent())));
+                graph.reactor.start();
+                await(terminal);
+                SemanticSigningOperation completed = graph.service.findRenewal(input).orElseThrow();
+                assertEquals(SemanticSigningState.COMPLETED, completed.state());
+                X509Certificate certificate = Pkix.parseCertificate(completed.result().orElseThrow().bytes());
+                certificate.verify(issuerKey.getPublic());
+                assertArrayEquals(leafKey.getPublic().getEncoded(), Pkix.subjectPublicKeyInfo(certificate));
+                assertEquals(Optional.of(input.request().existingCredentialId()), completed.scope().accessContext().objectId());
+                assertEquals(1, provider.dispatches.get());
+                store.transitionRevocation(new RevocationCommand.RevokePermanently(input.request().existingCredentialId(),
+                        RevocationReason.KEY_COMPROMISE, new SimpleAttributeSet()), clock.instant());
+                assertEquals(receipt.operationId(), ((CorrelatedIssuancePreparation.Existing)
+                        graph.service.prepareCorrelatedRenewal(ACCESS, input, Optional.empty(), CancellationSignal.NONE))
+                        .operation().submissionId().id());
+                assertThrows(PkiException.class, () -> graph.service.findIssuance(new zeroecho.pki.api.issuance.RetainedIssuanceBinding(
+                        CA, input.intent().issuanceId(), input.intent().expectedProfile(), input.intent().expectedIssuerId(),
+                        input.intent().expectedChainPathId(), input.intent().expectedChainPathCommitment(),
+                        CorrelatedIssuanceIdentity.derive(input).effectiveCommitment())));
+            }
+        }
+        try (FilesystemPkiStore store = open(root, clock);
+                RuntimeGraph graph = graph(store, clock, new RealProvider(clock, Mode.SIGN), new SigningOuterTerminalDriver(store), false)) {
+            assertEquals(SemanticSigningState.COMPLETED, graph.service.findRenewal(input).orElseThrow().state());
+        }
+    }
+
+    @Test
+    void correlatedCrmfReplacementRetainsExactOldCertificateAndNewKeyAcrossUncertainAcceptance(@TempDir Path root) throws Exception {
+        MutableClock clock = new MutableClock(NOW);
+        zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest input;
+        SigningAcceptanceReceipt receipt;
+        byte[] der = replacementCrmf(replacementLeafKey, "CN=Issuer", BigInteger.TEN);
+        try (FilesystemPkiStore store = fixture(root, clock)) {
+            Credential predecessor = lifecyclePredecessor(store, clock);
+            CaRecord ca = store.getCa(CA).orElseThrow();
+            IssuerChainPath path = store.getIssuerChainPath(ca.issuanceChainPathId()).orElseThrow();
+            input = new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(CA,
+                    new EndEntityReplacementRequest(predecessor.credentialId(), new zeroecho.pki.api.request.X509EnrollmentPayload(
+                            zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, der), PROFILE), predecessor.content().sha256(),
+                    new IssuanceIntent("cmp-replacement-1", "3".repeat(64), store.getActiveProfileRef(PROFILE).orElseThrow(),
+                            ca.currentIssuanceIssuerId(), path.pathId(), path.pathCommitment()));
+            try (RuntimeGraph graph = graph(store, clock, new RealProvider(clock, Mode.SIGN), new SigningOuterTerminalDriver(store), true)) {
+                assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedReplacement(ACCESS,
+                        new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(CA, input.request(),
+                                "0".repeat(64), input.intent()), Optional.empty(), CancellationSignal.NONE));
+                for (byte[] invalid : List.of(replacementCrmf(replacementLeafKey, "CN=Wrong issuer", BigInteger.TEN),
+                        replacementCrmf(replacementLeafKey, "CN=Issuer", BigInteger.ONE),
+                        replacementCrmf(replacementLeafKey, "CN=Issuer", null))) {
+                    assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedReplacement(ACCESS,
+                            replacementInput(input, invalid), Optional.empty(), CancellationSignal.NONE));
+                }
+                byte[] tampered = der.clone(); tampered[tampered.length - 1] ^= 1;
+                assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedReplacement(ACCESS,
+                        replacementInput(input, tampered), Optional.empty(), CancellationSignal.NONE));
+                store.transitionRevocation(new RevocationCommand.Hold(predecessor.credentialId(), new SimpleAttributeSet()), clock.instant().minusSeconds(1));
+                assertThrows(PkiException.class, () -> graph.service.prepareCorrelatedReplacement(ACCESS,
+                        replacementInput(input, replacementCrmf(leafKey, "CN=Issuer", BigInteger.TEN)), Optional.empty(), CancellationSignal.NONE));
+                PreparedSemanticSigningRequest prepared = ((CorrelatedIssuancePreparation.Prepared)
+                        graph.service.prepareCorrelatedReplacement(ACCESS, input, Optional.empty(), CancellationSignal.NONE)).prepared();
+                receipt = prepared.receipt();
+                assertThrows(IllegalStateException.class, () -> graph.service.accept(prepared));
+                assertEquals(SigningAcceptanceResolution.MATCHED, graph.service.resolve(receipt));
+                replaceCurrentSelections(store, clock);
+            }
+        }
+        try (FilesystemPkiStore store = open(root, clock)) {
+            CountDownLatch terminal = new CountDownLatch(1);
+            SigningOuterTerminalDriver outer = new SigningOuterTerminalDriver(store);
+            RealProvider provider = new RealProvider(clock, Mode.SIGN);
+            try (RuntimeGraph graph = graph(store, clock, provider, workflow -> {
+                outer.advance(workflow); terminal.countDown();
+            }, false)) {
+                assertEquals(receipt.operationId(), ((CorrelatedIssuancePreparation.Existing)
+                        graph.service.prepareCorrelatedReplacement(ACCESS, input, Optional.empty(), CancellationSignal.NONE))
+                        .operation().submissionId().id());
+                assertThrows(PkiException.class, () -> graph.service.findReplacement(replacementInput(input,
+                        replacementCrmf(replacementLeafKey, "CN=Issuer", BigInteger.ONE))));
+                graph.reactor.start();
+                await(terminal);
+                SemanticSigningOperation completed = graph.service.findReplacement(input).orElseThrow();
+                assertEquals(SemanticSigningState.COMPLETED, completed.state());
+                X509Certificate certificate = Pkix.parseCertificate(completed.result().orElseThrow().bytes());
+                certificate.verify(issuerKey.getPublic());
+                assertArrayEquals(replacementLeafKey.getPublic().getEncoded(), Pkix.subjectPublicKeyInfo(certificate));
+                assertEquals(1, provider.dispatches.get());
+                assertEquals(Optional.of(input.request().existingCredentialId()), completed.scope().accessContext().objectId());
+            }
+        }
+        try (FilesystemPkiStore store = open(root, clock);
+                RuntimeGraph graph = graph(store, clock, new RealProvider(clock, Mode.SIGN), new SigningOuterTerminalDriver(store), false)) {
+            assertEquals(SemanticSigningState.COMPLETED, graph.service.findReplacement(input).orElseThrow().state());
+            assertEquals(receipt.operationId(), graph.service.findReplacement(input).orElseThrow().submissionId().id());
+        }
+    }
+
+    private static zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest replacementInput(
+            zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest original, byte[] der) {
+        return new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(original.issuerCaId(),
+                new EndEntityReplacementRequest(original.request().existingCredentialId(), new zeroecho.pki.api.request.X509EnrollmentPayload(
+                        zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, der), original.request().profileId()),
+                original.predecessorSha256(), original.intent());
+    }
+
+    private static byte[] replacementCrmf(KeyPair key, String issuer, BigInteger serial) throws Exception {
+        org.bouncycastle.asn1.crmf.Controls controls = serial == null ? null : new org.bouncycastle.asn1.crmf.Controls(
+                new org.bouncycastle.asn1.crmf.AttributeTypeAndValue(org.bouncycastle.asn1.crmf.CRMFObjectIdentifiers.id_regCtrl_oldCertID,
+                        new org.bouncycastle.asn1.crmf.CertId(new org.bouncycastle.asn1.x509.GeneralName(
+                                new org.bouncycastle.asn1.x500.X500Name(issuer)), serial)));
+        org.bouncycastle.asn1.crmf.CertRequest request = new org.bouncycastle.asn1.crmf.CertRequest(17,
+                new org.bouncycastle.asn1.crmf.CertTemplateBuilder().setSubject(new org.bouncycastle.asn1.x500.X500Name("CN=Applicant"))
+                        .setPublicKey(org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(key.getPublic().getEncoded())).build(), controls);
+        org.bouncycastle.operator.ContentSigner signer = new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withRSA")
+                .build(key.getPrivate());
+        try (java.io.OutputStream output = signer.getOutputStream()) { output.write(request.getEncoded()); }
+        return new org.bouncycastle.asn1.crmf.CertReqMsg(request, new org.bouncycastle.asn1.crmf.ProofOfPossession(
+                new org.bouncycastle.asn1.crmf.POPOSigningKey(null, signer.getAlgorithmIdentifier(),
+                        new org.bouncycastle.asn1.DERBitString(signer.getSignature()))), null).getEncoded();
+    }
+
+    @Test
     void reactiveLifecycleCompletesWithRealSignaturesAndFrozenIdentity(@TempDir Path root) throws Exception {
         for (LifecycleCase lifecycle : LifecycleCase.values()) {
             MutableClock clock = new MutableClock(NOW);
@@ -689,6 +857,69 @@ final class EndEntitySigningLifecycleTest {
             CorrelatedIssuancePreparation retry = graph.service.prepareCorrelatedEndEntity(ACCESS, input, Optional.empty(), CancellationSignal.NONE);
             graph.service.discard(((CorrelatedIssuancePreparation.Prepared) retry).prepared());
             assertTrue(store.listSignWorkflows().isEmpty());
+        }
+    }
+
+    @Test
+    void crmfUncertainAcceptanceCompletesAndReplaysAfterRestart(@TempDir Path root) throws Exception {
+        MutableClock clock = new MutableClock(NOW);
+        byte[] der;
+        try (java.io.InputStream source = getClass().getResourceAsStream("/crmf/rsa2048-nosan.der")) {
+            der = java.util.Objects.requireNonNull(source).readAllBytes();
+        }
+        zeroecho.pki.api.request.X509EnrollmentPayload payload = new zeroecho.pki.api.request.X509EnrollmentPayload(
+                zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, der);
+        CorrelatedEndEntityIssuanceRequest input;
+        SigningAcceptanceReceipt receipt;
+        try (FilesystemPkiStore store = fixture(root, clock)) {
+            CorrelatedEndEntityIssuanceRequest template = correlatedRequest(store, csr);
+            zeroecho.pki.api.request.ParsedCertificationRequest parsed =
+                    new zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser().parseX509(payload);
+            store.putRequest(parsed);
+            assertArrayEquals(der, zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(parsed).der());
+            input = new CorrelatedEndEntityIssuanceRequest(
+                    new EndEntityIssuanceRequest(CA, payload, PROFILE, Optional.empty()), template.intent());
+            try (RuntimeGraph graph = graph(store, clock, new RealProvider(clock, Mode.SIGN),
+                    new SigningOuterTerminalDriver(store), true)) {
+                PreparedSemanticSigningRequest prepared = ((CorrelatedIssuancePreparation.Prepared)
+                        graph.service.prepareCorrelatedEndEntity(ACCESS, input, Optional.empty(), CancellationSignal.NONE)).prepared();
+                receipt = prepared.receipt();
+                assertThrows(IllegalStateException.class, () -> graph.service.accept(prepared));
+                assertEquals(SigningAcceptanceResolution.MATCHED, graph.service.resolve(receipt));
+            }
+        }
+        try (FilesystemPkiStore store = open(root, clock)) {
+            PkiId requestId = new PkiId("crmf:" + digest(der));
+            zeroecho.pki.api.request.ParsedCertificationRequest restored = store.getRequest(requestId).orElseThrow();
+            assertEquals(requestId, restored.requestId());
+            assertArrayEquals(der, zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(restored).der());
+            CountDownLatch terminal = new CountDownLatch(1);
+            SigningOuterTerminalDriver outer = new SigningOuterTerminalDriver(store);
+            RealProvider provider = new RealProvider(clock, Mode.SIGN);
+            try (RuntimeGraph graph = graph(store, clock, provider, workflow -> {
+                outer.advance(workflow); terminal.countDown();
+            }, false)) {
+                assertEquals(receipt.operationId(), ((CorrelatedIssuancePreparation.Existing)
+                        graph.service.prepareCorrelatedEndEntity(ACCESS, input, Optional.empty(), CancellationSignal.NONE))
+                        .operation().submissionId().id());
+                graph.reactor.start();
+                await(terminal);
+                SemanticSigningOperation completed = graph.service.findIssuance(input).orElseThrow();
+                assertEquals(SemanticSigningState.COMPLETED, completed.state());
+                X509Certificate certificate = Pkix.parseCertificate(completed.result().orElseThrow().bytes());
+                certificate.verify(issuerKey.getPublic());
+                assertArrayEquals(zeroecho.pkix.cmp.CrmfRequest.parse(der).subjectPublicKeyInfo(),
+                        Pkix.subjectPublicKeyInfo(certificate));
+                assertEquals(1, provider.dispatches.get());
+                assertThrows(zeroecho.pki.api.PkiException.class,
+                        () -> graph.service.findIssuance(new CorrelatedEndEntityIssuanceRequest(
+                                new EndEntityIssuanceRequest(CA, der, PROFILE, Optional.empty()), input.intent())));
+            }
+        }
+        try (FilesystemPkiStore store = open(root, clock);
+                RuntimeGraph graph = graph(store, clock, new RealProvider(clock, Mode.SIGN),
+                        new SigningOuterTerminalDriver(store), false)) {
+            assertEquals(SemanticSigningState.COMPLETED, graph.service.findIssuance(input).orElseThrow().state());
         }
     }
 

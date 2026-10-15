@@ -187,6 +187,83 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    @Test void administrativeHoldSurvivesRestartAndReleasePublishesFullAndDeltaState(@TempDir Path root) throws Exception {
+        Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
+        Path mirror = root.resolve("mirror");
+        fixture.publishers = List.of(new ProviderConfig("filesystem", Map.of("root", mirror.toString(), "targetId", "mirror")));
+        PkiId issuer;
+        PkiId credential = fixture.credentialId(1);
+        RevocationExecutionEvidence holdEvidence = RevocationExecutionEvidence.administrative("operator", "realm", "hold-request",
+                RevocationExecutionEvidence.Authentication.DIRECT_MTLS, RevocationExecutionEvidence.AuthorizationPath.ORDINARY_GRANT,
+                "a".repeat(64), Optional.of("ticket"));
+        try (PkiSession session = fixture.open(root, OptionalLong.empty())) {
+            PkiId oldIssuer = fixture.installIssuer(1, IssuerGenerationState.ACTIVE, List.of());
+            issuer = fixture.installIssuer(2, IssuerGenerationState.ACTIVE, List.of(oldIssuer));
+            assertEquals(new PkiResourceScopeResolver.CredentialScope(CA, "root"),
+                    session.resourceScopes().holdCredentialScope(credential).orElseThrow());
+            assertThrows(IllegalStateException.class, () -> session.resourceScopes().credentialScope(credential));
+            assertTrue(RevocationEvidenceExecutor.require(session.operations()).executeHold(new PkiOperation.HoldCredential(credential), holdEvidence, CancellationSignal.NONE)
+                    instanceof PkiOperationOutcome.Completed);
+            SemanticSigningService semantic = session.semanticSigning().orElseThrow();
+            SemanticSigningOperation full = await(semantic, semantic.accept(semantic.prepareFullCrl(ACCESS,
+                    request(issuer), CancellationSignal.NONE)).receipt().operationId());
+            java.security.cert.X509CRL crl = readCrl(session, semantic.completedStatusObjectId(full).orElseThrow());
+            crl.verify(fixture.key.getPublic());
+            assertEquals(java.security.cert.CRLReason.CERTIFICATE_HOLD, crl.getRevokedCertificate(BigInteger.ONE).getRevocationReason());
+            assertEquals(java.security.cert.CRLReason.CERTIFICATE_HOLD,
+                    publishCrl(session, semantic.completedStatusObjectId(full).orElseThrow(), mirror, "held")
+                            .getRevokedCertificate(BigInteger.ONE).getRevocationReason());
+        }
+        try (PkiSession session = fixture.open(root, OptionalLong.empty())) {
+            assertEquals(holdEvidence, RevocationExecutionEvidence.decode(session.revocations().get(credential)
+                    .orElseThrow().transition().attributes()).orElseThrow());
+            long heldRevision = session.revocations().get(credential).orElseThrow().transition().revision();
+            assertTrue(session.operations().execute(new PkiOperation.UnholdCredential(credential), () -> true)
+                    instanceof PkiOperationOutcome.Failed);
+            assertEquals(heldRevision, session.revocations().get(credential).orElseThrow().transition().revision());
+            assertTrue(session.operations().execute(new PkiOperation.UnholdCredential(credential), CancellationSignal.NONE)
+                    instanceof PkiOperationOutcome.Completed);
+            SemanticSigningService semantic = session.semanticSigning().orElseThrow();
+            SemanticSigningOperation delta = await(semantic, semantic.accept(semantic.prepareDeltaCrl(ACCESS,
+                    new DeltaCrlRequest(issuer, Duration.ofHours(1)), CancellationSignal.NONE)).receipt().operationId());
+            java.security.cert.X509CRL deltaCrl = readCrl(session, semantic.completedStatusObjectId(delta).orElseThrow());
+            deltaCrl.verify(fixture.key.getPublic());
+            assertEquals(java.security.cert.CRLReason.REMOVE_FROM_CRL, deltaCrl.getRevokedCertificate(BigInteger.ONE).getRevocationReason());
+            java.security.cert.X509CRL publishedDelta = publishCrl(session, semantic.completedStatusObjectId(delta).orElseThrow(), mirror, "released-delta");
+            publishedDelta.verify(fixture.key.getPublic());
+            assertEquals(java.security.cert.CRLReason.REMOVE_FROM_CRL,
+                    publishedDelta.getRevokedCertificate(BigInteger.ONE).getRevocationReason());
+            SemanticSigningOperation full = await(semantic, semantic.accept(semantic.prepareFullCrl(ACCESS,
+                    request(issuer), CancellationSignal.NONE)).receipt().operationId());
+            java.security.cert.X509CRL fullCrl = readCrl(session, semantic.completedStatusObjectId(full).orElseThrow());
+            fullCrl.verify(fixture.key.getPublic());
+            assertNull(fullCrl.getRevokedCertificate(BigInteger.ONE));
+            java.security.cert.X509CRL publishedFull = publishCrl(session, semantic.completedStatusObjectId(full).orElseThrow(), mirror, "released-full");
+            publishedFull.verify(fixture.key.getPublic());
+            assertNull(publishedFull.getRevokedCertificate(BigInteger.ONE));
+            assertTrue(session.operations().execute(new PkiOperation.RevokeCredential(credential, RevocationReason.KEY_COMPROMISE),
+                    CancellationSignal.NONE) instanceof PkiOperationOutcome.Completed);
+            assertTrue(session.operations().execute(new PkiOperation.UnholdCredential(credential), CancellationSignal.NONE)
+                    instanceof PkiOperationOutcome.Failed);
+            assertTrue(session.operations().execute(new PkiOperation.HoldCredential(credential), CancellationSignal.NONE)
+                    instanceof PkiOperationOutcome.Failed);
+        }
+    }
+
+    private static java.security.cert.X509CRL publishCrl(PkiSession session, PkiId status, Path mirror, String id) throws Exception {
+        zeroecho.pki.api.publication.PublicationTarget target = new zeroecho.pki.api.publication.PublicationTarget(
+                zeroecho.pki.api.publication.PublicationTargetType.FILESYSTEM, "mirror");
+        PkiId publicationId = new PkiId(id);
+        session.publications().orElseThrow().register(new zeroecho.pki.api.publication.PublicationRequest(publicationId,
+                zeroecho.pki.api.publication.PublicationSourceType.STATUS_OBJECT, status, target));
+        session.publications().orElseThrow().process(publicationId);
+        Path destination = mirror.resolve(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(id.getBytes(StandardCharsets.UTF_8))) + ".bin");
+        try (InputStream input = Files.newInputStream(destination)) {
+            return (java.security.cert.X509CRL) java.security.cert.CertificateFactory.getInstance("X.509").generateCRL(input);
+        }
+    }
+
     @Test void deltaReleasesUseGlobalRevisionAtEqualTimesAndKeepFrozenCutoffAcrossRestart(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         PkiId deltaOperation;
@@ -470,6 +547,7 @@ class PkiSessionFullCrlTest {
         private final Provider provider = new Provider();
         private PkiStore store;
         private Clock clock = CLOCK;
+        private List<ProviderConfig> publishers = List.of();
 
         private Fixture(boolean edDsa, Capability capability) throws Exception {
             this.capability = capability;
@@ -490,7 +568,7 @@ class PkiSessionFullCrlTest {
                     Optional.empty(), topology, limit);
             return DefaultPkiSession.open(new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                     new ProviderConfig("fs", Map.of("root", root.toString())), new ProviderConfig("memory", Map.of()),
-                    Optional.of(signing), List.of(), List.of()), clock, this);
+                    Optional.of(signing), publishers, List.of()), clock, this);
         }
 
         private PkiId installIssuer(int serial, IssuerGenerationState state, List<PkiId> previous) throws Exception {

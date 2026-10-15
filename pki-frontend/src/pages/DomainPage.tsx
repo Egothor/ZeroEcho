@@ -74,7 +74,9 @@ export function DomainPage() {
   const item = NAV_ITEMS.find((i) => i.path !== '/' && location.pathname.startsWith(i.path));
   const navId = item?.id ?? '';
   const operations = operationsForNav(navId);
-  const listings = domainListings(navId);
+  // Protocol availability is deployment-dependent. Use the discovery-filtered
+  // browser so direct URLs never expose actions from the static catalog alone.
+  const listings = ['est', 'scep', 'cmp', 'enrollment'].includes(navId) ? undefined : domainListings(navId);
 
   // Entity-centric screen where the backend can enumerate the entity...
   if (listings) {

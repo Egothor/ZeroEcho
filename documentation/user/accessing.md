@@ -65,6 +65,25 @@ permitted to invoke is refused, regardless of how the request is formed.
 If you expect to see an action and it is absent, your identity has most likely not
 been granted it. Ask a realm administrator to review your permissions.
 
+## Dashboard metrics
+
+The dashboard displays current server measurements and, after you select a
+**Metrics authority**, authority inventory, certificate lifecycle, revocation and
+publication measurements for that CA. Available panels load once; use each
+panel's **Refresh** button to request a new snapshot. There is no background
+polling or historical time series. Each panel shows its computation time when
+the server provides it.
+
+Panels follow the operations available to your identity and deployment. The
+server authorizes every request. Unavailable measurements, collection failures,
+request failures and denied access remain explicit; missing values never become
+zero. Changing the selected CA clears the previous CA's measurements.
+
+Bars compare reported counts within each group, not percentages. Certificate
+expiration windows are cumulative and overlap. A partial-count warning means
+the server reached its scan limit and the displayed counts are lower bounds.
+Missing CRL measurements remain unavailable until the server reports them.
+
 ## Trying it without a certificate: demo mode
 
 To let you evaluate the console *before* you have a client certificate, the web

@@ -134,7 +134,11 @@ export function OperationBrowser({ operations }: Props) {
             Could not load the operation catalog. Operations remain unavailable until discovery succeeds.
           </Alert>
         )}
-        {activeId ? (
+        {activeId === 'backup.stream.upload' || activeId === 'backup.stream.download' ? (
+          <Alert severity="info">
+            Use <a href="/backup">Backup and restore</a> to transfer archive files.
+          </Alert>
+        ) : activeId ? (
           <OperationRunner
             key={activeId}
             operationId={activeId}

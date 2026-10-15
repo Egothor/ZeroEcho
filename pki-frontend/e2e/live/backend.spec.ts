@@ -101,6 +101,163 @@ async function requestApproval(page: Page, request: APIRequestContext, form: Loc
   await choose(page, form.locator('form').first(), 'Approval (optional)', new RegExp(id));
 }
 
+test('protocol routes discover and execute available endpoint operations', async ({ page, request }) => {
+  for (const protocol of ['est', 'scep', 'cmp']) {
+    await page.goto(`/${protocol}`);
+    await expect(page.getByRole('heading', { name: protocol.toUpperCase(), exact: true })).toBeVisible();
+    const id = `${protocol}.endpoint.list`;
+    await page.getByPlaceholder('Filter operations').fill(id);
+    await page.getByText(id, { exact: true }).first().click();
+    await page.getByRole('spinbutton', { name: 'Offset', exact: true }).fill('0');
+    await page.getByRole('spinbutton', { name: 'Limit', exact: true }).fill('20');
+    const response = page.waitForResponse((r) => r.url().endsWith(`/operations/${id}`));
+    await page.getByRole('button', { name: /^Run operation$/i }).click();
+    expect((await response).status()).toBe(200);
+    await expect(page.getByText('Succeeded', { exact: true })).toBeVisible();
+  }
+  await page.getByPlaceholder('Filter operations').fill('cmp.endpoint.deregister');
+  await expect(page.getByRole('button', { name: /^Run operation$/i })).toHaveCount(0);
+  const denied = await request.post('/admin/v1/operations/cmp.endpoint.deregister', {
+    data: { version: 1, arguments: { label: 'not-authorized' } },
+  });
+  // The admin boundary deliberately hides operations outside discovery with 404.
+  expect(denied.status()).toBe(404);
+  expect(await denied.json()).toMatchObject({ status: 'FAILED', result: null,
+    failure: { code: 'OPERATION_NOT_FOUND' } });
+});
+
+test('direct protocol routes fail closed when discovery excludes their operations', async ({ page }) => {
+  // Model a principal with no visible operations using the real discovery envelope.
+  await page.route('**/admin/v1/operations', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.result = { operations: [], count: 0 };
+    await route.fulfill({ response, json: body });
+  });
+  for (const protocol of ['est', 'scep', 'cmp']) {
+    await page.goto(`/${protocol}`);
+    await expect(page.getByRole('heading', { name: protocol.toUpperCase(), exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder('Filter operations')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Run operation$/i })).toHaveCount(0);
+  }
+});
+
+test('dashboard requests no measurements when discovery excludes metrics', async ({ page }) => {
+  const metricRequests: string[] = [];
+  page.on('request', (sent) => {
+    if (sent.url().includes('/operations/dashboard.')) metricRequests.push(sent.url());
+  });
+  await page.route('**/admin/v1/operations', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.result.operations = body.result.operations.filter((entry: { operation: string }) => !entry.operation.startsWith('dashboard.'));
+    body.result.count = body.result.operations.length;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Operational metrics', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Metrics authority' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /^Refresh .* metrics$/ })).toHaveCount(0);
+  expect(metricRequests).toHaveLength(0);
+});
+
+test('enrollment profiles use real approval, forms, persistence and authorization', async ({ page, request }) => {
+  const profileId = 'browser-enrollment';
+  async function select(id: string, title: string) {
+    await page.goto('/enrollment');
+    await expect(page.getByRole('heading', { name: 'Enrollment Profiles', exact: true })).toBeVisible();
+    await page.getByPlaceholder('Filter operations').fill(`enrollment.profile.${id}`);
+    await page.getByText(`enrollment.profile.${id}`, { exact: true }).first().click();
+    return runner(page, title);
+  }
+  async function run(form: Locator, id: string) {
+    const response = page.waitForResponse((r) => r.url().endsWith(`/operations/enrollment.profile.${id}`));
+    await form.getByRole('button', { name: /^Run operation$/i }).first().click();
+    const received = await response;
+    expect(received.status()).toBe(200);
+    await expect(form.getByText('Succeeded', { exact: true })).toBeVisible();
+    return await received.json() as Envelope;
+  }
+  async function inspect(state: string) {
+    const form = await select('inspect', 'Inspect enrollment profile');
+    await choose(page, form, 'Id', new RegExp(profileId));
+    expect((await run(form, 'inspect')).result).toMatchObject({ value: {
+      id: profileId, displayName: 'Updated browser policy', state, certificateProfileId: 'server-tls',
+      subjectDnPattern: 'CN=.*', requiredSanDomains: ['example.test'], requireApproval: true,
+    } });
+  }
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Enrollment Profiles', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/enrollment$/);
+  const register = await select('register', 'Register enrollment profile');
+  await register.getByLabel('Id', { exact: true }).fill(profileId);
+  await register.getByLabel('Display name', { exact: true }).fill('Browser policy');
+  await choose(page, register, 'Certificate profile id', /Server TLS/);
+  const required = page.waitForResponse((r) => r.url().endsWith('/operations/enrollment.profile.register'));
+  await register.getByRole('button', { name: /^Run operation$/i }).first().click();
+  expect((await required).status()).toBe(409);
+  await register.getByRole('button', { name: 'Prepare approval request' }).click();
+  const approval = runner(page, 'Request approval');
+  await approval.getByRole('textbox', { name: 'Approval', exact: true }).fill('browser-enrollment-approval');
+  await expect(approval.getByText('Target arguments prepared. You can now request approval.')).toBeVisible();
+  const requested = page.waitForResponse((r) => r.url().endsWith('/operations/security.approval.request'));
+  await approval.getByRole('button', { name: /^Run operation$/i }).last().click();
+  expect((await requested).status()).toBe(200);
+  await approve(request, 'browser-enrollment-approval');
+  await register.getByText('Advanced (approval, deadline)', { exact: true }).first().click();
+  await choose(page, register.locator('form').first(), 'Approval (optional)', /browser-enrollment-approval/);
+  expect((await run(register, 'register')).result).toMatchObject({ value: { id: profileId, state: 'ACTIVE' } });
+
+  const update = await select('update', 'Update enrollment profile');
+  await choose(page, update, 'Id', new RegExp(profileId));
+  await update.getByLabel('Display name', { exact: true }).fill('Updated browser policy');
+  await choose(page, update, 'Certificate profile id', /Server TLS/);
+  await update.getByLabel('Subject dn pattern (optional)', { exact: true }).fill('(?=unsupported)');
+  const invalid = page.waitForResponse((r) => r.url().endsWith('/operations/enrollment.profile.update'));
+  await update.getByRole('button', { name: /^Run operation$/i }).click();
+  expect((await invalid).status()).toBeGreaterThanOrEqual(400);
+  await expect(update.getByText(/^Failed:/)).toBeVisible();
+  await update.getByLabel('Subject dn pattern (optional)', { exact: true }).fill('CN=.*');
+  await update.getByLabel('Required san domains (optional)', { exact: true }).fill('example.test');
+  await update.getByLabel('Required san domains (optional)', { exact: true }).press('Enter');
+  await update.getByLabel('Require approval (optional)', { exact: true }).check();
+  await run(update, 'update');
+  await page.reload();
+  await inspect('ACTIVE');
+  for (const [id, title, state] of [
+    ['suspend', 'Suspend enrollment profile', 'SUSPENDED'],
+    ['activate', 'Activate enrollment profile', 'ACTIVE'],
+  ] as const) {
+    const form = await select(id, title);
+    await choose(page, form, 'Id', new RegExp(profileId));
+    expect((await run(form, id)).result).toMatchObject({ value: { state } });
+  }
+  const denied = await request.post('/fixture/enrollment-denied', { data: { version: 1, arguments: { id: profileId } } });
+  expect(denied.status()).toBeGreaterThanOrEqual(400);
+  expect(denied.status()).toBeLessThan(500);
+  expect(await denied.json()).toMatchObject({ status: 'FAILED', result: null });
+  await inspect('ACTIVE');
+  expect((await request.post('/fixture/restart')).status()).toBe(200);
+  await inspect('ACTIVE');
+});
+
+test('enrollment direct route exposes no actions without successful discovery', async ({ page }) => {
+  for (const unavailable of [false, true]) {
+    await page.route('**/admin/v1/operations', async (route) => {
+      if (unavailable) { await route.abort('failed'); return; }
+      const response = await route.fetch();
+      const body = await response.json();
+      body.result = { operations: [], count: 0 };
+      await route.fulfill({ response, json: body });
+    });
+    await page.goto('/enrollment');
+    await expect(page.getByRole('heading', { name: 'Enrollment Profiles', exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder('Filter operations')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Run operation$/i })).toHaveCount(0);
+    await page.unroute('**/admin/v1/operations');
+  }
+});
+
 // One sequential scenario owns its newly created authorities and approvals.
 // The second identity uses direct mTLS; the packaged deployment suite verifies browser certificate forwarding.
 test('real selectors, bound dual-control approval, CA proof and receipt recheck', async ({ page, request }) => {
@@ -146,6 +303,53 @@ test('real selectors, bound dual-control approval, CA proof and receipt recheck'
   await choose(page, issue, 'Issuing authority', /Authority · Root · Active/);
   await choose(page, issue, 'Certificate request', /certificate request/i);
   await choose(page, issue, 'Certificate profile', /Server TLS/);
+  const issued = page.waitForResponse((response) => response.url().endsWith('/operations/credential.issue'));
+  await issue.getByRole('button', { name: /^Run operation$/i }).click();
+  expect((await issued).status()).toBe(202);
+  await expect(issue.getByText('Succeeded', { exact: true })).toBeVisible();
+
+  const search = await operation(page, 'credential.search', 'Browse certificates');
+  await choose(page, search, 'Authority', /Authority · Root · Active/);
+  await search.getByLabel('Limit', { exact: true }).fill('20');
+  await search.getByLabel('Subject alternative name (optional)', { exact: true }).fill('DNS_NAME:BROWSER.EXAMPLE.TEST');
+  await expect(search.getByLabel('Credential ID prefix (optional)', { exact: true })).toBeVisible();
+  const searched = page.waitForResponse((response) => response.url().endsWith('/operations/credential.search'));
+  await search.getByRole('button', { name: /^Run operation$/i }).click();
+  const searchResponse = await searched;
+  expect(searchResponse.status()).toBe(200);
+  const searchResult = await searchResponse.json() as Envelope;
+  expect(searchResult.result?.count).toBe(1);
+  const found = (searchResult.result?.credentials as Record<string, unknown>[])[0]!;
+  const searchArguments = searchResponse.request().postDataJSON() as OperationRequest;
+  const prefix = String(found.credentialId).slice(0, 12);
+  await search.getByLabel('Credential ID prefix (optional)', { exact: true }).fill(prefix);
+  const filtered = page.waitForResponse((response) => response.url().endsWith('/operations/credential.search'));
+  await search.getByRole('button', { name: /^Run operation$/i }).click();
+  expect((await (await filtered).json() as Envelope).result?.count).toBe(1);
+  expect((await request.post('/fixture/restart')).status()).toBe(200);
+  const recovered = await request.post('/admin/v1/operations/credential.search', { data: searchArguments });
+  expect(recovered.status()).toBe(200);
+  expect((await recovered.json() as Envelope).result?.credentials).toEqual(searchResult.result?.credentials);
+
+  // Render current measurements from the real backend for exactly the chosen CA.
+  const serverSnapshot = page.waitForResponse((response) => response.url().endsWith('/operations/dashboard.server'));
+  await page.goto('/');
+  expect((await serverSnapshot).status()).toBe(200);
+  const metricIds = ['authority', 'certificate', 'revocation', 'publication'];
+  const authoritySnapshots = metricIds.map((id) => page.waitForResponse((response) => response.url().endsWith(`/operations/dashboard.${id}`)));
+  await choose(page, page.getByRole('main'), 'Metrics authority', /Authority · Root · Active/);
+  for (const snapshot of authoritySnapshots) {
+    const response = await snapshot;
+    expect(response.status()).toBe(200);
+    const result = await response.json() as Envelope;
+    expect(result.status).toBe('SUCCEEDED');
+    expect(result.result?.caId).toBe(searchArguments.authorityId);
+  }
+  const certificateMetrics = page.getByRole('region', { name: 'Certificate metrics', exact: true });
+  await expect(certificateMetrics.getByRole('meter', { name: 'Certificates counted' })).toHaveAttribute('value', '2');
+  await expect(certificateMetrics.getByText('Unavailable', { exact: true })).toBeVisible();
+  await expect(certificateMetrics.getByText(/Expiration windows are cumulative/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Revocation metrics' }).getByText('Unavailable', { exact: true })).toHaveCount(4);
 
   const intermediate = await operation(page, 'ca.intermediate.create', 'Create intermediate CA');
   await choose(page, intermediate, 'Certificate format', /X.509/);
@@ -185,4 +389,28 @@ test('real selectors, bound dual-control approval, CA proof and receipt recheck'
   expect(intermediateChecks.length).toBeGreaterThanOrEqual(2);
   expect(new Set(intermediateChecks).size).toBe(1);
   await expect(intermediate.getByText('Succeeded', { exact: true })).toBeVisible();
+  // Exercise the newly generated status-transition forms against the same real authority.
+  let heldCredential: unknown;
+  for (const [id, title, state] of [
+    ['credential.hold', 'Hold credential', 'HELD'],
+    ['credential.unhold', 'Release credential hold', 'CLEAR'],
+  ] as const) {
+    await page.goto('/revocation');
+    await page.getByPlaceholder('Filter operations').fill(id);
+    await page.getByText(id, { exact: true }).first().click();
+    const form = runner(page, title);
+    await choose(page, form, 'Authority', /Authority · Root · Active/);
+    await form.getByLabel('Certificate', { exact: true }).click();
+    await page.getByRole('option').first().click();
+    const response = page.waitForResponse((r) => r.url().endsWith(`/operations/${id}`));
+    await form.getByRole('button', { name: /^Run operation$/i }).click();
+    const result = await response;
+    expect(result.status()).toBe(200);
+    const body = await result.json() as Envelope;
+    expect(body.status).toBe('SUCCEEDED');
+    expect(body.result?.state).toBe(state);
+    if (id === 'credential.hold') heldCredential = body.result?.credentialId;
+    else expect(body.result?.credentialId).toBe(heldCredential);
+    await expect(form.getByText('Succeeded', { exact: true })).toBeVisible();
+  }
 });

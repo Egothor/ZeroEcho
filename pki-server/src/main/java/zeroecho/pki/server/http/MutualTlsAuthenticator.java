@@ -50,6 +50,7 @@ import java.util.Optional;
 import java.util.function.Function;
 
 import zeroecho.pki.server.AdministrativeAuthenticationMode;
+import zeroecho.pki.server.CertificateIdentityEvidence;
 import zeroecho.pki.server.PkiServerConfiguration.ClientCertificateMapping;
 import zeroecho.pki.server.SecurityPrincipal;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
@@ -114,7 +115,15 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
                         Optional.of(principal.principalId()),
                         PkiServerAuthenticationResult.Code.PRINCIPAL_DISABLED);
             }
-            return new PkiServerAuthenticationResult.Authenticated(principal.principalId());
+            Optional<CertificateIdentityEvidence> evidence;
+            try {
+                evidence = Optional.of(CertificateIdentityEvidence.fromCertificate(context.realmId(), leaf));
+            } catch (IllegalArgumentException unsupportedIdentity) {
+                // Authentication retains existing mapping semantics; enrollment requires this evidence separately.
+                evidence = Optional.empty();
+            }
+            return new PkiServerAuthenticationResult.Authenticated(AdministrativeAuthenticationMode.DIRECT_MTLS,
+                    Optional.empty(), principal.principalId(), evidence);
         } catch (java.security.cert.CertificateException | IllegalArgumentException failure) {
             return new PkiServerAuthenticationResult.Rejected(
                     PkiServerAuthenticationResult.Code.CERTIFICATE_INVALID);

@@ -168,6 +168,154 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    @Test void enrollmentRenewalIdentityReparsesOriginalAndRejectsChangedOrForgedFields(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = fixture(root)) {
+            Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(100), NOW.plusSeconds(100)));
+            zeroecho.pki.spi.framework.CredentialFramework framework = (zeroecho.pki.spi.framework.CredentialFramework)
+                    Proxy.newProxyInstance(zeroecho.pki.spi.framework.CredentialFramework.class.getClassLoader(),
+                            new Class<?>[] { zeroecho.pki.spi.framework.CredentialFramework.class }, (proxy, method, args) -> {
+                                if (method.getName().equals("requestParser")) return new BcX509CertificationRequestParser();
+                                throw new AssertionError(method.getName());
+                            });
+            DefaultCertificationRequestService requests = new DefaultCertificationRequestService(readOnly(store), framework);
+            zeroecho.pki.api.request.ParsedCertificationRequest parsed = requests.parseX509(new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, csr(key)));
+            requests.requireRenewalIdentity(parsed, leaf.credentialId());
+            assertThrows(PkiException.class, () -> requests.requireRenewalIdentity(parsed, new PkiId("missing")));
+            assertThrows(IllegalArgumentException.class, () -> requests.requireRenewalIdentity(parsed, new PkiId("credential:issuer")));
+            zeroecho.pki.api.request.ParsedCertificationRequest changedKey = requests.parseX509(new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, csr(otherKey)));
+            assertThrows(IllegalArgumentException.class, () -> requests.requireRenewalIdentity(changedKey, leaf.credentialId()));
+            byte[] changedSubject = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=Other"), key.getPublic())
+                    .build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate())).getEncoded();
+            zeroecho.pki.api.request.ParsedCertificationRequest changed = requests.parseX509(new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, changedSubject));
+            assertThrows(IllegalArgumentException.class, () -> requests.requireRenewalIdentity(changed, leaf.credentialId()));
+            org.bouncycastle.asn1.x509.ExtensionsGenerator extensions = new org.bouncycastle.asn1.x509.ExtensionsGenerator();
+            extensions.addExtension(org.bouncycastle.asn1.x509.Extension.subjectAlternativeName, false,
+                    new org.bouncycastle.asn1.x509.GeneralNames(new org.bouncycastle.asn1.x509.GeneralName(
+                            org.bouncycastle.asn1.x509.GeneralName.dNSName, "changed.example.test")));
+            byte[] changedSan = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=Applicant"), key.getPublic())
+                    .addAttribute(org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
+                    .build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate())).getEncoded();
+            zeroecho.pki.api.request.ParsedCertificationRequest changedNames = requests.parseX509(new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, changedSan));
+            assertThrows(IllegalArgumentException.class, () -> requests.requireRenewalIdentity(changedNames, leaf.credentialId()));
+            zeroecho.pki.api.request.ParsedCertificationRequest missingPayload = new zeroecho.pki.api.request.ParsedCertificationRequest(
+                    parsed.requestId(), parsed.formatId(), parsed.subjectRef(), parsed.publicKeyInfo(), Optional.empty(), Optional.empty(),
+                    parsed.subjectRdns(), parsed.subjectAlternativeNames(), false, new SimpleAttributeSet());
+            assertThrows(IllegalArgumentException.class, () -> requests.requireRenewalIdentity(missingPayload, leaf.credentialId()));
+            for (zeroecho.pki.api.request.ParsedCertificationRequest forged : List.of(
+                    new zeroecho.pki.api.request.ParsedCertificationRequest(parsed.requestId(), parsed.formatId(), changed.subjectRef(),
+                            parsed.publicKeyInfo(), Optional.empty(), Optional.empty(), parsed.subjectRdns(), parsed.subjectAlternativeNames(), false, parsed.attributes()),
+                    new zeroecho.pki.api.request.ParsedCertificationRequest(parsed.requestId(), parsed.formatId(), parsed.subjectRef(),
+                            parsed.publicKeyInfo(), Optional.empty(), Optional.empty(), changed.subjectRdns(), parsed.subjectAlternativeNames(), false, parsed.attributes()),
+                    new zeroecho.pki.api.request.ParsedCertificationRequest(parsed.requestId(), parsed.formatId(), parsed.subjectRef(),
+                            changedKey.publicKeyInfo(), Optional.empty(), Optional.empty(), parsed.subjectRdns(), parsed.subjectAlternativeNames(), false, parsed.attributes()),
+                    new zeroecho.pki.api.request.ParsedCertificationRequest(parsed.requestId(), parsed.formatId(), parsed.subjectRef(),
+                            parsed.publicKeyInfo(), Optional.empty(), Optional.empty(), parsed.subjectRdns(),
+                            List.of(new zeroecho.pki.api.request.SubjectAlternativeName.DnsName("example.test")), true, parsed.attributes()))) {
+                assertThrows(IllegalArgumentException.class, () -> requests.requireRenewalIdentity(forged, leaf.credentialId()));
+            }
+            Credential wrong = new Credential(leaf.credentialId(), leaf.formatId(), leaf.issuerRef(), new SubjectRef("CN=Other"), leaf.validity(),
+                    leaf.serialOrUniqueId(), leaf.publicKeyId(), leaf.profileBinding(), leaf.status(), leaf.content(), leaf.attributes());
+            DefaultCertificationRequestService inconsistent = new DefaultCertificationRequestService(overrideCredential(store, leaf.credentialId(), wrong), framework);
+            assertThrows(IllegalArgumentException.class, () -> inconsistent.requireRenewalIdentity(parsed, leaf.credentialId()));
+        }
+    }
+
+    @Test void originalRenewalProofUsesExactFrozenBindingAtValidationAndDispatch(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = fixture(root)) {
+            zeroecho.pki.testkit.AcceptancePrivateBinding source = new zeroecho.pki.testkit.AcceptancePrivateBinding();
+            zeroecho.pki.api.algorithm.X509AlgorithmBinding template = zeroecho.pki.testkit.AcceptancePrivateBinding.DESCRIPTOR;
+            zeroecho.pki.api.algorithm.X509AlgorithmBinding binding = new zeroecho.pki.api.algorithm.X509AlgorithmBinding(
+                    template.bindingId(), template.algorithmIdentity(), zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.CSR_SIGNATURE,
+                    template.oid(), template.origin(), template.encodingVersion(), template.parameterRule(), template.publicKeyEncoding(),
+                    template.signatureEncoding(), template.interoperability(), template.providerId(), "renewal-proof-v1");
+            zeroecho.pki.impl.framework.x509.X509BindingRule rule = (zeroecho.pki.impl.framework.x509.X509BindingRule) Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[] {zeroecho.pki.impl.framework.x509.X509BindingRule.class},
+                    (proxy, method, args) -> switch (method.getName()) {
+                        case "bindings" -> List.of(binding);
+                        case "semanticFingerprint" -> binding.semanticCommitment();
+                        default -> method.invoke(source, args);
+                    });
+            List<zeroecho.pki.api.algorithm.X509AlgorithmBinding> descriptors = new java.util.ArrayList<>(StandardX509Bindings.descriptors());
+            descriptors.add(binding);
+            zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry registry = ImmutableX509AlgorithmBindingRegistry.create(descriptors);
+            BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
+            X509AuthoritySnapshot authority = X509AuthoritySnapshot.compose(List.of(new zeroecho.pki.impl.framework.x509.X509BindingRuleProvider() {
+                @Override public List<zeroecho.pki.impl.framework.x509.X509BindingRule> rules() { return List.of(rule); }
+            }), List.of(verifier),
+                    List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID, AlgorithmExecutionCapability.Direction.VERIFY, verifier)),
+                    new X509AlgorithmResolver.Policy() {
+                        @Override public boolean permits(AlgorithmSuite suite, AlgorithmExecutionCapability.Direction direction) { return true; }
+                        @Override public String semanticFingerprint() { return "renewal-proof-validation"; }
+                    });
+            zeroecho.pki.api.profile.CertificateProfileDefinition base = store.requireActiveProfile(PROFILE).definition();
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy policy = new zeroecho.pki.api.profile.X509AlgorithmBindingPolicy(
+                    zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.Mode.EXPLICIT, Optional.empty(),
+                    Optional.of(new zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference(binding.bindingId(), binding.semanticCommitment())),
+                    Optional.empty(), Optional.empty());
+            zeroecho.pki.api.profile.CertificateProfileDefinition restricted = new zeroecho.pki.api.profile.CertificateProfileDefinition(
+                    base.certificateType(), PROFILE, 2, base.formatId(), "Restricted renewal proof", base.maximumValidity(), base.approvalRequirement(),
+                    base.subjectPolicy(), base.certificatePolicy(), policy, base.confirmationPolicy());
+            DefaultProfileService profiles = new DefaultProfileService(store, CLOCK, new InMemoryAuditSink(), registry);
+            CertificateProfileRef frozen = profiles.importProfile(zeroecho.pki.api.profile.CertificateProfileDocumentCodec.writeCanonical(restricted));
+            profiles.activateProfile(PROFILE, 2);
+            Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(100), NOW.plusSeconds(100)));
+            PkiStore immutable = readOnly(store);
+            DefaultCertificationRequestService requests = new DefaultCertificationRequestService(immutable,
+                    new zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework(authority, verifier), registry);
+            byte[] alternate = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=Applicant"), key.getPublic())
+                    .build(new JcaContentSignerBuilder("SHA384withRSA").build(key.getPrivate())).getEncoded();
+            zeroecho.pki.api.request.X509EnrollmentPayload allowed = new zeroecho.pki.api.request.X509EnrollmentPayload(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, csr(key));
+            CertificateProfileRef standardProfile = store.getProfileVersion(PROFILE, 1).orElseThrow().reference();
+            zeroecho.pki.api.request.X509EnrollmentPayload denied = new zeroecho.pki.api.request.X509EnrollmentPayload(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, alternate);
+            zeroecho.pki.api.request.ParsedCertificationRequest parsed = requests.parseX509(denied);
+            assertEquals(zeroecho.pki.api.request.ProofOfPossessionStatus.VERIFIED,
+                    requests.verifyProofOfPossession(parsed, new zeroecho.pki.api.issuance.VerificationPolicy(true, Optional.empty())).status());
+            requests.requireRenewalIdentity(parsed, leaf.credentialId());
+            assertThrows(IllegalArgumentException.class, () -> requests.requireProfileProof(parsed, frozen));
+            requests.requireProfileProof(requests.parseX509(allowed), standardProfile);
+            org.bouncycastle.asn1.pkcs.CertificationRequest standard = org.bouncycastle.asn1.pkcs.CertificationRequest.getInstance(allowed.der());
+            byte[] absentParameters = new org.bouncycastle.asn1.pkcs.CertificationRequest(standard.getCertificationRequestInfo(),
+                    new org.bouncycastle.asn1.x509.AlgorithmIdentifier(standard.getSignatureAlgorithm().getAlgorithm()), standard.getSignature()).getEncoded();
+            zeroecho.pki.api.request.ParsedCertificationRequest alternateEncoding = requests.parseX509(new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, absentParameters));
+            assertEquals(zeroecho.pki.api.request.ProofOfPossessionStatus.NOT_SUPPORTED,
+                    requests.verifyProofOfPossession(alternateEncoding, new zeroecho.pki.api.issuance.VerificationPolicy(true, Optional.empty())).status());
+            assertThrows(IllegalArgumentException.class, () -> requests.requireProfileProof(alternateEncoding, standardProfile));
+            assertThrows(IllegalArgumentException.class, () -> requests.requireProfileProof(parsed, new CertificateProfileRef(PROFILE, 2, new byte[32])));
+            assertThrows(IllegalArgumentException.class, () -> requests.requireProfileProof(parsed, new CertificateProfileRef(PROFILE, 99, new byte[32])));
+            profiles.activateProfile(PROFILE, 1); // Recovery must still use the frozen version two.
+            assertThrows(IllegalArgumentException.class, () -> requests.requireProfileProof(parsed, frozen));
+            requests.requireProfileProof(requests.parseX509(allowed), standardProfile);
+            CaRecord ca = store.getCa(CA).orElseThrow();
+            IssuerChainPath path = store.getIssuerChainPath(ca.issuanceChainPathId()).orElseThrow();
+            zeroecho.pki.api.issuance.IssuanceIntent intent = new zeroecho.pki.api.issuance.IssuanceIntent("renewal-proof", "1".repeat(64), frozen,
+                    ca.currentIssuanceIssuerId(), path.pathId(), path.pathCommitment());
+            EndEntityLifecyclePreparation preparation = new EndEntityLifecyclePreparation(immutable, CLOCK, authority, verifier, registry,
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
+            zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest rejected = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                    CA, new EndEntityRenewalRequest(leaf.credentialId(), Optional.empty()), leaf.content().sha256(), intent, Optional.of(denied));
+            assertThrows(PkiException.class, () -> preparation.prepareCorrelatedRenewal(ACCESS, rejected, intent, CancellationSignal.NONE));
+            zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest accepted = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                    CA, rejected.request(), leaf.content().sha256(), new zeroecho.pki.api.issuance.IssuanceIntent("renewal-standard", "2".repeat(64), standardProfile,
+                            ca.currentIssuanceIssuerId(), path.pathId(), path.pathCommitment()), Optional.of(allowed));
+            assertEquals(standardProfile, preparation.prepareCorrelatedRenewal(ACCESS, accepted, accepted.intent(), CancellationSignal.NONE).issuance().request().profileReference());
+            zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest forbiddenReplacement =
+                    new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(CA,
+                            new EndEntityReplacementRequest(leaf.credentialId(), denied, PROFILE), leaf.content().sha256(), intent);
+            assertThrows(PkiException.class, () -> preparation.prepareCorrelatedReplacement(
+                    ACCESS, forbiddenReplacement, intent, CancellationSignal.NONE));
+            zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest allowedReplacement =
+                    new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(CA,
+                            new EndEntityReplacementRequest(leaf.credentialId(), allowed, PROFILE), leaf.content().sha256(), accepted.intent());
+            assertEquals(standardProfile, preparation.prepareCorrelatedReplacement(ACCESS, allowedReplacement,
+                    allowedReplacement.intent(), CancellationSignal.NONE).issuance().request().profileReference());
+        }
+    }
+
     @Test void missingNonleafAndInconsistentMetadataFailBeforeWrites(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             EndEntityLifecyclePreparation preparation = preparation(readOnly(store), CLOCK);

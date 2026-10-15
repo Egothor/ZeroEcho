@@ -34,6 +34,9 @@
 
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.issuance.IssuanceIntent;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -92,7 +95,7 @@ import zeroecho.pkix.Pkix;
  * Local work and auxiliary memory are O(P + C + I) in predecessor, optional CSR
  * and issuer DER, plus cryptographic verification and profile validation.
  */
-final class EndEntityLifecyclePreparation {
+final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One issuer lifecycle prepares renewal, replacement and reissue; individual methods remain checked.
     private final PkiStore store;
     private final EffectiveCredentialStatusResolver status;
     private final EndEntityIssuancePreparation issuance;
@@ -126,36 +129,93 @@ final class EndEntityLifecyclePreparation {
 
     /* default */ Prepared prepareReplacement(AccessContext access, EndEntityReplacementRequest request, CancellationSignal cancellation)
             throws IOException {
+        return replace(access, request, Optional.empty(), Optional.empty(), cancellation);
+    }
+
+    /* default */ Prepared prepareCorrelatedReplacement(AccessContext access,
+            CorrelatedEndEntityReplacementRequest request, IssuanceIntent effective,
+            CancellationSignal cancellation) throws IOException {
+        return replace(access, request.request(), Optional.of(request), Optional.of(effective), cancellation);
+    }
+
+    private Prepared replace(AccessContext access, EndEntityReplacementRequest request,
+            Optional<CorrelatedEndEntityReplacementRequest> binding, Optional<IssuanceIntent> intent,
+            CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(access, "access");
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
         Predecessor predecessor = predecessor(request.existingCredentialId(), cancellation);
-        byte[] csr = request.csrDer();
-        VerifiedIssuanceCandidate candidate = issuance.verifyCsr(predecessor.credential().issuerRef().caId(), csr,
+        if (binding.isPresent()) {
+            CorrelatedEndEntityReplacementRequest expected = binding.orElseThrow();
+            if (!expected.issuerCaId().equals(predecessor.credential().issuerRef().caId())
+                    || !expected.predecessorSha256().equals(predecessor.credential().content().sha256())) {
+                throw reject("PREDECESSOR_BINDING_MISMATCH");
+            }
+        }
+        VerifiedIssuanceCandidate candidate = issuance.verifyRequest(predecessor.credential().issuerRef().caId(), request.payload(),
                 request.profileId(), Optional.empty(), cancellation);
+        if (request.payload().kind() == zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF) {
+            zeroecho.pkix.cmp.CrmfRequest.CertificateReference original = zeroecho.pkix.cmp.CrmfRequest.parse(request.payload().der())
+                    .oldCertificate().orElseThrow(() -> reject("PREDECESSOR_REFERENCE_REQUIRED"));
+            if (!original.issuer().equals(predecessor.certificate().getIssuerX500Principal())
+                    || !original.serialNumber().equals(predecessor.certificate().getSerialNumber())) {
+                throw reject("PREDECESSOR_REFERENCE_MISMATCH");
+            }
+        }
         EffectiveCredentialStatus effective = evaluation.resolve(predecessor.credential());
         if (Arrays.equals(candidate.exactPublicKey().bytes(), predecessor.request().publicKeyInfo().bytes())) {
             requireReusable(effective);
         }
         return new Prepared(predecessor.credential(), issuance.prepareCandidate(access, candidate, evaluation,
-                Optional.of(csr), cancellation));
+                Optional.of(request.payload()), intent, cancellation));
     }
 
     private Prepared reconstruct(AccessContext access, PkiId id, Optional<Validity> validity,
             CancellationSignal cancellation) throws IOException {
+        return reconstruct(access, id, validity, Optional.empty(), Optional.empty(), cancellation);
+    }
+
+    /* default */ Prepared prepareCorrelatedRenewal(AccessContext access,
+            CorrelatedEndEntityRenewalRequest request,
+            IssuanceIntent effective, CancellationSignal cancellation) throws IOException {
+        return reconstruct(access, request.request().existingCredentialId(), request.request().validityOverride(),
+                Optional.of(request), Optional.of(effective), cancellation);
+    }
+
+    private Prepared reconstruct(AccessContext access, PkiId id, Optional<Validity> validity,
+            Optional<CorrelatedEndEntityRenewalRequest> binding,
+            Optional<IssuanceIntent> intent, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(access, "access");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
         Predecessor predecessor = predecessor(id, cancellation);
+        if (binding.isPresent()) {
+            CorrelatedEndEntityRenewalRequest expected = binding.orElseThrow();
+            if (!expected.issuerCaId().equals(predecessor.credential().issuerRef().caId())
+                    || !expected.predecessorSha256().equals(predecessor.credential().content().sha256())) {
+                throw reject("PREDECESSOR_BINDING_MISMATCH");
+            }
+        }
         requireReusable(evaluation.resolve(predecessor.credential()));
         ParsedCertificationRequest request = predecessor.request();
         CertificateProfileRef profile = ((EndEntityProfileBinding) predecessor.credential().profileBinding()).reference();
         VerifiedIssuanceCandidate candidate = VerifiedIssuanceCandidate.reconstructed(request, request.requestId(),
                 request.publicKeyInfo(), new IssueEndEntityCommand(predecessor.credential().issuerRef().caId(), request,
                         profile.profileId(), validity));
+        Optional<zeroecho.pki.api.request.X509EnrollmentPayload> original = binding.flatMap(CorrelatedEndEntityRenewalRequest::originalRequest);
+        if (original.isPresent()) {
+            candidate = issuance.verifyRequest(predecessor.credential().issuerRef().caId(), original.orElseThrow(), profile.profileId(), validity, cancellation);
+            ParsedCertificationRequest verified = candidate.request();
+            if (!request.subjectRef().equals(verified.subjectRef()) || !request.subjectRdns().equals(verified.subjectRdns())
+                    || !request.subjectAlternativeNames().equals(verified.subjectAlternativeNames())
+                    || request.subjectAlternativeNamePresent() != verified.subjectAlternativeNamePresent()
+                    || !Arrays.equals(request.publicKeyInfo().bytes(), verified.publicKeyInfo().bytes())) {
+                throw reject("PREDECESSOR_IDENTITY_CHANGED");
+            }
+        }
         EndEntityIssuancePreparation.Prepared prepared = issuance.prepareCandidate(access, candidate, evaluation,
-                Optional.empty(), cancellation);
+                original, intent, cancellation);
         if (!request.subjectRdns().equals(prepared.request().subjectRdns())
                 || !request.subjectAlternativeNames().equals(prepared.request().subjectAlternativeNames())
                 || !Arrays.equals(predecessor.subjectDer(), BcX509ProfileSupport.subject(
@@ -193,7 +253,7 @@ final class EndEntityLifecyclePreparation {
                     || !credential.validity().notAfter().equals(certificate.getNotAfter().toInstant())) {
                 throw reject("PREDECESSOR_METADATA_MISMATCH");
             }
-            return new Predecessor(credential, request, certificate.getSubjectX500Principal().getEncoded());
+            return new Predecessor(credential, request, certificate.getSubjectX500Principal().getEncoded(), certificate);
         } catch (IllegalArgumentException invalid) {
             throw reject("PREDECESSOR_CERTIFICATE_INVALID");
         }
@@ -295,7 +355,8 @@ final class EndEntityLifecyclePreparation {
         @Override public String toString() { return "PreparedEndEntityLifecycle[redacted]"; }
     }
 
-    private record Predecessor(Credential credential, ParsedCertificationRequest request, byte[] subjectDer) {
+    private record Predecessor(Credential credential, ParsedCertificationRequest request, byte[] subjectDer,
+            X509Certificate certificate) {
         private Predecessor { subjectDer = subjectDer.clone(); }
         @Override public byte[] subjectDer() { return subjectDer.clone(); }
     }

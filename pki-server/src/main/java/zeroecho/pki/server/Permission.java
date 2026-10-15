@@ -225,7 +225,8 @@ public final class Permission {
         /** SCEP endpoint configuration. */ SCEP_ENDPOINT(42),
         /** CMP endpoint configuration. */ CMP_ENDPOINT(43),
         /** Enrollment profile configuration. */ ENROLLMENT_PROFILE(44),
-        /** Status-generation schedule configuration. */ STATUS_SCHEDULE(45);
+        /** Status-generation schedule configuration. */ STATUS_SCHEDULE(45),
+        /** Durable protocol enrollment transaction and independent approval. */ ENROLLMENT_REQUEST(46);
         private final int code;
         ResourceType(int code) { this.code = code; }
         /**

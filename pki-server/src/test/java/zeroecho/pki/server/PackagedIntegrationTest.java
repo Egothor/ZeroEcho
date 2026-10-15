@@ -100,6 +100,14 @@ class PackagedIntegrationTest {
         byte[] encoded = StrictJson.encode(relocate(configuration));
         PkiServerConfigurationCodec.decode(encoded);
         Files.write(directory.resolve("server.json"), encoded);
+        Files.createDirectory(directory.resolve("backup-spool"),
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        Files.writeString(directory.resolve("backup-transfer.json"), """
+                {"version":1,"directory":"/fixture/backup-spool","maximumArchiveBytes":16777216,
+                 "maximumRetainedBytes":33554432,"maximumArtifacts":4,"maximumConcurrentJobs":1,
+                 "maximumWorkspaceBytes":8606711808,"lifetimeSeconds":3600,
+                 "transferTimeoutSeconds":30,"browserOrigin":"https://localhost"}
+                """);
         String suffix = UUID.randomUUID().toString().substring(0, 12);
         String network = "zeroecho-packaged-test-" + suffix;
         String server = network + "-server";
@@ -124,6 +132,7 @@ class PackagedIntegrationTest {
             assertEquals(1, cliAccess.lines().filter(line -> line.contains("POST /admin/v1/operations/ca.create ")).count(),
                     "CLI observation must never repeat the mutation, regardless of response status");
             browser(identities.edgeSpkiPin());
+            backupTransferThroughNginx();
             String access = checked("nginx-access", List.of("podman", "logs", nginx)).output();
             long acceptedPosts = access.lines().filter(line -> line.contains("POST /admin/v1/operations/ca.create ")
                     && line.contains(" 202 ")).count();
@@ -165,7 +174,9 @@ class PackagedIntegrationTest {
                 "keyringPath", directory.resolve("keyring/signing.zek").toString(), "keyRefPrefix", "fixture:",
                 "requireComponentSuffix", "true")));
         signing = with(signing, "signatureAlgorithm", new Text(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm()));
-        session = with(session, "store", provider("fs", Map.of("root", directory.resolve("store").toString())));
+        session = with(session, "store", provider("fs", Map.of("root", directory.resolve("store").toString(),
+                "credentialSearch", "h2", "credentialSearchCacheKiB", "4096",
+                "credentialSearchQueryTimeoutMillis", "5000", "credentialSearchMaximumCertificateBytes", "1048576")));
         session = with(session, "audit", provider("file", Map.of("root", directory.resolve("audit").toString())));
         session = with(session, "signing", signing);
         realm = with(realm, "pkiSession", session);
@@ -248,6 +259,7 @@ class PackagedIntegrationTest {
         checked("server-start", List.of("podman", "run", "--detach", "--pull=never", "--name", name,
                 "--network", network, "--network-alias", "pki-server", "--userns=keep-id:uid=10001,gid=10001",
                 "--volume", directory + ":/fixture:rw,z", "--env", "ZEROECHO_SERVER_CONFIG=/fixture/server.json",
+                "--env", "ZEROECHO_BACKUP_TRANSFER_CONFIG=/fixture/backup-transfer.json",
                 "--env", "ZEROECHO_PROFILE_RECONCILE=off", "--env", "PACKAGED_TEST_TLS_PASSWORD", "--env", "PACKAGED_TEST_KEY_PASSWORD",
                 System.getProperty("packaged.serverImage")));
     }
@@ -315,6 +327,35 @@ class PackagedIntegrationTest {
         ObjectValue denied = cli("cli-scope-denied", "scoped", 4, "ca.inspect", "--authority-id", caId, "--ca-id", caId);
         assertEquals("DENIED", text(denied.fields().get("failure")));
         assertEquals("AUTHORIZATION_DENIED", text(denied.fields().get("code")));
+    }
+
+    private void backupTransferThroughNginx() throws Exception {
+        ObjectValue exported = object(cli("backup-export", "administrator", 0, "backup.stream.export",
+                "--arg", "label=packaged-backup").fields().get("result"));
+        exported = object(exported.fields().get("value"));
+        String handle = text(exported.fields().get("artifactHandle"));
+        Path form = directory.resolve("backup-download.form");
+        Files.writeString(form, "artifactHandle=" + handle);
+        Path archive = directory.resolve("backup.zip");
+        Path headers = directory.resolve("backup.headers");
+        checked("backup-download", List.of("curl", "--silent", "--show-error", "--fail", "--max-time", "30",
+                "--cert", tls.resolve("administrator.crt").toString(), "--key", tls.resolve("administrator.key").toString(),
+                "--cacert", tls.resolve("ca.pem").toString(), "--header", "X-ZeroEcho-Transfer: 1",
+                "--header", "Content-Type: application/x-www-form-urlencoded",
+                "--data-binary", "@" + form, "--dump-header", headers.toString(),
+                "--output", archive.toString(), baseUrl + "/admin/v1/backup/download"));
+        assertEquals(((PkiOperationValue.IntegerValue) exported.fields().get("length")).value(), Files.size(archive));
+        java.security.MessageDigest hash = java.security.MessageDigest.getInstance("SHA-256");
+        try (java.io.InputStream input = Files.newInputStream(archive)) {
+            byte[] buffer = new byte[65536];
+            int count;
+            while ((count = input.read(buffer)) != -1) hash.update(buffer, 0, count);
+        }
+        assertEquals(text(exported.fields().get("sha256")), java.util.HexFormat.of().formatHex(hash.digest()));
+        String responseHeaders = Files.readString(headers).toLowerCase(java.util.Locale.ROOT);
+        assertTrue(responseHeaders.contains("content-type: application/zip"));
+        assertTrue(responseHeaders.contains("content-length: " + Files.size(archive)));
+        assertTrue(responseHeaders.contains("frame-ancestors 'self'"));
     }
 
     private void browser(String edgeSpkiPin) throws Exception {

@@ -82,16 +82,17 @@ export type NavGroup = 'Overview' | 'Issuance' | 'Lifecycle' | 'Trust & Access' 
 export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/', icon: DashboardIcon, group: 'Overview', operationPrefixes: [] },
   { id: 'realm', label: 'Realm', path: '/realm', icon: LanguageIcon, group: 'Overview', operationPrefixes: [] },
+  { id: 'backup', label: 'Backup and restore', path: '/backup', icon: FolderIcon, group: 'Operations', operationPrefixes: ['backup.stream.'] },
 
   { id: 'authorities', label: 'Certificate Authorities', path: '/authorities', icon: AccountBalanceIcon, group: 'Issuance', operationPrefixes: ['ca.'] },
   { id: 'issuers', label: 'Issuer Generations & Paths', path: '/issuers', icon: AccountTreeIcon, group: 'Issuance', operationPrefixes: ['issuer.'] },
   { id: 'profiles', label: 'Certificate Profiles', path: '/profiles', icon: DescriptionIcon, group: 'Issuance', operationPrefixes: ['profile.'] },
   { id: 'requests', label: 'Requests (CSRs)', path: '/requests', icon: UploadFileIcon, group: 'Issuance', operationPrefixes: ['request.'] },
-  { id: 'issuance', label: 'Issuance', path: '/issuance', icon: VerifiedIcon, group: 'Issuance', operationPrefixes: ['credential.issue', 'credential.inspect'] },
+  { id: 'issuance', label: 'Issuance', path: '/issuance', icon: VerifiedIcon, group: 'Issuance', operationPrefixes: ['credential.issue', 'credential.inspect', 'credential.search'] },
 
   { id: 'lifecycle', label: 'Lifecycle', path: '/lifecycle', icon: AutorenewIcon, group: 'Lifecycle', operationPrefixes: ['credential.renew', 'credential.replace', 'credential.reissue'] },
   { id: 'confirmations', label: 'Credential Confirmation', path: '/confirmations', icon: FactCheckIcon, group: 'Lifecycle', operationPrefixes: ['credential.confirmation.'] },
-  { id: 'revocation', label: 'Revocation', path: '/revocation', icon: BlockIcon, group: 'Lifecycle', operationPrefixes: ['credential.revoke', 'revocation.'] },
+  { id: 'revocation', label: 'Revocation', path: '/revocation', icon: BlockIcon, group: 'Lifecycle', operationPrefixes: ['credential.revoke', 'credential.hold', 'credential.unhold', 'revocation.'] },
   { id: 'status', label: 'Status & CRLs', path: '/status', icon: ListAltIcon, group: 'Lifecycle', operationPrefixes: ['status.', 'inventory.status'] },
   { id: 'publication', label: 'Publication', path: '/publication', icon: PublishIcon, group: 'Lifecycle', operationPrefixes: ['publication.'] },
 

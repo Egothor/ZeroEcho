@@ -52,6 +52,40 @@ public interface RevocationEvidenceExecutor {
             RevocationExecutionEvidence evidence, CancellationSignal cancellation);
 
     /**
+     * Reports whether both evidence-aware hold transition methods are implemented.
+     * Administrative callers must require this capability before consuming an approval.
+     * Implementations returning true must override both methods and preserve atomic evidence.
+     * @return true when both hold and release are supported; false by default
+     */
+    default boolean supportsHoldTransitions() { return false; }
+
+    /**
+     * Executes a temporary hold with atomically retained server-derived evidence.
+     * The default fails closed before any mutation.
+     * @param operation validated hold operation
+     * @param evidence authenticated server-derived evidence
+     * @param cancellation originating cancellation signal
+     * @return completed, durable-pending, or safely classified outcome
+     */
+    default PkiOperationOutcome executeHold(PkiOperation.HoldCredential operation,
+            RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+        throw new IllegalStateException("PKI executor does not support hold evidence");
+    }
+
+    /**
+     * Executes release of an existing hold with atomically retained server-derived evidence.
+     * The default fails closed before any mutation; permanent revocation cannot be released.
+     * @param operation validated hold-release operation
+     * @param evidence authenticated server-derived evidence
+     * @param cancellation originating cancellation signal
+     * @return completed, durable-pending, or safely classified outcome
+     */
+    default PkiOperationOutcome executeUnhold(PkiOperation.UnholdCredential operation,
+            RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+        throw new IllegalStateException("PKI executor does not support hold-release evidence");
+    }
+
+    /**
      * Executes an overdue pending-confirmation revocation with server-derived evidence.
      * @param operation validated pending-confirmation revocation operation
      * @param evidence authenticated server-derived evidence

@@ -102,12 +102,12 @@ class ServerControlOperationExecutorTest {
     void catalogContainsAllExplicitOperationFamilies() {
         System.out.println("catalogContainsAllExplicitOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(136, catalog.descriptors().size());
-        assertEquals(49, catalog.descriptors().values().stream()
+        assertEquals(150, catalog.descriptors().size());
+        assertEquals(51, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
         assertEquals(10, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
-        assertEquals(77, catalog.descriptors().values().stream()
+        assertEquals(89, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());
         assertEquals(catalog.descriptors().size(), catalog.descriptors().values().stream()

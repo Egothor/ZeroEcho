@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "directory": "/var/lib/zeroecho/backup-artifacts",
+  "maximumArchiveBytes": 67108864,
+  "maximumRetainedBytes": 268435456,
+  "maximumArtifacts": 8,
+  "maximumConcurrentJobs": 2,
+  "maximumWorkspaceBytes": 17314086912,
+  "lifetimeSeconds": 3600,
+  "transferTimeoutSeconds": 300,
+  "browserOrigin": "https://pki.example.test"
+}

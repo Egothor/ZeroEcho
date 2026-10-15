@@ -38,6 +38,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { NAV_ITEMS } from '@/app/navigation';
 import type { NavItem } from '@/app/navigation';
 import { useRealm } from '@/hooks/useRealm';
+import { MetricsDashboard } from '@/components/MetricsDashboard';
 
 const SECTIONS: { label: string; ids: string[] }[] = [
   { label: 'Certificate Management', ids: ['authorities', 'issuance', 'requests', 'revocation', 'approvals', 'audit'] },
@@ -99,6 +100,8 @@ export function DashboardPage() {
           </Typography>
         </Stack>
       )}
+
+      <MetricsDashboard />
 
       <Stack spacing={4}>
         {SECTIONS.map((section) => {

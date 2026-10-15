@@ -63,7 +63,7 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
         PkiOperation.TransitionAuthority, PkiOperation.SelectIssuancePath, PkiOperation.RegisterIssuerChainPath,
         PkiOperation.ListPendingCredentialConfirmations, PkiOperation.IssueCredentialConfirmationChallenge,
         PkiOperation.CompleteCredentialConfirmationProof, PkiOperation.RevokePendingCredentialConfirmation,
-        PkiOperation.RevokeCredential, PkiOperation.InspectRevocation,
+        PkiOperation.RevokeCredential, PkiOperation.HoldCredential, PkiOperation.UnholdCredential, PkiOperation.InspectRevocation,
         PkiOperation.ReadRevocationHistory, PkiOperation.SnapshotRevocations,
         PkiOperation.InspectPublication, PkiOperation.ListPublications,
         PkiOperation.RegisterPublication, PkiOperation.ProcessPublication,
@@ -121,14 +121,15 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
      * @param after            optional exclusive identifier cursor; empty starts the first page
      * @param subjectFilter    optional case-insensitive substring match on the subject DN
      * @param serialFilter     optional case-insensitive substring match on the serial/unique id
-     * @param fingerprintFilter optional case-insensitive prefix match on the credential fingerprint
+     * @param fingerprintFilter optional case-insensitive prefix match on the credential ID; not a digest
      * @param statusFilter     optional exact credential status name (ISSUED, REVOKED, EXPIRED)
      * @param profileIdFilter  optional exact profile logical id
+     * @param sanFilter optional exact typed SAN, encoded as DNS_NAME:value, IP_ADDRESS:value, URI:value or RFC822_NAME:value
      */
     record SearchCredentials(PkiId authorityId, int limit, Optional<String> after,
             Optional<String> subjectFilter, Optional<String> serialFilter,
             Optional<String> fingerprintFilter, Optional<String> statusFilter,
-            Optional<String> profileIdFilter) implements PkiOperation {
+            Optional<String> profileIdFilter, Optional<String> sanFilter) implements PkiOperation {
         /** Stable operation name. */ public static final String NAME = "credential.search";
         /** Validates the scope, page limit, exclusive cursor and optional filters. */
         public SearchCredentials {
@@ -139,6 +140,26 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
             Objects.requireNonNull(fingerprintFilter, "fingerprintFilter");
             Objects.requireNonNull(statusFilter, "statusFilter");
             Objects.requireNonNull(profileIdFilter, "profileIdFilter");
+            Objects.requireNonNull(sanFilter, "sanFilter").ifPresent(
+                    zeroecho.pki.api.credential.CredentialSearchQuery::parseSanFilter);
+        }
+
+        /**
+         * Creates a search without a SAN constraint, preserving the original constructor.
+         * @param authorityId authoritative issuing authority
+         * @param limit page size
+         * @param after exclusive ID cursor
+         * @param subjectFilter optional subject substring
+         * @param serialFilter optional serial substring
+         * @param fingerprintFilter optional credential-ID prefix
+         * @param statusFilter optional inventory status
+         * @param profileIdFilter optional profile logical ID
+         */
+        public SearchCredentials(PkiId authorityId, int limit, Optional<String> after,
+                Optional<String> subjectFilter, Optional<String> serialFilter, Optional<String> fingerprintFilter,
+                Optional<String> statusFilter, Optional<String> profileIdFilter) {
+            this(authorityId, limit, after, subjectFilter, serialFilter, fingerprintFilter,
+                    statusFilter, profileIdFilter, Optional.empty());
         }
         @Override public String name() { return NAME; }
     }
@@ -774,6 +795,46 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
          * @param credentialId exact stored credential identifier
          */
         public RevokePendingCredentialConfirmation(PkiId credentialId) { this(credentialId, Optional.empty()); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Places one committed credential on temporary hold using the authoritative clock.
+     * Permanent revocation cannot be replaced by a hold.
+     * @param credentialId exact stored credential identifier
+     * @param operatorJustification optional nonblank justification, at most 1024 characters
+     */
+    record HoldCredential(PkiId credentialId, Optional<String> operatorJustification) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "credential.hold";
+        /** Validates the exact target and bounded optional justification. */
+        public HoldCredential {
+            requireCredentialId(credentialId);
+            operatorJustification = boundedOptional(operatorJustification, "operatorJustification", 1_024);
+        }
+        /** Creates a hold without justification.
+         * @param credentialId exact stored credential identifier
+         */
+        public HoldCredential(PkiId credentialId) { this(credentialId, Optional.empty()); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Releases an existing temporary hold using the authoritative clock.
+     * Permanent revocation is irreversible and is never released by this operation.
+     * @param credentialId exact stored credential identifier
+     * @param operatorJustification optional nonblank justification, at most 1024 characters
+     */
+    record UnholdCredential(PkiId credentialId, Optional<String> operatorJustification) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "credential.unhold";
+        /** Validates the exact target and bounded optional justification. */
+        public UnholdCredential {
+            requireCredentialId(credentialId);
+            operatorJustification = boundedOptional(operatorJustification, "operatorJustification", 1_024);
+        }
+        /** Creates a release without justification.
+         * @param credentialId exact stored credential identifier
+         */
+        public UnholdCredential(PkiId credentialId) { this(credentialId, Optional.empty()); }
         @Override public String name() { return NAME; }
     }
 

@@ -34,9 +34,12 @@
 package zeroecho.pki.server.enrollment;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 /**
  * Immutable enrollment profile.
@@ -52,8 +55,10 @@ import java.util.Set;
  * @param certificateProfileId certificate profile applied to issued credentials
  * @param allowedAuthorityIds set of CA identities that may issue under this profile;
  *                            empty means any authority is permitted
- * @param subjectDnPattern   optional regex that the requested Subject DN must match
- * @param requiredSanDomains DNS suffixes that must appear as SANs; empty = unconstrained
+ * @param subjectDnPattern optional bounded pattern of literal text and {@code .*}
+ *                         wildcards; see {@link EnrollmentSubjectPattern}
+ * @param requiredSanDomains DNS suffixes each requiring at least one matching DNS SAN;
+ *                           normalized to sorted lowercase ASCII; empty = unconstrained
  * @param requireApproval    whether issuance requires an out-of-band approval
  */
 public record EnrollmentProfile(
@@ -65,18 +70,38 @@ public record EnrollmentProfile(
         Optional<String> subjectDnPattern,
         List<String> requiredSanDomains,
         boolean requireApproval) {
+    private static final int MAXIMUM_AUTHORITY_COUNT = 256;
+    private static final int MAXIMUM_SAN_DOMAIN_COUNT = 256;
 
     /** Validates and defensively copies the record. */
     public EnrollmentProfile {
         if (id == null || !id.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) {
             throw new IllegalArgumentException("enrollment profile identity is not canonical");
         }
-        Objects.requireNonNull(displayName, "displayName");
+        if (displayName == null || displayName.isBlank() || displayName.length() > 256) {
+            throw new IllegalArgumentException("Enrollment profile display name must contain 1 through 256 characters");
+        }
         Objects.requireNonNull(state, "state");
-        Objects.requireNonNull(certificateProfileId, "certificateProfileId");
+        EnrollmentEndpoint.requireProfileId(certificateProfileId);
         allowedAuthorityIds = Set.copyOf(Objects.requireNonNull(allowedAuthorityIds, "allowedAuthorityIds"));
+        if (allowedAuthorityIds.size() > MAXIMUM_AUTHORITY_COUNT) {
+            throw new IllegalArgumentException("Too many enrollment authorities");
+        }
+        allowedAuthorityIds.forEach(EnrollmentEndpoint::requireProfileId);
         Objects.requireNonNull(subjectDnPattern, "subjectDnPattern");
-        requiredSanDomains = List.copyOf(Objects.requireNonNull(requiredSanDomains, "requiredSanDomains"));
+        subjectDnPattern.ifPresent(EnrollmentSubjectPattern::compile);
+        Objects.requireNonNull(requiredSanDomains, "requiredSanDomains");
+        if (requiredSanDomains.size() > MAXIMUM_SAN_DOMAIN_COUNT) {
+            throw new IllegalArgumentException("Too many enrollment DNS suffixes");
+        }
+        SortedSet<String> domains = new TreeSet<>();
+        for (String domain : requiredSanDomains) {
+            String canonical = canonicalDomain(domain);
+            if (!domains.add(canonical)) {
+                throw new IllegalArgumentException("Duplicate enrollment DNS suffix");
+            }
+        }
+        requiredSanDomains = List.copyOf(domains);
     }
 
     /**
@@ -88,5 +113,25 @@ public record EnrollmentProfile(
     public EnrollmentProfile withState(EnrollmentProfileState newState) {
         return new EnrollmentProfile(id, displayName, newState, certificateProfileId,
                 allowedAuthorityIds, subjectDnPattern, requiredSanDomains, requireApproval);
+    }
+
+    private static String canonicalDomain(String value) {
+        Objects.requireNonNull(value, "DNS suffix");
+        if (value.length() > 254 || !value.matches("[A-Za-z0-9.-]+")) {
+            throw new IllegalArgumentException("Enrollment DNS suffix must contain canonical ASCII labels");
+        }
+        String domain = value.toLowerCase(Locale.ROOT);
+        if (domain.endsWith(".")) {
+            domain = domain.substring(0, domain.length() - 1);
+        }
+        if (domain.isEmpty() || domain.length() > 253) {
+            throw new IllegalArgumentException("Invalid enrollment DNS suffix");
+        }
+        for (String label : domain.split("\\.", -1)) {
+            if (!label.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) {
+                throw new IllegalArgumentException("Enrollment DNS suffix must contain canonical ASCII labels");
+            }
+        }
+        return domain;
     }
 }

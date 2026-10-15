@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import java.util.Base64;
 
@@ -60,6 +61,8 @@ import zeroecho.pki.server.acme.AcmeState;
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
         "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
 public final class ServerControlOperationExecutor {
+    private static final String FIELD_STATE = "state";
+    private static final String FIELD_EXPIRES_AT = "expiresAt";
     private static final String TEXT_SERVICE = "service";
     private static final String TEXT_ITEMS = "items";
     private static final String TEXT_NEXT_OFFSET = "nextOffset";
@@ -88,9 +91,11 @@ public final class ServerControlOperationExecutor {
     private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.scep.ScepService> scep = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.cmp.CmpService> cmp = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.enrollment.EnrollmentProfileService> enrollmentProfiles = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<zeroecho.pki.server.enrollment.EnrollmentCoordinator> enrollment = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<AuditService> auditSearch = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<AuditIntegrityService> auditIntegrity = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<BackupService> backup = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<BackupTransferService> transfers = new java.util.concurrent.atomic.AtomicReference<>();
 
     /**
      * Creates the one control dispatcher over existing durable authorities.
@@ -158,8 +163,27 @@ public final class ServerControlOperationExecutor {
             Permission.Resource authorizedResource, Optional<String> approvalId,
             Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory,
             CancellationSignal cancellation) {
+        return executeAuthorized(operation, actorPrincipalId, authorizedResource, approvalId,
+                approvedTargetCategory, cancellation, null);
+    }
+
+    /* default */ ServerControlOperationOutcome executeAuthorized(ServerControlOperation operation,
+            String actorPrincipalId, Permission.Resource authorizedResource, Optional<String> approvalId,
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory,
+            CancellationSignal cancellation, BackupTransferChannel channel) {
+        return executeAuthorized(operation, new AdministrativeDecisionActor(actorPrincipalId, Optional.empty()),
+                authorizedResource, approvalId, approvedTargetCategory, cancellation, channel);
+    }
+
+    /* default */ ServerControlOperationOutcome executeAuthorized(ServerControlOperation operation,
+            AdministrativeDecisionActor actor, Permission.Resource authorizedResource, Optional<String> approvalId,
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory,
+            CancellationSignal cancellation, BackupTransferChannel channel) {
         Objects.requireNonNull(operation, "operation");
-        Permission.requirePrincipal(actorPrincipalId);
+        Objects.requireNonNull(actor, "actor");
+        actor.credentialEvidence().ifPresent(evidence -> {
+            if (!realmId.equals(evidence.realmId())) throw new IllegalArgumentException("Decision evidence realm differs");
+        });
         Objects.requireNonNull(authorizedResource, "authorizedResource");
         Optional<OperationSecurityDescriptors.ApprovalCategory> exactTargetCategory = Objects.requireNonNull(
                 approvedTargetCategory, "approvedTargetCategory");
@@ -167,8 +191,12 @@ public final class ServerControlOperationExecutor {
             return failure(operation, PkiOperationFailure.CANCELLED, "CONTROL_OPERATION_CANCELLED");
         }
         try {
-            return dispatch(operation, actorPrincipalId, authorizedResource,
-                    Objects.requireNonNull(approvalId, "approvalId"), exactTargetCategory, cancellation);
+            return dispatch(operation, actor, authorizedResource,
+                    Objects.requireNonNull(approvalId, "approvalId"), exactTargetCategory, cancellation, channel);
+        } catch (java.io.IOException failure) {
+            String code = failure.getMessage();
+            return failure(operation, PkiOperationFailure.CONFLICT,
+                    code != null && code.matches("BACKUP_[A-Z_]+") ? code : "BACKUP_TRANSFER_OUTCOME_REQUIRES_STATUS");
         } catch (java.util.concurrent.CancellationException cancelled) {
             return failure(operation, PkiOperationFailure.CANCELLED, "CONTROL_OPERATION_CANCELLED");
         } catch (IllegalArgumentException unavailable) {
@@ -176,7 +204,9 @@ public final class ServerControlOperationExecutor {
         } catch (SecurityException denied) {
             return failure(operation, PkiOperationFailure.POLICY_REJECTION, "CONTROL_POLICY_REJECTED");
         } catch (IllegalStateException conflict) {
-            return failure(operation, PkiOperationFailure.CONFLICT, "CONTROL_STATE_CONFLICT");
+            return failure(operation, PkiOperationFailure.CONFLICT,
+                    "BACKUP_LEGACY_LIMIT".equals(conflict.getMessage())
+                            ? "BACKUP_LEGACY_LIMIT_USE_STREAMING" : "CONTROL_STATE_CONFLICT");
         }
     }
 
@@ -240,6 +270,13 @@ public final class ServerControlOperationExecutor {
         }
     }
 
+    /** Whether the configured service for a protocol operation is installed. */
+    /* default */ boolean protocolAvailable(String operationId) {
+        if (operationId.startsWith("est.")) return est.get() != null;
+        if (operationId.startsWith("scep.")) return scep.get() != null;
+        return !operationId.startsWith("cmp.") || cmp.get() != null;
+    }
+
     /**
      * Installs the enrollment profile registry exactly once before listener readiness.
      *
@@ -250,6 +287,24 @@ public final class ServerControlOperationExecutor {
         if (!enrollmentProfiles.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
             throw new IllegalStateException("Enrollment profile administration capability is already installed");
         }
+    }
+
+    /**
+     * Installs the realm-owned durable protocol approval coordinator exactly once.
+     * @param service validated coordinator
+     */
+    public void installEnrollmentCoordinator(zeroecho.pki.server.enrollment.EnrollmentCoordinator service) {
+        if (!enrollment.compareAndSet(null, Objects.requireNonNull(service, "service"))) throw new IllegalStateException("Enrollment coordinator already installed");
+    }
+
+    /**
+     * Resolves scope from the retained request before gateway authorization.
+     * @param id persisted enrollment identity
+     * @return exact authoritative realm/authority/issuer/profile scope
+     */
+    public Permission.Scope enrollmentScope(String id) {
+        return zeroecho.pki.server.enrollment.EnrollmentCoordinator.scope(enrollment().find(id)
+                .orElseThrow(() -> new IllegalStateException("Enrollment request is unavailable")));
     }
 
     /**
@@ -283,6 +338,31 @@ public final class ServerControlOperationExecutor {
         if (!backup.compareAndSet(null, backupService)) {
             throw new IllegalStateException("Backup capability is already installed");
         }
+    }
+
+    /* default */ void installBackupTransfers(BackupTransferService service) {
+        if (!transfers.compareAndSet(null, Objects.requireNonNull(service))) {
+            throw new IllegalStateException("Backup transfer service already installed");
+        }
+    }
+
+    /* default */ boolean backupTransfersAvailable() { return transfers.get() != null; }
+
+    /* default */ ServerControlOperation.BackupArtifactCommand bindBackup(String owner,
+            ServerControlOperation.BackupArtifactCommand operation) {
+        try {
+            BackupTransferService service = transfers(); // NOPMD CloseResource - Borrowed realm transfer service; its lifecycle owner closes it.
+            return new ServerControlOperation.BackupArtifactCommand(operation.action(), operation.artifactHandle(),
+                    Optional.of(service.commitment(service.bind(owner, operation))));
+        } catch (java.io.IOException failure) {
+            throw new SecurityException("Backup artifact unavailable"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        }
+    }
+
+    private BackupTransferService transfers() {
+        BackupTransferService service = transfers.get();
+        if (service == null) throw new IllegalStateException("Backup transfer is disabled");
+        return service;
     }
 
     /** Resolves the authoritative credential authorization resource before admission. */
@@ -319,9 +399,11 @@ public final class ServerControlOperationExecutor {
                 Optional.of(service.resolveDirectoryProfilePrecondition(operation.registration())));
     }
 
-    private ServerControlOperationOutcome dispatch(ServerControlOperation operation, String actor,
+    private ServerControlOperationOutcome dispatch(ServerControlOperation operation, AdministrativeDecisionActor decisionActor,
             Permission.Resource authorizedResource, Optional<String> approvalId,
-            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory, CancellationSignal cancellation) {
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory, CancellationSignal cancellation,
+            BackupTransferChannel channel) throws java.io.IOException {
+        String actor = decisionActor.principalId();
         return switch (operation) {
             case ServerControlOperation.ConfigurationChoices value -> ordinary(operation, configurationChoices(value, cancellation));
             case ServerControlOperation.ListCapabilities value -> ordinary(operation, capabilities(value, cancellation));
@@ -391,6 +473,11 @@ public final class ServerControlOperationExecutor {
             case ServerControlOperation.SearchAudit value -> ordinary(operation, auditSearch(value));
             case ServerControlOperation.VerifyAuditIntegrity value -> ordinary(operation, auditVerify(value));
             case ServerControlOperation.ExportBackup value -> ordinary(operation, exportBackup(value));
+            case ServerControlOperation.ReserveBackupUpload value -> ordinary(operation,
+                    artifactValue(transfers().reserveUpload(actor, value.backupId(), value.length(), value.sha256())));
+            case ServerControlOperation.ExportBackupStream value -> ordinary(operation,
+                    artifactValue(transfers().export(actor, new zeroecho.pki.api.backup.BackupRequest(value.label(), emptyBackupAttributes()))));
+            case ServerControlOperation.BackupArtifactCommand value -> ordinary(operation, transfer(actor, value, channel));
             case ServerControlOperation.VerifyBackup value -> ordinary(operation, verifyBackup(value));
             case ServerControlOperation.ExecuteRestore _ ->
                     failure(operation, PkiOperationFailure.POLICY_REJECTION, "BACKUP_RESTORE_UNAVAILABLE");
@@ -500,6 +587,11 @@ public final class ServerControlOperationExecutor {
                 enrollmentProfiles().register(value.profile());
                 yield ordinary(operation, enrollmentProfile(value.profile()));
             }
+            case ServerControlOperation.InspectEnrollmentRequest value -> ordinary(operation, inspectEnrollmentRequest(value.id()));
+            case ServerControlOperation.ListEnrollmentRequests value -> ordinary(operation, scopedPage(enrollment().list(value.offset(), value.limit()),
+                    authorizedResource.scope(), zeroecho.pki.server.enrollment.EnrollmentCoordinator::scope, ServerControlOperationExecutor::enrollmentRequest));
+            case ServerControlOperation.DecideEnrollmentRequest value -> ordinary(operation, enrollmentRequest(enrollment().decide(value.id(),
+                    value.expectedCommitment(), decisionActor, value.choice(), value.justification())));
             case ServerControlOperation.UpdateEnrollmentProfile value -> ordinary(operation,
                     enrollmentProfile(enrollmentProfiles().update(value.profile())));
             case ServerControlOperation.InspectEnrollmentProfile value -> ordinary(operation,
@@ -507,15 +599,13 @@ public final class ServerControlOperationExecutor {
                             .map(ServerControlOperationExecutor::enrollmentProfile)
                             .orElseThrow(() -> new IllegalArgumentException("Enrollment profile not found: " + value.id())));
             case ServerControlOperation.ListEnrollmentProfiles value -> {
-                List<zeroecho.pki.server.enrollment.EnrollmentProfile> allEp = enrollmentProfiles().list();
-                List<zeroecho.pki.server.enrollment.EnrollmentProfile> epSlice =
-                        allEp.stream().skip(value.offset()).limit(value.limit()).toList();
-                boolean epHasMore = allEp.size() > value.offset() + epSlice.size();
+                ServerControlStore.Page<zeroecho.pki.server.enrollment.EnrollmentProfile> epPage =
+                        enrollmentProfiles().list(value.offset(), value.limit());
                 yield ordinary(operation, object(TEXT_ITEMS,
-                        new PkiOperationValue.ListValue(epSlice.stream()
+                        new PkiOperationValue.ListValue(epPage.values().stream()
                                 .<PkiOperationValue>map(ServerControlOperationExecutor::enrollmentProfile).toList()),
-                        TEXT_NEXT_OFFSET, integer(value.offset() + epSlice.size()),
-                        TEXT_HAS_MORE, bool(epHasMore)));
+                        TEXT_NEXT_OFFSET, integer(epPage.nextOffset()),
+                        TEXT_HAS_MORE, bool(epPage.hasMore())));
             }
             case ServerControlOperation.ActivateEnrollmentProfile value -> ordinary(operation,
                     enrollmentProfile(enrollmentProfiles().setState(value.id(),
@@ -602,6 +692,51 @@ public final class ServerControlOperationExecutor {
     private zeroecho.pki.server.enrollment.EnrollmentProfileService enrollmentProfiles() {
         return Optional.ofNullable(enrollmentProfiles.get())
                 .orElseThrow(() -> new IllegalStateException("Enrollment profile capability unavailable"));
+    }
+
+    private zeroecho.pki.server.enrollment.EnrollmentCoordinator enrollment() {
+        return Optional.ofNullable(enrollment.get()).orElseThrow(() -> new IllegalStateException("Enrollment coordinator is unavailable"));
+    }
+
+    private static PkiOperationValue enrollmentRequest(zeroecho.pki.server.enrollment.EnrollmentTransaction value) {
+        zeroecho.pki.server.enrollment.EnrollmentTransaction.Intent intent = value.intent();
+        return new PkiOperationValue.ObjectValue(Map.ofEntries(Map.entry("id", text(value.id())), Map.entry("revision", integer(value.revision())),
+                Map.entry(FIELD_STATE, text(value.state().name())), Map.entry("commitment", text(value.commitment())),
+                Map.entry("intentCommitment", text(value.intentCommitment())), Map.entry("protocol", text(intent.source().protocol().name())),
+                Map.entry("operation", text(intent.operation().name())), Map.entry("requesterType", text(intent.requester().type().name())),
+                Map.entry("requesterId", text(intent.requester().actorId())), Map.entry("approvalThreshold", integer(intent.approvalPolicy().map(ApprovalService.Policy::threshold).orElse(0))),
+                Map.entry("predecessorId", text(intent.predecessorId().map(zeroecho.pki.api.PkiId::value).orElse(""))),
+                Map.entry("endpoint", text(intent.source().label())), Map.entry("enrollmentProfileId", text(intent.source().enrollmentProfileId())),
+                Map.entry("authorityId", text(intent.authorityId().value())), Map.entry("issuerId", text(intent.issuerId().value())),
+                Map.entry("profileId", text(intent.profile().profileId())), Map.entry("profileVersion", integer(intent.profile().profileVersion())),
+                Map.entry("requestId", text(intent.requestId().value())), Map.entry("requestKind", text(intent.requestKind().name())),
+                Map.entry("requestSha256", text(intent.requestSha256())), Map.entry("createdAt", text(intent.createdAt().toString())),
+                Map.entry(FIELD_EXPIRES_AT, text(intent.expiresAt().toString())), Map.entry("approvalCategory", text(intent.approvalCategory().name())),
+                Map.entry("decisions", new PkiOperationValue.ListValue(value.decisions().stream().<PkiOperationValue>map(decision -> new PkiOperationValue.ObjectValue(Map.of(
+                        "principalId", text(decision.principalId()), "choice", text(decision.choice().name()), "decidedAt", text(decision.decidedAt().toString())))).toList())),
+                Map.entry("credentialId", value.credentialId().map(zeroecho.pki.api.PkiId::value).map(ServerControlOperationExecutor::text).orElse(text("")))));
+    }
+
+    private PkiOperationValue inspectEnrollmentRequest(String id) {
+        zeroecho.pki.server.enrollment.EnrollmentTransaction value = enrollment().find(id).orElseThrow(() -> new IllegalStateException("Enrollment request is unavailable"));
+        zeroecho.pki.api.request.ParsedCertificationRequest parsed = enrollment().inspectIdentity(id);
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>(((PkiOperationValue.ObjectValue) enrollmentRequest(value)).fields());
+        fields.put("subject", text(parsed.subjectRef().value()));
+        fields.put("subjectRdns", new PkiOperationValue.ListValue(parsed.subjectRdns().stream().<PkiOperationValue>map(rdn -> object(
+                "type", text(rdn.type().oid()), "value", text(rdn.value()))).toList()));
+        fields.put("subjectAlternativeNames", new PkiOperationValue.ListValue(parsed.subjectAlternativeNames().stream().<PkiOperationValue>map(name -> {
+            String nameValue = switch (name) {
+                case zeroecho.pki.api.request.SubjectAlternativeName.DnsName dns -> dns.value();
+                case zeroecho.pki.api.request.SubjectAlternativeName.UriName uri -> uri.value();
+                case zeroecho.pki.api.request.SubjectAlternativeName.Rfc822Name email -> email.value();
+                case zeroecho.pki.api.request.SubjectAlternativeName.IpAddress address -> java.util.HexFormat.of().formatHex(address.bytes());
+            };
+            return object("type", text(name.type().name()), "value", text(nameValue));
+        }).toList()));
+        try {
+            fields.put("subjectPublicKeyInfoSha256", text(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(parsed.publicKeyInfo().bytes()))));
+        } catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
+        return new PkiOperationValue.ObjectValue(fields);
     }
 
     /* default */ OcspResponderService.Responder ocspResponder(String responderId) {
@@ -749,6 +884,51 @@ public final class ServerControlOperationExecutor {
         return new PkiOperationValue.ObjectValue(fields);
     }
 
+    private PkiOperationValue transfer(String actor, ServerControlOperation.BackupArtifactCommand operation,
+            BackupTransferChannel channel) throws java.io.IOException {
+        BackupTransferService service = transfers(); // NOPMD CloseResource - Borrowed realm transfer service; its lifecycle owner closes it.
+        BackupArtifactRepository.Descriptor descriptor = service.bind(actor, operation);
+        if (!operation.commitment().equals(Optional.of(service.commitment(descriptor)))) {
+            throw new SecurityException("Backup artifact identity changed");
+        }
+        return switch (operation.action()) {
+            case VERIFY -> artifactValue(service.verify(actor, descriptor));
+            case RESTORE -> artifactValue(service.restore(actor, descriptor));
+            case STATUS -> artifactValue(service.status(actor, descriptor.handle()));
+            case ACKNOWLEDGE -> {
+                service.acknowledge(actor, descriptor.handle());
+                yield text("ACKNOWLEDGED");
+            }
+            case UPLOAD -> {
+                if (channel == null) throw new IllegalStateException("Binary backup transfer route required");
+                service.upload(actor, descriptor, channel.input());
+                yield artifactValue(service.bind(actor, descriptor.handle()));
+            }
+            case DOWNLOAD -> {
+                if (channel == null) throw new IllegalStateException("Binary backup transfer route required");
+                service.download(actor, descriptor, channel::output);
+                yield text("DOWNLOADED");
+            }
+        };
+    }
+
+    private static PkiOperationValue artifactValue(BackupArtifactRepository.Descriptor descriptor) {
+        return new PkiOperationValue.ObjectValue(Map.of(
+                "artifactHandle", text(descriptor.handle()), "backupId", text(descriptor.backupId().value()),
+                "length", integer(descriptor.length()), "sha256", text(descriptor.sha256()),
+                "manifestSha256", text(descriptor.manifest()), FIELD_EXPIRES_AT, text(descriptor.expiresAt().toString()),
+                FIELD_STATE, text(descriptor.state().name()), "restoreId", text(descriptor.restoreId()),
+                "contentType", text("application/zip"), "purpose", text(descriptor.purpose().name())));
+    }
+
+    private static zeroecho.pki.api.attr.AttributeSet emptyBackupAttributes() {
+        return new zeroecho.pki.api.attr.AttributeSet() {
+            @Override public Set<zeroecho.pki.api.attr.AttributeId> ids() { return Set.of(); }
+            @Override public Optional<zeroecho.pki.api.attr.AttributeValue> get(zeroecho.pki.api.attr.AttributeId id) { return Optional.empty(); }
+            @Override public List<zeroecho.pki.api.attr.AttributeValue> getAll(zeroecho.pki.api.attr.AttributeId id) { return List.of(); }
+        };
+    }
+
     private PkiOperationValue exportBackup(ServerControlOperation.ExportBackup value) {
         BackupService service = backup.get();
         if (service == null) {
@@ -800,7 +980,7 @@ public final class ServerControlOperationExecutor {
         PkiOperationResult safe = new PkiOperationResult(operation.name(), Map.of(
                 "capabilityId", text(issued.capability().capabilityId()),
                 "objectId", text(issued.capability().objectId().value()),
-                "expiresAt", text(issued.capability().expiresAt().toString())));
+                FIELD_EXPIRES_AT, text(issued.capability().expiresAt().toString())));
         byte[] token = issued.token();
         try {
             return new ServerControlOperationOutcome.OneTimeSensitive(safe, token);
@@ -828,14 +1008,15 @@ public final class ServerControlOperationExecutor {
         fields.put("targetObjectId", text(value.targetObjectId().value()));
         value.issuerId().ifPresent(id -> fields.put("issuerId", text(id.value())));
         value.pathId().ifPresent(id -> fields.put("pathId", text(id.value())));
-        fields.put("state", text(value.state().name()));
+        fields.put(FIELD_STATE, text(value.state().name()));
         fields.put("recordCommitment", text(value.recordCommitment()));
         return new PkiOperationValue.ObjectValue(fields);
     }
     private static PkiOperationValue directory(AcmeState.Directory value) {
         return object("directoryId", text(value.directoryId()), "alias", text(value.alias()),
                 "revision", integer(value.revision()), TEXT_AUTHORITY_ID, text(value.authorityId().value()),
-                "profileId", text(value.profile().profileId()), "issuerId", text(value.issuerId().value()),
+                "profileId", text(value.profile().profileId()), "enrollmentProfileId", text(value.enrollmentProfileId()),
+                "issuerId", text(value.issuerId().value()),
                 "pathId", text(value.issuancePathId().value()), "status", text(value.status().name()),
                 "policyCommitment", text(value.policyCommitment()));
     }
@@ -847,6 +1028,7 @@ public final class ServerControlOperationExecutor {
     private static PkiOperationValue estEndpoint(zeroecho.pki.server.est.EstEndpoint value) {
         return object("label", text(value.label()), TEXT_AUTHORITY_ID, text(value.authorityId()),
                 "profileId", text(value.profileId()),
+                "enrollmentProfileId", text(value.enrollmentProfileId()),
                 "keygenEnabled", bool(value.keygen().enabled()),
                 "keygenAlgorithms", new PkiOperationValue.ListValue(
                         value.keygen().permittedAlgorithms().stream()
@@ -858,12 +1040,14 @@ public final class ServerControlOperationExecutor {
     private static PkiOperationValue scepEndpoint(zeroecho.pki.server.scep.ScepEndpoint value) {
         return object("label", text(value.label()), TEXT_AUTHORITY_ID, text(value.authorityId()),
                 "profileId", text(value.profileId()),
+                "enrollmentProfileId", text(value.enrollmentProfileId()),
                 "challengePasswordHash", text(value.challengePasswordHash()));
     }
 
     private static PkiOperationValue cmpEndpoint(zeroecho.pki.server.cmp.CmpEndpoint value) {
         return object("label", text(value.label()), TEXT_AUTHORITY_ID, text(value.authorityId()),
                 "profileId", text(value.profileId()),
+                "enrollmentProfileId", text(value.enrollmentProfileId()),
                 "protectionPolicy", text(value.protectionPolicy().name()));
     }
 
@@ -874,7 +1058,7 @@ public final class ServerControlOperationExecutor {
                 .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
         return object("id", text(value.id()),
                 "displayName", text(value.displayName()),
-                "state", text(value.state().name()),
+                FIELD_STATE, text(value.state().name()),
                 "certificateProfileId", text(value.certificateProfileId()),
                 "allowedAuthorityIds", new PkiOperationValue.ListValue(allowedAuthorities),
                 "subjectDnPattern", value.subjectDnPattern().map(ServerControlOperationExecutor::text)
@@ -887,7 +1071,7 @@ public final class ServerControlOperationExecutor {
         return object("responderId", text(value.responderId()), "alias", text(value.alias()),
                 TEXT_AUTHORITY_ID, text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
                 "signingMode", text(value.signingMode().name()), "responderCredentialId",
-                text(value.responderCredentialId().value()), "state", text(value.state().name()),
+                text(value.responderCredentialId().value()), FIELD_STATE, text(value.state().name()),
                 "requestAuthenticationMode", text(value.requestAuthenticationMode().name()),
                 "requesterRevocationPolicy", text(value.requesterTrustPolicy()
                         .map(policy -> policy.revocationPolicy().name()).orElse("NOT_APPLICABLE")),
@@ -914,12 +1098,12 @@ public final class ServerControlOperationExecutor {
     }
     private static PkiOperationValue approval(ApprovalService.Request value) {
         return object("approvalId", text(value.approvalId()), "operation", text(value.operationId()),
-                "requesterId", text(value.requesterPrincipalId()), "state", text(value.state().name()),
-                "expiresAt", text(value.expiresAt().toString()));
+                "requesterId", text(value.requesterPrincipalId()), FIELD_STATE, text(value.state().name()),
+                FIELD_EXPIRES_AT, text(value.expiresAt().toString()));
     }
     private static PkiOperationValue breakGlass(BreakGlassService.Record value) {
         return object("breakGlassId", text(value.breakGlassId()), "principalId", text(value.principalId()),
-                "state", text(value.state().name()), "expiresAt", text(value.expiresAt().toString()));
+                FIELD_STATE, text(value.state().name()), FIELD_EXPIRES_AT, text(value.expiresAt().toString()));
     }
     private static PkiOperationValue disclosure(DisclosureService.Record value) {
         return object("objectId", text(value.objectId().value()), "objectType", text(value.objectType().name()),
@@ -927,7 +1111,7 @@ public final class ServerControlOperationExecutor {
     }
     private static PkiOperationValue capability(DisclosureService.Capability value) {
         return object("capabilityId", text(value.capabilityId()), "objectId", text(value.objectId().value()),
-                "expiresAt", text(value.expiresAt().toString()), "revoked", bool(value.revoked()));
+                FIELD_EXPIRES_AT, text(value.expiresAt().toString()), "revoked", bool(value.revoked()));
     }
     private static <T> PkiOperationValue page(ServerControlStore.Page<T> page,
             java.util.function.Function<T, PkiOperationValue> renderer) {

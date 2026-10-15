@@ -56,6 +56,40 @@ class HttpServerControlOperationCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    @Test void enrollmentDecisionsRequireExactReviewedCommitmentAndClosedArguments() {
+        for (String name : java.util.List.of("enrollment.request.approve", "enrollment.request.reject")) {
+            String json = "{\"version\":1,\"arguments\":{\"id\":\"enrollment:fixture\",\"expectedCommitment\":\""
+                    + "a".repeat(64) + "\",\"justification\":\"Reviewed identity\"}}";
+            ServerControlOperation.DecideEnrollmentRequest decision = assertInstanceOf(ServerControlOperation.DecideEnrollmentRequest.class,
+                    assertInstanceOf(AdministrativeOperation.Control.class, decode(name, json).operation()).operation());
+            assertEquals(name.endsWith("approve") ? zeroecho.pki.server.ApprovalService.Choice.APPROVE : zeroecho.pki.server.ApprovalService.Choice.REJECT, decision.choice());
+            assertEquals(zeroecho.pki.server.Permission.ResourceType.ENROLLMENT_REQUEST, DESCRIPTORS.require(name).resourceType());
+            assertThrows(IllegalArgumentException.class, () -> decode(name, json.replace("\"expectedCommitment\"", "\"ignoredCommitment\"")));
+            assertThrows(IllegalArgumentException.class, () -> decode(name, json.replace("Reviewed identity", "x".repeat(2049))));
+            assertThrows(IllegalArgumentException.class, () -> decode(name, json.replace("\"id\":", "\"requester\":\"admin\",\"id\":")));
+        }
+        assertInstanceOf(ServerControlOperation.InspectEnrollmentRequest.class, assertInstanceOf(AdministrativeOperation.Control.class,
+                decode("enrollment.request.inspect", "{\"version\":1,\"arguments\":{\"id\":\"enrollment:fixture\"}}").operation()).operation());
+        assertInstanceOf(ServerControlOperation.ListEnrollmentRequests.class, assertInstanceOf(AdministrativeOperation.Control.class,
+                decode("enrollment.request.list", "{\"version\":1,\"arguments\":{\"offset\":0,\"limit\":10}}").operation()).operation());
+    }
+
+    @Test void legacyArchiveLimitIsCheckedBeforeDecodingAndForNestedApproval() {
+        String payload = "A".repeat(4 * ((zeroecho.pki.api.backup.BackupLimits.defaults().legacyBytes() + 2) / 3) + 4);
+        String arguments = "{\"backupId\":\"fixture\",\"payload\":\"" + payload + "\"}";
+        String direct = "{\"version\":1,\"arguments\":" + arguments + "}";
+        assertThrows(HttpOperationCodec.LegacyBackupLimitException.class, () -> HttpOperationCodec.decode(
+                "backup.verify", direct.getBytes(StandardCharsets.UTF_8), direct.length(), REALM, DESCRIPTORS::require));
+        String nested = "{\"version\":1,\"arguments\":{\"approvalId\":\"fixture\","
+                + "\"targetOperation\":\"backup.verify\",\"targetArguments\":" + arguments + "}}";
+        IllegalArgumentException approvalLimit = assertThrows(IllegalArgumentException.class, () -> HttpOperationCodec.decode(
+                "security.approval.request", nested.getBytes(StandardCharsets.UTF_8), nested.length(), REALM, DESCRIPTORS::require));
+        assertEquals(IllegalArgumentException.class, approvalLimit.getClass());
+        IllegalArgumentException otherLimit = assertThrows(IllegalArgumentException.class, () -> HttpOperationCodec.decode(
+                "profile.validate", direct.getBytes(StandardCharsets.UTF_8), direct.length(), REALM, DESCRIPTORS::require));
+        assertEquals(IllegalArgumentException.class, otherLimit.getClass());
+    }
+
     @Test
     void selectionControlQueriesUseBoundedRealmInputAndExactPermissionDescriptors() {
         HttpOperationCodec.Decoded configuration = decode(ServerControlOperation.ConfigurationChoices.NAME,
@@ -151,7 +185,7 @@ class HttpServerControlOperationCodecTest {
     void decodesDirectoryRegistrationWithoutClientSelectedConfirmationPolicy() {
         System.out.println("decodesDirectoryRegistrationWithoutClientSelectedConfirmationPolicy");
         String json = "{\"version\":1,\"authorityId\":\"ca:internal\",\"arguments\":{"
-                + "\"alias\":\"internal\",\"authorityId\":\"ca:internal\",\"profileId\":\"tls\","
+                + "\"alias\":\"internal\",\"authorityId\":\"ca:internal\",\"profileId\":\"tls\",\"enrollmentProfileId\":\"enrollment-tls\","
                 + "\"dnsNamespaces\":[\"example.test\"],\"maximumValidityMillis\":86400000,"
                 + "\"publicKeyAlgorithms\":[\"ECDSA\"],\"x509BindingPolicies\":[\"STANDARD_ONLY\"],"
                 + "\"challengeTypes\":[\"DNS_01\"],\"challengeProviderIds\":[\"zeroecho.dns-01.jndi.v1\"],"

@@ -31,32 +31,40 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pkix.cmp;
 
-/**
- * Signals a CMP protocol message encode or decode failure.
- *
- * @since 1.0
- */
-public final class CmpCodecException extends Exception {
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, expect, it, vi } from 'vitest';
+import { EntityListPage } from '@/pages/EntityListPage';
+import { DOMAIN_LISTINGS } from '@/app/domainListings';
+import type { OperationCatalogResponse } from '@/api/types';
+import type * as Operations from '@/api/operations';
 
-    /** Serialization identity for this exception type. */
-    private static final long serialVersionUID = 1L;
+const discovery = vi.hoisted(() => ({
+  data: undefined as OperationCatalogResponse | undefined,
+  isLoading: false,
+  isError: false,
+}));
+const execute = vi.hoisted(() => vi.fn());
+vi.mock('@/api/operations', async (original) => ({
+  ...await original<typeof Operations>(),
+  useOperationDescriptors: () => discovery,
+  executeOperation: execute,
+}));
 
-    /**
-     * Creates an exception with a diagnostic message.
-     * @param message failure description; must not contain protected key or payload data
-     */
-    public CmpCodecException(String message) {
-        super(message);
-    }
+afterEach(() => { execute.mockClear(); });
 
-    /**
-     * Creates an exception retaining its underlying cause.
-     * @param message failure description; must not contain protected key or payload data
-     * @param cause underlying failure, or null if unavailable
-     */
-    public CmpCodecException(String message, Throwable cause) {
-        super(message, cause);
-    }
-}
+it.each(['pending', 'failed', 'empty'])('does not expose certificate search when discovery is %s', (state) => {
+  discovery.data = state === 'empty' ? { count: 0, operations: [] } : undefined;
+  discovery.isLoading = state === 'pending';
+  discovery.isError = state === 'failed';
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}>
+    <EntityListPage navId="issuance" title="Certificates" listings={DOMAIN_LISTINGS.issuance!} />
+  </QueryClientProvider>);
+  expect(screen.getByText('Certificate search is unavailable for this deployment or identity.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Load' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/Credential ID prefix/)).not.toBeInTheDocument();
+  expect(execute).not.toHaveBeenCalled();
+});
+

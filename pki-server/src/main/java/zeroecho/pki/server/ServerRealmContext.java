@@ -82,7 +82,13 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     }
 
     private final ServerRealmConfiguration configuration;
+    private BackupTransferService backupTransfers;
+    private BackupTransferConfiguration backupTransferConfiguration;
+    private zeroecho.pki.server.enrollment.EnrollmentRuntime enrollmentRuntime;
+    private zeroecho.pki.server.enrollment.EnrollmentCoordinator enrollmentCoordinator;
     private final ServerControlStore control;
+    private final zeroecho.pki.server.enrollment.EnrollmentProfileService enrollmentProfiles;
+    private final zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry enrollmentEndpoints;
     private final PkiSession session;
     private final RoleTemplateCatalog roles;
     private final AuthorizationEngine authorization;
@@ -126,6 +132,8 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
             AuditorViews auditorViews, AuditSink auditSink, Clock clock) {
         this.configuration = configuration;
         this.control = control;
+        this.enrollmentProfiles = new zeroecho.pki.server.enrollment.EnrollmentProfileService(control);
+        this.enrollmentEndpoints = new zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry(control, enrollmentProfiles);
         this.session = session;
         this.roles = roles;
         this.authorization = authorization;
@@ -171,6 +179,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 profileId -> session.profiles().requireActiveProfile(profileId).definition().approvalRequirement(),
                 clock, auditSink, reconciliationWake::signal, this::requireOpen);
         this.gateway.installOcsp(ocspResponders);
+        this.gateway.installEnrollmentProfiles(enrollmentProfiles);
     }
 
     /**
@@ -259,6 +268,82 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 throw new IllegalArgumentException("RESTORE_COLOCATED_SERVER_AUTHORITY");
             }
         }));
+    }
+
+    void installBackupTransfer(BackupTransferConfiguration transfer, Clock clock, SecureRandom random) throws IOException {
+        if (backupTransfers != null) throw new IllegalStateException("Backup transfer already installed");
+        validateTransferTopology(transfer);
+        BackupArtifactRepository repository = new BackupArtifactRepository(transfer,
+                configuration.realmId().value(), clock, random);
+        try {
+            backupTransfers = new BackupTransferService(session.backup().orElseThrow(
+                    () -> new IllegalStateException("Streaming backup is unavailable")), repository,
+                    () -> validateTransferTopology(transfer));
+            gateway.installBackupTransfers(backupTransfers);
+            backupTransferConfiguration = transfer;
+        } catch (IOException | RuntimeException failure) {
+            try { repository.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    void installEnrollmentRuntime(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration configured,
+            PkiSessionRuntimeDependencies dependencies, Clock clock) {
+        requireOpen();
+        if (enrollmentRuntime != null) throw new IllegalStateException("Enrollment runtime already installed");
+        enrollmentRuntime = zeroecho.pki.server.enrollment.EnrollmentRuntime.open(configured, configuration,
+                session.repository(), control, enrollmentEndpoints, dependencies, clock, backupTransferConfiguration());
+    }
+
+    /**
+     * Returns explicitly installed enrollment custody and resource limits.
+     * @return empty when the server has no enrollment companion
+     */
+    public Optional<zeroecho.pki.server.enrollment.EnrollmentRuntime> enrollmentRuntime() {
+        requireOpen();
+        return Optional.ofNullable(enrollmentRuntime);
+    }
+
+    void installEnrollmentCoordinator(PkiServerConfiguration.Authentication authentication, Clock clock) {
+        requireOpen();
+        if (enrollmentCoordinator != null) throw new IllegalStateException("Enrollment coordinator already installed");
+        enrollmentCoordinator = new zeroecho.pki.server.enrollment.EnrollmentCoordinator(control, configuration, session,
+                enrollmentEndpoints, enrollmentProfiles, acmeControl, enrollmentRuntime().orElseThrow(),
+                new zeroecho.pki.server.enrollment.EnrollmentIdentityAliases(configuration.realmId(), authentication), clock);
+        gateway.installEnrollmentCoordinator(enrollmentCoordinator);
+    }
+
+    /** Returns the coordinator installed for this realm's enrollment services.
+     * @return installed durable coordinator, empty for deployments without enrollment */
+    public Optional<zeroecho.pki.server.enrollment.EnrollmentCoordinator> enrollmentCoordinator() {
+        requireOpen(); return Optional.ofNullable(enrollmentCoordinator);
+    }
+
+    /**
+     * Returns explicitly installed binary transfer settings.
+     * @return empty when remote backup transfer is disabled
+     */
+    public Optional<BackupTransferConfiguration> backupTransferConfiguration() {
+        return Optional.ofNullable(backupTransferConfiguration);
+    }
+
+    private void validateTransferTopology(BackupTransferConfiguration transfer) throws IOException {
+        zeroecho.pki.spi.ProviderConfig store = configuration.pkiSessionConfiguration().store();
+        if (!"fs".equals(store.backendId())) throw new IOException("Backup transfer requires the filesystem store");
+        Path root = Path.of(store.require("root")).toRealPath();
+        Path spool = transfer.directory().toRealPath();
+        if (spool.startsWith(root) || root.startsWith(spool)) throw new IOException("BACKUP_STORAGE_OVERLAP");
+        java.util.List<Path> authorities = new java.util.ArrayList<>();
+        authorities.add(configuration.controlLogPath());
+        configuration.pkiSessionConfiguration().audit().get("root").ifPresent(value -> authorities.add(Path.of(value)));
+        configuration.pkiSessionConfiguration().signing().ifPresent(signing -> signing.provider().get("keyringPath")
+                .ifPresent(value -> authorities.add(Path.of(value))));
+        for (Path authority : authorities) {
+            Path resolved = authority.toRealPath();
+            if (resolved.startsWith(root) || resolved.startsWith(spool)) {
+                throw new IOException("RESTORE_COLOCATED_SERVER_AUTHORITY");
+            }
+        }
     }
 
     static PkiSessionRuntimeDependencies confirmationProofRuntime(
@@ -362,6 +447,24 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @return authorized typed-operation gateway
      */
     public ServerOperationGateway gateway() { requireOpen(); return gateway; }
+
+    /**
+     * Returns the realm-owned durable enrollment endpoint authority.
+     * @return shared thread-safe registry, usable only while this realm is open
+     */
+    public zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry enrollmentEndpoints() {
+        requireOpen();
+        return enrollmentEndpoints;
+    }
+
+    /**
+     * Returns the realm-owned durable enrollment policy authority.
+     * @return shared thread-safe policy registry, usable only while this realm is open
+     */
+    public zeroecho.pki.server.enrollment.EnrollmentProfileService enrollmentProfiles() {
+        requireOpen();
+        return enrollmentProfiles;
+    }
     /**
      * Returns synchronous authoritative-revocation audit projector owned by this realm.
      *
@@ -646,6 +749,18 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
             } catch (Throwable failure) {
                 primary = failure;
             }
+        }
+        if (backupTransfers != null) {
+            try { backupTransfers.close(); }
+            catch (Throwable failure) { return preferFailure(failure, primary); }
+        }
+        if (enrollmentRuntime != null) {
+            if (enrollmentCoordinator != null) {
+                try { enrollmentCoordinator.close(); }
+                catch (Throwable failure) { return preferFailure(failure, primary); }
+            }
+            try { enrollmentRuntime.close(); }
+            catch (Throwable failure) { return preferFailure(failure, primary); }
         }
         if (!sessionClosed.get()) {
             try {

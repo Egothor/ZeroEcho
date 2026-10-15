@@ -34,6 +34,8 @@
 
 package zeroecho.pki.api;
 
+import zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest;
 import java.util.Optional;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.audit.AccessContext;
@@ -385,6 +387,35 @@ public interface SemanticSigningService {
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation);
 
     /**
+     * Prepares one durable correlated renewal or returns its already accepted
+     * operation. Fresh work verifies the authoritative predecessor and current
+     * status against the exact frozen issuer, path and profile selection. Replay
+     * performs point reads and exact commitment checks without signing again or
+     * reinterpreting the accepted operation after later status changes.
+     * The caller must accept or discard a returned prepared candidate.
+     * @param access trusted requester audit context
+     * @param request immutable predecessor binding and frozen intent
+     * @param evidence trusted execution evidence, or empty; never null
+     * @param cancellation cooperative pre-acceptance cancellation
+     * @return existing operation or exclusively owned unaccepted candidate
+     * @throws PkiException if validation, correlation or preparation fails
+     */
+    CorrelatedIssuancePreparation prepareCorrelatedRenewal(AccessContext access,
+            CorrelatedEndEntityRenewalRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation);
+
+    /**
+     * Finds a retained renewal using exact frozen input and predecessor binding.
+     * No parsing, status evaluation, signing or credential inventory scan occurs.
+     * Local work is linear in bounded input text plus durable point reads.
+     * @param request immutable exact renewal input
+     * @return retained operation, or empty after absence or retention purge
+     * @throws PkiException if the external identity belongs to different work
+     */
+    Optional<SemanticSigningOperation> findRenewal(
+            CorrelatedEndEntityRenewalRequest request);
+
+    /**
      * Prepares replacement from a verified exact CSR using the selected active
      * profile and the predecessor's current logical issuing authority. Reuse of
      * the predecessor SPKI is permitted only while it is neither held nor
@@ -407,6 +438,33 @@ public interface SemanticSigningService {
      */
     PreparedSemanticSigningRequest prepareReplacement(AccessContext access, EndEntityReplacementRequest request,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation);
+
+    /**
+     * Prepares a correlated replacement or returns its already accepted operation.
+     * Fresh preparation verifies exact original proof, authoritative predecessor,
+     * current reuse eligibility and the frozen profile, issuer and path. Accepted
+     * replay validates its exact binding without signing or re-evaluating status.
+     * A prepared result is exclusively owned and must be accepted or discarded.
+     * @param access trusted requester audit context
+     * @param request exact predecessor, typed request and frozen selection
+     * @param evidence trusted execution evidence, or empty; never null
+     * @param cancellation cooperative pre-acceptance cancellation
+     * @return existing operation or exclusively owned unaccepted candidate
+     * @throws PkiException if validation, correlation or preparation fails
+     */
+    CorrelatedIssuancePreparation prepareCorrelatedReplacement(AccessContext access,
+            CorrelatedEndEntityReplacementRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation);
+
+    /**
+     * Finds an accepted replacement using exact frozen input and predecessor binding.
+     * No parsing, status evaluation or signing occurs. Hashing is linear in bounded
+     * request bytes; persistent recovery uses point reads.
+     * @param request exact immutable replacement input
+     * @return retained operation, or empty after absence or retention purge
+     * @throws PkiException if the correlation belongs to different work
+     */
+    Optional<SemanticSigningOperation> findReplacement(CorrelatedEndEntityReplacementRequest request);
 
     /**
      * Prepares reissue of the predecessor's subject, SAN and SPKI using the

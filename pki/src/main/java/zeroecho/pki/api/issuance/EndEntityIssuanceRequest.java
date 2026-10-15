@@ -38,43 +38,59 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 
 /**
- * Immutable input for end-entity issuance from an exact DER PKCS#10 request.
+ * Immutable input for end-entity issuance from an explicitly typed X.509 request.
  * Construction bounds and snapshots the input; cryptographic proof, issuer and
  * profile validation belong to semantic preparation. Thread-safe.
  *
  * @param issuerCaId logical issuing authority; the current generation is selected by the store
- * @param csrDer exact DER request, between one byte and one MiB inclusive
+ * @param payload exact typed DER request, between one byte and one MiB inclusive
  * @param profileId nonblank active profile identifier
  * @param validityOverride optional requested duration, evaluated against issuer time and policy
  */
-public record EndEntityIssuanceRequest(PkiId issuerCaId, byte[] csrDer, String profileId,
+public record EndEntityIssuanceRequest(PkiId issuerCaId, X509EnrollmentPayload payload, String profileId,
         Optional<Validity> validityOverride) {
     /** Maximum encoded request size, checked before allocating its defensive copy. */
     public static final int MAXIMUM_CSR_DER_BYTES = 1024 * 1024;
 
     /**
-     * Validates and snapshots the request in linear time and auxiliary memory in its byte size.
+     * Validates references and reuses the already immutable payload in constant time and memory.
      *
      * @throws IllegalArgumentException if an argument is null, the profile is blank,
      *         or the request is empty or exceeds the size limit
      */
     public EndEntityIssuanceRequest {
-        if (issuerCaId == null || csrDer == null || profileId == null || profileId.isBlank()
-                || validityOverride == null || csrDer.length == 0 || csrDer.length > MAXIMUM_CSR_DER_BYTES) {
+        if (issuerCaId == null || payload == null || profileId == null || profileId.isBlank()
+                || validityOverride == null) {
             throw new IllegalArgumentException("Invalid end-entity issuance request");
         }
-        csrDer = csrDer.clone();
+    }
+
+    /**
+     * Constructs a PKCS#10 issuance request using the established convenience API.
+     * @param issuerCaId logical issuing authority
+     * @param csrDer bounded exact PKCS#10 DER, defensively copied
+     * @param profileId active certificate profile identity
+     * @param validityOverride optional requested validity
+     */
+    public EndEntityIssuanceRequest(PkiId issuerCaId, byte[] csrDer, String profileId,
+            Optional<Validity> validityOverride) {
+        this(issuerCaId, new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, csrDer), profileId, validityOverride);
     }
 
     /**
      * Returns the immutable request payload as a caller-owned snapshot.
      *
-     * @return a defensive copy of the exact DER request
+     * @return a defensive copy of the exact PKCS#10 DER request
+     * @throws IllegalStateException if this request carries CRMF rather than PKCS#10
      */
-    @Override public byte[] csrDer() {
-        return csrDer.clone();
+    public byte[] csrDer() {
+        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10) {
+            throw new IllegalStateException("The enrollment request is not PKCS#10");
+        }
+        return payload.der();
     }
 
     /**

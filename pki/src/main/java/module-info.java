@@ -36,6 +36,8 @@
  * filesystem/BouncyCastle backends discovered via ServiceLoader.
  */
 module zeroecho.pki {
+    requires java.sql;
+    requires com.h2database;
     requires transitive zeroecho.lib;
     requires tools.jackson.core;
     requires java.net.http;

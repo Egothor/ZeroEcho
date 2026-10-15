@@ -57,6 +57,31 @@ operations:
   backup.verify:
     summary: "Verify the structure of a backup artifact"
 
+  backup.stream.reserve:
+    summary: Reserve a bounded archive upload
+    description: Requires explicitly configured transfer budgets. Bind the exact backup ID, byte length and whole-archive SHA-256 before uploading.
+  backup.stream.export:
+    summary: Prepare a file-backed export
+    description: Returns an owner-bound one-use download handle and archive commitments, never archive bytes.
+  backup.stream.upload:
+    summary: Upload reserved archive bytes
+    description: Binary POST to /backup/upload with application/zip and X-ZeroEcho-Artifact; optional X-ZeroEcho-Approval. Exact configured Origin or X-ZeroEcho-Transfer=1 is required. The ordinary operation JSON route cannot carry archive bytes.
+  backup.stream.download:
+    summary: Download a prepared export once
+    description: POST to /backup/download with URL-encoded artifactHandle and optional approvalId. Exact configured Origin or X-ZeroEcho-Transfer=1 is required. The handle is consumed before any response bytes are sent.
+  backup.stream.verify:
+    summary: Verify an uploaded archive
+    description: Validates the complete manifest and offline store recovery. Integrity does not authenticate archive provenance.
+  backup.stream.restore:
+    summary: Stage a verified archive for cold activation
+    description: Requires high-risk approval bound to the exact immutable artifact. STAGED requires administrator restart; inspect the retained workflow before retrying any uncertain outcome.
+  backup.stream.status:
+    summary: Inspect the retained restore workflow
+    description: Remains available to the owning principal after archive expiry. Only ACTIVATED confirms completed activation.
+  backup.stream.acknowledge:
+    summary: Acknowledge a terminal restore outcome
+    description: Releases retained workflow metadata only for ACTIVATED or REJECTED outcomes.
+
   # ---- Dashboard metrics --------------------------------------------------
 
   dashboard.authority:
@@ -205,14 +230,31 @@ operations:
       credentialId: "Stable credential identifier (UUID)"
 
   credential.search:
-    summary: "Search credentials by subject, serial, or validity window"
+    summary: "Search credential inventory using the optional embedded index"
+    description: "Unavailable unless the store search index is explicitly enabled and ready. Filters are combined with current row authorization before limiting results. SAN filters match exact typed values from issued certificate DER."
     arguments:
       subjectFilter: "Optional subject DN substring filter"
-      serial: "Optional exact certificate serial number (hex)"
-      notBefore: "Optional start of issuance window (ISO-8601)"
-      notAfter: "Optional end of expiry window (ISO-8601)"
-      offset: "Zero-based page offset"
+      serialFilter: "Optional case-insensitive literal serial substring"
+      fingerprintFilter: "Optional case-insensitive credential-ID prefix; not a certificate digest"
+      statusFilter: "Optional exact persisted inventory status; not effective revocation status"
+      profileIdFilter: "Optional exact logical profile identifier"
+      sanFilter: "Optional exact typed SAN: DNS_NAME:value, IP_ADDRESS:value, URI:value or RFC822_NAME:value"
+      after: "Exclusive credential-ID cursor in ascending ID order"
       limit: "Maximum number of results (1–1000)"
+
+  credential.hold:
+    summary: "Temporarily hold a credential"
+    description: "Records a temporary certificate hold. Existing status generation and publication expose the hold in subsequent CRLs; this operation does not synchronously publish a CRL."
+    arguments:
+      credentialId: "Stable credential identifier"
+      justification: "Optional nonblank operator justification (at most 1024 characters)"
+
+  credential.unhold:
+    summary: "Release a temporary credential hold"
+    description: "Releases a temporary hold. Permanent revocation cannot be reversed. Subsequent full CRLs omit the released entry and applicable delta CRLs contain removeFromCRL."
+    arguments:
+      credentialId: "Stable credential identifier"
+      justification: "Optional nonblank operator justification (at most 1024 characters)"
 
   credential.revoke:
     summary: "Revoke a credential"
@@ -730,6 +772,7 @@ operations:
     arguments:
       authorityId: "Stable authority identifier"
       profileId: "Issuance profile to use for ACME-issued certificates"
+      enrollmentProfileId: "Required active enrollment policy matching the certificate profile and permitting the authority"
       externalId: "External directory identifier used in the ACME URL path"
 
   acme.directory.inspect:
@@ -891,7 +934,7 @@ operations:
       displayName: "Human-readable name shown in the admin UI"
       certificateProfileId: "Certificate profile to apply when issuing under this enrollment profile"
       allowedAuthorityIds: "Comma-separated set of authority IDs permitted to issue certificates; empty means no restriction"
-      subjectDnPattern: "Optional regular expression the requested subject DN must match; absent means no constraint"
+      subjectDnPattern: "Optional full-subject pattern of literals and .* wildcards; general regular expressions are rejected"
       requiredSanDomains: "Comma-separated list of DNS domains that must appear in the SAN; empty means no requirement"
       requireApproval: "Whether requests matching this profile require a durable approval before issuance"
 
@@ -927,6 +970,36 @@ operations:
 
   enrollment.profile.suspend:
     summary: "Suspend an active enrollment profile"
-    description: "Transitions the profile from ACTIVE to SUSPENDED. Existing in-flight requests are unaffected; new requests will not match a suspended profile."
+    description: "Transitions the profile from ACTIVE to SUSPENDED, blocking new admission and dispatch claims. Work already durably admitted for dispatch may complete."
     arguments:
       id: "Canonical identifier of the profile to suspend"
+
+  # ---- Enrollment requests -------------------------------------------------
+
+  enrollment.request.inspect:
+    summary: "Inspect a durable enrollment request"
+    description: "Returns the authorized view of an enrollment transaction. Its authority and profile scope are resolved from the stored request."
+    arguments:
+      id: "Durable enrollment transaction identifier"
+
+  enrollment.request.list:
+    summary: "Page through durable enrollment requests"
+    arguments:
+      offset: "Zero-based page offset"
+      limit: "Maximum results (1–256)"
+
+  enrollment.request.approve:
+    summary: "Approve a durable enrollment request"
+    description: "Records an eligible administrator's approval against the inspected request commitment and frozen policy. Requester identities and repeated votes under the same key cannot satisfy independent approval."
+    arguments:
+      id: "Durable enrollment transaction identifier"
+      expectedCommitment: "Exact record commitment returned by inspection; stale decisions are rejected"
+      justification: "Administrator's reason for the decision; must not contain credentials or secrets"
+
+  enrollment.request.reject:
+    summary: "Reject a durable enrollment request"
+    description: "Records an eligible administrator's rejection against the inspected request commitment."
+    arguments:
+      id: "Durable enrollment transaction identifier"
+      expectedCommitment: "Exact record commitment returned by inspection; stale decisions are rejected"
+      justification: "Administrator's reason for the decision; must not contain credentials or secrets"

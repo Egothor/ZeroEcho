@@ -54,9 +54,10 @@ flowchart TD
     order["Place an order<br/>for one or more DNS identifiers"]
     chall["Prove control of each identifier<br/>via a challenge (http-01 / dns-01)"]
     final["Finalize the order<br/>(submit a CSR)"]
+    processing["Wait for issuance<br/>and administrator approval if required"]
     down["Download the certificate chain"]
 
-    dir --> acct --> order --> chall --> final --> down
+    dir --> acct --> order --> chall --> final --> processing --> down
 ```
 
 1. **Account.** The client registers an ACME account, identified by an account key
@@ -66,13 +67,29 @@ flowchart TD
    satisfy to prove control. ZeroEcho supports the standard **`http-01`** and
    **`dns-01`** challenge types; which are offered is set per directory.
 4. **Finalize.** Once challenges are validated, the client submits a CSR and the
-   realm issues the certificate.
+   realm checks the enrollment policy. If approval is required, the order remains
+   `processing` until an eligible administrator approves it. The client's
+   authenticated order polling then continues issuance.
 5. **Download.** The client downloads the issued certificate together with its
    chain, in PEM.
 
 !!! note "Renewal is just the same flow again"
     ACME clients re-run this flow automatically before a certificate expires, so
-    renewal is hands-off once enrolment works.
+    renewal can run unattended when the configured policy does not require human
+    approval. A policy that requires approval also applies to renewal orders.
+
+## Waiting for approval
+
+Successful domain challenges prove control of the requested names. They do not
+bypass the directory's enrollment profile or its approval requirement. Pending
+requests survive server restart; a retry of the same order does not request a
+second certificate. Rejection, or expiry while waiting for approval, makes the
+order `invalid`.
+
+An administrator's response may take longer than your client's polling timeout.
+If that happens, check the existing order's status and contact your administrator
+before submitting another order. A client timeout alone does not establish that
+the server rejected the request or that issuance failed.
 
 ## Example: certbot
 

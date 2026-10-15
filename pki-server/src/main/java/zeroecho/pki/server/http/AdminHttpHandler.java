@@ -48,6 +48,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -160,11 +161,12 @@ final class AdminHttpHandler implements HttpHandler {
             if (admitted) runtime.releaseAdmission();
         }
         if (jfrEvent.shouldCommit()) {
-            jfrEvent.httpStatus = response.statusCode();
+            jfrEvent.httpStatus = response == null ? exchange.getResponseCode() : response.statusCode();
             jfrEvent.authorized = admitted;
             jfrEvent.commit();
         }
-        send(exchange, requestId, response);
+        if (response == null) exchange.close();
+        else send(exchange, requestId, response);
     }
 
     private HttpResponses.Response admin(HttpsExchange exchange, String path, String requestId) throws IOException {
@@ -183,6 +185,9 @@ final class AdminHttpHandler implements HttpHandler {
         realm.auditTransport("ADMIN_AUTHENTICATION_ACCEPTED", principalId,
                 authenticationDetails(requestId, authenticated.mode(), authenticated.transportPrincipalId(),
                         Optional.of(principalId), "ACCEPTED"));
+        if ("/admin/v1/backup/upload".equals(path) || "/admin/v1/backup/download".equals(path)) {
+            return backupTransfer(exchange, path.endsWith("/upload"), requestId, authenticated);
+        }
         if ("/admin/v1/realm".equals(path)) return realm(exchange, requestId, principalId);
         if ("/admin/v1/schema".equals(path)) return schema(requestId);
         if ("/admin/v1/operations".equals(path)) return operations(exchange, requestId, principalId);
@@ -278,10 +283,120 @@ final class AdminHttpHandler implements HttpHandler {
         };
     }
 
+    // A null response means the binary exchange was committed or closed by its
+    // deadline; the caller must not attempt a second JSON response.
+    private HttpResponses.Response backupTransfer(HttpsExchange exchange, boolean upload, String requestId,
+            PkiServerAuthenticationResult.Authenticated authenticated) throws IOException {
+        Optional<zeroecho.pki.server.BackupTransferConfiguration> configured = realm.backupTransferConfiguration();
+        if (configured.isEmpty()) return notFound(requestId);
+        String operationId = upload ? "backup.stream.upload" : "backup.stream.download";
+        if (!requireMethod(exchange, "POST")) return method(requestId, operationId);
+        String origin = singleHeader(exchange, "Origin");
+        if (origin != null ? !origin.equals(configured.orElseThrow().browserOrigin().toString())
+                : !"1".equals(singleHeader(exchange, "X-ZeroEcho-Transfer"))) {
+            return denied(requestId, operationId);
+        }
+        String contentType = singleHeader(exchange, "Content-Type");
+        if (!(upload ? "application/zip" : "application/x-www-form-urlencoded").equalsIgnoreCase(contentType)) {
+            return HttpResponses.failure(415, requestId, operationId, "VALIDATION_FAILURE",
+                    "UNSUPPORTED_MEDIA_TYPE", "UNSUPPORTED_MEDIA_TYPE", false, false);
+        }
+        ServerRuntime.Submitted<ServerOperationGateway.Outcome> submitted;
+        try {
+            submitted = runtime.submit(cancellation -> {
+                try {
+                    String handle;
+                    Optional<String> approval;
+                    if (upload) {
+                        handle = singleHeader(exchange, "X-ZeroEcho-Artifact");
+                        approval = Optional.ofNullable(singleHeader(exchange, "X-ZeroEcho-Approval"));
+                    } else {
+                        byte[] form = exchange.getRequestBody().readNBytes(2049);
+                        if (form.length > 2048) throw new IllegalArgumentException("Backup form too large");
+                        Map<String, String> fields = new java.util.HashMap<>();
+                        for (String entry : new String(form, StandardCharsets.UTF_8).split("&")) {
+                            String[] pair = entry.split("=", 2);
+                            if (pair.length != 2) throw new IllegalArgumentException("Invalid backup form");
+                            String name = java.net.URLDecoder.decode(pair[0], StandardCharsets.UTF_8);
+                            String value = java.net.URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+                            if (!Set.of("artifactHandle", "approvalId").contains(name) || fields.putIfAbsent(name, value) != null) {
+                                throw new IllegalArgumentException("Invalid backup form field");
+                            }
+                        }
+                        handle = fields.get("artifactHandle");
+                        approval = Optional.ofNullable(fields.get("approvalId")).filter(value -> !value.isEmpty());
+                    }
+                    zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand command =
+                            new zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand(
+                                    upload ? zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand.Action.UPLOAD
+                                            : zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand.Action.DOWNLOAD,
+                                    handle, Optional.empty());
+                    Permission.Resource resource = new Permission.Resource(Permission.ResourceType.BACKUP,
+                            new Permission.Scope(configuration.realm().realmId(), Optional.empty(), Optional.empty(), Optional.empty()),
+                            Optional.empty(), Optional.empty());
+                    ServerOperationGateway.Request request = new ServerOperationGateway.Request(configuration.realm().realmId(),
+                            authenticated.endClientPrincipalId(), authenticated.mode(), authenticated.transportPrincipalId(),
+                            authenticated.credentialEvidence(),
+                            new zeroecho.pki.server.AdministrativeOperation.Control(command), resource, Permission.Relationship.ANY,
+                            new Permission.Context(Optional.empty(), approval.isPresent(), false, Map.of()), approval, requestId);
+                    return realm.gateway().executeBackupTransfer(request, cancellation, new zeroecho.pki.server.BackupTransferChannel() {
+                        @Override public InputStream input() { return exchange.getRequestBody(); }
+                        @Override public java.io.OutputStream output(long length) throws IOException {
+                            exchange.getResponseHeaders().set("Content-Type", "application/zip");
+                            exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"zeroecho-backup.zip\"");
+                            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                            exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+                            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+                            exchange.getResponseHeaders().set(RequestIds.HEADER, requestId);
+                            exchange.sendResponseHeaders(200, length);
+                            return exchange.getResponseBody();
+                        }
+                    });
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException("Backup transfer failed", failure);
+                }
+            });
+        } catch (RejectedExecutionException overloaded) {
+            return HttpResponses.failure(429, requestId, operationId, "OVERLOADED", "OPERATION_QUEUE_FULL",
+                    "OPERATION_QUEUE_FULL", false, false);
+        }
+        try {
+            ServerOperationGateway.Outcome outcome = submitted.future().get(
+                    configured.orElseThrow().transferTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            return exchange.getResponseCode() == -1 ? HttpResponses.gateway(requestId, operationId, outcome) : null;
+        } catch (TimeoutException timeout) {
+            submitted.cancellation().cancel();
+            submitted.future().cancel(true);
+            // TLS close may wait for the writer's lock. Interrupt blocked channel
+            // I/O first so exchange closure cannot deadlock the deadline thread.
+            exchange.close();
+            return null;
+        } catch (InterruptedException interrupted) {
+            submitted.cancellation().cancel();
+            submitted.future().cancel(true);
+            exchange.close();
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException failure) {
+            return exchange.getResponseCode() == -1 ? HttpResponses.failure(400, requestId, operationId,
+                    "VALIDATION_FAILURE", "BACKUP_TRANSFER_REJECTED", "BACKUP_TRANSFER_REJECTED", false, false) : null;
+        } finally {
+            submitted.finish();
+        }
+    }
+
+    private static String singleHeader(HttpExchange exchange, String name) {
+        List<String> values = exchange.getRequestHeaders().get(name);
+        if (values == null) return null;
+        if (values.size() != 1) throw new IllegalArgumentException("Duplicate transfer header");
+        return values.getFirst();
+    }
+
     private HttpResponses.Response schema(String requestId) {
         try {
             byte[] json = GenerateOperationSchema.serialize(zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
                     .entries().stream().filter(zeroecho.pki.server.schema.OperationDescriptorCatalog.Entry::available)
+                    .filter(entry -> realm.gateway().operationAvailable(entry.parameters().operationId()))
                     .map(zeroecho.pki.server.schema.OperationDescriptorCatalog.Entry::parameters).toList());
             return new HttpResponses.Response(200, json);
         } catch (java.io.IOException failure) {
@@ -343,6 +458,9 @@ final class AdminHttpHandler implements HttpHandler {
                     configuration.realm().realmId(), realm.gateway()::descriptor);
         } catch (SecurityException unavailable) {
             return notFound(requestId);
+        } catch (HttpOperationCodec.LegacyBackupLimitException oversized) {
+            return HttpResponses.failure(413, requestId, operationId, "VALIDATION_FAILURE",
+                    "BACKUP_LEGACY_LIMIT_USE_STREAMING", "BACKUP_LEGACY_LIMIT_USE_STREAMING", false, false);
         } catch (IllegalArgumentException invalid) {
             return HttpResponses.failure(400, requestId, operationId, "VALIDATION_FAILURE",
                     "INVALID_OPERATION_REQUEST", "INVALID_OPERATION_REQUEST", false, false);
@@ -365,7 +483,7 @@ final class AdminHttpHandler implements HttpHandler {
                 if (!clock.instant().isBefore(deadline)) throw new DeadlineExceeded();
                 ServerOperationGateway.Request gateway = new ServerOperationGateway.Request(
                         configuration.realm().realmId(), principalId, authenticated.mode(),
-                        authenticated.transportPrincipalId(), decoded.operation(), decoded.resource(),
+                        authenticated.transportPrincipalId(), authenticated.credentialEvidence(), decoded.operation(), decoded.resource(),
                         Permission.Relationship.ANY, decoded.context(), decoded.approvalId(), requestId);
                 return TransportCancellationGateway.executeAdmin(realm.gateway(), gateway, cancellation);
             });

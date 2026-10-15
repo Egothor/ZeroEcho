@@ -44,6 +44,7 @@ dependencies {
     implementation platform('tools.jackson:jackson-bom:3.1.5')
     implementation 'tools.jackson.core:jackson-core'
     implementation project(':lib')
+    implementation('com.h2database:h2:2.5.252') { transitive = false }
 }
 
 application {

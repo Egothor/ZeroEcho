@@ -62,6 +62,7 @@ class HttpScepEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"devices\","
                 + "\"authorityId\":\"ca:device-issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"device-cert\","
                 + "\"challengePasswordHash\":\"" + VALID_HASH + "\"}}";
         HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterScepEndpoint.NAME, json);
@@ -69,6 +70,7 @@ class HttpScepEndpointCodecTest {
                 ServerControlOperation.RegisterScepEndpoint.class,
                 ((AdministrativeOperation.Control) decoded.operation()).operation());
         ScepEndpoint endpoint = operation.endpoint();
+        assertEquals("enrollment-test", endpoint.enrollmentProfileId());
         assertEquals("devices", endpoint.label());
         assertEquals("ca:device-issuer", endpoint.authorityId());
         assertEquals("device-cert", endpoint.profileId());
@@ -83,6 +85,7 @@ class HttpScepEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"devices\","
                 + "\"authorityId\":\"ca:issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"device\","
                 + "\"challengePasswordHash\":\"" + VALID_HASH + "\","
                 + "\"unexpected\":true}}";
@@ -95,6 +98,7 @@ class HttpScepEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"bad label with spaces\","
                 + "\"authorityId\":\"ca:issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"device\","
                 + "\"challengePasswordHash\":\"" + VALID_HASH + "\"}}";
         assertThrows(IllegalArgumentException.class,
@@ -107,6 +111,7 @@ class HttpScepEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"devices\","
                 + "\"authorityId\":\"ca:issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"device\","
                 + "\"challengePasswordHash\":\"" + badHash + "\"}}";
         assertThrows(IllegalArgumentException.class,
@@ -177,5 +182,12 @@ class HttpScepEndpointCodecTest {
         return HttpOperationCodec.decode(operation, json.getBytes(StandardCharsets.UTF_8),
                 PkiServerConfiguration.Listener.MINIMUM_BODY_BYTES,
                 REALM, DESCRIPTORS::require);
+    }
+
+    @Test
+    void rejectsRegistrationWithoutExplicitEnrollmentProfile() {
+        String json = "{\"version\":1,\"arguments\":{\"label\":\"endpoint\",\"authorityId\":\"authority\","
+                + "\"profileId\":\"certificate\",\"challengePasswordHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}";
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.RegisterScepEndpoint.NAME, json));
     }
 }

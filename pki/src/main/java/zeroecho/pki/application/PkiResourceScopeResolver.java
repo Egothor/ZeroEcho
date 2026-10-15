@@ -70,6 +70,18 @@ public interface PkiResourceScopeResolver {
     Optional<CredentialScope> credentialScope(PkiId credentialId);
 
     /**
+     * Returns frozen authorization coordinates for a temporary hold or release,
+     * including CA certificates when supported by the implementation.
+     * The default retains the existing credential resolver's fail-closed scope.
+     * This lookup does not grant permission or change confirmation eligibility.
+     * @param credentialId exact committed certificate identifier
+     * @return authoritative scope, or empty when absent
+     */
+    default Optional<CredentialScope> holdCredentialScope(PkiId credentialId) {
+        return credentialScope(credentialId);
+    }
+
+    /**
      * Returns the exact logical issuer authority of one committed status object.
      *
      * @param statusObjectId object identifier

@@ -210,9 +210,18 @@ public final class RoleTemplateCatalog {
         if (!exact.enabled()) return List.of();
         Template template = require(exact.templateId(), exact.templateVersion());
         return template.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))
-                .map(action -> new Permission.Grant(exact.assignmentId() + ":" + action.code(), exact.principalId(),
+                .flatMap(action -> {
+                    Permission.Grant ordinary = new Permission.Grant(exact.assignmentId() + ":" + action.code(), exact.principalId(),
                         Permission.Effect.ALLOW, action, resourceType(action), exact.scope(),
-                        relationship(template, action), dataView(action), Set.of(), exact.expiresAt(), true))
+                        relationship(template, action), dataView(action), Set.of(), exact.expiresAt(), true);
+                    if (action == Permission.Action.REQUEST_READ_ANY || action == Permission.Action.REQUEST_APPROVE || action == Permission.Action.REQUEST_REJECT) {
+                        Permission.Grant enrollment = new Permission.Grant(exact.assignmentId() + ":enrollment:" + action.code(), exact.principalId(),
+                                Permission.Effect.ALLOW, action, Permission.ResourceType.ENROLLMENT_REQUEST, exact.scope(),
+                                relationship(template, action), dataView(action), Set.of(), exact.expiresAt(), true);
+                        return java.util.stream.Stream.of(ordinary, enrollment);
+                    }
+                    return java.util.stream.Stream.of(ordinary);
+                })
                 .toList();
     }
 

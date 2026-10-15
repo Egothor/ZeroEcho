@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -87,6 +88,54 @@ import zeroecho.pki.spi.audit.AuditSink;
 /** Gateway descriptor, multi-authority and approval enforcement coverage. */
 class ServerOperationGatewayTest {
     @TempDir Path temporaryDirectory;
+
+    @Test
+    void authoritativeScopeResolutionPreservesCredentialEvidenceIntoTypedControlActor() throws Exception {
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("requester"));
+            opened.store().createPrincipal(ServerTestSupport.principal("reader"));
+            Permission.Scope scope = new Permission.Scope(ServerTestSupport.REALM, Optional.of(ServerTestSupport.AUTHORITY),
+                    Optional.empty(), Optional.of("profile-a"));
+            opened.store().createGrant(ServerTestSupport.grant("read-approval", "reader", Permission.Effect.ALLOW,
+                    Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.APPROVAL, scope,
+                    Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED));
+            ApprovalService approvals = new ApprovalService(opened.store(), ServerTestSupport.CLOCK, opened.audit());
+            approvals.request("identity-approval", "test.operation", ServerTestSupport.DIGEST, scope, "requester",
+                    new ApprovalService.Policy("identity-policy", 1, Set.of("reader"), Set.of(), true, Duration.ofHours(1), true));
+            CertificateIdentityEvidence evidence = new CertificateIdentityEvidence(ServerTestSupport.REALM,
+                    "1".repeat(64), "2".repeat(64), Set.of("3".repeat(64)), "4".repeat(64));
+            AtomicReference<AdministrativeDecisionActor> observed = new AtomicReference<>();
+            AtomicReference<Permission.Resource> authorized = new AtomicReference<>();
+            try (org.mockito.MockedConstruction<ServerControlOperationExecutor> construction = org.mockito.Mockito.mockConstruction(
+                    ServerControlOperationExecutor.class, (executor, context) -> {
+                        when(executor.protocolAvailable(any())).thenReturn(true);
+                        org.mockito.Mockito.doAnswer(invocation -> {
+                        observed.set(invocation.getArgument(1));
+                        authorized.set(invocation.getArgument(2));
+                        return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Completed(
+                                new PkiOperationResult(ServerControlOperation.InspectApproval.NAME, Map.of())));
+                    }).when(executor).executeAuthorized(any(), any(AdministrativeDecisionActor.class), any(), any(), any(), any(),
+                            org.mockito.ArgumentMatchers.nullable(BackupTransferChannel.class));
+                    })) {
+                ServerOperationGateway gateway = gateway(opened, new AtomicInteger(), Map.of());
+                ServerOperationGateway.Request request = new ServerOperationGateway.Request(ServerTestSupport.REALM, "reader",
+                        AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), Optional.of(evidence),
+                        new AdministrativeOperation.Control(new ServerControlOperation.InspectApproval("identity-approval")),
+                        new Permission.Resource(Permission.ResourceType.APPROVAL, new Permission.Scope(ServerTestSupport.REALM,
+                                Optional.of(ServerTestSupport.AUTHORITY), Optional.empty(), Optional.empty()), Optional.empty(), Optional.empty()),
+                        Permission.Relationship.ANY, Permission.Context.empty(), Optional.empty(), "identity-correlation");
+                ServerOperationGateway.Outcome outcome = gateway.execute(request, CancellationSignal.NONE);
+                assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, outcome, outcome.toString());
+                assertEquals(Optional.of(evidence), observed.get().credentialEvidence());
+                assertEquals("reader", observed.get().principalId());
+                assertEquals(scope, authorized.get().scope());
+                ServerOperationGateway.Request embedded = new ServerOperationGateway.Request(request.realmId(), request.principalId(),
+                        request.operation(), request.resource(), request.relationship(), request.context(), request.approvalId(), request.correlationId());
+                assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, gateway.execute(embedded, CancellationSignal.NONE));
+                assertTrue(observed.get().credentialEvidence().isEmpty());
+            }
+        }
+    }
 
     @Test
     void delegatesAllowedOperationAndDeniesCrossAuthorityWithoutExecution() throws Exception {
@@ -375,7 +424,7 @@ class ServerOperationGatewayTest {
             AcmeService acme = mock(AcmeService.class);
             gateway.installAcme(acme);
             AcmeService.DirectoryRegistration registration = new AcmeService.DirectoryRegistration(
-                    "internal", ServerTestSupport.AUTHORITY, "server-tls", Set.of("example.test"),
+                    "internal", ServerTestSupport.AUTHORITY, "server-tls", "acme-enrollment", Set.of("example.test"),
                     Duration.ofDays(30), Set.of("RSA"), Set.of("STANDARD_ONLY"),
                     Set.of(AcmeState.ChallengeType.HTTP_01), Set.of("http"), Optional.empty(), false);
             ServerControlOperation.RegisterAcmeDirectory operation =
@@ -930,8 +979,8 @@ class ServerOperationGatewayTest {
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
-        assertEquals(136, descriptors.descriptors().size());
-        assertEquals(49, descriptors.descriptors().values().stream()
+        assertEquals(150, descriptors.descriptors().size());
+        assertEquals(51, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
         assertEquals(10, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
@@ -1158,6 +1207,16 @@ class ServerOperationGatewayTest {
             PkiOperationOutcome result, zeroecho.pki.application.PkiResourceScopeResolver resourceScopes,
             AtomicReference<RevocationExecutionEvidence> evidence, AuditSink auditSink, Runnable wake,
             AtomicReference<zeroecho.pki.api.attr.AttributeSet> issuanceEvidence) {
+        return gateway(opened, calls, policies, result, resourceScopes, evidence, auditSink, wake,
+                issuanceEvidence, new TestEvidenceExecutor(calls, result, evidence, issuanceEvidence));
+    }
+
+    private static ServerOperationGateway gateway(ServerTestSupport.OpenedStore opened, AtomicInteger calls,
+            Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> policies,
+            PkiOperationOutcome result, zeroecho.pki.application.PkiResourceScopeResolver resourceScopes,
+            AtomicReference<RevocationExecutionEvidence> evidence, AuditSink auditSink, Runnable wake,
+            AtomicReference<zeroecho.pki.api.attr.AttributeSet> issuanceEvidence,
+            zeroecho.pki.application.PkiOperationExecutor executor) {
         AuthorizationEngine authorization = new AuthorizationEngine(ServerTestSupport.CLOCK);
         ApprovalService approvals = new ApprovalService(opened.store(), ServerTestSupport.CLOCK, opened.audit());
         BreakGlassService breakGlass = new BreakGlassService(opened.store(), ServerTestSupport.CLOCK, opened.audit());
@@ -1172,7 +1231,7 @@ class ServerOperationGatewayTest {
                 opened.store(), RoleTemplateCatalog.load(ServerOperationGatewayTest.class.getClassLoader()),
                 authorization, approvals, breakGlass, disclosure, publication, auditorViews, Optional.empty(),
                 new OperationSecurityDescriptors(),
-                new TestEvidenceExecutor(calls, result, evidence, issuanceEvidence),
+                executor,
                 (request, exactEvidence, cancellation) -> {
                     exactEvidence.ifPresent(value -> issuanceEvidence.set(value.attributes()));
                     calls.incrementAndGet();
@@ -1182,10 +1241,140 @@ class ServerOperationGatewayTest {
                 ServerTestSupport.CLOCK, auditSink, wake, () -> { });
     }
 
+    @Test
+    void holdAndReleaseRequireTheirOwnPermissionsAndAuthoritativeProfile() throws Exception {
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("auditor"));
+            opened.store().createGrant(revocationGrant("revoke-only", Set.of()));
+            AtomicInteger calls = new AtomicInteger();
+            AtomicInteger wakes = new AtomicInteger();
+            AtomicReference<RevocationExecutionEvidence> evidence = new AtomicReference<>();
+            ServerOperationGateway gateway = gateway(opened, calls, Map.of(),
+                    new PkiOperationOutcome.Completed(new PkiOperationResult("test", Map.of())),
+                    new TestScopeResolver(), evidence, opened.audit(), wakes::incrementAndGet);
+            PkiId id = new PkiId("credential-a");
+            for (PkiOperation operation : List.of(new PkiOperation.HoldCredential(id, Optional.of("ticket")),
+                    new PkiOperation.UnholdCredential(id, Optional.of("ticket")))) {
+                assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,
+                        gateway.execute(request(operation, credentialResource(id), Optional.empty()), CancellationSignal.NONE));
+                Permission.Action action = operation instanceof PkiOperation.HoldCredential
+                        ? Permission.Action.CERTIFICATE_HOLD : Permission.Action.CERTIFICATE_RELEASE_HOLD;
+                Permission.Scope scope = new Permission.Scope(ServerTestSupport.REALM,
+                        Optional.of(ServerTestSupport.AUTHORITY), Optional.empty(), Optional.of("profile-a"));
+                opened.store().createGrant(new Permission.Grant(operation.name(), "auditor", Permission.Effect.ALLOW,
+                        action, Permission.ResourceType.CERTIFICATE, scope, Permission.Relationship.ANY,
+                        Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true));
+                for (Permission.Scope invalid : List.of(
+                        new Permission.Scope(ServerTestSupport.REALM, Optional.of(ServerTestSupport.AUTHORITY),
+                                Optional.empty(), Optional.of("wrong-profile")),
+                        new Permission.Scope(ServerTestSupport.REALM, Optional.of(new PkiId("other-ca")),
+                                Optional.empty(), Optional.of("profile-a")))) {
+                    Permission.Resource resource = new Permission.Resource(Permission.ResourceType.CERTIFICATE,
+                            invalid, Optional.of(id), Optional.empty());
+                    assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,
+                            gateway.execute(request(operation, resource, Optional.empty()), CancellationSignal.NONE));
+                }
+                assertInstanceOf(ServerOperationGateway.Outcome.Executed.class,
+                        gateway.execute(request(operation, credentialResource(id), Optional.empty()), CancellationSignal.NONE));
+                assertEquals(RevocationExecutionEvidence.AuthorizationPath.ORDINARY_GRANT,
+                        evidence.get().authorizationPath().orElseThrow());
+                assertEquals(RevocationExecutionEvidence.commitJustification(Optional.of("ticket")),
+                        evidence.get().justificationCommitment().orElseThrow());
+            }
+            assertEquals(2, calls.get());
+            assertEquals(2, wakes.get());
+        }
+    }
+
+    @Test
+    void holdApprovalBindsActionTargetJustificationAndResolvedProfile() throws Exception {
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("auditor"));
+            opened.store().createPrincipal(ServerTestSupport.principal("approver"));
+            for (Permission.Action action : List.of(Permission.Action.CERTIFICATE_HOLD, Permission.Action.CERTIFICATE_RELEASE_HOLD)) {
+                opened.store().createGrant(new Permission.Grant(action.name(), "auditor", Permission.Effect.ALLOW,
+                        action, Permission.ResourceType.CERTIFICATE, ServerTestSupport.scope(), Permission.Relationship.ANY,
+                        Permission.DataView.METADATA_REDACTED, Set.of(Permission.Condition.APPROVAL_REQUIRED), Optional.empty(), true));
+            }
+            opened.store().createGrant(approvalRequestGrant());
+            AtomicInteger calls = new AtomicInteger();
+            ServerOperationGateway gateway = gateway(opened, calls, approvalPolicies());
+            PkiId id = new PkiId("credential-a");
+            PkiOperation operation = new PkiOperation.HoldCredential(id, Optional.of("ticket"));
+            assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class,
+                    gateway.execute(approvalRequest("approval-hold", operation, credentialResource(id)), CancellationSignal.NONE));
+            ApprovalService approvals = new ApprovalService(opened.store(), ServerTestSupport.CLOCK, opened.audit());
+            assertEquals(Optional.of("profile-a"), approvals.requireCurrent("approval-hold").scope().profileId());
+            approvals.decide("approval-hold", "approver", ApprovalService.Choice.APPROVE, "reviewed");
+            for (PkiOperation changed : List.of(new PkiOperation.UnholdCredential(id, Optional.of("ticket")),
+                    new PkiOperation.HoldCredential(id, Optional.of("changed")),
+                    new PkiOperation.HoldCredential(new PkiId("credential-b"), Optional.of("ticket")))) {
+                PkiId target = changed instanceof PkiOperation.HoldCredential hold ? hold.credentialId() : id;
+                assertThrows(IllegalStateException.class, () -> gateway.execute(
+                        request(changed, credentialResource(target), Optional.of("approval-hold")), CancellationSignal.NONE));
+            }
+            assertEquals(0, calls.get());
+            assertInstanceOf(ServerOperationGateway.Outcome.Executed.class, gateway.execute(
+                    request(operation, credentialResource(id), Optional.of("approval-hold")), CancellationSignal.NONE));
+            assertEquals(1, calls.get());
+        }
+    }
+
+    @Test
+    void legacyEvidenceExecutorCannotConsumeHoldApproval() throws Exception {
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("auditor"));
+            opened.store().createPrincipal(ServerTestSupport.principal("approver"));
+            opened.store().createGrant(new Permission.Grant("hold", "auditor", Permission.Effect.ALLOW,
+                    Permission.Action.CERTIFICATE_HOLD, Permission.ResourceType.CERTIFICATE,
+                    ServerTestSupport.scope(), Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED,
+                    Set.of(Permission.Condition.APPROVAL_REQUIRED), Optional.empty(), true));
+            opened.store().createGrant(approvalRequestGrant());
+            AtomicInteger calls = new AtomicInteger();
+            PkiOperationOutcome result = new PkiOperationOutcome.Completed(new PkiOperationResult("test", Map.of()));
+            class Legacy implements zeroecho.pki.application.PkiOperationExecutor, RevocationEvidenceExecutor {
+                @Override public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
+                    calls.incrementAndGet(); return result;
+                }
+                @Override public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
+                        RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+                    calls.incrementAndGet(); return result;
+                }
+            }
+            Legacy legacy = new Legacy();
+            assertTrue(!legacy.supportsHoldTransitions());
+            ServerOperationGateway unsupported = gateway(opened, calls, approvalPolicies(), result,
+                    new TestScopeResolver(), new AtomicReference<>(), opened.audit(), () -> { },
+                    new AtomicReference<>(), legacy);
+            PkiId id = new PkiId("credential-a");
+            PkiOperation operation = new PkiOperation.HoldCredential(id);
+            unsupported.execute(approvalRequest("hold-legacy", operation, credentialResource(id)), CancellationSignal.NONE);
+            ApprovalService approvals = new ApprovalService(opened.store(), ServerTestSupport.CLOCK, opened.audit());
+            approvals.decide("hold-legacy", "approver", ApprovalService.Choice.APPROVE, "reviewed");
+            ApprovalService.Request before = approvals.requireCurrent("hold-legacy");
+            assertThrows(IllegalStateException.class, () -> unsupported.execute(
+                    request(operation, credentialResource(id), Optional.of("hold-legacy")), CancellationSignal.NONE));
+            assertEquals(before, approvals.requireCurrent("hold-legacy"));
+            assertEquals(0, calls.get());
+            ServerOperationGateway supported = gateway(opened, calls, approvalPolicies());
+            assertInstanceOf(ServerOperationGateway.Outcome.Executed.class, supported.execute(
+                    request(operation, credentialResource(id), Optional.of("hold-legacy")), CancellationSignal.NONE));
+        }
+    }
+
     private record TestEvidenceExecutor(AtomicInteger calls, PkiOperationOutcome result,
             AtomicReference<RevocationExecutionEvidence> evidence,
             AtomicReference<zeroecho.pki.api.attr.AttributeSet> issuanceEvidence)
             implements zeroecho.pki.application.PkiOperationExecutor, RevocationEvidenceExecutor {
+        @Override public boolean supportsHoldTransitions() { return true; }
+        @Override public PkiOperationOutcome executeHold(PkiOperation.HoldCredential operation,
+                RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
+            evidence.set(exactEvidence); calls.incrementAndGet(); return result;
+        }
+        @Override public PkiOperationOutcome executeUnhold(PkiOperation.UnholdCredential operation,
+                RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
+            evidence.set(exactEvidence); calls.incrementAndGet(); return result;
+        }
         @Override public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
             calls.incrementAndGet(); return result;
         }

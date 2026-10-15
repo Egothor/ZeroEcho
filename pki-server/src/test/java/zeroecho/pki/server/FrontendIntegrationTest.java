@@ -92,6 +92,25 @@ class FrontendIntegrationTest {
         seed(configuration, dependencies);
         try (PkiHttpsServer backend = PkiHttpsServer.start(configuration, dependencies);
                 FrontendTestBridge bridge = new FrontendTestBridge(frontend.resolve("dist"), backend.address(), tls)) {
+            backend.realm().gateway().installEst(new zeroecho.pki.server.est.EstService(backend.realm()));
+            backend.realm().gateway().installScep(new zeroecho.pki.server.scep.ScepService(backend.realm()));
+            backend.realm().gateway().installCmp(new zeroecho.pki.server.cmp.CmpService(backend.realm()));
+            Path spool = directory.resolve("backup-artifacts");
+            Files.createDirectory(spool, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")));
+            BackupTransferConfiguration transfer = new BackupTransferConfiguration(spool,
+                    16 * 1024 * 1024, 64 * 1024 * 1024, 8, 2, 18L * 1024 * 1024 * 1024,
+                    Duration.ofHours(1), Duration.ofSeconds(30), bridge.baseUri());
+            backend.realm().installBackupTransfer(transfer, Clock.systemUTC(), HttpServerTestSupport.random());
+            java.util.concurrent.atomic.AtomicReference<PkiHttpsServer> current = new java.util.concurrent.atomic.AtomicReference<>(backend);
+            bridge.restartWith(() -> {
+                try {
+                    current.get().close();
+                    PkiHttpsServer reopened = PkiHttpsServer.start(configuration, dependencies, Optional.of(transfer));
+                    current.set(reopened);
+                    return reopened.address();
+                } catch (Exception failure) { throw new IllegalStateException("Fixture restart failed", failure); }
+            });
             ProcessBuilder builder = new ProcessBuilder(node.toString(),
                     frontend.resolve("node_modules/@playwright/test/cli.js").toString(),
                     "test", "--config=playwright.live.config.ts");
@@ -115,6 +134,7 @@ class FrontendIntegrationTest {
                     awaitExit(owned);
                 }
                 assertTrue(owned.stream().noneMatch(ProcessHandle::isAlive), "Browser processes did not terminate");
+                current.get().close();
             }
         }
     }
@@ -147,7 +167,11 @@ class FrontendIntegrationTest {
                 BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), Duration.ofMinutes(2),
                 Optional.empty(), topology, OptionalLong.empty());
         PkiSessionConfiguration original = base.realm().pkiSessionConfiguration();
-        PkiSessionConfiguration session = new PkiSessionConfiguration(original.version(), original.store(),
+        Map<String, String> storeProperties = new java.util.HashMap<>(original.store().properties());
+        storeProperties.putAll(Map.of("credentialSearch", "h2", "credentialSearchCacheKiB", "4096",
+                "credentialSearchQueryTimeoutMillis", "5000", "credentialSearchMaximumCertificateBytes", "1048576"));
+        PkiSessionConfiguration session = new PkiSessionConfiguration(original.version(),
+                new ProviderConfig("fs", storeProperties),
                 original.audit(), Optional.of(signing), original.publishers(), original.bindingProviders());
         ServerRealmConfiguration realm = base.realm();
         realm = new ServerRealmConfiguration(realm.realmId(), realm.displayName(), realm.confirmationProofPolicy(),
@@ -174,6 +198,11 @@ class FrontendIntegrationTest {
             for (String principal : List.of("administrator", "approver")) {
                 context.createPrincipal(ServerTestSupport.principal(principal), "system");
                 for (OperationSecurityDescriptors.Descriptor descriptor : new OperationSecurityDescriptors().descriptors().values()) {
+                    if (principal.equals("administrator")
+                            && descriptor.action() == Permission.Action.CMP_ENDPOINT_ADMINISTER
+                            || principal.equals("approver") && descriptor.action() == Permission.Action.ENROLLMENT_PROFILE_ADMINISTER) {
+                        continue;
+                    }
                     context.grant(ServerTestSupport.grant(principal + "." + descriptor.operationId(), principal,
                             Permission.Effect.ALLOW, descriptor.action(), descriptor.resourceType(), scope,
                             Permission.Relationship.ANY, descriptor.dataView()), "system");
@@ -188,10 +217,33 @@ class FrontendIntegrationTest {
             KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
             KeyPair requestKey = generator.generateKeyPair();
+            org.bouncycastle.asn1.x509.ExtensionsGenerator extensions = new org.bouncycastle.asn1.x509.ExtensionsGenerator();
+            extensions.addExtension(org.bouncycastle.asn1.x509.Extension.subjectAlternativeName, false,
+                    new org.bouncycastle.asn1.x509.GeneralNames(new org.bouncycastle.asn1.x509.GeneralName(2, "browser.example.test")));
             byte[] csr = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=Browser CSR"), requestKey.getPublic())
+                    .addAttribute(org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
                     .build(new JcaContentSignerBuilder("SHA256withRSA").build(requestKey.getPrivate())).getEncoded();
             assertInstanceOf(PkiOperationOutcome.Completed.class, context.session().operations().execute(
                     new PkiOperation.ImportRequest(new FormatId("x509"), new EncodedObject(Encoding.DER, csr)), CancellationSignal.NONE));
+        }
+        byte[] payload = new byte[1024 * 1024];
+        java.util.Random random = new java.util.Random(7903);
+        try (zeroecho.pki.impl.fs.FilesystemPkiStore store = new zeroecho.pki.impl.fs.FilesystemPkiStore(
+                Path.of(configuration.realm().pkiSessionConfiguration().store().require("root")),
+                zeroecho.pki.impl.fs.FsPkiStoreOptions.defaults())) {
+            java.time.Instant now = Clock.systemUTC().instant();
+            for (int index = 0; index < 5; index++) {
+                random.nextBytes(payload);
+                store.putWorkflowState(new zeroecho.pki.api.orch.WorkflowStateRecord(new zeroecho.pki.api.PkiId("large-backup-fixture-" + index),
+                    "FIXTURE", new zeroecho.pki.api.audit.Principal("TEST", "fixture"),
+                    zeroecho.pki.api.orch.OrchestrationDurabilityPolicy.DURABLE_MIN_STATE, now, now, now.plusSeconds(3600),
+                    Encoding.BINARY, Optional.of(new EncodedObject(Encoding.BINARY, payload))));
+            }
+            try (zeroecho.pki.api.backup.BackupSource archive = store.createBackupSource(
+                    new zeroecho.pki.api.backup.BackupRequest("fixture-validation", org.mockito.Mockito.mock(zeroecho.pki.api.attr.AttributeSet.class)));
+                    zeroecho.pki.api.backup.BackupPreparation verified = store.prepareBackup(archive)) {
+                assertEquals(archive.backupId(), verified.backupId());
+            }
         }
     }
 }

@@ -34,6 +34,8 @@
 
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -96,6 +98,9 @@ import zeroecho.pkix.cert.CertificateBuilder;
  * Instances are thread-safe when their store is thread-safe.
  */
 public final class EndEntitySigningPreparation {
+    private static final String SUBMISSION_PARAMETER = "submission";
+    private static final String TTL_PARAMETER = "ttl";
+
     private static final String EVIDENCE_ARGUMENT = "evidence";
 
     private final PkiStore store;
@@ -145,8 +150,8 @@ public final class EndEntitySigningPreparation {
             SigningSubmissionId submission, Duration ttl, Optional<IssuanceExecutionEvidence> evidence,
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
-        Objects.requireNonNull(submission, "submission");
-        Objects.requireNonNull(ttl, "ttl");
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
         EndEntityIssuancePreparation.Prepared approved = validation.prepare(access, request, cancellation);
         return stage(approved, submission, ttl, evidence, cancellation, LeafOperation.ISSUE_END_ENTITY, Optional.empty());
     }
@@ -174,8 +179,8 @@ public final class EndEntitySigningPreparation {
             SigningSubmissionId submission, Duration ttl, Optional<IssuanceExecutionEvidence> evidence,
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
-        Objects.requireNonNull(submission, "submission");
-        Objects.requireNonNull(ttl, "ttl");
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(request);
         IssuanceIntent caller = request.intent();
@@ -186,6 +191,68 @@ public final class EndEntitySigningPreparation {
                 Optional.of(effective), cancellation);
         return stage(approved, submission, ttl, evidence, cancellation, LeafOperation.ISSUE_END_ENTITY,
                 Optional.empty(), identity.correlationId());
+    }
+
+    /**
+     * Prepares a correlated renewal after the semantic facade has excluded an
+     * accepted replay. Authoritative predecessor status and frozen selection are
+     * checked before staging; content ownership matches {@link #prepare}.
+     * @param access trusted requester audit context
+     * @param request immutable predecessor binding and frozen selection
+     * @param submission fresh session operation identity
+     * @param ttl exact signing lifetime
+     * @param evidence trusted issuance evidence, never null
+     * @param cancellation cooperative pre-acceptance cancellation
+     * @return exclusively owned staged renewal candidate
+     * @throws IOException if staging or cancellation fails
+     * @throws PkiException if predecessor, policy or frozen selection is invalid
+     */
+    public DomainSigningRequest prepareCorrelatedRenewal(AccessContext access,
+            CorrelatedEndEntityRenewalRequest request,
+            SigningSubmissionId submission, Duration ttl, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
+        CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(request);
+        IssuanceIntent caller = request.intent();
+        IssuanceIntent effective = new IssuanceIntent(caller.issuanceId(), identity.effectiveCommitment(),
+                caller.expectedProfile(), caller.expectedIssuerId(), caller.expectedChainPathId(),
+                caller.expectedChainPathCommitment());
+        EndEntityLifecyclePreparation.Prepared approved = lifecycle.prepareCorrelatedRenewal(
+                lifecycleAccess(access, request.request().existingCredentialId()), request, effective, cancellation);
+        return stage(approved.issuance(), submission, ttl, evidence, cancellation, LeafOperation.RENEW_END_ENTITY,
+                Optional.of(approved.predecessor().credentialId()), identity.correlationId());
+    }
+
+    /**
+     * Stages a correlated replacement through the existing replacement continuation.
+     * The caller exclusively owns the resulting candidate; no acceptance occurs.
+     * @param access trusted requester audit context
+     * @param request exact replacement and frozen predecessor binding
+     * @param submission fresh internal signing identity
+     * @param ttl signing lifetime
+     * @param evidence trusted execution evidence, never null
+     * @param cancellation cooperative pre-acceptance cancellation
+     * @return exclusively owned staged candidate
+     * @throws IOException if staging or cancellation fails
+     * @throws PkiException if proof, predecessor or frozen policy is invalid
+     */
+    public DomainSigningRequest prepareCorrelatedReplacement(AccessContext access,
+            CorrelatedEndEntityReplacementRequest request, SigningSubmissionId submission, Duration ttl,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
+        CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(request);
+        IssuanceIntent caller = request.intent();
+        IssuanceIntent effective = new IssuanceIntent(caller.issuanceId(), identity.effectiveCommitment(),
+                caller.expectedProfile(), caller.expectedIssuerId(), caller.expectedChainPathId(),
+                caller.expectedChainPathCommitment());
+        EndEntityLifecyclePreparation.Prepared approved = lifecycle.prepareCorrelatedReplacement(
+                lifecycleAccess(access, request.request().existingCredentialId()), request, effective, cancellation);
+        return stage(approved.issuance(), submission, ttl, evidence, cancellation, LeafOperation.REPLACE_END_ENTITY,
+                Optional.of(approved.predecessor().credentialId()), identity.correlationId());
     }
 
     /**
@@ -209,8 +276,8 @@ public final class EndEntitySigningPreparation {
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
         Objects.requireNonNull(request, "request");
-        Objects.requireNonNull(submission, "submission");
-        Objects.requireNonNull(ttl, "ttl");
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
         EndEntityLifecyclePreparation.Prepared approved = lifecycle.prepareRenewal(
                 lifecycleAccess(access, request.existingCredentialId()), request, cancellation);
         return stage(approved.issuance(), submission, ttl, evidence, cancellation, LeafOperation.RENEW_END_ENTITY,
@@ -237,8 +304,8 @@ public final class EndEntitySigningPreparation {
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
         Objects.requireNonNull(request, "request");
-        Objects.requireNonNull(submission, "submission");
-        Objects.requireNonNull(ttl, "ttl");
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
         EndEntityLifecyclePreparation.Prepared approved = lifecycle.prepareReplacement(
                 lifecycleAccess(access, request.existingCredentialId()), request, cancellation);
         return stage(approved.issuance(), submission, ttl, evidence, cancellation, LeafOperation.REPLACE_END_ENTITY,
@@ -265,8 +332,8 @@ public final class EndEntitySigningPreparation {
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
         Objects.requireNonNull(request, "request");
-        Objects.requireNonNull(submission, "submission");
-        Objects.requireNonNull(ttl, "ttl");
+        Objects.requireNonNull(submission, SUBMISSION_PARAMETER);
+        Objects.requireNonNull(ttl, TTL_PARAMETER);
         EndEntityLifecyclePreparation.Prepared approved = lifecycle.prepareReissue(
                 lifecycleAccess(access, request.existingCredentialId()), request, cancellation);
         return stage(approved.issuance(), submission, ttl, evidence, cancellation, LeafOperation.REISSUE_END_ENTITY,

@@ -66,6 +66,13 @@ final class CorrelatedIssuanceIdentityTest {
         CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(request);
         assertEquals(identity, CorrelatedIssuanceIdentity.derive(request));
         assertEquals("issuance.a134bb5c6fc1283746d3e7f9f15b4ada31074c8dfd7e982dd5d887b589b5c9db", identity.correlationId());
+        assertEquals("19d0d54661bda7b6eaad03f8292fd050f093c77f47f1be381af6be8ce207efd3", identity.effectiveCommitment());
+        CorrelatedEndEntityIssuanceRequest crmf = new CorrelatedEndEntityIssuanceRequest(
+                new EndEntityIssuanceRequest(request.request().issuerCaId(), new zeroecho.pki.api.request.X509EnrollmentPayload(
+                        zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, request.request().csrDer()),
+                        request.request().profileId(), request.request().validityOverride()), request.intent());
+        assertEquals(identity.correlationId(), CorrelatedIssuanceIdentity.derive(crmf).correlationId());
+        assertNotEquals(identity.effectiveCommitment(), CorrelatedIssuanceIdentity.derive(crmf).effectiveCommitment());
         assertEquals(identity.correlationId(), CorrelatedIssuanceIdentity.correlationId(
                 request.request().issuerCaId(), request.intent().issuanceId()));
         assertTrue(identity.correlationId().startsWith("issuance."));
@@ -75,6 +82,46 @@ final class CorrelatedIssuanceIdentityTest {
                 new byte[] { 1 }, Optional.empty()));
         assertEquals(identity.correlationId(), different.correlationId());
         assertNotEquals(identity.effectiveCommitment(), different.effectiveCommitment());
+    }
+
+    @Test
+    void renewalCommitmentBindsEveryPredecessorCoordinateAndRejectsMalformedInput() {
+        CorrelatedEndEntityIssuanceRequest issue = request("authority", "order", DIGEST, "profile", 1,
+                DIGEST, "issuer", "path", DIGEST, new byte[] { 1 }, Optional.empty());
+        zeroecho.pki.api.issuance.EndEntityRenewalRequest predecessor = new zeroecho.pki.api.issuance.EndEntityRenewalRequest(
+                new PkiId("x509:" + DIGEST), Optional.empty());
+        zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest renewal = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                issue.request().issuerCaId(), predecessor, DIGEST, issue.intent());
+        CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(renewal);
+        zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest original = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                renewal.issuerCaId(), renewal.request(), renewal.predecessorSha256(), renewal.intent(), Optional.of(
+                        new zeroecho.pki.api.request.X509EnrollmentPayload(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, new byte[] {1})));
+        CorrelatedIssuanceIdentity withOriginal = CorrelatedIssuanceIdentity.derive(original);
+        assertEquals(identity.correlationId(), withOriginal.correlationId());
+        assertNotEquals(identity.effectiveCommitment(), withOriginal.effectiveCommitment());
+        for (zeroecho.pki.api.request.X509EnrollmentPayload payload : java.util.List.of(
+                new zeroecho.pki.api.request.X509EnrollmentPayload(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, new byte[] {2}),
+                new zeroecho.pki.api.request.X509EnrollmentPayload(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, new byte[] {1}))) {
+            CorrelatedIssuanceIdentity changed = CorrelatedIssuanceIdentity.derive(new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                    renewal.issuerCaId(), renewal.request(), renewal.predecessorSha256(), renewal.intent(), Optional.of(payload)));
+            assertEquals(identity.correlationId(), changed.correlationId());
+            assertNotEquals(withOriginal.effectiveCommitment(), changed.effectiveCommitment());
+        }
+        assertEquals(CorrelatedIssuanceIdentity.derive(issue).correlationId(), identity.correlationId());
+        assertNotEquals(CorrelatedIssuanceIdentity.derive(issue).effectiveCommitment(), identity.effectiveCommitment());
+        for (int field = 0; field < 3; field++) {
+            zeroecho.pki.api.issuance.EndEntityRenewalRequest changed = new zeroecho.pki.api.issuance.EndEntityRenewalRequest(
+                    field == 0 ? new PkiId("x509:" + "2".repeat(64)) : predecessor.existingCredentialId(),
+                    field == 2 ? Optional.of(new Validity(NOW, NOW.plusSeconds(30))) : Optional.empty());
+            assertNotEquals(identity.effectiveCommitment(), CorrelatedIssuanceIdentity.derive(
+                    new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(renewal.issuerCaId(), changed,
+                            field == 1 ? "2".repeat(64) : DIGEST, renewal.intent())).effectiveCommitment());
+        }
+        assertThrows(IllegalArgumentException.class, () -> new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                renewal.issuerCaId(), predecessor, "not-a-digest", renewal.intent()));
+        assertThrows(IllegalArgumentException.class, () -> new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(
+                renewal.issuerCaId(), new zeroecho.pki.api.issuance.EndEntityRenewalRequest(new PkiId("x".repeat(4097)), Optional.empty()),
+                DIGEST, renewal.intent()));
     }
 
     @Test
@@ -105,6 +152,39 @@ final class CorrelatedIssuanceIdentityTest {
         assertNotEquals(nanos, CorrelatedIssuanceIdentity.derive(request("authority", "order", DIGEST,
                 "profile", 1, DIGEST, "issuer", "path", DIGEST, new byte[] { 1 },
                 Optional.of(new Validity(NOW.plusNanos(1), NOW.plusSeconds(30))))));
+    }
+
+    @Test
+    void replacementBindsPayloadKindBytesPredecessorAndFrozenSelectionInSeparateDomain() {
+        CorrelatedEndEntityIssuanceRequest issue = request("authority", "order", DIGEST, "profile", 1,
+                DIGEST, "issuer", "path", DIGEST, new byte[] { 1 }, Optional.empty());
+        zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest original = new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(
+                issue.request().issuerCaId(), new zeroecho.pki.api.issuance.EndEntityReplacementRequest(
+                        new PkiId("predecessor"), new byte[] { 1 }, "profile"), DIGEST, issue.intent());
+        CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(original);
+        assertEquals(CorrelatedIssuanceIdentity.derive(issue).correlationId(), identity.correlationId());
+        assertNotEquals(CorrelatedIssuanceIdentity.derive(issue).effectiveCommitment(), identity.effectiveCommitment());
+        for (int change = 0; change < 9; change++) {
+            zeroecho.pki.api.request.X509EnrollmentPayload payload = new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    change == 0 ? zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF : zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10,
+                    new byte[] { (byte) (change == 1 ? 2 : 1) });
+            IssuanceIntent intent = new IssuanceIntent("order", change == 4 ? "2".repeat(64) : DIGEST,
+                    change == 5 ? new CertificateProfileRef("profile", 2, HexFormat.of().parseHex(DIGEST)) : issue.intent().expectedProfile(),
+                    new PkiId(change == 6 ? "other-issuer" : "issuer"), new PkiId(change == 7 ? "other-path" : "path"),
+                    change == 8 ? "2".repeat(64) : DIGEST);
+            zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest changed = new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(
+                    original.issuerCaId(), new zeroecho.pki.api.issuance.EndEntityReplacementRequest(
+                            new PkiId(change == 2 ? "other-predecessor" : "predecessor"), payload, "profile"),
+                    change == 3 ? "2".repeat(64) : DIGEST, intent);
+            assertEquals(identity.correlationId(), CorrelatedIssuanceIdentity.derive(changed).correlationId());
+            assertNotEquals(identity.effectiveCommitment(), CorrelatedIssuanceIdentity.derive(changed).effectiveCommitment());
+            if (change == 0) assertThrows(IllegalStateException.class, () -> changed.request().csrDer());
+        }
+        assertThrows(IllegalArgumentException.class, () -> new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(
+                original.issuerCaId(), original.request(), "invalid", original.intent()));
+        assertThrows(IllegalArgumentException.class, () -> new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(
+                original.issuerCaId(), new zeroecho.pki.api.issuance.EndEntityReplacementRequest(new PkiId("predecessor"), new byte[] {1}, "other"),
+                DIGEST, original.intent()));
     }
 
     @Test

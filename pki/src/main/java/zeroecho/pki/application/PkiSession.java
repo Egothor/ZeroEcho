@@ -314,6 +314,16 @@ public interface PkiSession extends AutoCloseable {
     PkiRepository repository();
 
     /**
+     * Returns the session's authoritative inventory, revocation and time resolver.
+     * Callers must supply credentials read from the authoritative repository and
+     * reuse one evaluation across the candidates of one trust decision. The
+     * resolver and retained evaluations reject use after session closure.
+     * @return lifecycle-owned resolver; never a metadata-only status fallback
+     * @throws IllegalStateException when the session is not open
+     */
+    zeroecho.pki.api.credential.EffectiveCredentialStatusResolver credentialStatuses();
+
+    /**
      * Returns the backup service when the underlying store supports backup operations.
      *
      * <p>Sessions backed by stores that do not support backup return {@link Optional#empty()}.

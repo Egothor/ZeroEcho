@@ -242,6 +242,10 @@ public final class PkiCli {
     private static int executeRemote(Remote remote, PkiOutputMode mode, java.time.Duration pendingWait,
             PkiOutputRenderer renderer, RemoteExchangeFactory factory, CancellationSignal cancellation,
             OutputStream output) {
+        if ("backup.stream.upload".equals(remote.operationId()) || "backup.stream.download".equals(remote.operationId())) {
+            return renderFailure(renderer, mode, "INVALID_INVOCATION", "BACKUP_BINARY_ROUTE_USE_WEB_CONSOLE_OR_HTTP",
+                    PkiExitCodes.INVALID_INVOCATION, output);
+        }
         try {
             if (!PkiLocalCommand.INSPECT.equals(remote.operationId())) {
                 PkiSchemaValidator.validateIfKnown(remote.operationId(), remote.arguments());
@@ -516,6 +520,8 @@ public final class PkiCli {
         writer.println("  issuer.path.select --ca-id <id> --issuer-id <id> --path-id <id> --reason <reason>");
         writer.println("  credential.revoke --credential-id <id> --reason <permanent-reason>");
         writer.println("                    [--justification <operator-justification-or-ticket>]");
+        writer.println("  credential.hold --credential-id <id> [--justification <operator-justification-or-ticket>]");
+        writer.println("  credential.unhold --credential-id <id> [--justification <operator-justification-or-ticket>]");
         writer.println("  revocation.inspect --credential-id <id>");
         writer.println("  revocation.history --credential-id <id> --limit <1..1000>");
         writer.println("  revocation.snapshot --limit <1..1000>");

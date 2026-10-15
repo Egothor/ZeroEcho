@@ -82,6 +82,23 @@ class PkiRevocationRegistryTest {
         return new PkiOperationValue.ObjectValue(values);
     }
 
+    @Test
+    void bindsHoldAndReleaseWithoutCallerReasonOrTime() throws Exception {
+        PkiOperationRegistry registry = new PkiOperationRegistry();
+        for (String name : java.util.List.of("credential.hold", "credential.unhold")) {
+            PkiOperation operation = ((PkiLocalCommand.Core) registry.bind(name, arguments(Map.of(
+                    "credentialId", text("credential-a"), "justification", text("ticket-300"))), temporaryDirectory)).operation();
+            PkiOperation expected = name.equals("credential.hold")
+                    ? new PkiOperation.HoldCredential(new zeroecho.pki.api.PkiId("credential-a"), Optional.of("ticket-300"))
+                    : new PkiOperation.UnholdCredential(new zeroecho.pki.api.PkiId("credential-a"), Optional.of("ticket-300"));
+            assertEquals(expected, operation);
+            for (String field : java.util.List.of("reason", "revocationDate", "evidence")) {
+                assertThrows(IllegalArgumentException.class, () -> registry.bind(name, arguments(Map.of(
+                        "credentialId", text("credential-a"), field, text("invalid"))), temporaryDirectory));
+            }
+        }
+    }
+
     private static PkiOperationValue.Text text(String value) {
         return new PkiOperationValue.Text(value);
     }

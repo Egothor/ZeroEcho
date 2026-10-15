@@ -144,6 +144,7 @@ public final class AcmeState {
      * @param realmId owning security realm
      * @param authorityId exact logical authority
      * @param profile frozen certificate profile reference
+     * @param enrollmentProfileId mandatory enrollment admission policy identity
      * @param issuerId exact issuer generation
      * @param issuancePathId exact issuance chain path
      * @param issuancePathCommitment expected chain-path commitment
@@ -164,7 +165,7 @@ public final class AcmeState {
      * @param commitment commitment to the complete record
      */
     public record Directory(String directoryId, String alias, int revision, RealmId realmId,
-            PkiId authorityId, CertificateProfileRef profile, PkiId issuerId, PkiId issuancePathId,
+            PkiId authorityId, CertificateProfileRef profile, String enrollmentProfileId, PkiId issuerId, PkiId issuancePathId,
             String issuancePathCommitment, Set<IdentifierType> identifierTypes, Set<String> dnsNamespaces,
             Duration maximumValidity, Set<String> publicKeyAlgorithms, Set<String> x509BindingPolicies,
             Set<ChallengeType> challengeTypes, Set<String> challengeProviderIds,
@@ -176,6 +177,7 @@ public final class AcmeState {
             id(directoryId); AcmeState.alias(alias); positive(revision, "directory revision");
             Objects.requireNonNull(realmId, "realmId"); Objects.requireNonNull(authorityId, "authorityId");
             Objects.requireNonNull(profile, "profile"); Objects.requireNonNull(issuerId, "issuerId");
+            zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(enrollmentProfileId);
             Objects.requireNonNull(issuancePathId, "issuancePathId"); digest(issuancePathCommitment);
             identifierTypes = nonEmpty(identifierTypes, "identifier types");
             dnsNamespaces = nonEmptyStrings(dnsNamespaces, "DNS namespaces");
@@ -218,11 +220,13 @@ public final class AcmeState {
      * @param createdAt server-authoritative creation time
      * @param updatedAt server-authoritative last-update time
      * @param commitment commitment to the complete account record
+     * @param keyHistory append-only authenticated key identities and known administrative exclusions
      */
     public record Account(String accountId, String directoryId, int directoryRevision,
             String directoryPolicyCommitment, String keyThumbprint, byte[] publicKeySpki,
             AccountStatus status, List<String> contacts, boolean termsAgreed,
-            Optional<String> eabPolicyCommitment, Instant createdAt, Instant updatedAt, String commitment) {
+            Optional<String> eabPolicyCommitment, Instant createdAt, Instant updatedAt, String commitment,
+            List<AccountKeyIdentity> keyHistory) {
         /** Validates account identity, bounded public material, PII and commitments. */
         public Account {
             id(accountId); id(directoryId); positive(directoryRevision, "directory revision");
@@ -241,6 +245,42 @@ public final class AcmeState {
             eabPolicyCommitment.ifPresent(AcmeState::digest);
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(updatedAt, "updatedAt");
             digest(commitment);
+            keyHistory = List.copyOf(Objects.requireNonNull(keyHistory, "keyHistory"));
+            if (keyHistory.isEmpty() || keyHistory.size() > 256) throw new IllegalArgumentException("ACME key history bound is invalid");
+            java.util.HashSet<String> identities = new java.util.HashSet<>();
+            for (AccountKeyIdentity key : keyHistory) {
+                if (!identities.add(key.canonicalSha256())) throw new IllegalArgumentException("ACME key history contains duplicate keys");
+            }
+            zeroecho.pkix.PublicKeyIdentity current = zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(publicKeySpki);
+            if (keyHistory.stream().noneMatch(key -> key.canonicalSha256().equals(current.canonicalSha256())
+                    && key.legacySpkiSha256().equals(current.equivalentSubjectPublicKeyInfoSha256()))) {
+                throw new IllegalArgumentException("ACME current key is absent from its history");
+            }
+        }
+
+        /**
+         * Creates an account with its initial validated key identity. The enrollment
+         * authority adds configured exclusion aliases before durable creation.
+         * @param accountId account identity
+         * @param directoryId owning directory identity
+         * @param directoryRevision exact directory revision
+         * @param directoryPolicyCommitment frozen directory policy
+         * @param keyThumbprint authenticated JWK thumbprint
+         * @param publicKeySpki validated account public key
+         * @param status account status
+         * @param contacts bounded contacts
+         * @param termsAgreed terms acceptance
+         * @param eabPolicyCommitment optional external binding commitment
+         * @param createdAt creation time
+         * @param updatedAt update time
+         * @param commitment complete record commitment
+         */
+        public Account(String accountId, String directoryId, int directoryRevision, String directoryPolicyCommitment,
+                String keyThumbprint, byte[] publicKeySpki, AccountStatus status, List<String> contacts, boolean termsAgreed,
+                Optional<String> eabPolicyCommitment, Instant createdAt, Instant updatedAt, String commitment) {
+            this(accountId, directoryId, directoryRevision, directoryPolicyCommitment, keyThumbprint, publicKeySpki,
+                    status, contacts, termsAgreed, eabPolicyCommitment, createdAt, updatedAt, commitment,
+                    List.of(AccountKeyIdentity.fromKey(publicKeySpki, Set.of())));
         }
         /**
          * Returns the account public key.
@@ -248,6 +288,39 @@ public final class AcmeState {
          * @return defensive copy of canonical subject-public-key information
          */
         @Override public byte[] publicKeySpki() { return publicKeySpki.clone(); }
+    }
+
+    /**
+     * Exclusion-only evidence for one authenticated account key, retained across
+     * rollover. Neither this record nor an alias grants authentication authority.
+     * @param canonicalSha256 mathematical public-key commitment
+     * @param legacySpkiSha256 finite supported equivalent SPKI commitments
+     * @param aliases known administrative principal exclusions at observation time
+     */
+    public record AccountKeyIdentity(String canonicalSha256, Set<String> legacySpkiSha256, Set<String> aliases) {
+        /** Validates immutable bounded public commitments and aliases. */
+        public AccountKeyIdentity {
+            digest(canonicalSha256);
+            legacySpkiSha256 = Set.copyOf(Objects.requireNonNull(legacySpkiSha256, "legacySpkiSha256"));
+            if (legacySpkiSha256.isEmpty() || legacySpkiSha256.size() > 3) throw new IllegalArgumentException("ACME key encoding bound is invalid");
+            legacySpkiSha256.forEach(AcmeState::digest);
+            aliases = Set.copyOf(Objects.requireNonNull(aliases, "aliases"));
+            if (aliases.size() > 20_000) throw new IllegalArgumentException("ACME key alias bound is invalid");
+            aliases.forEach(AcmeState::id);
+        }
+
+        /**
+         * Derives supported canonical commitments from validated public-key material.
+         * @param spki exact public key
+         * @param aliases exclusion-only aliases
+         * @return immutable key identity
+         */
+        public static AccountKeyIdentity fromKey(byte[] spki, Set<String> aliases) {
+            zeroecho.pkix.PublicKeyIdentity identity = zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(spki);
+            return new AccountKeyIdentity(identity.canonicalSha256(), identity.equivalentSubjectPublicKeyInfoSha256(), aliases);
+        }
+
+        @Override public String toString() { return "AcmeState.AccountKeyIdentity[redacted]"; }
     }
 
     /**
@@ -305,9 +378,8 @@ public final class AcmeState {
                 throw new IllegalArgumentException("ACME order credential state mismatch");
             }
             if (signingOperationId.isPresent() && issuanceCommitment.isEmpty()
-                    || status == OrderStatus.PROCESSING
-                            && (signingOperationId.isEmpty() || issuanceCommitment.isEmpty())) {
-                throw new IllegalArgumentException("Processing ACME order lacks its signing operation");
+                    || status == OrderStatus.PROCESSING && issuanceCommitment.isEmpty()) {
+                throw new IllegalArgumentException("ACME order lacks its durable issuance binding");
             }
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(expiresAt, "expiresAt");
             if (!expiresAt.isAfter(createdAt)) throw new IllegalArgumentException("ACME order expiry is invalid");

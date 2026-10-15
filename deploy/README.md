@@ -1,5 +1,13 @@
 # ZeroEcho PKI — deployment artifacts
 
+Remote backup transfer is opt-in. Mount an administrator-selected
+[transfer configuration](../docs/pki-backup-transfer-example.json), provision its
+private persistent artifact directory outside the PKI root, and set
+`ZEROECHO_BACKUP_TRANSFER_CONFIG` to the in-container configuration path.
+See [backup and restore](../documentation/admin/backup-restore.md#opt-in-http-transfer)
+for budgets, topology, permissions and restart reconciliation. Existing deployment
+examples leave this feature disabled.
+
 Packaging and deployment examples for the permanent backend and asynchronous web
 frontend (mode a), remote mTLS CLI (mode b), and synchronous standalone CLI
 (mode c). The application, server and web artifacts use the existing Gradle/npm

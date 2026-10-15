@@ -118,5 +118,8 @@ temporarily owns the bounded input plus two extracted copies (frozen candidate a
 recovery copy). Successful cleanup removes each exact owned subtree without following
 links. A cleanup failure is explicit; retained incomplete work is never returned as
 a consumable backup. Operators may reclaim abandoned work only while the owning
-process is stopped. Network artifact expiry and streaming transfer remain separate
-work; source/preparation owners must close handles now.
+process is stopped. Remote transfer owns a separate durable artifact spool with
+explicit quotas and expiry; see [HTTP transfer](../admin/backup-restore.md#opt-in-http-transfer).
+Local source/preparation owners must still close their handles. Cold coordinator
+startup reclaims only recognized abandoned preparation directories under its own
+external work root before admitting new store operations.

@@ -60,7 +60,7 @@ import zeroecho.pki.server.RealmId;
 @SuppressWarnings("PMD")
 final class AcmeStateCodec {
     private static final int MAGIC = 0x5a454143;
-    private static final int VERSION = 6;
+    private static final int VERSION = 8;
     private static final int MAX_TEXT = 16_384;
     private static final int MAX_COLLECTION = 256;
     private static final String ZERO = "0".repeat(64);
@@ -78,7 +78,7 @@ final class AcmeStateCodec {
         String value = commitment(record);
         return switch (record) {
             case AcmeState.Directory item -> new AcmeState.Directory(item.directoryId(), item.alias(), item.revision(),
-                    item.realmId(), item.authorityId(), item.profile(), item.issuerId(), item.issuancePathId(),
+                    item.realmId(), item.authorityId(), item.profile(), item.enrollmentProfileId(), item.issuerId(), item.issuancePathId(),
                     item.issuancePathCommitment(), item.identifierTypes(), item.dnsNamespaces(), item.maximumValidity(),
                     item.publicKeyAlgorithms(), item.x509BindingPolicies(), item.challengeTypes(),
                     item.challengeProviderIds(), item.eabProviderId(), item.eabRequired(), item.confirmationPolicy(),
@@ -87,7 +87,7 @@ final class AcmeStateCodec {
             case AcmeState.Account item -> new AcmeState.Account(item.accountId(), item.directoryId(),
                     item.directoryRevision(), item.directoryPolicyCommitment(), item.keyThumbprint(), item.publicKeySpki(),
                     item.status(), item.contacts(), item.termsAgreed(), item.eabPolicyCommitment(), item.createdAt(),
-                    item.updatedAt(), value);
+                    item.updatedAt(), value, item.keyHistory());
             case AcmeState.Order item -> new AcmeState.Order(item.orderId(), item.accountId(), item.directoryId(),
                     item.directoryRevision(), item.directoryPolicyCommitment(), item.authorityId(), item.profile(),
                     item.issuerId(), item.issuancePathId(), item.issuancePathCommitment(), item.identifiers(),
@@ -148,6 +148,7 @@ final class AcmeStateCodec {
     private static void writeDirectory(DataOutputStream out, AcmeState.Directory v, boolean committed) throws IOException {
         out.writeInt(DIRECTORY); string(out, v.directoryId()); string(out, v.alias()); out.writeInt(v.revision());
         string(out, v.realmId().value()); string(out, v.authorityId().value()); profile(out, v.profile());
+        string(out, v.enrollmentProfileId());
         string(out, v.issuerId().value()); string(out, v.issuancePathId().value()); string(out, v.issuancePathCommitment());
         enums(out, v.identifierTypes()); strings(out, v.dnsNamespaces()); out.writeLong(v.maximumValidity().toSeconds());
         strings(out, v.publicKeyAlgorithms()); strings(out, v.x509BindingPolicies()); enums(out, v.challengeTypes());
@@ -159,6 +160,7 @@ final class AcmeStateCodec {
     private static AcmeState.Directory readDirectory(DataInputStream in) throws IOException {
         String id = string(in), alias = string(in); int revision = in.readInt(); RealmId realm = new RealmId(string(in));
         PkiId authority = new PkiId(string(in)); CertificateProfileRef profile = profile(in);
+        String enrollmentProfileId = string(in);
         PkiId issuer = new PkiId(string(in)), path = new PkiId(string(in)); String pathCommitment = string(in);
         Set<AcmeState.IdentifierType> types = enumSet(in, AcmeState.IdentifierType.class);
         Set<String> namespaces = strings(in); Duration validity = Duration.ofSeconds(in.readLong());
@@ -168,7 +170,7 @@ final class AcmeStateCodec {
         CredentialConfirmationPolicy confirmation = confirmationPolicy(in);
         String confirmationCommitment = string(in);
         AcmeState.DirectoryStatus status = AcmeState.DirectoryStatus.valueOf(string(in));
-        return new AcmeState.Directory(id, alias, revision, realm, authority, profile, issuer, path, pathCommitment,
+        return new AcmeState.Directory(id, alias, revision, realm, authority, profile, enrollmentProfileId, issuer, path, pathCommitment,
                 types, namespaces, validity, algorithms, bindings, challenges, providers, eab, required,
                 confirmation, confirmationCommitment, status, string(in), instant(in), string(in));
     }
@@ -194,12 +196,45 @@ final class AcmeStateCodec {
         string(out, v.directoryPolicyCommitment()); string(out, v.keyThumbprint()); bytes(out, v.publicKeySpki());
         string(out, v.status().name()); stringsList(out, v.contacts()); out.writeBoolean(v.termsAgreed());
         optional(out, v.eabPolicyCommitment()); instant(out, v.createdAt()); instant(out, v.updatedAt());
+        accountKeyHistory(out, v.keyHistory());
         string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Account readAccount(DataInputStream in) throws IOException {
-        return new AcmeState.Account(string(in), string(in), in.readInt(), string(in), string(in), bytes(in, 16_384),
-                AcmeState.AccountStatus.valueOf(string(in)), stringsList(in), in.readBoolean(), optional(in),
-                instant(in), instant(in), string(in));
+        String id = string(in); String directory = string(in); int revision = in.readInt();
+        String policy = string(in); String thumbprint = string(in); byte[] spki = bytes(in, 16_384);
+        AcmeState.AccountStatus status = AcmeState.AccountStatus.valueOf(string(in));
+        List<String> contacts = stringsList(in); boolean terms = in.readBoolean(); Optional<String> eab = optional(in);
+        Instant created = instant(in); Instant updated = instant(in);
+        List<AcmeState.AccountKeyIdentity> history = accountKeyHistory(in);
+        return new AcmeState.Account(id, directory, revision, policy, thumbprint, spki, status, contacts, terms,
+                eab, created, updated, string(in), history);
+    }
+
+    static byte[] accountKeyHistory(List<AcmeState.AccountKeyIdentity> history) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bytes)) {
+            accountKeyHistory(out, history); out.flush(); return bytes.toByteArray();
+        } catch (IOException impossible) { throw new IllegalStateException("ACME history encoding failed", impossible); }
+    }
+
+    private static void accountKeyHistory(DataOutputStream out, List<AcmeState.AccountKeyIdentity> history) throws IOException {
+        out.writeInt(history.size());
+        for (AcmeState.AccountKeyIdentity key : history) {
+            string(out, key.canonicalSha256()); strings(out, key.legacySpkiSha256());
+            out.writeInt(key.aliases().size());
+            for (String alias : key.aliases().stream().sorted().toList()) string(out, alias);
+        }
+    }
+
+    private static List<AcmeState.AccountKeyIdentity> accountKeyHistory(DataInputStream in) throws IOException {
+        int size = count(in); List<AcmeState.AccountKeyIdentity> history = new ArrayList<>(size);
+        for (int index = 0; index < size; index++) {
+            String canonical = string(in); Set<String> hashes = strings(in);
+            int aliases = in.readInt(); if (aliases < 0 || aliases > 20_000) throw invalid();
+            Set<String> principals = new HashSet<>();
+            for (int alias = 0; alias < aliases; alias++) if (!principals.add(string(in))) throw invalid();
+            history.add(new AcmeState.AccountKeyIdentity(canonical, hashes, principals));
+        }
+        return List.copyOf(history);
     }
 
     private static void writeOrder(DataOutputStream out, AcmeState.Order v, boolean committed) throws IOException {

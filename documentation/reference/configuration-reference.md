@@ -244,6 +244,51 @@ Every provider block is `{ "id": "<provider-id>", "properties": { "<k>": "<v>" }
 Property values are strings; those that reference secrets hold environment-variable
 names, not the secret itself.
 
+#### Optional credential-search index
+
+The `fs` store can enable credential search with an embedded **H2 2.5.252**
+database. Add these string properties to `realm.pkiSession.store.properties`:
+
+```json
+{
+  "root": "state/pki",
+  "credentialSearch": "h2",
+  "credentialSearchCacheKiB": "16384",
+  "credentialSearchQueryTimeoutMillis": "5000",
+  "credentialSearchMaximumCertificateBytes": "1048576"
+}
+```
+
+These are example budgets, not defaults. Omit all four `credentialSearch*`
+properties to disable search. Disabled installations open no search database and
+do not expose `credential.search` through runtime discovery; direct execution is
+also unavailable. Other PKI operations remain available under their existing
+permissions. There is no unindexed search fallback.
+
+| Property | Supported values |
+| --- | --- |
+| `credentialSearch` | `h2`; required to activate search. |
+| `credentialSearchCacheKiB` | 16–1048576 KiB; required when enabled. Controls the database cache, not total JVM heap. |
+| `credentialSearchQueryTimeoutMillis` | 1–600000 ms; required when enabled. One search deadline covers admission, lock waiting, SQL and result authorization. |
+| `credentialSearchMaximumCertificateBytes` | 1–1048576 bytes; required when enabled. Bounds certificate DER before allocation. |
+
+Missing budgets, unsupported engines and unknown search options are rejected.
+The application constructs a local embedded connection; JDBC URLs, network
+listeners and initialization SQL are not configurable.
+
+The index is derived from authoritative PKI records and rebuilt before search
+becomes available on each store open. Initial activation and subsequent starts
+therefore read the stored certificate content and build its SQL indexes. Malformed
+or oversized certificate content produces an explicit failure, not a silently
+incomplete index. An index update failure after a committed credential disables
+search until recovery; it does not undo successful issuance. The logical PKI
+backup excludes the database and restored deployments rebuild it.
+
+Exact SAN lookup uses the index, but existing substring filters can still scan
+many rows. A timeout fails the request rather than returning a partial page.
+Allow appropriate startup time, disk space and JVM memory for the selected
+deployment size; the database cache setting alone is not a heap limit.
+
 #### Built-in publisher providers
 
 | Provider ID | Required properties | Optional properties | Description |
@@ -399,6 +444,94 @@ Set `{ "enabled": false }` to disable it, or supply the full block:
 | `publicImmutableCacheMillis`, `publicAliasCacheMillis` | Public cache durations for immutable objects and stable aliases. |
 | `authorityListExposed` | Whether the public authority-list routes are enabled. |
 
+## Enrollment runtime configuration
+
+Enabled ACME, EST, SCEP or CMP listeners require a separate
+`--enrollment-config /absolute/path/enrollment.json` companion. Its
+`"version": 1` is independent of the main server schema version 8. Relative file
+paths resolve against the process working directory; use absolute paths in
+deployment configuration. Unknown fields and invalid cross-references are rejected.
+For the packaged container, mount the companion and set
+`ZEROECHO_ENROLLMENT_CONFIG` to its path inside the container.
+The repository's `docs/pki-enrollment-example.json` illustrates a SCEP credential
+set. Replace its authority, issuer and chain identifiers with actual repository
+identifiers, provision the referenced key and DER chain, and choose budgets for
+your deployment. Its values are examples, not automatically selected defaults.
+For ACME and EST enrollment/renewal without server-keygen, the required `keyrings`,
+`credentialSets` and `activeCredentials` arrays may be empty.
+
+The `budgets` object supplies explicit limits; there are no implicit defaults:
+
+| Field | Meaning |
+| --- | --- |
+| `maximumTransactions` | Retained transactions, including terminal replay records, and one additional retained identity-history entry per ACME account. |
+| `maximumPending` | Pending requests; cannot exceed `maximumTransactions`. |
+| `maximumRetainedRequestBytes` | Retained request bytes and transaction metadata, including requester aliases, approval decisions and ACME account key-exclusion history. |
+| `maximumRequestBytes` | One encoded request, at most 1 MiB. Transport bounds also apply. |
+| `maximumConcurrentDispatches` | Concurrent dispatches, at most the pending limit. |
+| `pendingLifetimeSeconds` | Positive pending lifetime, at most 30 days. |
+| `retryAfterSeconds` | Positive polling interval, at most the pending lifetime. |
+
+Each ACME account retains its initial key identity and any proven rollover
+relationships solely to prevent those identities from approving their own
+enrollment requests. This history does not grant permissions or change the
+original request. Its count and encoded bytes consume the limits above; account
+creation or rollover is rejected before changing account state if the required
+history cannot fit. Include one identity-history entry per account, in addition
+to its enrollment transactions, when sizing capacity. Rollover increases retained
+bytes without adding another identity-history entry.
+An account retains at most 256 distinct canonical key identities, and its complete
+encoded record must fit within 512 KiB. Old exclusion evidence is retained; there
+is no account-history pruning operation.
+
+`keyrings` contains dedicated preprovisioned encrypted stores with `id` and `path`
+fields. Key references use `keyringId` and `alias`. The existing injected
+unlock provider supplies their unlock credential; configuration contains no raw
+private keys or shared secrets. These stores must be separate from the signing
+keyring and other managed storage roots.
+
+`credentialSets` defines immutable EST, SCEP or CMP credentials by `credentialId`,
+`protocol`, `authorityId`, `issuerId` and `chainPathId`. A `signer` references its
+`key` and an ordered `certificateChain` of DER file paths, beginning with the
+signer certificate and followed by the selected authority path. CMP signature
+protection also supplies explicit `requestTrustAnchors`; `authorizedRaKeys`
+contains authority-scoped canonical public-key commitments for RA privileges.
+Trusting a client certificate alone does not grant those privileges.
+An EST set requires the generator signer and its chain, empty `requestTrustAnchors`
+and `authorizedRaKeys` arrays, and no `pbm` field. Server-keygen endpoints require an explicit active
+EST selection for their authority. SCEP or CMP signers are not selected implicitly.
+
+CMP `pbm` configuration declares allowed `digests` and `macs`, minimum/maximum
+iterations and salt bytes, and requester `identities`. Each identity has a
+hexadecimal `senderKid`, `identityId`, encrypted `secret` reference and explicit
+administrative `ownerAliases` excluded from approving its requests. Provision
+32–128 random secret bytes; a password of the same length is not equivalent.
+
+`activeCredentials` selects a `credentialId` for each `(protocol, authorityId)`.
+Changing the active selection does not replace credentials retained by an
+existing transaction. Use a new ID when changing a credential set; retain old
+sets while transactions still reference them. Credential retirement is currently
+unavailable: every installed set remains pinned, and removing one from the
+configuration prevents startup, even if it has expired. Expired retained sets
+cannot protect protocol responses. EST enrollment/renewal and ACME do not require
+message credentials; EST server-keygen retains its selected generator signer.
+
+Optional `keygenArtifacts` configures client-encrypted server-keygen delivery:
+`directory`, `maximumArtifactBytes`, `maximumRetainedBytes`, `maximumArtifacts`,
+`maximumConcurrentGenerations` and `deliveryRetentionSeconds`. It does not permit
+persisting plaintext private keys. Capacity is reserved before generation and
+ciphertext is durably published before approval/signing. Delivery leases pin files
+while in use; unresolved accepted issuance also prevents expiry cleanup. Expired
+bytes are reclaimed through ordinary admission and recovery, while terminal replay
+records continue to consume retained count/metadata capacity. Delivery retention
+does not extend beyond the authenticated recipient or frozen generator-chain
+validity. Keep this directory separate from backup transfer storage.
+
+`--validate-config` checks structure and configuration relationships without
+opening the realm or decrypting keys. Server startup additionally validates
+resolved storage paths, key custody and certificate/authority bindings before
+readiness. Offline validation does not prove that provisioned keys are usable.
+
 ## ACME listener
 
 Set `{ "enabled": false }` to disable it. When enabled, the block configures a
@@ -427,6 +560,8 @@ Set `{ "enabled": false }` to disable it. When enabled, configures a separately 
 | `maximumBodyBytes` | Request-body size bound. |
 
 EST endpoints are managed at runtime via `est.endpoint.register/deregister/inspect/list`.
+Their bindings are durable server-control records. Registration requires an
+active `enrollmentProfileId` matching the certificate profile and permitted authority.
 
 ## SCEP listener
 
@@ -445,6 +580,8 @@ Set `{ "enabled": false }` to disable it. When enabled, configures a separately 
 | `maximumBodyBytes` | Request-body size bound. |
 
 SCEP endpoints are managed at runtime via `scep.endpoint.register/deregister/inspect/list`.
+Their durable bindings require an active `enrollmentProfileId` matching the
+certificate profile and permitted authority.
 The challenge password hash is a SHA-256 hex string (64 lower-case hex characters).
 
 ## CMP listener
@@ -465,6 +602,8 @@ Fields:
 | `maximumBodyBytes` | Request-body size bound. |
 
 CMP endpoints are managed at runtime via `cmp.endpoint.register/deregister/inspect/list`.
+Their durable bindings require an active `enrollmentProfileId` matching the
+certificate profile and permitted authority.
 The `protectionPolicy` field of a CMP endpoint is either `SHARED_SECRET_MAC` or `SIGNATURE_BASED`.
 
 ## Runtime

@@ -109,8 +109,9 @@ returned by issuance) rather than from a realm-wide list.
 
 ## Browse / search credentials
 
-**Browse credentials** (`credential.search`) lists credentials issued by a given
-authority. Supply `authorityId` to scope the results, then optionally narrow them
+**Browse credentials** (`credential.search`) requires the optional H2 search index
+to be activated in the [deployment configuration](../reference/configuration-reference.md).
+It lists credentials issued by a given authority. Supply `authorityId` to scope the results, then optionally narrow them
 with any combination of the filters below. All filters are optional and
 AND-combined: omitting a filter leaves that field unconstrained.
 
@@ -118,9 +119,10 @@ AND-combined: omitting a filter leaves that field unconstrained.
 |---|---|---|
 | `subjectFilter` | optional text | Case-insensitive substring match on the subject distinguished name. For example, `server1` matches `CN=server1,O=Acme`. |
 | `serialFilter` | optional text | Case-insensitive substring match on the serial number or unique identifier. |
-| `fingerprintFilter` | optional text | Case-insensitive hex prefix match on the credential fingerprint (`credentialId`). |
+| `fingerprintFilter` | optional text | Case-insensitive prefix match on the credential ID (`credentialId`); no certificate digest is computed. |
 | `statusFilter` | optional enum: `ISSUED`, `REVOKED`, `EXPIRED` | Exact match on the credential's inventory status. |
 | `profileIdFilter` | optional text | Exact match on the profile logical identifier. |
+| `sanFilter` | optional text | Exact typed SAN match, such as `DNS_NAME:api.example.test`; see [credential search](../user/managing-certificates.md). |
 
 Results are paginated. Use `limit` to control the page size and `after` to advance
 to the next page, exactly as in other paginated operations.

@@ -60,7 +60,8 @@ final class FrontendTestBridge implements AutoCloseable {
     private static final Set<String> GET_ROUTES = Set.of("/admin/v1/realm", "/admin/v1/operations", "/admin/v1/health");
     private static final Set<String> OPERATIONS = new OperationSecurityDescriptors().descriptors().keySet();
     private final Path root;
-    private final URI upstream;
+    private volatile URI upstream;
+    private java.util.function.Supplier<InetSocketAddress> restart;
     private final HttpClient administrator;
     private final HttpClient approver;
     private final HttpServer server;
@@ -90,6 +91,8 @@ final class FrontendTestBridge implements AutoCloseable {
 
     URI baseUri() { return URI.create("http://127.0.0.1:" + server.getAddress().getPort()); }
 
+    void restartWith(java.util.function.Supplier<InetSocketAddress> callback) { restart = callback; }
+
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             String host = exchange.getRequestHeaders().getFirst("Host");
@@ -100,16 +103,39 @@ final class FrontendTestBridge implements AutoCloseable {
             }
             String path = exchange.getRequestURI().getPath();
             String method = exchange.getRequestMethod();
+            if (path.equals("/fixture/restart") && method.equals("POST") && restart != null) {
+                upstream = URI.create("https://localhost:" + restart.get().getPort());
+                reply(exchange, 200, "application/json", "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                return;
+            }
             if (exchange.getRequestURI().getRawQuery() != null) {
                 reply(exchange, 400, "text/plain", new byte[0]);
                 return;
             }
             boolean approve = path.equals("/fixture/approve");
-            boolean api = path.startsWith("/admin/") || approve;
+            boolean deniedEnrollment = path.equals("/fixture/enrollment-denied");
+            boolean api = path.startsWith("/admin/") || approve || deniedEnrollment;
+            if (method.equals("POST") && (path.equals("/admin/v1/backup/upload") || path.equals("/admin/v1/backup/download"))) {
+                HttpRequest.Builder request = HttpRequest.newBuilder(upstream.resolve(path)).timeout(Duration.ofSeconds(30))
+                        .POST(HttpRequest.BodyPublishers.ofInputStream(exchange::getRequestBody));
+                for (String header : List.of("Content-Type", "Origin", "X-ZeroEcho-Transfer", "X-ZeroEcho-Artifact", "X-ZeroEcho-Approval")) {
+                    String value = exchange.getRequestHeaders().getFirst(header);
+                    if (value != null) request.header(header, value);
+                }
+                HttpResponse<java.io.InputStream> response = administrator.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+                try (java.io.InputStream body = response.body()) {
+                    for (String header : List.of("Content-Type", "Content-Disposition")) {
+                        response.headers().firstValue(header).ifPresent(value -> exchange.getResponseHeaders().set(header, value));
+                    }
+                    exchange.sendResponseHeaders(response.statusCode(), 0);
+                    body.transferTo(exchange.getResponseBody());
+                }
+                return;
+            }
             if (api) {
                 boolean allowed = method.equals("GET") && (GET_ROUTES.contains(path)
                         || path.matches("/admin/v1/signing-operations/[A-Za-z0-9:%._-]+"))
-                        || method.equals("POST") && (approve
+                        || method.equals("POST") && (approve || deniedEnrollment
                         || (path.startsWith("/admin/v1/operations/")
                         && OPERATIONS.contains(path.substring("/admin/v1/operations/".length()))));
                 if (!allowed) {
@@ -122,12 +148,12 @@ final class FrontendTestBridge implements AutoCloseable {
                     return;
                 }
                 URI target = upstream.resolve(approve ? "/admin/v1/operations/security.approval.approve"
-                        : exchange.getRequestURI().getRawPath());
+                        : deniedEnrollment ? "/admin/v1/operations/enrollment.profile.suspend" : exchange.getRequestURI().getRawPath());
                 HttpRequest request = HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(15))
                         .header("Accept", "application/json").header("Content-Type", "application/json")
                         .method(method, body.length == 0 ? HttpRequest.BodyPublishers.noBody()
                                 : HttpRequest.BodyPublishers.ofByteArray(body)).build();
-                HttpResponse<byte[]> response = (approve ? approver : administrator).send(request,
+                HttpResponse<byte[]> response = (approve || deniedEnrollment ? approver : administrator).send(request,
                         ignored -> new LimitedBodySubscriber());
                 reply(exchange, response.statusCode(), "application/json", response.body());
             } else {

@@ -49,7 +49,7 @@ import { OperationBrowser } from '@/components/operation/OperationBrowser';
 import { OperationDialog } from '@/components/operation/OperationDialog';
 import { OperationField } from '@/components/operation/OperationField';
 import { operationSpec } from '@/api/operationCatalog';
-import { executeOperation, type FieldValue } from '@/api/operations';
+import { executeOperation, indexDescriptors, useOperationDescriptors, type FieldValue } from '@/api/operations';
 import type { FieldSpec } from '@/api/operationSchema';
 import { resultAt } from '@/api/entityRefs';
 import { displayLabel } from '@/api/labels';
@@ -82,6 +82,9 @@ interface DialogState {
 function EntityTable({ navId, listing }: { readonly navId: string; readonly listing: DomainListing }) {
   const queryClient = useQueryClient();
   const listSpec = operationSpec(listing.listOperationId);
+  const discovery = useOperationDescriptors();
+  const searchAvailable = listing.listOperationId !== 'credential.search'
+    || !discovery.isError && indexDescriptors(discovery.data).has('credential.search');
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [createAnchor, setCreateAnchor] = useState<HTMLElement | null>(null);
 
@@ -111,7 +114,7 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
 
   const query = useQuery({
     queryKey,
-    enabled: applied !== null && !!listSpec,
+    enabled: applied !== null && !!listSpec && searchAvailable,
     queryFn: async ({ signal }) => {
       const outcome = await executeOperation(listSpec!, { ...listing.args, ...applied, ...(typeof cursor === 'string' ? { after: cursor } : typeof cursor === 'number' ? { offset: cursor } : {}) } as Record<string, never>, { signal });
       if (outcome.kind !== 'succeeded') {
@@ -177,6 +180,7 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
   const refresh = () => { setCursor(undefined); return queryClient.invalidateQueries({ queryKey: queryKey.slice(0, 4) }); };
 
   if (!listSpec) return <Alert severity="error">Unknown list operation {listing.listOperationId}.</Alert>;
+  if (!searchAvailable) return <Alert severity="info">Certificate search is unavailable for this deployment or identity.</Alert>;
 
   return (
     <>

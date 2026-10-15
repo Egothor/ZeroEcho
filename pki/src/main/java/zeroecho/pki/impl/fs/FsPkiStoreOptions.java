@@ -76,19 +76,65 @@ import java.util.Optional;
  * @param signingEvidenceAudit whether optional best-effort signing/proof evidence is appended; defaults to false
  * @param initialCrlNumber initial number for a newly created CRL scope counter,
  *                         from zero through {@code 2^159 - 1}; defaults to one
+ * @param credentialSearch optional explicitly budgeted embedded credential search
  */
 @SuppressWarnings("PMD.LongVariable") // Public option names remain explicit and configuration-stable.
 public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
         FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
         Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
         long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
-        BigInteger initialCrlNumber, boolean signingEvidenceAudit) {
+        BigInteger initialCrlNumber, boolean signingEvidenceAudit, Optional<CredentialSearch> credentialSearch) {
 
     private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
     private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
     /* default */ static final long DEFAULT_RESIDENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
     /* default */ static final long DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
     private static final long MINIMUM_RESIDENT_INDEX_BUDGET_BYTES = 1L;
+
+    /**
+     * Explicit resource settings for the derived embedded H2 search index.
+     * Cache size constrains the database cache, not total JVM heap. Searches have
+     * one deadline covering lock acquisition, SQL, rehydration and authorization.
+     * @param cacheKiB database cache setting, from 16 through 1048576 KiB
+     * @param queryTimeoutMillis maximum whole-search time, from 1 through 600000 milliseconds
+     * @param maximumCertificateBytes maximum certificate DER bytes before allocation, from 1 through 1048576
+     */
+    public record CredentialSearch(int cacheKiB, int queryTimeoutMillis, int maximumCertificateBytes) {
+        /** Validates all explicitly selected resource bounds. */
+        public CredentialSearch {
+            if (cacheKiB < 16 || cacheKiB > 1_048_576 || queryTimeoutMillis < 1 || queryTimeoutMillis > 600_000
+                    || maximumCertificateBytes < 1 || maximumCertificateBytes > 1_048_576) {
+                throw new IllegalArgumentException("Credential search resource settings are outside supported bounds");
+            }
+        }
+    }
+
+    /**
+     * Creates existing filesystem options with credential search disabled.
+     * @param caHistoryPolicy CA history policy
+     * @param profileHistoryPolicy profile history policy
+     * @param revocationHistoryPolicy revocation history policy
+     * @param workflowHistoryPolicy workflow history policy
+     * @param strictSnapshotExport strict snapshot validation
+     * @param signingOperationHorizon signing retention horizon
+     * @param signingIdPermittedSkew allowed signing identifier clock skew
+     * @param signingMaximumGroupSize signing durability-group bound
+     * @param signingResidentIndexBudgetBytes signing resident-memory budget
+     * @param signingCompactionTransientBudgetBytes signing transient-memory budget
+     * @param initialCrlNumber initial CRL number
+     * @param signingEvidenceAudit whether signing evidence is enabled
+     */
+    // Preserves the public source/binary-compatible overload delegating to the search-disabled canonical configuration.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
+    public FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
+            FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
+            Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
+            long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
+            BigInteger initialCrlNumber, boolean signingEvidenceAudit) {
+        this(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize, signingResidentIndexBudgetBytes,
+                signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, Optional.empty());
+    }
 
     /**
      * Canonical constructor with validation.
@@ -106,6 +152,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         Objects.requireNonNull(signingOperationHorizon, "signingOperationHorizon");
         Objects.requireNonNull(signingIdPermittedSkew, "signingIdPermittedSkew");
         Objects.requireNonNull(initialCrlNumber, "initialCrlNumber");
+        credentialSearch = Objects.requireNonNull(credentialSearch, "credentialSearch");
         if (initialCrlNumber.signum() < 0 || initialCrlNumber.bitLength() > 159) {
             throw new IllegalArgumentException("initialCrlNumber must be from zero through 2^159 - 1");
         }
@@ -167,7 +214,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, maximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch);
     }
 
     /**
@@ -186,7 +233,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit);
+                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch);
     }
 
     /**
@@ -202,7 +249,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit);
+                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch);
     }
 
     /**
@@ -218,7 +265,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit, credentialSearch);
     }
     /**
      * Returns a copy enabling or disabling best-effort terminal signing and internal-proof evidence.
@@ -232,6 +279,18 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled, credentialSearch);
+    }
+
+    /**
+     * Returns a copy with explicitly selected credential-search resources.
+     * @param configuration explicit search settings; empty disables the index
+     * @return immutable options preserving all other settings
+     */
+    public FsPkiStoreOptions withCredentialSearch(Optional<CredentialSearch> configuration) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
+                strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
+                signingEvidenceAudit, configuration);
     }
 }

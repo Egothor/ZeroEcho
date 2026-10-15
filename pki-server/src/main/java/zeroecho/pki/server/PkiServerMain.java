@@ -61,7 +61,8 @@ public final class PkiServerMain {
     private static final String DEV_PASSWORD_FLAG = "--publisher-secrets-dev-password";
 
     private static final String HELP = """
-            Usage: zeroecho-pki-server --config <server-config.json>
+            Usage: zeroecho-pki-server --config <server-config.json> [--backup-transfer-config <transfer.json>]
+                   [--enrollment-config <enrollment.json>]
                    zeroecho-pki-server --validate-config --config <server-config.json>
                    zeroecho-pki-server --help
                    zeroecho-pki-server --version
@@ -101,16 +102,30 @@ public final class PkiServerMain {
             }
             char[] devPassword = extractDevPassword(arguments);
             String[] remaining = stripDevPasswordFlag(arguments);
+            Optional<BackupTransferConfiguration> transfer = Optional.empty();
+            Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment = Optional.empty();
+            java.util.List<String> baseArguments = new java.util.ArrayList<>();
+            for (int index = 0; index < remaining.length; index++) {
+                if ("--backup-transfer-config".equals(remaining[index])) {
+                    if (transfer.isPresent() || index + 1 >= remaining.length) throw new IllegalArgumentException("Invalid transfer option");
+                    transfer = Optional.of(BackupTransferConfiguration.read(Path.of(remaining[++index])));
+                } else if ("--enrollment-config".equals(remaining[index])) {
+                    if (enrollment.isPresent() || index + 1 >= remaining.length) throw new IllegalArgumentException("Invalid enrollment option");
+                    enrollment = Optional.of(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.read(Path.of(remaining[++index])));
+                } else baseArguments.add(remaining[index]);
+            }
+            remaining = baseArguments.toArray(String[]::new);
             boolean validate = Arrays.asList(remaining).contains("--validate-config");
             Path path = configurationPath(remaining, validate);
             PkiServerConfiguration configuration = PkiServerConfigurationCodec.read(path);
+            zeroecho.pki.server.enrollment.EnrollmentRuntime.validateConfiguration(configuration, enrollment, transfer);
             if (validate) {
                 System.out.println("configuration valid");
                 return 0;
             }
             configuration = resolvePublisherSecrets(configuration, devPassword);
             PkiSessionRuntimeDependencies dependencies = runtimeDependencies(configuration);
-            PkiHttpsServer server = PkiHttpsServer.start(configuration, dependencies);
+            PkiHttpsServer server = PkiHttpsServer.start(configuration, dependencies, transfer, enrollment);
             server.installShutdownHook();
             new CountDownLatch(1).await();
             return 0;

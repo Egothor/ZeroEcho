@@ -38,6 +38,7 @@ const LABELS: Readonly<Record<string, string>> = {
   authorityId: 'Certificate authority', __authorityId: 'Certificate authority',
   issuerId: 'Issuer generation', profileId: 'Certificate profile', profileVersion: 'Profile version',
   requestId: 'Certificate request', credentialId: 'Certificate', existingCredentialId: 'Existing certificate',
+  fingerprintFilter: 'Credential ID prefix', sanFilter: 'Subject alternative name',
   formatId: 'Certificate format', keyRef: 'Signing key', newKeyRef: 'New signing key',
   pathId: 'Certificate chain', parentPathId: 'Parent certificate chain', chainPathId: 'Certificate chain',
   subjectRef: 'Subject', statusObjectId: 'Revocation list', approvalId: 'Approval',

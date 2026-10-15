@@ -72,6 +72,10 @@ import java.util.Map;
  * @since 1.0
  */
 public final class OpenApiGenerator {
+    private static final String STRING_TYPE = "string";
+    private static final String CONTENT_FIELD = "content";
+    private static final String SCHEMA_FIELD = "schema";
+
     private static final int ARGUMENT_COUNT = 3;
     private static final Map<String, String> TAG_MAP = new LinkedHashMap<>();
     private static final String TEXT_DESCRIPTION = "description";
@@ -80,7 +84,7 @@ public final class OpenApiGenerator {
     private static final String TEXT__REF = "$ref";
     private static final String TEXT_PROPERTIES = "properties";
     private static final String TEXT_OBJECT = "object";
-    private static final String TEXT_STRING = "string";
+    private static final String TEXT_STRING = STRING_TYPE;
 
 
     /** Creates a build-time generator without loading the catalog or writing output. */
@@ -316,7 +320,10 @@ public final class OpenApiGenerator {
                 boolean highRisk = isHighRisk(descriptor);
                 String tag = deriveTag(opId);
 
-                y.blockMapping("'/operations/" + opId + "'", () -> {
+                boolean upload = zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand.UPLOAD.equals(opId);
+                boolean download = zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand.DOWNLOAD.equals(opId);
+                String path = upload ? "/backup/upload" : download ? "/backup/download" : "/operations/" + opId;
+                y.blockMapping("'" + path + "'", () -> {
                     y.blockMapping("post", () -> {
                         y.mapping("operationId", opId);
                         y.mappingLiteral("x-zeroecho-available", Boolean.toString(descriptor.available()));
@@ -331,8 +338,13 @@ public final class OpenApiGenerator {
                             y.mapping(TEXT_DESCRIPTION, description);
                         }
                         y.blockMapping("tags", () -> y.sequenceItemString(tag));
-                        emitRequestBody(y, opId);
-                        emitResponses(y, highRisk);
+                        if (upload || download) {
+                            emitTransferRequest(y, upload);
+                        }
+                        else {
+                            emitRequestBody(y, opId);
+                        }
+                        emitResponses(y, highRisk || upload || download, download);
                     });
                 });
                 y.blank();
@@ -426,9 +438,9 @@ public final class OpenApiGenerator {
         String schemaName = toSchemaName(opId) + "Arguments";
         y.blockMapping("requestBody", () -> {
             y.mappingLiteral(TEXT_REQUIRED, "true");
-            y.blockMapping("content", () -> {
+            y.blockMapping(CONTENT_FIELD, () -> {
                 y.blockMapping("application/json", () -> {
-                    y.blockMapping("schema", () -> {
+                    y.blockMapping(SCHEMA_FIELD, () -> {
                         y.blockMapping("allOf", () -> {
                             y.sequenceItem(() -> y.mapping(TEXT__REF, "#/components/schemas/OperationRequest"));
                             {
@@ -448,22 +460,62 @@ public final class OpenApiGenerator {
         });
     }
 
-    private void emitResponses(YamlBuilder y, boolean highRisk) {
+    private void emitTransferRequest(YamlBuilder y, boolean upload) {
+        y.blockMapping("parameters", () -> {
+            for (String header : upload ? List.of("Origin", "X-ZeroEcho-Transfer", "X-ZeroEcho-Artifact", "X-ZeroEcho-Approval")
+                    : List.of("Origin", "X-ZeroEcho-Transfer")) {
+                y.sequenceItem(() -> {
+                    y.mapping("name", header);
+                    y.mapping("in", "header");
+                    y.mappingLiteral(TEXT_REQUIRED, Boolean.toString("X-ZeroEcho-Artifact".equals(header)));
+                    y.blockMapping(SCHEMA_FIELD, () -> y.mapping(TEXT_TYPE, STRING_TYPE));
+                });
+            }
+        });
+        y.blockMapping("requestBody", () -> {
+            y.mappingLiteral(TEXT_REQUIRED, "true");
+            y.blockMapping(CONTENT_FIELD, () -> y.blockMapping(upload ? "application/zip" : "application/x-www-form-urlencoded", () ->
+                    y.blockMapping(SCHEMA_FIELD, () -> {
+                        if (upload) {
+                            y.mapping(TEXT_TYPE, STRING_TYPE);
+                            y.mapping("format", "binary");
+                        } else {
+                            y.mapping(TEXT_TYPE, TEXT_OBJECT);
+                            y.mappingLiteral("additionalProperties", "false");
+                            y.blockMapping(TEXT_REQUIRED, () -> y.sequenceItemString("artifactHandle"));
+                            y.blockMapping(TEXT_PROPERTIES, () -> {
+                                y.blockMapping("artifactHandle", () -> {
+                                    y.mapping(TEXT_TYPE, STRING_TYPE);
+                                    y.mapping("pattern", "^[0-9a-f]{64}$");
+                                });
+                                y.blockMapping("approvalId", () -> y.mapping(TEXT_TYPE, STRING_TYPE));
+                            });
+                        }
+                    })));
+        });
+    }
+
+    private void emitResponses(YamlBuilder y, boolean highRisk, boolean download) {
         y.blockMapping("responses", () -> {
             y.blockMapping("'200'", () -> {
                 y.mapping(TEXT_DESCRIPTION, "Operation completed successfully");
-                y.blockMapping("content", () -> {
-                    y.blockMapping("application/json", () -> {
-                        y.refMapping("schema", "#/components/schemas/OperationResponse");
-                    });
+                y.blockMapping(CONTENT_FIELD, () -> {
+                    if (download) {
+                        y.blockMapping("application/zip", () -> y.blockMapping(SCHEMA_FIELD, () -> {
+                            y.mapping(TEXT_TYPE, STRING_TYPE);
+                            y.mapping("format", "binary");
+                        }));
+                    } else {
+                        y.blockMapping("application/json", () -> y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse"));
+                    }
                 });
             });
             if (highRisk) {
                 y.blockMapping("'409'", () -> {
                     y.mapping(TEXT_DESCRIPTION, "Dual-control approval required before the operation can proceed");
-                    y.blockMapping("content", () -> {
+                    y.blockMapping(CONTENT_FIELD, () -> {
                         y.blockMapping("application/json", () -> {
-                            y.refMapping("schema", "#/components/schemas/ApprovalResponse");
+                            y.refMapping(SCHEMA_FIELD, "#/components/schemas/ApprovalResponse");
                         });
                     });
                 });
@@ -480,9 +532,9 @@ public final class OpenApiGenerator {
         y.blockMapping("responses", () -> {
             y.blockMapping("'200'", () -> {
                 y.mapping(TEXT_DESCRIPTION, "Success");
-                y.blockMapping("content", () -> {
+                y.blockMapping(CONTENT_FIELD, () -> {
                     y.blockMapping("application/json", () -> {
-                        y.refMapping("schema", "#/components/schemas/OperationResponse");
+                        y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse");
                     });
                 });
             });
@@ -678,9 +730,9 @@ public final class OpenApiGenerator {
         for (Map.Entry<String, String> resp : responses.entrySet()) {
             y.blockMapping(resp.getKey(), () -> {
                 y.mapping(TEXT_DESCRIPTION, resp.getValue());
-                y.blockMapping("content", () -> {
+                y.blockMapping(CONTENT_FIELD, () -> {
                     y.blockMapping("application/json", () -> {
-                        y.refMapping("schema", "#/components/schemas/OperationResponse");
+                        y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse");
                     });
                 });
             });

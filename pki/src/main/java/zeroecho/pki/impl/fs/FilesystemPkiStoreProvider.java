@@ -59,6 +59,8 @@ import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
  * </ul>
  */
 public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
+    private static final String CREDENTIAL_SEARCH_PROPERTY = "credentialSearch";
+
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStoreProvider.class.getName());
 
     /**
@@ -75,7 +77,8 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
 
     @Override
     public Set<String> supportedKeys() {
-        return Set.of("root", "initialCrlNumber");
+        return Set.of("root", "initialCrlNumber", CREDENTIAL_SEARCH_PROPERTY, "credentialSearchCacheKiB",
+                "credentialSearchQueryTimeoutMillis", "credentialSearchMaximumCertificateBytes");
     }
 
     /**
@@ -129,6 +132,11 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
 
     /* default */ static FsPkiStoreOptions options(ProviderConfig config) {
         String value = config.get("initialCrlNumber").orElse("1");
+        requireInitialCrlNumber(value);
+        return searchOptions(config, FsPkiStoreOptions.defaults().withInitialCrlNumber(new BigInteger(value)));
+    }
+
+    private static void requireInitialCrlNumber(String value) {
         if (value.isEmpty() || value.length() > 48 || value.length() > 1 && value.charAt(0) == '0') {
             throw new IllegalArgumentException("initialCrlNumber must be a canonical unsigned decimal integer");
         }
@@ -138,6 +146,35 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
                 throw new IllegalArgumentException("initialCrlNumber must be a canonical unsigned decimal integer");
             }
         }
-        return FsPkiStoreOptions.defaults().withInitialCrlNumber(new BigInteger(value));
+    }
+
+    private static FsPkiStoreOptions searchOptions(ProviderConfig config, FsPkiStoreOptions options) {
+        if (config.get(CREDENTIAL_SEARCH_PROPERTY).isEmpty()) {
+            if (config.properties().keySet().stream().anyMatch(key -> key.startsWith(CREDENTIAL_SEARCH_PROPERTY))) {
+                throw new IllegalArgumentException("Credential search budgets require explicit activation");
+            }
+            return options;
+        }
+        if (!"h2".equals(config.require(CREDENTIAL_SEARCH_PROPERTY))) {
+            throw new IllegalArgumentException("Unsupported credential search provider");
+        }
+        for (String key : config.properties().keySet()) {
+            if (key.startsWith(CREDENTIAL_SEARCH_PROPERTY) && !Set.of(CREDENTIAL_SEARCH_PROPERTY, "credentialSearchCacheKiB",
+                    "credentialSearchQueryTimeoutMillis", "credentialSearchMaximumCertificateBytes").contains(key)) {
+                throw new IllegalArgumentException("Unknown credential search option");
+            }
+        }
+        return options.withCredentialSearch(java.util.Optional.of(new FsPkiStoreOptions.CredentialSearch(
+                searchInteger(config, "credentialSearchCacheKiB"), searchInteger(config, "credentialSearchQueryTimeoutMillis"),
+                searchInteger(config, "credentialSearchMaximumCertificateBytes"))));
+    }
+
+    private static int searchInteger(ProviderConfig configuration, String key) {
+        String value = configuration.require(key);
+        if (!value.matches("[1-9][0-9]{0,9}")) {
+            throw new IllegalArgumentException("Invalid credential search resource bound");
+        }
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException failure) { throw new IllegalArgumentException("Credential search resource bound exceeds its range"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 }

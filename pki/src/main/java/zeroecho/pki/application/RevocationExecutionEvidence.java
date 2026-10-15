@@ -54,13 +54,13 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
  * revision, and state.
  *
  * @param actorType administrative or protocol-native actor classification
- * @param actorId bounded stable principal or ACME account identifier
+ * @param actorId bounded stable administrative or protocol-native actor identifier
  * @param realmId bounded realm in which authorization was evaluated
  * @param requestId bounded transport request identifier
  * @param authentication authentication mechanism that established the actor
  * @param authorization authorization decision classification
  * @param authorizationPath optional administrative authorization path
- * @param operationCommitment optional administrative operation commitment
+ * @param operationCommitment administrative operation or exact CMP request commitment
  * @param justificationCommitment optional administrative justification commitment
  * @param outcome atomically committed revocation outcome
  */
@@ -73,7 +73,9 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
         /** Authenticated administrative principal. */
         ADMIN_PRINCIPAL,
         /** Protocol-native ACME account. */
-        ACME_ACCOUNT
+        ACME_ACCOUNT,
+        /** Certificate-authenticated CMP requester. */
+        CMP_SIGNER
     }
     /** Stable evidence authentication classifications. */
     public enum Authentication {
@@ -82,14 +84,20 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
         /** Identity asserted by a trusted reverse proxy. */
         TRUSTED_REVERSE_PROXY,
         /** ACME account JSON Web Signature authentication. */
-        ACME_ACCOUNT_JWS
+        ACME_ACCOUNT_JWS,
+        /** Verified CMP signature protection. */
+        CMP_SIGNATURE
     }
     /** Stable evidence authorization classifications. */
     public enum Authorization {
         /** Administrative policy allowed the operation. */
         ALLOWED,
         /** ACME account ownership authorized the operation. */
-        ACME_OWNERSHIP
+        ACME_OWNERSHIP,
+        /** Exact issued-certificate holder authorized CMP revocation. */
+        CMP_CERTIFICATE_HOLDER,
+        /** Explicit authority-scoped CMP registration-agent grant. */
+        CMP_AUTHORIZED_RA
     }
     /** Administrative authorization path, with break-glass taking precedence. */
     public enum AuthorizationPath {
@@ -151,7 +159,7 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
         justificationCommitment.ifPresent(RevocationExecutionEvidence::requireCommitment);
         Objects.requireNonNull(outcome, "outcome");
         boolean administrative = actorType == ActorType.ADMIN_PRINCIPAL
-                && authentication != Authentication.ACME_ACCOUNT_JWS
+                && (authentication == Authentication.DIRECT_MTLS || authentication == Authentication.TRUSTED_REVERSE_PROXY)
                 && authorization == Authorization.ALLOWED
                 && authorizationPath.isPresent() && operationCommitment.isPresent()
                 && justificationCommitment.isPresent();
@@ -160,7 +168,10 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
                 && authorization == Authorization.ACME_OWNERSHIP
                 && authorizationPath.isEmpty() && operationCommitment.isEmpty()
                 && justificationCommitment.isEmpty();
-        if (!administrative && !acme) {
+        boolean cmp = actorType == ActorType.CMP_SIGNER && authentication == Authentication.CMP_SIGNATURE
+                && (authorization == Authorization.CMP_CERTIFICATE_HOLDER || authorization == Authorization.CMP_AUTHORIZED_RA)
+                && authorizationPath.isEmpty() && operationCommitment.isPresent() && justificationCommitment.isEmpty();
+        if (!administrative && !acme && !cmp) {
             throw new IllegalArgumentException("Revocation evidence classification is inconsistent");
         }
     }
@@ -171,7 +182,7 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
      * @param principalId bounded authenticated administrator identifier
      * @param realmId bounded authorization realm identifier
      * @param requestId bounded transport request identifier
-     * @param authentication non-ACME authentication mechanism
+     * @param authentication direct or trusted-proxy mutual-TLS authentication
      * @param path administrative grant, approval, or break-glass path
      * @param operationCommitment lowercase 64-hex-character operation commitment
      * @param operatorJustification optional plaintext justification committed but not retained
@@ -199,6 +210,25 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
     public static RevocationExecutionEvidence acme(String accountId, String realmId, String requestId) {
         return new RevocationExecutionEvidence(ActorType.ACME_ACCOUNT, accountId, realmId, requestId,
                 Authentication.ACME_ACCOUNT_JWS, Authorization.ACME_OWNERSHIP, Optional.empty(), Optional.empty(),
+                Optional.empty(), Outcome.COMMITTED);
+    }
+
+    /**
+     * Records a verified CMP signature actor and the exact authorization used.
+     * Construction records trusted evidence; it does not grant authorization.
+     * @param actorId verified certificate identity commitment
+     * @param realmId exact issuing realm
+     * @param transactionId durable CMP transaction identity
+     * @param authorization exact certificate holder or explicitly scoped RA grant
+     * @param requestCommitment exact authenticated original CMP wire commitment
+     * @return immutable protocol-native evidence committed with the revocation
+     */
+    // Preserves the public source/binary contract for named persisted identity coordinates.
+    @SuppressWarnings("PMD.UseObjectForClearerAPI")
+    public static RevocationExecutionEvidence cmp(String actorId, String realmId, String transactionId,
+            Authorization authorization, String requestCommitment) {
+        return new RevocationExecutionEvidence(ActorType.CMP_SIGNER, actorId, realmId, transactionId,
+                Authentication.CMP_SIGNATURE, authorization, Optional.empty(), Optional.of(requestCommitment),
                 Optional.empty(), Outcome.COMMITTED);
     }
 

@@ -159,7 +159,7 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
         PkiServerAuthenticationResult result = transportMapper.authenticate(context);
         if (result instanceof PkiServerAuthenticationResult.Authenticated authenticated) {
             return new PkiServerAuthenticationResult.Authenticated(AdministrativeAuthenticationMode.DIRECT_MTLS,
-                    Optional.empty(), authenticated.endClientPrincipalId());
+                    Optional.empty(), authenticated.endClientPrincipalId(), authenticated.credentialEvidence());
         }
         return result;
     }
@@ -230,6 +230,13 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
             return rejected(AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY, resolvedTransport,
                     PkiServerAuthenticationResult.Code.INTERNAL_FAILURE);
         }
+        return mapForwarded(context, forwarded, transport);
+    }
+
+    private PkiServerAuthenticationResult mapForwarded(PkiServerAuthenticationContext context,
+            List<X509Certificate> forwarded, PkiServerAuthenticationResult.Authenticated transport) {
+        String transportId = transport.endClientPrincipalId();
+        Optional<String> resolvedTransport = Optional.of(transportId);
         PkiServerAuthenticationContext forwardedContext = new PkiServerAuthenticationContext(forwarded,
                 context.protocol(), context.cipherSuite(), context.requestId(), context.realmId(), Map.of());
         PkiServerAuthenticationResult endResult = endClientMapper.authenticate(forwardedContext);
@@ -241,13 +248,16 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
                     rejection.endClientPrincipalId(), rejection.code());
         }
         String endId = endClient.endClientPrincipalId();
-        if (transportId.equals(endId)) {
+        if (transportId.equals(endId)
+                || transport.credentialEvidence().isPresent() && endClient.credentialEvidence().isPresent()
+                && transport.credentialEvidence().orElseThrow().sameCredential(endClient.credentialEvidence().orElseThrow())) {
             return new PkiServerAuthenticationResult.Rejected(
                     AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY, resolvedTransport,
                     Optional.of(endId), PkiServerAuthenticationResult.Code.IDENTITY_COLLISION);
         }
         return new PkiServerAuthenticationResult.Authenticated(
-                AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY, resolvedTransport, endId);
+                AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY, resolvedTransport, endId,
+                endClient.credentialEvidence());
     }
 
     private static boolean sameCredential(X509Certificate transport, X509Certificate forwarded)

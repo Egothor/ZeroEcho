@@ -212,6 +212,8 @@ public final class OperationSecurityDescriptors {
                 mutate(PkiOperation.SelectIssuancePath.NAME, Permission.Action.ISSUER_ROTATE, Permission.ResourceType.AUTHORITY, true),
                 mutate(PkiOperation.RegisterIssuerChainPath.NAME, Permission.Action.ISSUER_ROTATE, Permission.ResourceType.AUTHORITY, false),
                 mutate(PkiOperation.RevokeCredential.NAME, Permission.Action.CERTIFICATE_REVOKE, Permission.ResourceType.CERTIFICATE, false),
+                mutate(PkiOperation.HoldCredential.NAME, Permission.Action.CERTIFICATE_HOLD, Permission.ResourceType.CERTIFICATE, false),
+                mutate(PkiOperation.UnholdCredential.NAME, Permission.Action.CERTIFICATE_RELEASE_HOLD, Permission.ResourceType.CERTIFICATE, false),
                 read(PkiOperation.ReadRevocationHistory.NAME, Permission.Action.REVOCATION_HISTORY_READ, Permission.ResourceType.REVOCATION),
                 signing(PkiSigningOperation.GenerateStatus.NAME, Permission.Action.CRL_GENERATE, Permission.ResourceType.STATUS_OBJECT, false),
                 read(PkiOperation.InspectPublication.NAME, Permission.Action.PUBLICATION_READ, Permission.ResourceType.PUBLICATION),
@@ -297,6 +299,22 @@ public final class OperationSecurityDescriptors {
                         Permission.ResourceType.AUDIT, false, false),
                 control(ServerControlOperation.ExportBackup.NAME, Permission.Action.BACKUP_EXPORT,
                         Permission.ResourceType.BACKUP, true, false),
+                control("backup.stream.reserve", Permission.Action.BACKUP_VERIFY,
+                        Permission.ResourceType.BACKUP, true, false),
+                control("backup.stream.export", Permission.Action.BACKUP_EXPORT,
+                        Permission.ResourceType.BACKUP, true, false),
+                control("backup.stream.upload", Permission.Action.BACKUP_VERIFY,
+                        Permission.ResourceType.BACKUP, true, false),
+                control("backup.stream.download", Permission.Action.BACKUP_EXPORT,
+                        Permission.ResourceType.BACKUP, true, false),
+                control("backup.stream.verify", Permission.Action.BACKUP_VERIFY,
+                        Permission.ResourceType.BACKUP, true, false),
+                control("backup.stream.restore", Permission.Action.RESTORE_EXECUTE,
+                        Permission.ResourceType.RESTORE, true, true),
+                control("backup.stream.status", Permission.Action.RESTORE_EXECUTE,
+                        Permission.ResourceType.RESTORE, false, false),
+                control("backup.stream.acknowledge", Permission.Action.RESTORE_EXECUTE,
+                        Permission.ResourceType.RESTORE, true, false),
                 control(ServerControlOperation.VerifyBackup.NAME, Permission.Action.BACKUP_VERIFY,
                         Permission.ResourceType.BACKUP, false, false),
                 control(ServerControlOperation.ExecuteRestore.NAME, Permission.Action.RESTORE_EXECUTE,
@@ -328,6 +346,14 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.RegisterEnrollmentProfile.NAME,
                         Permission.Action.ENROLLMENT_PROFILE_ADMINISTER,
                         Permission.ResourceType.ENROLLMENT_PROFILE, true, true),
+                control(ServerControlOperation.InspectEnrollmentRequest.NAME, Permission.Action.REQUEST_READ_ANY,
+                        Permission.ResourceType.ENROLLMENT_REQUEST, false, false),
+                control(ServerControlOperation.ListEnrollmentRequests.NAME, Permission.Action.REQUEST_READ_ANY,
+                        Permission.ResourceType.ENROLLMENT_REQUEST, false, false),
+                control(ServerControlOperation.DecideEnrollmentRequest.APPROVE, Permission.Action.REQUEST_APPROVE,
+                        Permission.ResourceType.ENROLLMENT_REQUEST, true, false),
+                control(ServerControlOperation.DecideEnrollmentRequest.REJECT, Permission.Action.REQUEST_REJECT,
+                        Permission.ResourceType.ENROLLMENT_REQUEST, true, false),
                 control(ServerControlOperation.UpdateEnrollmentProfile.NAME,
                         Permission.Action.ENROLLMENT_PROFILE_ADMINISTER,
                         Permission.ResourceType.ENROLLMENT_PROFILE, true, false),
@@ -484,6 +510,7 @@ public final class OperationSecurityDescriptors {
         }
         return grantApprovalRequired && operation instanceof AdministrativeOperation.Pki pki
                 && (pki.operation() instanceof PkiOperation.RevokeCredential
+                        || pki.operation() instanceof PkiOperation.HoldCredential || pki.operation() instanceof PkiOperation.UnholdCredential
                         || pki.operation() instanceof PkiOperation.RevokePendingCredentialConfirmation)
                         ? ApprovalCategory.HIGH_RISK : ApprovalCategory.NONE;
     }
@@ -543,6 +570,10 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.ValidateAlgorithmBindings ignored -> resource.scope().authorityId().isEmpty()
                     && resource.objectId().isEmpty();
             case PkiOperation.RevokeCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.HoldCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.UnholdCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
                     && resource.scope().authorityId().isPresent();
             case PkiOperation.ReadRevocationHistory value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
                     && resource.scope().authorityId().isPresent();
@@ -608,7 +639,7 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.SearchCredentials value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""))
                     + ";subject=" + atom(value.subjectFilter().orElse("")) + ";serial=" + atom(value.serialFilter().orElse(""))
                     + ";fingerprint=" + atom(value.fingerprintFilter().orElse("")) + ";status=" + atom(value.statusFilter().orElse(""))
-                    + ";profile=" + atom(value.profileIdFilter().orElse(""));
+                    + ";profile=" + atom(value.profileIdFilter().orElse("")) + ";san=" + atom(value.sanFilter().orElse(""));
             case PkiOperation.ListIssuerGenerations value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.ListAuthorities value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.InspectAuthority value -> "ca=" + atom(value.caId().value());
@@ -648,6 +679,10 @@ public final class OperationSecurityDescriptors {
                     + ";reason=" + value.reason().name() + ";justificationPresent="
                     + value.operatorJustification().isPresent() + ";justification="
                     + atom(value.operatorJustification().orElse(""));
+            case PkiOperation.HoldCredential value -> "credential=" + atom(value.credentialId().value())
+                    + ";justificationPresent=" + value.operatorJustification().isPresent() + ";justification=" + atom(value.operatorJustification().orElse(""));
+            case PkiOperation.UnholdCredential value -> "credential=" + atom(value.credentialId().value())
+                    + ";justificationPresent=" + value.operatorJustification().isPresent() + ";justification=" + atom(value.operatorJustification().orElse(""));
             case PkiOperation.ReadRevocationHistory value -> "credential=" + atom(value.credentialId().value())
                     + ";limit=" + value.limit();
             case PkiOperation.InspectIssuerGeneration value -> "issuer=" + atom(value.issuerId().value());
@@ -905,7 +940,8 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.RegisterAcmeDirectory value -> "alias="
                     + atom(value.registration().alias()) + ";authority="
                     + atom(value.registration().authorityId().value()) + ";profile="
-                    + atom(value.registration().profileId()) + ";namespaces="
+                    + atom(value.registration().profileId()) + ";enrollmentProfile="
+                    + atom(value.registration().enrollmentProfileId()) + ";namespaces="
                     + atom(value.registration().dnsNamespaces().stream().sorted().collect(java.util.stream.Collectors.joining(",")))
                     + ";validity=" + value.registration().maximumValidity().toMillis()
                     + ";keyAlgorithms=" + atom(value.registration().publicKeyAlgorithms().stream().sorted()
@@ -946,36 +982,40 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.VerifyAuditIntegrity value -> "head=" + atom(value.expectedHead()
                     .map(head -> head.sequence() + ":" + head.recordHash()).orElse(""));
             case ServerControlOperation.ExportBackup value -> "label=" + atom(value.label());
+            case ServerControlOperation.ExportBackupStream value -> "label=" + atom(value.label());
+            case ServerControlOperation.ReserveBackupUpload value -> "backupId=" + atom(value.backupId().value())
+                    + ";length=" + value.length() + ";sha256=" + value.sha256();
+            case ServerControlOperation.BackupArtifactCommand value -> "artifact=" + value.commitment()
+                    .orElseThrow(() -> new SecurityException("Unbound backup artifact"));
             case ServerControlOperation.VerifyBackup value -> "backupId=" + atom(value.artifact().backupId().value());
             case ServerControlOperation.ExecuteRestore value -> "backupId=" + atom(value.request().artifact().backupId().value());
-            case ServerControlOperation.RegisterEstEndpoint value -> "label=" + atom(value.endpoint().label())
-                    + ";authority=" + atom(value.endpoint().authorityId())
-                    + ";profile=" + atom(value.endpoint().profileId());
+            case ServerControlOperation.RegisterEstEndpoint value -> "endpoint="
+                    + zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.commitment(value.endpoint());
             case ServerControlOperation.DeregisterEstEndpoint value -> "label=" + atom(value.label());
             case ServerControlOperation.InspectEstEndpoint value -> "label=" + atom(value.label());
             case ServerControlOperation.ListEstEndpoints value -> "offset=" + value.offset()
                     + ";limit=" + value.limit();
-            case ServerControlOperation.RegisterScepEndpoint value -> "label=" + atom(value.endpoint().label())
-                    + ";authority=" + atom(value.endpoint().authorityId())
-                    + ";profile=" + atom(value.endpoint().profileId());
+            case ServerControlOperation.RegisterScepEndpoint value -> "endpoint="
+                    + zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.commitment(value.endpoint());
             case ServerControlOperation.DeregisterScepEndpoint value -> "label=" + atom(value.label());
             case ServerControlOperation.InspectScepEndpoint value -> "label=" + atom(value.label());
             case ServerControlOperation.ListScepEndpoints value -> "offset=" + value.offset()
                     + ";limit=" + value.limit();
-            case ServerControlOperation.RegisterCmpEndpoint value -> "label=" + atom(value.endpoint().label())
-                    + ";authority=" + atom(value.endpoint().authorityId())
-                    + ";profile=" + atom(value.endpoint().profileId())
-                    + ";policy=" + value.endpoint().protectionPolicy().name();
+            case ServerControlOperation.RegisterCmpEndpoint value -> "endpoint="
+                    + zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.commitment(value.endpoint());
             case ServerControlOperation.DeregisterCmpEndpoint value -> "label=" + atom(value.label());
             case ServerControlOperation.InspectCmpEndpoint value -> "label=" + atom(value.label());
             case ServerControlOperation.ListCmpEndpoints value -> "offset=" + value.offset()
                     + ";limit=" + value.limit();
-            case ServerControlOperation.RegisterEnrollmentProfile value -> "id=" + atom(value.profile().id())
-                    + ";certificateProfileId=" + atom(value.profile().certificateProfileId());
-            case ServerControlOperation.UpdateEnrollmentProfile value -> "id=" + atom(value.profile().id())
-                    + ";certificateProfileId=" + atom(value.profile().certificateProfileId())
-                    + ";state=" + value.profile().state().name();
+            case ServerControlOperation.RegisterEnrollmentProfile value -> "profile="
+                    + zeroecho.pki.server.enrollment.EnrollmentProfileService.commitment(value.profile());
+            case ServerControlOperation.UpdateEnrollmentProfile value -> "profile="
+                    + zeroecho.pki.server.enrollment.EnrollmentProfileService.commitment(value.profile());
             case ServerControlOperation.InspectEnrollmentProfile value -> "id=" + atom(value.id());
+            case ServerControlOperation.InspectEnrollmentRequest value -> "id=" + atom(value.id());
+            case ServerControlOperation.ListEnrollmentRequests value -> "offset=" + value.offset() + "|limit=" + value.limit();
+            case ServerControlOperation.DecideEnrollmentRequest value -> "id=" + atom(value.id()) + "|record=" + atom(value.expectedCommitment())
+                    + "|choice=" + value.choice().name() + "|justification=" + atom(value.justification());
             case ServerControlOperation.ListEnrollmentProfiles value -> "offset=" + value.offset()
                     + ";limit=" + value.limit();
             case ServerControlOperation.ActivateEnrollmentProfile value -> "id=" + atom(value.id());

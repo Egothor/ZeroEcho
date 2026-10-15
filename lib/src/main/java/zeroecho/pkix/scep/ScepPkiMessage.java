@@ -38,16 +38,15 @@ import java.security.cert.X509Certificate;
 /**
  * Parsed representation of a SCEP PKIOperation message.
  *
- * <p>All SCEP protocol messages (PKCSReq, GetCertInitial, GetCert, GetCRL) are
- * transported as CMS SignedData. This record captures the authenticated attributes
- * and inner content extracted by {@link ScepCodec#parsePkiOperationDer}.</p>
+ * <p>This immutable value contains PKCSReq or GetCertInitial plaintext extracted
+ * by {@link ScepCodec#decryptRequest}. Constructing the value directly does not
+ * establish authentication.</p>
  *
  * @param messageType    SCEP message type integer (e.g., 19=PKCSReq, 20=GetCertInitial)
  * @param transactionId  SCEP transaction identifier string
- * @param senderNonce    senderNonce octet string (16 bytes, nullable if absent)
+ * @param senderNonce    senderNonce octet string (exactly 16 bytes)
  * @param innerContent   decrypted inner content bytes (PKCS#10 CSR DER for PKCSReq,
- *                       IssuerAndSubject DER for GetCertInitial, IssuerAndSerialNumber
- *                       DER for GetCert/GetCRL; raw encap content for others)
+ *                       IssuerAndSubject DER for GetCertInitial)
  * @param requesterCert  the signing certificate carried in the outer CMS SignedData
  *                       (the requester's self-signed certificate)
  * @since 1.0
@@ -58,4 +57,25 @@ public record ScepPkiMessage(
         byte[] senderNonce,
         byte[] innerContent,
         X509Certificate requesterCert) {
+    /** Validates and defensively copies bounded request content. */
+    public ScepPkiMessage {
+        java.util.Objects.requireNonNull(transactionId, "transactionId");
+        java.util.Objects.requireNonNull(requesterCert, "requesterCert");
+        if (messageType != ScepCodec.MSG_PKCS_REQ && messageType != ScepCodec.MSG_GET_CERT_INITIAL
+                || transactionId.isEmpty() || transactionId.length() > 128 || senderNonce.length != 16
+                || innerContent.length == 0 || innerContent.length > ScepCodec.MAXIMUM_REQUEST_BYTES) {
+            throw new IllegalArgumentException("Invalid SCEP request");
+        }
+        senderNonce = senderNonce.clone(); innerContent = innerContent.clone();
+    }
+    /** Copies the sender nonce.
+     * @return independently owned nonce
+     */
+    @Override public byte[] senderNonce() { return senderNonce.clone(); }
+    /** Copies the plaintext request.
+     * @return independently owned request
+     */
+    @Override public byte[] innerContent() { return innerContent.clone(); }
+    /** @return redacted description without plaintext or requester data */
+    @Override public String toString() { return "ScepPkiMessage[messageType=" + messageType + "]"; }
 }

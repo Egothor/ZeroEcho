@@ -40,6 +40,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import java.util.Optional;
+import java.util.List;
+import java.nio.file.Path;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
+import zeroecho.pki.server.EnrollmentTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,16 +55,22 @@ import zeroecho.pki.server.ServerRealmContext;
 class ScepServiceTest {
     private static final String HASH = "a".repeat(64);
 
+    @TempDir Path directory;
+    private EnrollmentTestSupport fixture;
     private ScepService service;
 
     @BeforeEach
-    void setUp() {
-        service = new ScepService(mock(ServerRealmContext.class));
+    void setUp() throws Exception {
+        fixture = new EnrollmentTestSupport(directory, List.of("device-cert", "device-cert-v2", "profile-a", "profile-b"));
+        service = new ScepService(fixture.realm());
     }
+
+    @AfterEach
+    void closeFixture() throws Exception { fixture.close(); }
 
     @Test
     void registersAndFindsEndpoint() {
-        ScepEndpoint endpoint = new ScepEndpoint("devices", "ca:issuer", "device-cert", HASH);
+        ScepEndpoint endpoint = new ScepEndpoint("devices", "ca:issuer", "device-cert", "enrollment-device-cert", HASH);
         service.register(endpoint);
         Optional<ScepEndpoint> found = service.find("devices");
         assertTrue(found.isPresent());
@@ -73,7 +84,7 @@ class ScepServiceTest {
 
     @Test
     void deregistersExistingEndpoint() {
-        ScepEndpoint endpoint = new ScepEndpoint("devices", "ca:issuer", "device-cert", HASH);
+        ScepEndpoint endpoint = new ScepEndpoint("devices", "ca:issuer", "device-cert", "enrollment-device-cert", HASH);
         service.register(endpoint);
         Optional<ScepEndpoint> removed = service.deregister("devices");
         assertTrue(removed.isPresent());
@@ -90,8 +101,8 @@ class ScepServiceTest {
     void registerReplacesExistingWithSameLabel() {
         String hashA = "a".repeat(64);
         String hashB = "b".repeat(64);
-        ScepEndpoint first = new ScepEndpoint("devices", "ca:issuer", "device-cert", hashA);
-        ScepEndpoint second = new ScepEndpoint("devices", "ca:issuer", "device-cert-v2", hashB);
+        ScepEndpoint first = new ScepEndpoint("devices", "ca:issuer", "device-cert", "enrollment-device-cert", hashA);
+        ScepEndpoint second = new ScepEndpoint("devices", "ca:issuer", "device-cert-v2", "enrollment-device-cert-v2", hashB);
         service.register(first);
         service.register(second);
         Optional<ScepEndpoint> found = service.find("devices");
@@ -102,8 +113,8 @@ class ScepServiceTest {
 
     @Test
     void listReturnsAllRegisteredEndpoints() {
-        ScepEndpoint a = new ScepEndpoint("endpoint-a", "ca:issuer", "profile-a", "a".repeat(64));
-        ScepEndpoint b = new ScepEndpoint("endpoint-b", "ca:issuer", "profile-b", "b".repeat(64));
+        ScepEndpoint a = new ScepEndpoint("endpoint-a", "ca:issuer", "profile-a", "enrollment-profile-a", "a".repeat(64));
+        ScepEndpoint b = new ScepEndpoint("endpoint-b", "ca:issuer", "profile-b", "enrollment-profile-b", "b".repeat(64));
         service.register(a);
         service.register(b);
         var listed = service.list();

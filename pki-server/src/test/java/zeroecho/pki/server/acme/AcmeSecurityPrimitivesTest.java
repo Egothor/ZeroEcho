@@ -170,6 +170,26 @@ class AcmeSecurityPrimitivesTest {
     }
 
     @Test
+    void accountHistoryRejectsMissingCurrentKeyDuplicateKeysAndOldFormats() throws Exception {
+        byte[] spki = accountKey().getPublic().getEncoded();
+        AcmeState.AccountKeyIdentity identity = AcmeState.AccountKeyIdentity.fromKey(spki, Set.of());
+        AcmeState.AccountKeyIdentity other = new AcmeState.AccountKeyIdentity("f".repeat(64), Set.of("e".repeat(64)), Set.of());
+        for (List<AcmeState.AccountKeyIdentity> history : List.of(List.<AcmeState.AccountKeyIdentity>of(),
+                List.of(other), List.of(identity, identity), java.util.Collections.nCopies(257, identity))) {
+            assertThrows(IllegalArgumentException.class, () -> new AcmeState.Account("account:test", DIRECTORY, 1,
+                    "1".repeat(64), "2".repeat(64), spki, AcmeState.AccountStatus.VALID, List.of(), true,
+                    Optional.empty(), NOW, NOW, "0".repeat(64), history));
+        }
+        AcmeState.Account account = new AcmeState.Account("account:test", DIRECTORY, 1, "1".repeat(64),
+                "2".repeat(64), spki, AcmeState.AccountStatus.VALID, List.of(), true, Optional.empty(), NOW, NOW,
+                "0".repeat(64));
+        AcmeStateCodec codec = new AcmeStateCodec();
+        byte[] previous = codec.encode(codec.seal(account));
+        java.nio.ByteBuffer.wrap(previous).putInt(4, 7);
+        assertThrows(IllegalArgumentException.class, () -> codec.decode(previous));
+    }
+
+    @Test
     void processingOrderCodecRetainsExactSigningOperation() {
         PkiId operationId = new PkiId("signing:acme-restart");
         AcmeState.Order source = new AcmeState.Order("order:restart", "account:test", DIRECTORY, 1,
@@ -201,7 +221,7 @@ class AcmeSecurityPrimitivesTest {
         AcmeState.Directory decoded = (AcmeState.Directory) codec.decode(codec.encode(sealed));
         AcmeState.Directory inactive = (AcmeState.Directory) codec.seal(new AcmeState.Directory(
                 sealed.directoryId(), sealed.alias(), sealed.revision(), sealed.realmId(), sealed.authorityId(),
-                sealed.profile(), sealed.issuerId(), sealed.issuancePathId(), sealed.issuancePathCommitment(),
+                sealed.profile(), sealed.enrollmentProfileId(), sealed.issuerId(), sealed.issuancePathId(), sealed.issuancePathCommitment(),
                 sealed.identifierTypes(), sealed.dnsNamespaces(), sealed.maximumValidity(),
                 sealed.publicKeyAlgorithms(), sealed.x509BindingPolicies(), sealed.challengeTypes(),
                 sealed.challengeProviderIds(), sealed.eabProviderId(), sealed.eabRequired(),
@@ -223,7 +243,7 @@ class AcmeSecurityPrimitivesTest {
 
     private static AcmeState.Directory directory(CredentialConfirmationPolicy policy, String policyCommitment) {
         return new AcmeState.Directory(DIRECTORY, "internal", 1, new RealmId("realm"), new PkiId("ca:test"),
-                new CertificateProfileRef("leaf", 1, new byte[32]), new PkiId("issuer:test"),
+                new CertificateProfileRef("leaf", 1, new byte[32]), "acme-enrollment", new PkiId("issuer:test"),
                 new PkiId("path:test"), "1".repeat(64), Set.of(AcmeState.IdentifierType.DNS),
                 Set.of("example.test"), Duration.ofDays(30), Set.of("RSA"), Set.of("STANDARD_ONLY"),
                 Set.of(AcmeState.ChallengeType.HTTP_01), Set.of("http"), Optional.empty(), false,

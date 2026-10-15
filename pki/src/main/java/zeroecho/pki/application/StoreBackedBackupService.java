@@ -72,8 +72,30 @@ final class StoreBackedBackupService implements BackupService {
 
     /** {@inheritDoc} */
     @Override
+    public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source,
+            zeroecho.pki.api.PkiId restoreId) throws java.io.IOException {
+        return store.stageRestore(source, restoreId);
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public java.util.Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws java.io.IOException {
         return store.latestRestoreStatus();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void discardUnpublishedRestore(zeroecho.pki.api.PkiId restoreId,
+            java.util.Optional<zeroecho.pki.api.PkiId> previousRestoreId,
+            String manifestSha256) throws java.io.IOException {
+        store.discardUnpublishedRestore(restoreId, previousRestoreId, manifestSha256);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public java.util.Optional<zeroecho.pki.api.backup.RestoreIdentity> latestRestoreIdentity()
+            throws java.io.IOException {
+        return store.latestRestoreIdentity();
     }
 
     /**

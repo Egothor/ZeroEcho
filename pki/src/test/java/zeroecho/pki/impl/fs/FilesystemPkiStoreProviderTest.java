@@ -54,6 +54,37 @@ import zeroecho.pki.spi.store.PkiStore;
 
 final class FilesystemPkiStoreProviderTest {
     @Test
+    void credentialSearchRequiresExplicitActivationAndEveryResourceBound() {
+        Map<String, String> properties = Map.of("root", "unused", "credentialSearch", "h2",
+                "credentialSearchCacheKiB", "16384", "credentialSearchQueryTimeoutMillis", "5000",
+                "credentialSearchMaximumCertificateBytes", "1048576");
+        FsPkiStoreOptions options = FilesystemPkiStoreProvider.options(new ProviderConfig("fs", properties));
+        FsPkiStoreOptions.CredentialSearch search = options.credentialSearch().orElseThrow();
+        assertEquals(new FsPkiStoreOptions.CredentialSearch(16384, 5000, 1048576), search);
+        assertEquals(options.credentialSearch(), options.withInitialCrlNumber(BigInteger.TEN)
+                .withSigningMaximumGroupSize(2).withSigningEvidenceAudit(true)
+                .withSigningResidentIndexBudgetBytes(1024).withSigningCompactionTransientBudgetBytes(1024).credentialSearch());
+        assertTrue(FilesystemPkiStoreProvider.options(new ProviderConfig("fs", Map.of("root", "unused")))
+                .credentialSearch().isEmpty());
+        for (String key : List.of("credentialSearch", "credentialSearchCacheKiB", "credentialSearchQueryTimeoutMillis",
+                "credentialSearchMaximumCertificateBytes")) {
+            Map<String, String> incomplete = new java.util.HashMap<>(properties);
+            incomplete.remove(key);
+            assertThrows(IllegalArgumentException.class, () -> FilesystemPkiStoreProvider.options(new ProviderConfig("fs", incomplete)));
+        }
+        for (String invalid : List.of("0", "-1", " 100", "01", "999999999999", "jdbc:h2:tcp://host/db")) {
+            Map<String, String> changed = new java.util.HashMap<>(properties);
+            changed.put("credentialSearchCacheKiB", invalid);
+            assertThrows(IllegalArgumentException.class, () -> FilesystemPkiStoreProvider.options(new ProviderConfig("fs", changed)));
+        }
+        Map<String, String> injected = new java.util.HashMap<>(properties);
+        injected.put("credentialSearchUrl", "jdbc:h2:mem:bad;INIT=bad");
+        assertThrows(IllegalArgumentException.class, () -> FilesystemPkiStoreProvider.options(new ProviderConfig("fs", injected)));
+        assertThrows(IllegalArgumentException.class, () -> new FsPkiStoreOptions.CredentialSearch(16384, 0, 1048576));
+        assertThrows(IllegalArgumentException.class, () -> new FsPkiStoreOptions.CredentialSearch(16384, 5000, 1048577));
+    }
+
+    @Test
     void defaultsAndCanonicalValuesFlowThroughSharedAllocationOptions(@TempDir Path directory) throws Exception {
         FilesystemPkiStoreProvider provider = new FilesystemPkiStoreProvider();
         assertTrue(provider.supportedKeys().contains("initialCrlNumber"));

@@ -66,7 +66,7 @@ import zeroecho.pki.application.PkiResourceScopeResolver;
  */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops",
-        "PMD.NcssCount", "PMD.ConfusingTernary", "PMD.ExceptionAsFlowControl",
+        "PMD.NcssCount", "PMD.ConfusingTernary",
         "PMD.CouplingBetweenObjects" })
 public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
     private static final String PROFILE_ID = "profileId";
@@ -78,6 +78,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * @param principalId authenticated end-client principal identity
      * @param authenticationMode explicit administrative authentication mode
      * @param transportPrincipalId trusted proxy identity, present only in proxy mode
+     * @param credentialEvidence trusted end-client credential evidence, never operation data
      * @param operation existing typed operation
      * @param resource exact non-bearer resource reference
      * @param relationship established object relationship
@@ -87,6 +88,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      */
     public record Request(RealmId realmId, String principalId,
             AdministrativeAuthenticationMode authenticationMode, Optional<String> transportPrincipalId,
+            Optional<CertificateIdentityEvidence> credentialEvidence,
             AdministrativeOperation operation,
             Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
             Optional<String> approvalId, String correlationId) {
@@ -97,6 +99,10 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             Objects.requireNonNull(authenticationMode, "authenticationMode");
             transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
             transportPrincipalId.ifPresent(Permission::requirePrincipal);
+            credentialEvidence = Objects.requireNonNull(credentialEvidence, "credentialEvidence");
+            credentialEvidence.ifPresent(evidence -> {
+                if (!realmId.equals(evidence.realmId())) throw new IllegalArgumentException("Credential evidence realm differs");
+            });
             if (authenticationMode == AdministrativeAuthenticationMode.DIRECT_MTLS
                     && transportPrincipalId.isPresent()
                     || authenticationMode == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY
@@ -147,6 +153,27 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
                 Optional<String> approvalId, String correlationId) {
             this(realmId, principalId, AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), operation,
+                    resource, relationship, context, approvalId, correlationId);
+        }
+
+        /**
+         * Creates an embedded request with no enrollment credential evidence.
+         * @param realmId exact target realm
+         * @param principalId authenticated principal
+         * @param authenticationMode administrative topology
+         * @param transportPrincipalId trusted proxy identity when applicable
+         * @param operation typed operation
+         * @param resource authorized resource coordinates
+         * @param relationship requester relationship
+         * @param context closed authorization context
+         * @param approvalId optional approval identity
+         * @param correlationId bounded request correlation identity
+         */
+        public Request(RealmId realmId, String principalId, AdministrativeAuthenticationMode authenticationMode,
+                Optional<String> transportPrincipalId, AdministrativeOperation operation, Permission.Resource resource,
+                Permission.Relationship relationship, Permission.Context context, Optional<String> approvalId,
+                String correlationId) {
+            this(realmId, principalId, authenticationMode, transportPrincipalId, Optional.empty(), operation,
                     resource, relationship, context, approvalId, correlationId);
         }
     }
@@ -365,6 +392,22 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
     public void installBackup(zeroecho.pki.api.BackupService backupService) {
         controlExecutor.installBackup(backupService);
     }
+
+    /* default */ void installBackupTransfers(BackupTransferService service) { controlExecutor.installBackupTransfers(service); }
+
+    /**
+     * Reports deployment capability availability independently of caller permission.
+     * @param operationId catalog operation identity
+     * @return false when backup transfer storage or the operation's EST, SCEP,
+     *         or CMP service is not installed
+     */
+    public boolean operationAvailable(String operationId) {
+        return controlExecutor.protocolAvailable(operationId)
+                && (!PkiOperation.SearchCredentials.NAME.equals(operationId)
+                        || executor instanceof zeroecho.pki.application.PkiSelectionExecutor selection
+                        && selection.credentialSearchAvailable())
+                && (!operationId.startsWith("backup.stream.") || controlExecutor.backupTransfersAvailable());
+    }
     /**
      * Admits and synchronously executes one operation.
      *
@@ -372,9 +415,62 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * @param cancellation cooperative cancellation signal passed unchanged to PKI
      * @return safe gateway outcome
      */
-    // The ordered authentication, authorization, approval, and dispatch checks form one auditable security gate.
-    @SuppressWarnings("PMD.CognitiveComplexity")
     public Outcome execute(Request request, CancellationSignal cancellation) {
+        return execute(request, cancellation, null);
+    }
+
+    /**
+     * Executes binary backup I/O through the same authentication, authorization
+     * and approval gate as ordinary operations. Streams open only after admission.
+     * @param request authenticated operation request
+     * @param cancellation request cancellation signal
+     * @param channel deadline-bound transport streams
+     * @return classified authorized result or denial
+     */
+    public Outcome executeBackupTransfer(Request request, CancellationSignal cancellation, BackupTransferChannel channel) {
+        return execute(request, cancellation, Objects.requireNonNull(channel, "channel"));
+    }
+
+    private Optional<RevocationEvidenceExecutor> revocationExecutor(AdministrativeOperation operation) {
+        Optional<RevocationEvidenceExecutor> revocationExecutor = Optional.empty();
+        if (operation instanceof AdministrativeOperation.Pki pki
+                && (pki.operation() instanceof PkiOperation.RevokeCredential
+                        || pki.operation() instanceof PkiOperation.HoldCredential || pki.operation() instanceof PkiOperation.UnholdCredential
+                        || pki.operation() instanceof PkiOperation.RevokePendingCredentialConfirmation)) {
+            revocationExecutor = Optional.of(RevocationEvidenceExecutor.require(executor));
+            if ((pki.operation() instanceof PkiOperation.HoldCredential || pki.operation() instanceof PkiOperation.UnholdCredential)
+                    && !revocationExecutor.orElseThrow().supportsHoldTransitions()) {
+                throw new IllegalStateException("PKI executor does not support authoritative hold transitions");
+            }
+        }
+        return revocationExecutor;
+    }
+
+    private OperationSecurityDescriptors.Descriptor validateOperationScope(Request exact, BackupTransferChannel channel) {
+        OperationSecurityDescriptors.Descriptor descriptor = descriptors.require(exact.operation());
+        if (!operationAvailable(exact.operation().name())) throw new SecurityException("Operation unavailable");
+        if (channel == null && exact.operation() instanceof AdministrativeOperation.Control transfer
+                && transfer.operation() instanceof ServerControlOperation.BackupArtifactCommand command
+                && (command.action() == ServerControlOperation.BackupArtifactCommand.Action.UPLOAD
+                    || command.action() == ServerControlOperation.BackupArtifactCommand.Action.DOWNLOAD)) {
+            throw new SecurityException("Binary backup route required");
+        }
+        if (exact.operation() instanceof AdministrativeOperation.Pki pki) {
+            descriptors.validateResource(pki.operation(), exact.resource());
+            validateAuthoritativeScope(pki.operation(), exact.resource());
+        } else if (exact.operation() instanceof AdministrativeOperation.Signing signing) {
+            descriptors.validateResource(signing.operation(), exact.resource());
+            validateSigningScope(signing.operation(), exact.resource());
+        } else if (descriptor.resourceType() != exact.resource().type()) {
+            throw new SecurityException("Control operation resource type differs");
+        } else {
+            validateControlScope(((AdministrativeOperation.Control) exact.operation()).operation(),
+                    exact.resource());
+        }
+        return descriptor;
+    }
+
+    private Outcome execute(Request request, CancellationSignal cancellation, BackupTransferChannel channel) {
         openCheck.run();
         Request exact = Objects.requireNonNull(request, "request");
         Objects.requireNonNull(cancellation, "cancellation");
@@ -388,19 +484,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         }
         OperationSecurityDescriptors.Descriptor descriptor;
         try {
-            descriptor = descriptors.require(exact.operation());
-            if (exact.operation() instanceof AdministrativeOperation.Pki pki) {
-                descriptors.validateResource(pki.operation(), exact.resource());
-                validateAuthoritativeScope(pki.operation(), exact.resource());
-            } else if (exact.operation() instanceof AdministrativeOperation.Signing signing) {
-                descriptors.validateResource(signing.operation(), exact.resource());
-                validateSigningScope(signing.operation(), exact.resource());
-            } else if (descriptor.resourceType() != exact.resource().type()) {
-                throw new SecurityException("Control operation resource type differs");
-            } else {
-                validateControlScope(((AdministrativeOperation.Control) exact.operation()).operation(),
-                        exact.resource());
-            }
+            descriptor = validateOperationScope(exact, channel);
         } catch (SecurityException | IllegalArgumentException | IllegalStateException invalid) {
             // IllegalStateException covers an authoritative-scope source that cannot yield a coordinate
             // (e.g. a publication whose CREDENTIAL source is not an end-entity credential); it fails closed
@@ -462,12 +546,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
             }
         }
-        Optional<RevocationEvidenceExecutor> revocationExecutor = Optional.empty();
-        if (exact.operation() instanceof AdministrativeOperation.Pki pki
-                && (pki.operation() instanceof PkiOperation.RevokeCredential
-                        || pki.operation() instanceof PkiOperation.RevokePendingCredentialConfirmation)) {
-            revocationExecutor = Optional.of(RevocationEvidenceExecutor.require(executor));
-        }
+        Optional<RevocationEvidenceExecutor> revocationExecutor = revocationExecutor(exact.operation());
         if (decision.usedBreakGlass()) breakGlass.auditUse(principal.principalId());
         String commitment = descriptors.commitment(realmId, exact.operation(), exact.resource());
         Optional<String> claimedApproval = Optional.empty();
@@ -492,6 +571,18 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                         authentication(exact.authenticationMode()), authorizationPath(decision, claimedApproval),
                         commitment, revocation.operatorJustification());
                 backend = revocationExecutor.orElseThrow().executeRevocation(revocation, evidence, cancellation);
+                wakeAfterCommittedRevocation(backend);
+            } else if (pki.operation() instanceof PkiOperation.HoldCredential hold) {
+                RevocationExecutionEvidence evidence = RevocationExecutionEvidence.administrative(principal.principalId(), realmId.value(),
+                        exact.correlationId(), authentication(exact.authenticationMode()), authorizationPath(decision, claimedApproval), commitment,
+                        hold.operatorJustification());
+                backend = revocationExecutor.orElseThrow().executeHold(hold, evidence, cancellation);
+                wakeAfterCommittedRevocation(backend);
+            } else if (pki.operation() instanceof PkiOperation.UnholdCredential unhold) {
+                RevocationExecutionEvidence evidence = RevocationExecutionEvidence.administrative(principal.principalId(), realmId.value(),
+                        exact.correlationId(), authentication(exact.authenticationMode()), authorizationPath(decision, claimedApproval), commitment,
+                        unhold.operatorJustification());
+                backend = revocationExecutor.orElseThrow().executeUnhold(unhold, evidence, cancellation);
                 wakeAfterCommittedRevocation(backend);
             } else if (pki.operation()
                     instanceof PkiOperation.RevokePendingCredentialConfirmation revocation) {
@@ -527,8 +618,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         }
         ServerControlOperation controlOperation = ((AdministrativeOperation.Control) exact.operation()).operation();
         ServerControlOperationOutcome controlResult = controlExecutor.executeAuthorized(controlOperation,
-                principal.principalId(), exact.resource(), exact.approvalId(), approvedTargetCategory,
-                cancellation);
+                new AdministrativeDecisionActor(principal.principalId(), exact.credentialEvidence()), exact.resource(), exact.approvalId(), approvedTargetCategory,
+                cancellation, channel);
         String result = classification(controlResult);
         if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), result);
         audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
@@ -679,6 +770,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principalId);
         grants.addAll(emergency.grants());
         return descriptors.descriptors().values().stream()
+                .filter(descriptor -> operationAvailable(descriptor.operationId()))
                 .filter(descriptor -> discoverable(descriptor, principal, grants, emergency.grantIds()))
                 .sorted(java.util.Comparator.comparing(OperationSecurityDescriptors.Descriptor::operationId))
                 .toList();
@@ -868,6 +960,11 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         OperationSecurityDescriptors.Descriptor target;
         try {
             target = descriptors.require(approvalRequest.targetOperation());
+            if (!operationAvailable(target.operationId())) return Optional.empty();
+            if (approvalRequest.targetOperation() instanceof AdministrativeOperation.Control controlTarget
+                    && controlTarget.operation().name().startsWith("backup.stream.")) {
+                validateControlScope(controlTarget.operation(), approvalRequest.targetResource());
+            }
             if (target.resourceType() != approvalRequest.targetResource().type()) {
                 return Optional.empty();
             } else if (approvalRequest.targetOperation() instanceof AdministrativeOperation.Signing signing) {
@@ -923,6 +1020,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         if (operation instanceof AdministrativeOperation.Pki pki) {
             justification = switch (pki.operation()) {
                 case PkiOperation.RevokeCredential value -> value.operatorJustification();
+                case PkiOperation.HoldCredential value -> value.operatorJustification();
+                case PkiOperation.UnholdCredential value -> value.operatorJustification();
                 case PkiOperation.RevokePendingCredentialConfirmation value ->
                     value.operatorJustification();
                 case PkiOperation.TransitionAuthority value -> Optional.of(value.reason());
@@ -940,6 +1039,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         Optional<PkiId> actual = switch (operation) {
             case PkiOperation.InspectCredential value -> credentialAuthority(value.credentialId());
             case PkiOperation.RevokeCredential value -> credentialAuthority(value.credentialId());
+            case PkiOperation.HoldCredential value -> credentialAuthority(value.credentialId());
+            case PkiOperation.UnholdCredential value -> credentialAuthority(value.credentialId());
             case PkiOperation.RevokePendingCredentialConfirmation value ->
                 credentialAuthority(value.credentialId());
             case PkiOperation.ReadRevocationHistory value -> credentialAuthority(value.credentialId());
@@ -1007,7 +1108,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             }
             Permission.Resource resource = capabilityObjectResource(query.objectId());
             return new Request(exact.realmId(), exact.principalId(), exact.authenticationMode(),
-                    exact.transportPrincipalId(), exact.operation(), resource, exact.relationship(), exact.context(),
+                    exact.transportPrincipalId(), exact.credentialEvidence(), exact.operation(), resource, exact.relationship(), exact.context(),
                     exact.approvalId(), exact.correlationId());
         }
         if (!(exact.operation() instanceof AdministrativeOperation.Pki pki)) {
@@ -1016,10 +1117,10 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         Optional<PkiId> selectedCredential = confirmationCredentialId(pki.operation());
         if (selectedCredential.isEmpty()) return exact;
         PkiId credentialId = selectedCredential.orElseThrow();
-        Permission.Resource authoritative = authoritativeConfirmationResource(
-                credentialId, exact.resource(), exact.relationship());
+        Permission.Resource authoritative = authoritativeCredentialResource(
+                credentialId, exact.resource(), exact.relationship(), isHoldTransition(pki.operation()));
         return new Request(exact.realmId(), exact.principalId(), exact.authenticationMode(),
-                exact.transportPrincipalId(), exact.operation(), authoritative, Permission.Relationship.ANY,
+                exact.transportPrincipalId(), exact.credentialEvidence(), exact.operation(), authoritative, Permission.Relationship.ANY,
                 exact.context(), exact.approvalId(), exact.correlationId());
     }
 
@@ -1062,14 +1163,38 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 Optional.of(value.submission().proofCas().credentialId());
             case PkiOperation.RevokePendingCredentialConfirmation value ->
                 Optional.of(value.credentialId());
+            case PkiOperation.HoldCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.UnholdCredential value -> Optional.of(value.credentialId());
             default -> Optional.empty();
         };
+    }
+
+    private Request authoritativeEnrollmentRequest(Request request, String enrollmentId) {
+        Permission.Scope scope = controlExecutor.enrollmentScope(enrollmentId);
+        Permission.Resource supplied = request.resource();
+        if (supplied.type() != Permission.ResourceType.ENROLLMENT_REQUEST || supplied.objectId().isPresent()
+                || supplied.ownerPrincipalId().isPresent() || !supplied.scope().realmId().equals(scope.realmId())
+                || supplied.scope().authorityId().isPresent() && !supplied.scope().authorityId().equals(scope.authorityId())
+                || supplied.scope().issuerId().isPresent() && !supplied.scope().issuerId().equals(scope.issuerId())
+                || supplied.scope().profileId().isPresent() && !supplied.scope().profileId().equals(scope.profileId())
+                || supplied.scope().responderId().isPresent()) throw new SecurityException("Enrollment request scope differs");
+        Permission.Resource resource = new Permission.Resource(Permission.ResourceType.ENROLLMENT_REQUEST, scope, Optional.empty(), Optional.empty());
+        return new Request(request.realmId(), request.principalId(), request.authenticationMode(), request.transportPrincipalId(),
+                request.credentialEvidence(), request.operation(), resource, request.relationship(), request.context(), request.approvalId(), request.correlationId());
     }
 
     private Request authoritativeControlRequest(Request request) {
         Request exact = request;
         if (request.operation() instanceof AdministrativeOperation.Control controlOperation) {
             ServerControlOperation operation = controlOperation.operation();
+            Optional<String> enrollmentId = switch (operation) {
+                case ServerControlOperation.InspectEnrollmentRequest value -> Optional.of(value.id());
+                case ServerControlOperation.DecideEnrollmentRequest value -> Optional.of(value.id());
+                default -> Optional.empty();
+            };
+            if (enrollmentId.isPresent()) {
+                return authoritativeEnrollmentRequest(request, enrollmentId.orElseThrow());
+            }
             Optional<String> existingApprovalId = switch (operation) {
                 case ServerControlOperation.InspectApproval value -> Optional.of(value.approvalId());
                 case ServerControlOperation.DecideApproval value -> Optional.of(value.approvalId());
@@ -1082,8 +1207,22 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 Permission.Scope scope = approvals.requireCurrent(existingApprovalId.orElseThrow()).scope();
                 Permission.Resource resource = authoritativeApprovalResource(request.resource(), scope);
                 exact = new Request(request.realmId(), request.principalId(), request.authenticationMode(),
-                        request.transportPrincipalId(), request.operation(), resource, request.relationship(),
+                        request.transportPrincipalId(), request.credentialEvidence(), request.operation(), resource, request.relationship(),
                         request.context(), request.approvalId(), request.correlationId());
+            } else if (operation instanceof ServerControlOperation.BackupArtifactCommand command) {
+                validateControlScope(command, request.resource());
+                exact = withControlOperation(request, controlExecutor.bindBackup(request.principalId(), command));
+            } else if (operation instanceof ServerControlOperation.RequestApproval approval
+                    && approval.targetOperation() instanceof AdministrativeOperation.Control target
+                    && target.operation() instanceof ServerControlOperation.BackupArtifactCommand command) {
+                validateControlScope(command, approval.targetResource());
+                Permission.Resource approvalResource = authoritativeApprovalResource(request.resource(), approval.targetResource().scope());
+                ServerControlOperation.RequestApproval bound = new ServerControlOperation.RequestApproval(
+                        approval.approvalId(), new AdministrativeOperation.Control(controlExecutor.bindBackup(request.principalId(), command)),
+                        approval.targetResource());
+                exact = new Request(request.realmId(), request.principalId(), request.authenticationMode(),
+                        request.transportPrincipalId(), request.credentialEvidence(), new AdministrativeOperation.Control(bound), approvalResource,
+                        request.relationship(), request.context(), request.approvalId(), request.correlationId());
             } else if (operation instanceof ServerControlOperation.RegisterAcmeDirectory registration) {
                 exact = withControlOperation(request,
                         controlExecutor.bindAcmeDirectoryRegistration(registration));
@@ -1097,20 +1236,25 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                         approval.targetResource()));
             } else if (operation instanceof ServerControlOperation.RequestApproval approval
                     && approval.targetOperation() instanceof AdministrativeOperation.Pki target
-                    && target.operation()
-                            instanceof PkiOperation.RevokePendingCredentialConfirmation revocation) {
-                Permission.Resource targetResource = authoritativeConfirmationResource(
-                        revocation.credentialId(), approval.targetResource(), request.relationship());
+                    && (target.operation() instanceof PkiOperation.RevokePendingCredentialConfirmation
+                            || target.operation() instanceof PkiOperation.HoldCredential || target.operation() instanceof PkiOperation.UnholdCredential)) {
+                Permission.Resource targetResource = authoritativeCredentialResource(
+                        confirmationCredentialId(target.operation()).orElseThrow(), approval.targetResource(), request.relationship(),
+                        isHoldTransition(target.operation()));
                 ServerControlOperation.RequestApproval bound = new ServerControlOperation.RequestApproval(
                         approval.approvalId(), approval.targetOperation(), targetResource);
                 Permission.Resource approvalResource = authoritativeApprovalResource(
                         request.resource(), targetResource.scope());
                 exact = new Request(request.realmId(), request.principalId(), request.authenticationMode(),
-                        request.transportPrincipalId(), new AdministrativeOperation.Control(bound),
+                        request.transportPrincipalId(), request.credentialEvidence(), new AdministrativeOperation.Control(bound),
                         approvalResource, Permission.Relationship.ANY, request.context(),
                         request.approvalId(), request.correlationId());
             }
         }
+        return authoritativePublicationRequest(exact);
+    }
+
+    private Request authoritativePublicationRequest(Request exact) {
         if (!(exact.operation() instanceof AdministrativeOperation.Control controlOperation)
                 || !(controlOperation.operation()
                         instanceof ServerControlOperation.EnrollCredentialPublication enrollment)) {
@@ -1130,14 +1274,18 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             throw new SecurityException("Credential publication resource differs");
         }
         return new Request(exact.realmId(), exact.principalId(), exact.authenticationMode(),
-                exact.transportPrincipalId(), exact.operation(), authoritative, exact.relationship(),
+                exact.transportPrincipalId(), exact.credentialEvidence(), exact.operation(), authoritative, exact.relationship(),
                 exact.context(), exact.approvalId(), exact.correlationId());
     }
 
-    private Permission.Resource authoritativeConfirmationResource(PkiId credentialId,
-            Permission.Resource supplied, Permission.Relationship relationship) {
-        PkiResourceScopeResolver.CredentialScope coordinates = resourceScopes
-                .credentialScope(credentialId)
+    private static boolean isHoldTransition(PkiOperation operation) {
+        return operation instanceof PkiOperation.HoldCredential || operation instanceof PkiOperation.UnholdCredential;
+    }
+
+    private Permission.Resource authoritativeCredentialResource(PkiId credentialId,
+            Permission.Resource supplied, Permission.Relationship relationship, boolean holdTransition) {
+        PkiResourceScopeResolver.CredentialScope coordinates = (holdTransition
+                ? resourceScopes.holdCredentialScope(credentialId) : resourceScopes.credentialScope(credentialId))
                 .orElseThrow(() -> new SecurityException("Credential authorization scope is unavailable"));
         if (supplied.type() != Permission.ResourceType.CERTIFICATE
                 || !supplied.objectId().equals(Optional.of(credentialId))
@@ -1147,7 +1295,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 || !supplied.scope().authorityId().equals(Optional.of(coordinates.authorityId()))
                 || supplied.scope().profileId().isPresent()
                         && !supplied.scope().profileId().equals(Optional.of(coordinates.profileId()))) {
-            throw new SecurityException("Credential confirmation resource differs");
+            throw new SecurityException("Credential authorization resource differs");
         }
         Permission.Scope scope = new Permission.Scope(realmId, Optional.of(coordinates.authorityId()),
                 Optional.empty(), Optional.of(coordinates.profileId()));
@@ -1175,11 +1323,18 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
 
     private static Request withControlOperation(Request request, ServerControlOperation operation) {
         return new Request(request.realmId(), request.principalId(), request.authenticationMode(),
-                request.transportPrincipalId(), new AdministrativeOperation.Control(operation), request.resource(),
+                request.transportPrincipalId(), request.credentialEvidence(), new AdministrativeOperation.Control(operation), request.resource(),
                 request.relationship(), request.context(), request.approvalId(), request.correlationId());
     }
 
     private void validateControlScope(ServerControlOperation operation, Permission.Resource resource) {
+        if (operation.name().startsWith("backup.stream.")
+                && (!realmId.equals(resource.scope().realmId()) || resource.scope().authorityId().isPresent()
+                    || resource.scope().issuerId().isPresent() || resource.scope().profileId().isPresent()
+                    || resource.scope().responderId().isPresent() || resource.objectId().isPresent()
+                    || resource.ownerPrincipalId().isPresent() || descriptors.require(operation.name()).resourceType() != resource.type())) {
+            throw new SecurityException("Backup transfers require exact realm scope");
+        }
         if (operation instanceof ServerControlOperation.ConfigurationChoices
                 && (resource.scope().authorityId().isPresent() || resource.scope().issuerId().isPresent()
                         || resource.scope().profileId().isPresent() || resource.scope().responderId().isPresent()
@@ -1187,6 +1342,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             throw new SecurityException("Configuration choices require realm scope");
         }
         Permission.Scope actual = switch (operation) {
+            case ServerControlOperation.InspectEnrollmentRequest value -> controlExecutor.enrollmentScope(value.id());
+            case ServerControlOperation.DecideEnrollmentRequest value -> controlExecutor.enrollmentScope(value.id());
             case ServerControlOperation.CreateRoleAssignment value -> value.assignment().scope();
             case ServerControlOperation.InspectRoleAssignment value -> control.requireAssignment(value.assignmentId()).scope();
             case ServerControlOperation.RevokeRoleAssignment value -> control.requireAssignment(value.assignmentId()).scope();
@@ -1231,6 +1388,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
     private static boolean requiresResolvedAuthority(PkiOperation operation) {
         return operation instanceof PkiOperation.InspectCredential
                 || operation instanceof PkiOperation.RevokeCredential
+                || operation instanceof PkiOperation.HoldCredential || operation instanceof PkiOperation.UnholdCredential
                 || operation instanceof PkiOperation.RevokePendingCredentialConfirmation
                 || operation instanceof PkiOperation.ReadRevocationHistory
                 || operation instanceof PkiOperation.InspectPublication
@@ -1312,6 +1470,12 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      */
     public void installEnrollmentProfiles(zeroecho.pki.server.enrollment.EnrollmentProfileService service) {
         controlExecutor.installEnrollmentProfiles(service);
+    }
+
+    /** Installs the validated coordinator before publishing realm readiness.
+     * @param service validated realm-owned protocol enrollment coordinator */
+    public void installEnrollmentCoordinator(zeroecho.pki.server.enrollment.EnrollmentCoordinator service) {
+        controlExecutor.installEnrollmentCoordinator(service);
     }
 
     private zeroecho.pki.application.PkiSelectionExecutor selectionExecutor() {

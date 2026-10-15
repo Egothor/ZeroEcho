@@ -44,11 +44,14 @@ import java.util.Objects;
  * URL path under {@code /scep/{label}}.</p>
  *
  * <p>The {@code challengePasswordHash} field stores a SHA-256 hex digest of the SCEP
- * challenge password. The plaintext password is never retained by the server.</p>
+ * challenge password. Endpoint and control metadata contain only that digest;
+ * the exact signed CSR, including its challenge attribute, is retained in the
+ * protected PKI request store and its backups for durable enrollment recovery.</p>
  *
  * @param label                URL-safe identifier, 1–64 characters, matching {@code [A-Za-z0-9._-]+}
  * @param authorityId          the CA authority identifier whose chain is served on this endpoint
  * @param profileId            the issuance profile identifier applied to enrollment requests
+ * @param enrollmentProfileId mandatory enrollment policy identity, distinct from the issuance profile
  * @param challengePasswordHash SHA-256 hex digest of the challenge password (64 lower-case hex chars)
  * @since 1.0
  */
@@ -56,7 +59,8 @@ public record ScepEndpoint(
         String label,
         String authorityId,
         String profileId,
-        String challengePasswordHash) {
+        String enrollmentProfileId,
+        String challengePasswordHash) implements zeroecho.pki.server.enrollment.EnrollmentEndpoint {
 
     /** Maximum permitted label length. */
     public static final int MAX_LABEL_LENGTH = 64;
@@ -69,6 +73,9 @@ public record ScepEndpoint(
         Objects.requireNonNull(label, "label");
         Objects.requireNonNull(authorityId, "authorityId");
         Objects.requireNonNull(profileId, "profileId");
+        zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(authorityId);
+        zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(profileId);
+        zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(enrollmentProfileId);
         Objects.requireNonNull(challengePasswordHash, "challengePasswordHash");
         if (label.isBlank() || label.length() > MAX_LABEL_LENGTH
                 || !label.matches("[A-Za-z0-9._-]+")) {

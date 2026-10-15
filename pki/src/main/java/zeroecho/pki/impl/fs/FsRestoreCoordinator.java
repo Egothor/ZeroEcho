@@ -64,6 +64,8 @@ import zeroecho.pki.api.backup.RestoreStatus;
 
 /** External lifetime fencing and cold activation; all roots are on one filesystem. */
 final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
+    private static final String ROLLBACK_PREFIX = "rollback-";
+    private static final String INVALID_ROOT_LAYOUT = "RESTORE_ROOT_LAYOUT_INVALID";
     private static final String TEXT_CANDIDATE = "candidate";
     private static final String TEXT_ORIGINAL = "original";
     private static final String JOURNAL_NAME = "journal";
@@ -89,7 +91,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         RECOVERY_STARTED, BEFORE_RECOVERY, AFTER_RECOVERY, BEFORE_ROLLBACK, AFTER_ROLLBACK, DIRECTORY_FORCE,
         BEFORE_RECORD_FORCE, AFTER_JOURNAL_RENAME, BEFORE_RECORD_WRITE, AFTER_RECORD_WRITE, AFTER_RECORD_FORCE,
         BEFORE_RECORD_RENAME, AFTER_RECORD_DIRECTORY_FORCE, BEFORE_ATOMIC_MOVE, AFTER_ATOMIC_MOVE,
-        BEFORE_RECOVERY_CLOSE, BEFORE_PARENT_FORCE }
+        BEFORE_RECOVERY_CLOSE, BEFORE_PARENT_FORCE, AFTER_STAGE_MOVE, AFTER_CANDIDATE_MARKER, AFTER_ORIGINAL_MARKER }
     /** Receives deterministic restore transition notifications. */
     /* default */ @FunctionalInterface interface Observer {
         /** Observes one restore transition.
@@ -115,6 +117,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         FsRestoreCoordinator result = new FsRestoreCoordinator(root, limits);
         try {
             result.reconcile(options, clock);
+            result.cleanupAbandonedPreparation();
             return result;
         } catch (IOException | RuntimeException | Error failure) { // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.
             try { result.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
@@ -163,13 +166,106 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                         : state == RestoreStatus.State.FAILED ? List.of("RESTORE_ACTIVATION_REJECTED") : List.of()));
     }
 
-    /* default */ RestoreStatus stage(BackupPreparation prepared, Path baseline) throws IOException {
+    /* default */ Optional<zeroecho.pki.api.backup.RestoreIdentity> identity() {
+        return status().map(value -> new zeroecho.pki.api.backup.RestoreIdentity(
+                new PkiId(journal.source()), journal.manifest(), value));
+    }
+
+    /* default */ RestoreStatus stage(BackupPreparation prepared, Path baseline, PkiId restoreId) throws IOException {
+        Journal next;
+        try { next = prepareJournal(prepared, baseline, restoreId); }
+        catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
+        Path stage = parent.resolve(next.stage());
+        atomicMove(prepared.directory(), stage);
+        observe(Phase.AFTER_STAGE_MOVE);
+        lockRoot(stage);
+        writeMarker(stage, TEXT_CANDIDATE, next);
+        observe(Phase.AFTER_CANDIDATE_MARKER);
+        writeMarker(live, TEXT_ORIGINAL, next);
+        observe(Phase.AFTER_ORIGINAL_MARKER);
+        forceParent();
+        publish(next);
+        return status().orElseThrow();
+    }
+
+    /* default */ void discardUnpublished(PkiId restoreId, Optional<PkiId> previousRestoreId,
+            String manifest) throws IOException {
+        String id = restoreId.value();
+        if (!UUID.fromString(id).toString().equals(id) || !manifest.matches("[0-9a-f]{64}")
+                || previousRestoreId.map(restoreId::equals).orElse(false)) {
+            throw new IllegalArgumentException("Invalid unpublished restore identity");
+        }
+        Optional<PkiId> current = journal == null ? Optional.empty() : Optional.of(new PkiId(journal.id()));
+        if (uncertain || !current.equals(previousRestoreId)
+                || journal != null && journal.state() != State.COMPLETE && journal.state() != State.ROLLED_BACK) {
+            throw new IOException("RESTORE_OUTCOME_UNCERTAIN");
+        }
+        for (Path conflict : List.of(parent.resolve("." + live.getFileName() + ".restore-old-" + id),
+                parent.resolve("." + live.getFileName() + ".restore-failed-" + id),
+                control.resolve(ROLLBACK_PREFIX + id), control.resolve("recovery-" + id))) {
+            if (Files.exists(conflict, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException(INVALID_ROOT_LAYOUT);
+            }
+        }
+        Path stage = parent.resolve("." + live.getFileName() + ".restore-stage-" + id);
+        Path original = live.resolve(MARKER + id);
+        requireOptionalMarker(stage.resolve(MARKER + id), TEXT_CANDIDATE, id, manifest);
+        requireOptionalMarker(original, TEXT_ORIGINAL, id, manifest);
+        discardStage(stage);
+        Files.deleteIfExists(original);
+        FsBackupFiles.forceDirectory(live);
+        forceParent();
+    }
+
+    private static void discardStage(Path stage) throws IOException {
+        if (Files.exists(stage, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(stage, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException(INVALID_ROOT_LAYOUT);
+            }
+            FsBackupFiles.deleteTree(stage);
+        }
+    }
+
+    private static void requireOptionalMarker(Path path, String role, String id, String manifest) throws IOException {
+        if (Files.exists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            requireBytes(path, ("1\n" + role + "\n" + id + "\n" + manifest + "\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        }
+    }
+
+    /** Called only during cold open, before any preparation can be admitted. */
+    private void cleanupAbandonedPreparation() throws IOException {
+        Path directory = control.resolve("work");
+        if (!Files.exists(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        if (!Files.isDirectory(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException(INVALID_ROOT_LAYOUT);
+        }
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString();
+                if (!(name.startsWith(".verification-") || name.startsWith(".baseline-"))
+                        || !Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("RESTORE_WORKSPACE_INVALID");
+                }
+                FsBackupFiles.deleteTree(entry);
+            }
+        }
+        FsBackupFiles.forceDirectory(directory);
+    }
+
+    private Journal prepareJournal(BackupPreparation prepared, Path baseline, PkiId restoreId) throws IOException {
         if (uncertain || journal != null && journal.state() != State.COMPLETE && journal.state() != State.ROLLED_BACK) {
             throw new IOException("RESTORE_ALREADY_STAGED");
         }
         FsRestoreSafety.requireCompatible(baseline, prepared.directory(), limits);
         FsRestoreInventory.validate(live, limits);
-        String id = UUID.randomUUID().toString();
+        String id = restoreId.value();
+        if (!UUID.fromString(id).toString().equals(id)) {
+            throw new IllegalArgumentException("Restore identifier must be a canonical UUID");
+        }
+        requireUnusedRestoreId(id);
         Path stage = parent.resolve("." + live.getFileName() + ".restore-stage-" + id);
         Path rollback = parent.resolve("." + live.getFileName() + ".restore-old-" + id);
         String inventory = inventory(prepared.directory());
@@ -178,19 +274,25 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                 stage.getFileName().toString(), rollback.getFileName().toString(), State.PREPARED);
         // Validate representation before creating durable intent or moving any root.
         encode(next);
-        atomicMove(prepared.directory(), stage);
-        lockRoot(stage);
-        writeMarker(stage, TEXT_CANDIDATE, next);
-        writeMarker(live, TEXT_ORIGINAL, next);
-        forceParent();
-        publish(next);
-        return status().orElseThrow();
+        return next;
+    }
+
+    private void requireUnusedRestoreId(String id) throws IOException {
+        if (journal != null && journal.id().equals(id)
+                || Files.exists(parent.resolve("." + live.getFileName() + ".restore-stage-" + id))
+                || Files.exists(parent.resolve("." + live.getFileName() + ".restore-old-" + id))
+                || Files.exists(parent.resolve("." + live.getFileName() + ".restore-failed-" + id))
+                || Files.exists(control.resolve(ROLLBACK_PREFIX + id))
+                || Files.exists(control.resolve("recovery-" + id))
+                || Files.exists(live.resolve(MARKER + id))) {
+            throw new IOException("RESTORE_IDENTIFIER_ALREADY_USED");
+        }
     }
 
     private void reconcile(FsPkiStoreOptions options, Clock clock) throws IOException {
         if (journal == null) { return; }
         if (journal.state() == State.COMPLETE || journal.state() == State.ROLLED_BACK) {
-            if (!Files.isDirectory(live)) { throw new IOException("RESTORE_ROOT_LAYOUT_INVALID"); }
+            if (!Files.isDirectory(live)) { throw new IOException(INVALID_ROOT_LAYOUT); }
             lockRoot(live);
             requireMarker(live, journal.state() == State.COMPLETE ? TEXT_CANDIDATE : TEXT_ORIGINAL);
             return;
@@ -201,7 +303,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         for (Path root : List.of(live, stage, old, failed)) {
             if (Files.exists(root)) { lockRoot(root); }
         }
-        if (Files.exists(control.resolve("rollback-" + journal.id()))) {
+        if (Files.exists(control.resolve(ROLLBACK_PREFIX + journal.id()))) {
             rollback();
             return;
         }
@@ -232,7 +334,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
             observe(Phase.AFTER_LIVE_MOVE);
             forceParent();
         } else if (Files.exists(live) || !Files.exists(old)) {
-            throw new IOException("RESTORE_ROOT_LAYOUT_INVALID");
+            throw new IOException(INVALID_ROOT_LAYOUT);
         }
         requireMarker(old, TEXT_ORIGINAL);
         // A rename observed after a crash may never have reached its parent's durable boundary.
@@ -244,7 +346,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     private boolean promoteStaging(Path stage, Path old) throws IOException {
         requireMarker(old, TEXT_ORIGINAL);
         if (Files.exists(live)) {
-            if (!Files.exists(live) || Files.exists(stage)) { throw new IOException("RESTORE_ROOT_LAYOUT_INVALID"); }
+            if (!Files.exists(live) || Files.exists(stage)) { throw new IOException(INVALID_ROOT_LAYOUT); }
         } else {
             try {
                 requireMarker(stage, TEXT_CANDIDATE);
@@ -255,7 +357,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                 observe(Phase.AFTER_PROMOTION);
                 forceParent();
             } catch (IOException | RuntimeException rejected) { // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.
-                durable(control.resolve("rollback-" + journal.id()), marker("rollback", journal));
+                durable(control.resolve(ROLLBACK_PREFIX + journal.id()), marker("rollback", journal));
                 rollback();
                 return false;
             }
@@ -290,7 +392,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
             forceParent();
             publish(journal.next(State.NEW_ROOT_VERIFIED));
         } catch (IOException | RuntimeException rejected) { // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.
-            durable(control.resolve("rollback-" + journal.id()), marker("rollback", journal));
+            durable(control.resolve(ROLLBACK_PREFIX + journal.id()), marker("rollback", journal));
             rollback();
             return false;
         }
@@ -298,7 +400,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     private void rollback() throws IOException {
-        requireBytes(control.resolve("rollback-" + journal.id()), marker("rollback", journal));
+        requireBytes(control.resolve(ROLLBACK_PREFIX + journal.id()), marker("rollback", journal));
         Path old = parent.resolve(journal.rollback());
         Path failed = failed();
         observe(Phase.BEFORE_ROLLBACK);
@@ -319,7 +421,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     private void moveFailedCandidate(Path failed) throws IOException {
         if (Files.exists(live)) {
             requireMarker(live, TEXT_CANDIDATE);
-            if (Files.exists(failed)) { throw new IOException("RESTORE_ROOT_LAYOUT_INVALID"); }
+            if (Files.exists(failed)) { throw new IOException(INVALID_ROOT_LAYOUT); }
             atomicMove(live, failed);
             forceParent();
         }
@@ -328,7 +430,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     private Path failed() { return parent.resolve("." + live.getFileName() + ".restore-failed-" + journal.id()); }
 
     private void atomicMove(Path from, Path to) throws IOException {
-        if (Files.exists(to)) { throw new IOException("RESTORE_ROOT_LAYOUT_INVALID"); }
+        if (Files.exists(to)) { throw new IOException(INVALID_ROOT_LAYOUT); }
         observe(Phase.BEFORE_ATOMIC_MOVE);
         Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
         FilesystemPkiStore.StoreOwnership owner = roots.remove(from); // NOPMD CloseResource - Ownership is transferred to the enclosing lifecycle and its explicit close/stream completion; not a local resource.

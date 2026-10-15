@@ -137,6 +137,26 @@ class RevocationExecutionEvidenceTest {
                 () -> RevocationExecutionEvidence.decode(validWithUnknownVersion));
     }
 
+    @Test
+    void cmpSignatureEvidencePreservesScopedAuthorizationAndCannotImpersonateAdministrator() {
+        for (RevocationExecutionEvidence.Authorization authorization : List.of(
+                RevocationExecutionEvidence.Authorization.CMP_CERTIFICATE_HOLDER, RevocationExecutionEvidence.Authorization.CMP_AUTHORIZED_RA)) {
+            RevocationExecutionEvidence evidence = RevocationExecutionEvidence.cmp("a".repeat(64), "realm", "cmp:request", authorization, "b".repeat(64));
+            assertEquals(evidence, RevocationExecutionEvidence.decode(evidence.attributes()).orElseThrow());
+            assertEquals(RevocationExecutionEvidence.ActorType.CMP_SIGNER, evidence.actorType());
+            assertFalse(evidence.authorizationPath().isPresent());
+        }
+        assertThrows(IllegalArgumentException.class, () -> RevocationExecutionEvidence.administrative("admin", "realm", "request",
+                RevocationExecutionEvidence.Authentication.CMP_SIGNATURE, RevocationExecutionEvidence.AuthorizationPath.ORDINARY_GRANT,
+                "a".repeat(64), Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> RevocationExecutionEvidence.cmp("a".repeat(64), "realm", "request",
+                RevocationExecutionEvidence.Authorization.ALLOWED, "b".repeat(64)));
+        assertThrows(IllegalArgumentException.class, () -> new RevocationExecutionEvidence(RevocationExecutionEvidence.ActorType.CMP_SIGNER,
+                "a".repeat(64), "realm", "request", RevocationExecutionEvidence.Authentication.DIRECT_MTLS,
+                RevocationExecutionEvidence.Authorization.CMP_CERTIFICATE_HOLDER, Optional.empty(), Optional.of("b".repeat(64)),
+                Optional.empty(), RevocationExecutionEvidence.Outcome.COMMITTED));
+    }
+
     private static String string(RevocationExecutionEvidence evidence, AttributeId id) {
         return ((AttributeValue.StringValue) evidence.attributes().get(id).orElseThrow()).value();
     }

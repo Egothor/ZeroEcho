@@ -159,6 +159,56 @@ You can also generate a CSR natively with `Pkix.certificationRequestBuilder()`,
 which mirrors the certificate builder: set `subject(...)` and `publicKey(...)`,
 optionally request extensions, and finish with `build(ContentSigner)`.
 
+### Typed CRMF requests
+
+`zeroecho.pkix.cmp.CrmfRequest.parse(byte[])` provides a bounded structural view
+of one DER CRMF `CertReqMsg`. It retains the exact request, signed `CertRequest`,
+request identifier, subject, public key, extensions and signature. Parsing does
+not assert proof validity or authorize issuance.
+
+The supported form contains the subject and public key in `CertRequest` and uses
+signing-key proof without `poposkInput`. Unsupported proof forms, controls,
+registration information and template fields are rejected. The parser does not
+convert CRMF into PKCS#10 or generate a replacement key.
+
+The PKI layer accepts `X509EnrollmentPayload` with an explicit `PKCS10` or `CRMF`
+kind. `CertificationRequestService.parseX509` and `encodedX509Request` preserve
+that kind and the exact DER through storage. Issuance independently verifies the
+requested key's proof against the configured algorithm and certificate-profile
+policy. The older `encodedRequest` and `EndEntityIssuanceRequest.csrDer()` accessors
+are specifically PKCS#10 and reject CRMF input.
+
+`CertificationRequestService.requireProfileProof` checks the original proof and
+its CSR-signature algorithm binding against an exact imported certificate-profile
+version and commitment. It reparses the retained payload and performs no writes,
+serial allocation or signing preparation. Success does not authorize issuance or
+replace the separate subject, issuer and validity checks.
+
+Protocol renewals carry the original typed request in
+`CorrelatedEndEntityRenewalRequest`. The core checks its identity against the stored
+predecessor and applies the frozen proof policy; the renewal correlation includes
+the request kind and exact DER. Reconstruction-only domain renewals may omit that
+payload because they do not consume a new protocol request.
+
+Key changes use `EndEntityReplacementRequest` with an explicitly typed original
+payload. `CorrelatedEndEntityReplacementRequest` additionally binds the
+predecessor's DER commitment and the frozen issuance intent so that retries can
+recover the same replacement operation. This follows replacement policy, including
+the restrictions on reusing a held or revoked predecessor's key; it does not turn
+key replacement into unchanged-key renewal. The PKCS#10 convenience constructor
+and `csrDer()` accessor remain specific to PKCS#10; use `payload()` for CRMF.
+
+### EST server-generated key packages
+
+`zeroecho.pkix.EstKeygen` validates the required encryption attributes of an EST
+CSR template and binds the requested recipient to the authenticated certificate.
+The template's public-key and signature values do not prove possession; the
+generated CSR is separately verified against the frozen issuance profile.
+`signedEncryptedPackage` packages one key using RFC 5958, signs with the supplied
+generator identity, and encrypts the signed content for the recipient. The caller
+owns authentication, generator trust/validity and the lifecycle of its input key
+buffer. No BouncyCastle types cross this facade.
+
 ### Signing and verifying content
 
 `ContentSigner` and `ContentVerifier` are minimal, toolkit-independent, streaming

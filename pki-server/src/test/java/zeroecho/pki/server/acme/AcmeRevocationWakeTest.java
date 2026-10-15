@@ -131,12 +131,12 @@ final class AcmeRevocationWakeTest {
         when(control.page(AcmeState.Directory.class, 0, 256))
                 .thenReturn(new ServerControlStore.Page<>(List.of(), 0, false));
         AcmeState.Account account = new AcmeState.Account(ACCOUNT_ID, "directory:test", 1,
-                directoryPolicyCommitment, "5".repeat(64), new byte[32], AcmeState.AccountStatus.VALID,
+                directoryPolicyCommitment, "5".repeat(64), java.util.HexFormat.of().parseHex("3059301306072a8648ce3d020106082a8648ce3d030107034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"), AcmeState.AccountStatus.VALID,
                 List.of(), true, Optional.empty(), Instant.parse("2026-08-20T00:00:00Z"),
                 Instant.parse("2026-08-20T00:00:00Z"), ACCOUNT_COMMITMENT);
         when(control.get(AcmeState.Account.class, ACCOUNT_ID)).thenReturn(Optional.of(account));
         AcmeState.Directory directory = new AcmeState.Directory("directory:test", "test", 1,
-                new RealmId("realm-test"), authorityId, profile, issuerId, pathId, pathCommitment,
+                new RealmId("realm-test"), authorityId, profile, "acme-enrollment", issuerId, pathId, pathCommitment,
                 Set.of(AcmeState.IdentifierType.DNS), Set.of("example.test"), Duration.ofDays(30),
                 Set.of("RSA"), Set.of("STANDARD_ONLY"), Set.of(AcmeState.ChallengeType.HTTP_01),
                 Set.of("http"), Optional.empty(), false, confirmationPolicy,

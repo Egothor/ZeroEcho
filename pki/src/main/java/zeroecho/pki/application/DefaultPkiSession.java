@@ -103,6 +103,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
     private final PkiResourceScopeResolver resourceScopes;
     private final PkiOperationExecutor operations;
     private final PkiRepository repository;
+    private final zeroecho.pki.api.credential.EffectiveCredentialStatusResolver credentialStatuses;
     private final Optional<PkiSigningCommands> signingCommands;
     private final AtomicReference<Lifecycle> lifecycle;
     private final Optional<LocalSigningExecutor> localSigning;
@@ -130,6 +131,22 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
         this.resourceScopes = new DefaultPkiResourceScopeResolver(store, this::requireOpen);
         this.repository = new DefaultPkiRepository(store, this::requireOpen);
+        zeroecho.pki.api.credential.EffectiveCredentialStatusResolver statusDelegate =
+                new zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver(store, clock);
+        this.credentialStatuses = () -> {
+            requireOpen();
+            zeroecho.pki.api.credential.EffectiveCredentialStatusResolver.Evaluation evaluation = statusDelegate.beginEvaluation();
+            return new zeroecho.pki.api.credential.EffectiveCredentialStatusResolver.Evaluation() {
+                @Override public java.time.Instant evaluationTime() { requireOpen(); return evaluation.evaluationTime(); }
+                @Override public zeroecho.pki.api.credential.EffectiveCredentialStatus resolve(zeroecho.pki.api.credential.Credential credential) {
+                    requireOpen(); return evaluation.resolve(credential);
+                }
+                @Override public zeroecho.pki.api.credential.Credential requireUsable(zeroecho.pki.api.credential.Credential credential,
+                        zeroecho.pki.api.credential.CredentialUse use) {
+                    requireOpen(); return evaluation.requireUsable(credential, use);
+                }
+            };
+        };
         this.signingCommands = signingGraph.semanticService()
                 .map(service -> new DefaultPkiSigningCommands(service, repository, requests, this::requireOpen));
         DefaultPkiConfigurationChoices choices = new DefaultPkiConfigurationChoices(configuredKeys, store,
@@ -198,7 +215,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             ProfileService profiles = new DefaultProfileService(store, exactClock, audit, bindings.registry(),
                     false, Optional.empty(), Optional.empty(), Optional.empty());
             RevocationService revocations = new DefaultRevocationService(store, exactClock, audit);
-            graph = composeGraph(exact.publishers(), store, exactClock, exactBootstrap, authority, verification);
+            graph = composeGraph(exact.publishers(), store, exactClock, exactBootstrap, authority, verification, bindings.registry());
             signingGraph = composeSigning(exact, runtime, store, exactBootstrap, exactClock,
                     authority, verification, bindings);
             DefaultPkiSession session = new DefaultPkiSession(new DefaultPkiOperationExecutor.ConfigurationSummary(
@@ -258,7 +275,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             ProfileService profiles = new DefaultProfileService(store, exactClock, audit, bindings.registry(),
                     false, Optional.empty(), Optional.empty(), Optional.empty());
             RevocationService revocations = new DefaultRevocationService(store, exactClock, audit);
-            graph = composeGraph(exact.publishers(), store, exactClock, exactBootstrap, authority, verification);
+            graph = composeGraph(exact.publishers(), store, exactClock, exactBootstrap, authority, verification, bindings.registry());
             signingGraph = composeLocalSigning(exact.signing(), runtime, store, exactBootstrap, exactClock,
                     authority, verification, bindings, requireOpen);
             SigningOuterTerminalDriver driver = exact.signing().isEmpty() ? null : new SigningOuterTerminalDriver(
@@ -415,11 +432,11 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private static ServiceGraph composeGraph(List<ProviderConfig> publishers, PkiStore store, Clock clock,
-            Bootstrap bootstrap, X509AuthoritySnapshot authority, BcX509VerificationExecutor verification) {
+            Bootstrap bootstrap, X509AuthoritySnapshot authority, BcX509VerificationExecutor verification, X509AlgorithmBindingRegistry bindings) {
         Optional<PublicationService> publications = Optional.empty();
         try {
             CertificationRequestService requests = new DefaultCertificationRequestService(store,
-                    new BcX509CredentialFramework(authority, verification));
+                    new BcX509CredentialFramework(authority, verification), bindings);
             List<Publisher> configuredPublishers = new ArrayList<>();
             for (ProviderConfig publisher : publishers) {
                 configuredPublishers.add(bootstrap.openPublisher(publisher));
@@ -591,6 +608,11 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
     public PkiRepository repository() {
         requireOpen();
         return repository;
+    }
+
+    @Override
+    public zeroecho.pki.api.credential.EffectiveCredentialStatusResolver credentialStatuses() {
+        requireOpen(); return credentialStatuses;
     }
 
     @Override

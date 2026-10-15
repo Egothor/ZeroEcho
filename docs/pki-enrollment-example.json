@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "budgets": {
+    "maximumTransactions": 10000,
+    "maximumPending": 1000,
+    "maximumRetainedRequestBytes": 134217728,
+    "maximumRequestBytes": 1048576,
+    "maximumConcurrentDispatches": 4,
+    "pendingLifetimeSeconds": 86400,
+    "retryAfterSeconds": 30
+  },
+  "keyrings": [
+    {
+      "id": "scep-keys",
+      "path": "/var/lib/zeroecho/protocol-keys/scep.keyring"
+    }
+  ],
+  "credentialSets": [
+    {
+      "credentialId": "scep-example-v1",
+      "protocol": "SCEP",
+      "authorityId": "authority-example",
+      "issuerId": "issuer-example",
+      "chainPathId": "chain-example",
+      "signer": {
+        "key": {
+          "keyringId": "scep-keys",
+          "alias": "scep-ra"
+        },
+        "certificateChain": [
+          "/etc/zeroecho/protocols/scep-ra.der",
+          "/etc/zeroecho/protocols/issuing-ca.der"
+        ]
+      },
+      "requestTrustAnchors": [],
+      "authorizedRaKeys": []
+    }
+  ],
+  "activeCredentials": [
+    {
+      "protocol": "SCEP",
+      "authorityId": "authority-example",
+      "credentialId": "scep-example-v1"
+    }
+  ]
+}

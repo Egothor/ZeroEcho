@@ -16,14 +16,101 @@ locks, incomplete content, derived indexes and unrelated files. It does not insp
 opaque accepted domain payloads for embedded secrets. Back up private keys,
 external CT journals and server-owned configuration/audit state separately.
 
+The optional embedded SQL credential-search database is one such derived index.
+It is excluded from logical backups and rebuilt from recovered PKI records when
+an enabled store opens. Preserve the deployment's search configuration separately
+and allow time and disk space for rebuilding after restore.
+
+EST server-keygen delivery ciphertext is also outside the logical PKI backup.
+Preserve its configured artifact directory together with the corresponding
+server-control state and enrollment credential keyrings during an offline backup
+and recovery. Pending delivery cannot be reconstructed by generating another key;
+missing ciphertext that is still required for retained delivery causes recovery
+to fail. Expired, released replay records do not require deleted ciphertext.
+
 Use `BackupService.createBackupSource` or `PkiStore.createBackupSource` for the
 file-backed API and close the returned source after consuming its repeatable
 streams. `verifyBackupSource` checks the complete manifest, every entry and normal
 offline store recovery. `prepareBackup` returns close-owned verified staging; it
 does not activate it. The existing byte-array API is limited to 2 MiB by default.
-Large artifacts remain on disk. HTTP streaming and complete frontend backup
-workflows are deferred without a scheduled implementation date; the local APIs
-do not imply those remote capabilities.
+Large artifacts remain on disk. The separately enabled HTTP streaming workflow
+below uses the same verification and cold activation rules. The legacy
+`backup.restore` identity remains disabled; the new operation is
+`backup.stream.restore`.
+
+## Opt-in HTTP transfer
+
+Remote transfer is disabled unless the server is started with
+`--backup-transfer-config /path/to/transfer.json`. The separate version-1
+document preserves the main server schema (version 8).
+Start from the repository example `docs/pki-backup-transfer-example.json`
+and choose every value for the deployment. In the packaged server, set
+`ZEROECHO_BACKUP_TRANSFER_CONFIG` to the mounted configuration file.
+
+Provision the artifact directory durably with owner-only access before startup.
+It must be exclusively used by this service, outside the PKI root, and preserved
+across restart. Server control, audit and signing-keyring paths must also be
+outside the replaceable PKI root and artifact directory. Overlapping storage is
+rejected. Storage must support atomic replacement and directory fsync.
+
+The example permits 64 MiB archives, 256 MiB retained archive bytes, eight
+descriptors and two concurrent jobs. Each verification/restore job reserves the
+archive maximum plus two 4 GiB expanded trees. Workspace reservation is admission
+accounting, **not** an OS disk quota: provision additional recovery/index headroom
+and filesystem limits. The source archive remains charged to retained storage
+until closed. Artifact lifetime is one hour; each binary transfer has a
+five-minute deadline. All budgets are mandatory.
+
+Use **Backup and restore** in the administration console:
+
+1. Create an export; retain its backup identifier and SHA-256.
+2. Download it once. An interrupted download consumes its handle; create a new
+   export. The browser streams the attachment to its download destination.
+3. Select an archive and enter its backup identifier. The browser hashes fixed
+   64 KiB blocks, reserves an upload and sends the file without Base64 encoding.
+4. Verify the uploaded archive on the server. Independently establish provenance;
+   integrity verification does not authenticate its origin.
+5. Stage restoration. Request approval, obtain an independent decision, then
+   retry with the approval identifier.
+6. Preserve the displayed restore workflow identifier. Restart the server through
+   the normal operational procedure and inspect the outcome. Only `ACTIVATED`
+   acknowledges activation. Acknowledge `ACTIVATED` or `REJECTED` after review.
+
+`UNCERTAIN` requires reconciliation after restart. Never infer rejection from
+a timeout or blindly retry restoration. The server persists exact manifest and
+restore identities. A provably unpublished attempt is cleaned by the domain
+coordinator before becoming `REJECTED`. Unresolved outcomes keep their metadata
+quota until acknowledged, even after the archive expires.
+
+Every action requires authentication, permissions and applicable approval policy.
+Handles are principal/realm-bound and grant no authority on their own. Restore
+always requires high-risk approval. Browser POSTs must have the exact configured
+origin. Nonbrowser clients without `Origin` must send `X-ZeroEcho-Transfer: 1`.
+Handles belong in request bodies or headers, never URLs.
+
+Binary routes are `POST /admin/v1/backup/upload` (`application/zip`,
+`X-ZeroEcho-Artifact`, optional `X-ZeroEcho-Approval`) and
+`POST /admin/v1/backup/download` (URL-encoded `artifactHandle`, optional
+`approvalId`). Other steps use the generated `backup.stream.*` catalog.
+The remote CLI supports those JSON workflow steps, but has no binary file
+transport. Direct CLI upload/download attempts fail locally with
+`BACKUP_BINARY_ROUTE_USE_WEB_CONSOLE_OR_HTTP`, before opening a connection;
+use the console or these HTTP routes for archive bytes.
+Download responses declare exact length, so truncated bodies fail.
+nginx disables request/response buffering for these routes and retains
+authenticated certificate forwarding.
+
+Cancellation closes network streams; domain work retains quotas until it returns.
+Failed, consumed and expired artifacts are cleaned on startup and subsequent
+admission/status/download cleanup. Expiry prevents new use immediately; active
+leases pin their files. Legacy JSON verification is capped at 2 MiB decoded
+archive data and reports `BACKUP_LEGACY_LIMIT_USE_STREAMING` above that bound.
+The ordinary HTTP body limit may reject the request earlier. The existing JSON
+value limit (21,846 characters, about 16 KiB of Base64 archive data) is also
+preserved. Direct legacy backup requests report `BACKUP_LEGACY_LIMIT_USE_STREAMING`
+when that parser bound is exceeded; unrelated and approval-envelope parse failures
+retain their existing generic validation response. Legacy export uses the same
+backup-specific code above 2 MiB.
 
 ## Local staged restoration
 
@@ -46,6 +133,13 @@ safe. Writes after staging are checked again at cold activation. A historical
 backup therefore normally cannot replace a PKI that has issued, revoked or
 advanced durable workflow state since that backup. Carry-forward merging is not
 implemented. Authentication of the archive remains the operator's responsibility.
+
+The comparison also includes immutable certification requests in
+`requests/by-id`. A backup predating an imported request is rejected even when
+that request has not yet been issued or referenced by an enrollment transaction.
+Importing a request after staging can likewise prevent cold activation. This
+conservative rule preserves enrollment inputs held outside the server-control
+records; it does not merge newer requests into an older backup.
 
 The store parent must be writable on the same filesystem as the store and support
 atomic directory moves and directory fsync. The live root must be a normal child

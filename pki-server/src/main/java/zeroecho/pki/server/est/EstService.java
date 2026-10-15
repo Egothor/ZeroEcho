@@ -36,7 +36,6 @@ package zeroecho.pki.server.est;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -45,33 +44,27 @@ import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
-import javax.security.auth.x500.X500Principal;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.CertificationRequestException;
 import zeroecho.pkix.Pkix;
+import zeroecho.pki.server.enrollment.EnrollmentCoordinator;
+import zeroecho.pki.server.enrollment.EnrollmentTransaction;
+import zeroecho.pki.server.enrollment.EnrollmentIdentityAliases;
+import zeroecho.pki.server.CertificateIdentityEvidence;
+import zeroecho.pki.application.IssuanceExecutionEvidence;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pkix.csr.CertificationRequest;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.SemanticSigningService;
-import zeroecho.pki.api.audit.AccessContext;
-import zeroecho.pki.api.audit.Principal;
-import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.IssuerChainPath;
-import zeroecho.pki.api.issuance.EndEntityIssuanceRequest;
-import zeroecho.pki.api.issuance.EndEntityRenewalRequest;
-import zeroecho.pki.api.signing.PreparedSemanticSigningRequest;
-import zeroecho.pki.api.signing.SemanticSigningOperation;
-import zeroecho.pki.api.signing.SigningAcceptanceDisposition;
-import zeroecho.pki.api.signing.SigningAcceptanceResult;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiRepositoryContent;
 import zeroecho.pki.server.ServerRealmContext;
@@ -83,13 +76,14 @@ import zeroecho.pki.server.ServerRealmContext;
  * No BouncyCastle imports are present; all CMS/cryptographic codec operations
  * are delegated to {@link EstCmsCodec} (which delegates to {@link Pkix}).</p>
  *
- * <p>Endpoint registration is thread-safe via {@link ConcurrentHashMap}; operation
+ * <p>Endpoint registration uses the durable realm registry; operation
  * methods are stateless with respect to the endpoint registry and safe to call concurrently.</p>
  *
  * @since 1.0
  */
-@SuppressWarnings("PMD.AvoidCatchingGenericException")
-public final class EstService {
+public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST protocol lifecycle complexity across the five shared realm/endpoint operations; individual methods remain checked.
+    private static final String SUBJECT_ALT_NAME_OID = "2.5.29.17"; // NOPMD AvoidUsingHardCodedIP - Standard X.509 subjectAltName OID, not an IP address.
+    private static final int MAX_CHAIN_CERTIFICATE_BYTES = 1_048_576;
     private static final String TEXT_ENDPOINT = "endpoint";
 
 
@@ -102,13 +96,9 @@ public final class EstService {
     private static final String EC_P256 = "secp256r1";
     /** Default RSA key size in bits when not otherwise constrained by policy. */
     private static final int RSA_DEFAULT_BITS = 2048;
-    /** Maximum wait for signing completion before returning 503. */
-    private static final long SIGNING_POLL_TIMEOUT_MS = 60_000L;
-    /** Interval between signing-completion polls. */
-    private static final long SIGNING_POLL_INTERVAL_MS = 100L;
 
     private final ServerRealmContext realm;
-    private final ConcurrentMap<String, EstEndpoint> endpoints = new ConcurrentHashMap<>();
+    private final zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry endpoints;
 
     /**
      * Creates an EST service over the given realm.
@@ -117,6 +107,7 @@ public final class EstService {
      */
     public EstService(ServerRealmContext realm) {
         this.realm = Objects.requireNonNull(realm, "realm");
+        this.endpoints = Objects.requireNonNull(realm.enrollmentEndpoints(), "enrollmentEndpoints");
     }
 
     // -------------------------------------------------------------------------
@@ -130,7 +121,7 @@ public final class EstService {
      */
     public void register(EstEndpoint endpoint) {
         Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
-        endpoints.put(endpoint.label(), endpoint);
+        endpoints.register(endpoint);
     }
 
     /**
@@ -140,7 +131,8 @@ public final class EstService {
      * @return the removed endpoint, or empty if absent
      */
     public Optional<EstEndpoint> deregister(String label) {
-        return Optional.ofNullable(endpoints.remove(Objects.requireNonNull(label, "label")));
+        return endpoints.deregister(zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.Protocol.EST, label)
+                .map(value -> (EstEndpoint) value);
     }
 
     /**
@@ -150,16 +142,19 @@ public final class EstService {
      * @return the endpoint, or empty when not registered
      */
     public Optional<EstEndpoint> find(String label) {
-        return Optional.ofNullable(endpoints.get(Objects.requireNonNull(label, "label")));
+        return endpoints.find(zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.Protocol.EST, label)
+                .map(value -> (EstEndpoint) value);
     }
 
     /**
-     * Returns an immutable snapshot of all registered endpoints.
+     * Collects active endpoints in deterministic store-key order. Concurrent
+     * changes across persistence pages need not form one atomic snapshot.
      *
      * @return current endpoint list
      */
     public List<EstEndpoint> list() {
-        return List.copyOf(endpoints.values());
+        return endpoints.list(zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.Protocol.EST)
+                .stream().map(value -> (EstEndpoint) value).toList();
     }
 
     // -------------------------------------------------------------------------
@@ -181,56 +176,148 @@ public final class EstService {
 
     /**
      * Performs EST {@code simpleenroll} (RFC 7030 section 4.2): verifies the client CSR,
-     * issues a certificate, and returns the issued certificate + chain as MIME-base64-encoded
-     * CMS certs-only.
+     * durably admits the request and returns its current approval or issuance outcome.
+     * Completed results contain MIME-base64 CMS certificates and the frozen issuer chain.
      *
      * @param endpoint   the EST endpoint
-     * @param csrBody    raw PKCS#10 CSR bytes (DER or PEM); self-signature must be valid
+     * @param csrBody    PKCS#10 DER, PEM, or RFC 7030 base64; self-signature must be valid
      * @param clientCert authenticated mTLS client certificate
-     * @return MIME-base64-encoded CMS certs-only DER
-     * @throws EstProtocolException if the CSR is invalid, issuance fails, or times out
+     * @return completed CMS response, pending approval/signing response, or terminal rejection
+     * @throws EstProtocolException if input validation or durable admission is unavailable
      */
-    public byte[] simpleenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert)
+    public EnrollmentResult simpleenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert)
             throws EstProtocolException {
         Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
         Objects.requireNonNull(csrBody, "csrBody");
         Objects.requireNonNull(clientCert, "clientCert");
 
-        byte[] csrDer = requireValidCsr(csrBody);
-        AccessContext access = estAccess(clientCert, "EST_SIMPLEENROLL", endpoint);
-        EndEntityIssuanceRequest request = new EndEntityIssuanceRequest(
-                new PkiId(endpoint.authorityId()), csrDer, endpoint.profileId(), Optional.empty());
-        return issueAndEncode(access, request, endpoint);
+        return simpleenroll(endpoint, csrBody, clientCert, CancellationSignal.NONE);
+    }
+
+    /**
+     * Admits or continues enrollment with cancellation before the durable signing claim.
+     * @param endpoint exact endpoint
+     * @param csrBody bounded original PKCS#10 DER, PEM, or base64
+     * @param clientCert verified TLS end-client certificate
+     * @param cancellation transport cancellation signal
+     * @return durable response outcome
+     * @throws EstProtocolException if validation or admission fails
+     */
+    public EnrollmentResult simpleenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert,
+            CancellationSignal cancellation) throws EstProtocolException {
+        return enroll(endpoint, csrBody, clientCert, EnrollmentTransaction.Operation.ISSUE, cancellation);
     }
 
     /**
      * Performs EST {@code simplereenroll} (RFC 7030 section 4.2.2): renews the client's
-     * certificate using the current logical profile, returning the renewed certificate chain
-     * as MIME-base64-encoded CMS certs-only.
+     * certificate after proving the authoritative predecessor identity and satisfying
+     * the frozen approval and proof policy. Repeated identical requests retain one operation.
      *
      * @param endpoint   the EST endpoint
-     * @param csrBody    renewal PKCS#10 CSR bytes (DER or PEM); self-signature must be valid
+     * @param csrBody    renewal PKCS#10 DER, PEM, or base64; self-signature must be valid
      * @param clientCert authenticated mTLS client certificate (the predecessor)
-     * @return MIME-base64-encoded CMS certs-only DER
-     * @throws EstProtocolException if renewal fails or times out
+     * @return completed CMS response, pending approval/signing response, or terminal rejection
+     * @throws EstProtocolException if identity validation or durable admission is unavailable
      */
-    public byte[] simplereenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert)
+    public EnrollmentResult simplereenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert)
             throws EstProtocolException {
         Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
         Objects.requireNonNull(csrBody, "csrBody");
         Objects.requireNonNull(clientCert, "clientCert");
 
-        requireValidCsr(csrBody);
-        AccessContext access = estAccess(clientCert, "EST_SIMPLEREENROLL", endpoint);
-        PkiId existingCredentialId = credentialIdFor(clientCert);
-        EndEntityRenewalRequest request = new EndEntityRenewalRequest(existingCredentialId, Optional.empty());
+        return simplereenroll(endpoint, csrBody, clientCert, CancellationSignal.NONE);
+    }
 
-        SemanticSigningService signing = requireSigning("renewal");
-        PreparedSemanticSigningRequest prepared = signing.prepareRenewal(
-                access, request, Optional.empty(), CancellationSignal.NONE);
-        SigningAcceptanceResult accepted = acceptOrThrow(signing, prepared, "renewal");
-        SemanticSigningOperation completed = pollForCompletion(signing, accepted.receipt().operationId());
-        return EstCmsCodec.encodeCertsOnly(buildIssuedChain(completed, new PkiId(endpoint.authorityId())));
+    /**
+     * Admits or continues exact-identity renewal with pre-claim cancellation.
+     * @param endpoint exact endpoint
+     * @param csrBody bounded original PKCS#10 DER, PEM, or base64
+     * @param clientCert verified TLS predecessor certificate
+     * @param cancellation transport cancellation signal
+     * @return durable response outcome
+     * @throws EstProtocolException if validation or admission fails
+     */
+    public EnrollmentResult simplereenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert,
+            CancellationSignal cancellation) throws EstProtocolException {
+        return enroll(endpoint, csrBody, clientCert, EnrollmentTransaction.Operation.RENEW, cancellation);
+    }
+
+    /**
+     * Immutable EST enrollment response. Pending work carries an explicit retry
+     * interval; terminal responses never masquerade as pending approval.
+     * @param status HTTP response status
+     * @param body completed MIME-base64 CMS or empty for non-success responses
+     * @param retryAfterSeconds positive interval only for HTTP 202
+     */
+    public record EnrollmentResult(int status, byte[] body, Optional<Long> retryAfterSeconds) {
+        /** Validates response state and defensively copies the response body. */
+        public EnrollmentResult {
+            body = Objects.requireNonNull(body, "body").clone();
+            Objects.requireNonNull(retryAfterSeconds, "retryAfterSeconds");
+            if (status != 200 && status != 202 && status != 403 && status != 410 && status != 500
+                    || status == 202 != retryAfterSeconds.isPresent() || retryAfterSeconds.filter(value -> value < 1).isPresent()
+                    || status != 200 && body.length != 0) {
+                throw new IllegalArgumentException("Invalid EST enrollment result");
+            }
+        }
+        /**
+         * Returns a defensive copy.
+         * @return independently owned response bytes
+         */
+        @Override public byte[] body() { return body.clone(); }
+        /** @return response status without body content */
+        @Override public String toString() { return "EnrollmentResult[status=" + status + "]"; }
+    }
+
+    private EnrollmentResult enroll(EstEndpoint endpoint, byte[] body, X509Certificate certificate, EnrollmentTransaction.Operation operation,
+            CancellationSignal cancellation)
+            throws EstProtocolException {
+        Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
+        Objects.requireNonNull(certificate, "clientCert");
+        Objects.requireNonNull(cancellation, "cancellation");
+        try {
+            byte[] original = requireValidCsr(body);
+            CertificateIdentityEvidence evidence = CertificateIdentityEvidence.fromCertificate(realm.configuration().realmId(), certificate);
+            EnrollmentTransaction.Requester requester = new EnrollmentTransaction.Requester(IssuanceExecutionEvidence.ActorType.EST_CLIENT,
+                    evidence.certificateSha256(), IssuanceExecutionEvidence.Authentication.EST_MTLS, Optional.of(evidence),
+                    Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(),
+                    new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), java.util.Set.of()));
+            EnrollmentCoordinator coordinator = realm.enrollmentCoordinator().orElseThrow(() -> new IllegalStateException("Enrollment unavailable")); // NOPMD CloseResource - Borrowed realm coordinator; the realm owns its shutdown.
+            EnrollmentTransaction value = coordinator.admit(new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, endpoint.label(), requester,
+                    HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(original)), operation,
+                    new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, original), Optional.empty(),
+                    operation == EnrollmentTransaction.Operation.RENEW ? Optional.of(credentialIdFor(certificate)) : Optional.empty()));
+            value = coordinator.dispatch(value.id(), cancellation);
+            return switch (value.state()) {
+                case ISSUED -> new EnrollmentResult(200, EstCmsCodec.encodeCertsOnly(retainedChain(value)), Optional.empty());
+                case REJECTED -> new EnrollmentResult(403, new byte[0], Optional.empty());
+                case EXPIRED -> new EnrollmentResult(410, new byte[0], Optional.empty());
+                case FAILED -> new EnrollmentResult(500, new byte[0], Optional.empty());
+                default -> new EnrollmentResult(202, new byte[0], Optional.of(Math.max(1,
+                        realm.enrollmentRuntime().orElseThrow().configuration().budgets().retryAfter().toSeconds())));
+            };
+        } catch (IllegalArgumentException invalid) {
+            throw new EstProtocolException(400, "EST enrollment input is invalid"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        } catch (java.security.GeneralSecurityException | IllegalStateException unavailable) {
+            throw new EstProtocolException(503, "EST enrollment is unavailable"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        }
+    }
+
+    private List<X509Certificate> retainedChain(EnrollmentTransaction value) throws EstProtocolException {
+        PkiRepository repository = realm.session().repository();
+        IssuerChainPath path = repository.chainPath(value.intent().pathId()).orElseThrow(() -> new EstProtocolException(503, "EST frozen path is unavailable"));
+        List<PkiId> ids = new ArrayList<>(); ids.add(value.credentialId().orElseThrow()); ids.addAll(path.orderedCredentialIds());
+        List<X509Certificate> certificates = new ArrayList<>();
+        for (PkiId id : ids) {
+            try (PkiRepositoryContent content = repository.openCredential(id); InputStream input = content.openStream()) {
+                byte[] der = input.readNBytes(1_048_577);
+                if (der.length > MAX_CHAIN_CERTIFICATE_BYTES) {
+                    throw new EstProtocolException(503, "EST credential exceeds the size limit");
+                }
+                certificates.add(parseCertificate(der));
+            } catch (IOException failure) { throw new EstProtocolException(503, "EST credential is unavailable"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        }
+        return List.copyOf(certificates);
     }
 
     /**
@@ -246,75 +333,127 @@ public final class EstService {
     }
 
     /**
-     * Performs EST {@code serverkeygen} (RFC 7030 section 4.4): generates a server-side key
-     * pair, issues a certificate using the template CSR subject, and returns both as a
-     * {@code multipart/mixed} response.
-     *
-     * <p>The private key is encrypted for the mTLS client certificate's public key using
-     * CMS EnvelopedData (AES-256-GCM). The raw private key bytes are zeroed after encryption.</p>
-     *
-     * @param endpoint   the EST endpoint
-     * @param csrBody    template PKCS#10 CSR bytes (subject and extensions used as template)
-     * @param clientCert authenticated mTLS client certificate (recipient of encrypted key)
-     * @return structured response with encrypted private key, certificate chain, and boundary
-     * @throws EstProtocolException if serverkeygen is disabled, the algorithm is unsupported,
-     *                              issuance fails, or the operation times out
+     * Performs server-key generation through durable encrypted-artifact admission.
+     * This overload has no caller cancellation signal.
+     * @param endpoint registered endpoint
+     * @param csrBody exact DER, PEM or MIME-base64 PKCS#10 template
+     * @param clientCert authenticated TLS recipient
+     * @return pending, terminal or lazily leased encrypted delivery
+     * @throws EstProtocolException if validation or custody is unavailable
      */
     public EstServerKeygenResponse serverkeygen(EstEndpoint endpoint, byte[] csrBody,
             X509Certificate clientCert) throws EstProtocolException {
-        Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
-        Objects.requireNonNull(csrBody, "csrBody");
-        Objects.requireNonNull(clientCert, "clientCert");
+        return serverkeygen(endpoint, csrBody, clientCert, CancellationSignal.NONE);
+    }
 
-        KeygenPolicy policy = endpoint.keygen();
-        if (!policy.enabled()) {
-            throw new EstProtocolException(404, "Server-side key generation is not enabled on this EST endpoint");
-        }
-
-        // Parse template CSR to extract subject name.
-        CertificationRequest template;
+    /**
+     * Freezes the authenticated original template and reserves capacity before
+     * generating a key. Ciphertext is generator-signed, encrypted and durably
+     * attached before approval or issuance. Exact retries resume the retained
+     * transaction and never regenerate a key. Template proof is ignored as required
+     * by RFC 7030; the generated CSR undergoes normal frozen-profile proof checks.
+     * @param endpoint registered endpoint
+     * @param csrBody original template in DER, PEM or MIME-base64 form
+     * @param clientCert actual authenticated TLS recipient
+     * @param cancellation checked before generation, attachment and dispatch
+     * @return typed protocol status with resource-free deferred delivery
+     * @throws EstProtocolException if input, negotiation, policy or custody fails
+     */
+    public EstServerKeygenResponse serverkeygen(EstEndpoint endpoint, byte[] csrBody,
+            X509Certificate clientCert, CancellationSignal cancellation) throws EstProtocolException {
+        Objects.requireNonNull(endpoint, TEXT_ENDPOINT); Objects.requireNonNull(clientCert, "clientCert");
+        Objects.requireNonNull(cancellation, "cancellation");
         try {
-            template = Pkix.parseCsr(csrBody);
-        } catch (CertificationRequestException failure) {
-            throw new EstProtocolException(400,
-                    "EST serverkeygen template CSR is invalid: " + failure.getMessage(), failure);
+            cancellation.throwIfCancelled();
+            byte[] original = templateDer(csrBody);
+            zeroecho.pkix.EstKeygen.requireRecipient(original, clientCert);
+            CertificateIdentityEvidence evidence = CertificateIdentityEvidence.fromCertificate(realm.configuration().realmId(), clientCert);
+            EnrollmentTransaction.Requester requester = new EnrollmentTransaction.Requester(IssuanceExecutionEvidence.ActorType.EST_CLIENT,
+                    evidence.certificateSha256(), IssuanceExecutionEvidence.Authentication.EST_MTLS, Optional.of(evidence),
+                    Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(),
+                    new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), java.util.Set.of()));
+            EnrollmentCoordinator.Admission admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, endpoint.label(), requester,
+                    HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(original)), EnrollmentTransaction.Operation.SERVER_KEYGEN,
+                    new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, original), Optional.empty(), Optional.empty());
+            EnrollmentCoordinator coordinator = realm.enrollmentCoordinator().orElseThrow(() -> new IllegalStateException("Enrollment unavailable"));
+            Optional<zeroecho.pki.server.enrollment.EnrollmentKeygenArtifact> retained = coordinator.findKeygen(admission);
+            if (retained.isEmpty()) {
+                cancellation.throwIfCancelled();
+                try (EnrollmentCoordinator.KeygenGeneration generation = coordinator.beginKeygen(admission, clientCert)) {
+                    zeroecho.pki.server.enrollment.EnrollmentKeygenArtifact descriptor = generation.descriptor();
+                    try (zeroecho.pki.server.enrollment.EnrollmentRuntime.CredentialLease signer = realm.enrollmentRuntime().orElseThrow()
+                            .acquire(descriptor.template().source().credentialId().orElseThrow())) {
+                        cancellation.throwIfCancelled();
+                        KeyPair key = generateKeyPair(descriptor.algorithm(), descriptor.maximumKeySizeBits());
+                        cancellation.throwIfCancelled();
+                        byte[] generated = generatedRequest(original, key, descriptor.algorithm());
+                        byte[] privateKey = key.getPrivate().getEncoded();
+                        if (privateKey == null) {
+                            throw new IllegalStateException("Generated key is not encodable");
+                        }
+                        try {
+                            cancellation.throwIfCancelled();
+                            byte[] encrypted = zeroecho.pkix.EstKeygen.signedEncryptedPackage(original, privateKey, clientCert, signer.responseChain(),
+                                    Pkix.signer(signer.privateKey(), signingAlgorithmFor(signer.privateKey().getAlgorithm())));
+                            cancellation.throwIfCancelled();
+                            generation.attach(new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, generated), encrypted);
+                        } finally { Arrays.fill(privateKey, (byte) 0); }
+                    }
+                }
+            }
+            zeroecho.pki.server.enrollment.EnrollmentKeygenArtifact descriptor = coordinator.findKeygen(admission).orElseThrow();
+            if (descriptor.state() == zeroecho.pki.server.enrollment.EnrollmentKeygenArtifact.State.EXPIRED) {
+                return EstServerKeygenResponse.terminal(410);
+            }
+            if (descriptor.state() == zeroecho.pki.server.enrollment.EnrollmentKeygenArtifact.State.FAILED) {
+                return EstServerKeygenResponse.terminal(500);
+            }
+            if (descriptor.state() == zeroecho.pki.server.enrollment.EnrollmentKeygenArtifact.State.GENERATING) {
+                return keygenPending();
+            }
+            EnrollmentTransaction enrollment = coordinator.dispatch(descriptor.enrollmentId(), cancellation);
+            return switch (enrollment.state()) {
+                case ISSUED -> EstServerKeygenResponse.issued(coordinator, admission, descriptor.id(), EstCmsCodec.encodeCertsOnly(retainedChain(enrollment)));
+                case REJECTED -> EstServerKeygenResponse.terminal(403);
+                case EXPIRED -> EstServerKeygenResponse.terminal(410);
+                case FAILED -> EstServerKeygenResponse.terminal(500);
+                default -> keygenPending();
+            };
+        } catch (java.io.InterruptedIOException cancelled) {
+            throw new EstProtocolException(503, "EST key generation cancelled"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        } catch (IllegalArgumentException | zeroecho.pki.api.PkiException invalid) {
+            throw new EstProtocolException(400, "EST key-generation input is invalid"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        } catch (java.security.GeneralSecurityException | IllegalStateException unavailable) { // NOPMD ExceptionAsFlowControl - Invalid input is rejected here and normalized at the protocol boundary; exceptions do not represent successful control flow.
+            throw new EstProtocolException(503, "EST key generation is unavailable"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         }
-        X500Principal subject = template.subject();
+    }
 
-        // Generate key pair using the first permitted algorithm.
-        String jcaAlg = policy.permittedAlgorithms().getFirst();
-        KeyPair keyPair = generateKeyPair(jcaAlg, policy.maximumKeySizeBits());
+    private EstServerKeygenResponse keygenPending() {
+        return EstServerKeygenResponse.pending(Math.max(1, realm.enrollmentRuntime().orElseThrow().configuration().budgets().retryAfter().toSeconds()));
+    }
 
-        // Build a self-signed CSR with the generated key pair and the template subject.
-        AlgorithmIdentifier sigAlg = signingAlgorithmFor(jcaAlg);
-        byte[] generatedCsrDer;
-        try {
-            CertificationRequest generated = Pkix.certificationRequestBuilder()
-                    .subject(subject)
-                    .publicKey(keyPair.getPublic())
-                    .build(Pkix.signer(keyPair.getPrivate(), sigAlg));
-            generatedCsrDer = generated.encoded();
-        } catch (Exception failure) {
-            throw new EstProtocolException(500, "EST serverkeygen CSR construction failed", failure);
+    private byte[] templateDer(byte[] body) {
+        if (body == null || body.length == 0 || body.length > X509EnrollmentPayload.MAXIMUM_DER_BYTES * 2) {
+            throw new IllegalArgumentException("Invalid EST template size");
         }
-
-        // Issue the certificate using the generated CSR.
-        AccessContext access = estAccess(clientCert, "EST_SERVERKEYGEN", endpoint);
-        EndEntityIssuanceRequest request = new EndEntityIssuanceRequest(
-                new PkiId(endpoint.authorityId()), generatedCsrDer, endpoint.profileId(), Optional.empty());
-        List<X509Certificate> chain = issueAndBuildChain(access, request, endpoint);
-
-        // Encrypt private key for the client certificate, then zero the raw bytes.
-        byte[] pkcs8Der = keyPair.getPrivate().getEncoded();
-        try {
-            byte[] encryptedKeyBase64 = EstCmsCodec.encryptPrivateKey(pkcs8Der, clientCert);
-            byte[] certsCmsBase64 = EstCmsCodec.encodeCertsOnly(chain);
-            byte[][] multipart = EstCmsCodec.buildServerKeygenMultipart(encryptedKeyBase64, certsCmsBase64);
-            return new EstServerKeygenResponse(multipart[0], certsCmsBase64,
-                    new String(multipart[1], StandardCharsets.US_ASCII));
-        } finally {
-            Arrays.fill(pkcs8Der, (byte) 0);
+        byte[] encoded = body;
+        if (body[0] != 0x30 && body[0] != '-') {
+            StringBuilder compact = new StringBuilder(body.length);
+            for (byte value : body) {
+                if (value != ' ' && value != '\t' && value != '\r' && value != '\n') {
+                    compact.append((char) (value & 255));
+                }
+            }
+            encoded = Base64.getDecoder().decode(compact.toString());
         }
+        if (encoded.length == 0) {
+            throw new IllegalArgumentException("Empty EST template");
+        }
+        zeroecho.pki.api.CertificationRequestService requests = realm.session().requests().orElseThrow();
+        zeroecho.pki.api.request.ParsedCertificationRequest parsed = requests.parse(new zeroecho.pki.api.request.CertificationRequest(
+                new zeroecho.pki.api.FormatId("x509"), new zeroecho.pki.api.EncodedObject(encoded[0] == '-'
+                        ? zeroecho.pki.api.Encoding.PEM : zeroecho.pki.api.Encoding.DER, encoded)));
+        return requests.encodedX509Request(parsed).der();
     }
 
     // -------------------------------------------------------------------------
@@ -323,87 +462,25 @@ public final class EstService {
 
     private byte[] requireValidCsr(byte[] csrBody) throws EstProtocolException {
         try {
-            return Pkix.parseCsr(csrBody).encoded();
-        } catch (CertificationRequestException failure) {
-            throw new EstProtocolException(400, "EST CSR is invalid: " + failure.getMessage(), failure);
-        }
-    }
-
-    private byte[] issueAndEncode(AccessContext access, EndEntityIssuanceRequest request,
-            EstEndpoint endpoint) throws EstProtocolException {
-        return EstCmsCodec.encodeCertsOnly(issueAndBuildChain(access, request, endpoint));
-    }
-
-    private List<X509Certificate> issueAndBuildChain(AccessContext access,
-            EndEntityIssuanceRequest request, EstEndpoint endpoint) throws EstProtocolException {
-        SemanticSigningService signing = requireSigning("issuance");
-        PreparedSemanticSigningRequest prepared = signing.prepareEndEntity(
-                access, request, Optional.empty(), CancellationSignal.NONE);
-        SigningAcceptanceResult accepted = acceptOrThrow(signing, prepared, "issuance");
-        SemanticSigningOperation completed = pollForCompletion(signing, accepted.receipt().operationId());
-        return buildIssuedChain(completed, new PkiId(endpoint.authorityId()));
-    }
-
-    private SigningAcceptanceResult acceptOrThrow(SemanticSigningService signing,
-            PreparedSemanticSigningRequest prepared, String context) throws EstProtocolException {
-        SigningAcceptanceResult accepted;
-        try {
-            accepted = signing.accept(prepared);
-        } catch (RuntimeException failure) {
-            throw new EstProtocolException(503, "EST " + context + " signing acceptance failed", failure);
-        }
-        if (accepted.disposition() == SigningAcceptanceDisposition.CAPACITY_REJECTED) {
-            throw new EstProtocolException(503, "EST " + context + " signing capacity exhausted");
-        }
-        if (accepted.disposition() == SigningAcceptanceDisposition.CONFLICT) {
-            throw new EstProtocolException(409, "EST " + context + " signing correlation conflict");
-        }
-        return accepted;
-    }
-
-    private SemanticSigningService requireSigning(String context) throws EstProtocolException {
-        return realm.session().semanticSigning()
-                .orElseThrow(() -> new EstProtocolException(503, "EST " + context + " capability is unavailable"));
-    }
-
-    private SemanticSigningOperation pollForCompletion(SemanticSigningService signing,
-            PkiId operationId) throws EstProtocolException {
-        long deadline = System.currentTimeMillis() + SIGNING_POLL_TIMEOUT_MS;
-        while (System.currentTimeMillis() < deadline) {
-            Optional<SemanticSigningOperation> snapshot = signing.find(operationId);
-            if (snapshot.isPresent()) {
-                SemanticSigningOperation op = snapshot.get();
-                switch (op.state()) {
-                    case COMPLETED -> { return op; }
-                    case FAILED, EXPIRED -> {
-                        String detail = op.detailCode().map(c -> ": " + c).orElse("");
-                        throw new EstProtocolException(500, "EST signing " + op.state().name().toLowerCase(java.util.Locale.ROOT) + detail);
+            if (csrBody == null || csrBody.length == 0 || csrBody.length > X509EnrollmentPayload.MAXIMUM_DER_BYTES * 2) {
+                throw new IllegalArgumentException("EST request size is invalid");
+            }
+            byte[] encoded = csrBody;
+            if (csrBody[0] != 0x30 && csrBody[0] != '-') {
+                StringBuilder compact = new StringBuilder(csrBody.length);
+                for (byte value : csrBody) {
+                    if (value != ' ' && value != '\t' && value != '\r' && value != '\n') {
+                        compact.append((char) (value & 255));
                     }
-                    default -> { /* still pending */ }
                 }
+                encoded = Base64.getDecoder().decode(compact.toString());
             }
-            try {
-                Thread.sleep(SIGNING_POLL_INTERVAL_MS); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
-                throw new EstProtocolException(503, "EST signing wait interrupted", interrupted);
-            }
+            return Pkix.parseCsr(encoded).encoded();
+        } catch (CertificationRequestException | IllegalArgumentException failure) { // NOPMD ExceptionAsFlowControl - Invalid input is rejected here and normalized at the protocol boundary; exceptions do not represent successful control flow.
+            throw new EstProtocolException(400, "EST CSR is invalid"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         }
-        throw new EstProtocolException(503,
-                "EST signing timed out after " + (SIGNING_POLL_TIMEOUT_MS / 1000) + "s");
     }
 
-    private List<X509Certificate> buildIssuedChain(SemanticSigningOperation completed,
-            PkiId authorityId) throws EstProtocolException {
-        byte[] issuedDer = completed.result()
-                .orElseThrow(() -> new EstProtocolException(500, "EST signing result is absent"))
-                .bytes();
-        X509Certificate issued = parseCertificate(issuedDer);
-        List<X509Certificate> chain = new ArrayList<>();
-        chain.add(issued);
-        chain.addAll(caChain(authorityId));
-        return List.copyOf(chain);
-    }
 
     private List<X509Certificate> caChain(PkiId authorityId) throws EstProtocolException {
         PkiRepository repository = realm.session().repository();
@@ -423,6 +500,18 @@ public final class EstService {
         return List.copyOf(chain);
     }
 
+    private static byte[] generatedRequest(byte[] original, KeyPair key, String algorithm) throws EstProtocolException {
+        CertificationRequest template = Pkix.parseCertificationRequest(original);
+        zeroecho.pkix.csr.CertificationRequestBuilder builder = Pkix.certificationRequestBuilder()
+                .subject(template.subject()).publicKey(key.getPublic());
+        for (zeroecho.pkix.CertificateExtension extension : template.requestedExtensions()) {
+            if (SUBJECT_ALT_NAME_OID.equals(extension.oid())) {
+                builder.requestExtension(extension);
+            }
+        }
+        return builder.build(Pkix.signer(key.getPrivate(), signingAlgorithmFor(algorithm))).encoded();
+    }
+
     private static X509Certificate parseCertificate(byte[] der) throws EstProtocolException {
         try {
             return (X509Certificate) CertificateFactory.getInstance("X.509")
@@ -432,12 +521,6 @@ public final class EstService {
         }
     }
 
-    private static AccessContext estAccess(X509Certificate clientCert, String purpose,
-            EstEndpoint endpoint) {
-        String principalName = clientCert.getSubjectX500Principal().getName();
-        return new AccessContext(new Principal("EST", principalName), new Purpose(purpose),
-                Optional.of(new PkiId(endpoint.authorityId())), Optional.empty());
-    }
 
     private static PkiId credentialIdFor(X509Certificate cert) throws EstProtocolException {
         try {

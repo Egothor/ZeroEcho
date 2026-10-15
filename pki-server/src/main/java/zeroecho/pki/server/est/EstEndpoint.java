@@ -46,6 +46,7 @@ import java.util.Objects;
  * @param label       URL-safe identifier, 1–64 characters, matching {@code [A-Za-z0-9._-]+}
  * @param authorityId the CA authority identifier whose chain is served on this endpoint
  * @param profileId   the issuance profile identifier applied to enrollment requests
+ * @param enrollmentProfileId mandatory enrollment policy identity, distinct from the issuance profile
  * @param keygen      key-generation policy for POST {@code /serverkeygen}
  * @since 1.0
  */
@@ -53,7 +54,8 @@ public record EstEndpoint(
         String label,
         String authorityId,
         String profileId,
-        KeygenPolicy keygen) {
+        String enrollmentProfileId,
+        KeygenPolicy keygen) implements zeroecho.pki.server.enrollment.EnrollmentEndpoint {
 
     /** Maximum permitted label length. */
     public static final int MAX_LABEL_LENGTH = 64;
@@ -63,6 +65,9 @@ public record EstEndpoint(
         Objects.requireNonNull(label, "label");
         Objects.requireNonNull(authorityId, "authorityId");
         Objects.requireNonNull(profileId, "profileId");
+        zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(authorityId);
+        zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(profileId);
+        zeroecho.pki.server.enrollment.EnrollmentEndpoint.requireProfileId(enrollmentProfileId);
         Objects.requireNonNull(keygen, "keygen");
         if (label.isBlank() || label.length() > MAX_LABEL_LENGTH
                 || !label.matches("[A-Za-z0-9._-]+")) {

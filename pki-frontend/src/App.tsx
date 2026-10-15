@@ -41,6 +41,7 @@ import { AppLayout } from '@/components/AppLayout';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DomainPage } from '@/pages/DomainPage';
 import { RealmPage } from '@/pages/RealmPage';
+import { BackupPage } from '@/pages/BackupPage';
 import { OperationsExplorerPage } from '@/pages/OperationsExplorerPage';
 import { PublicRepositoryPage } from '@/pages/PublicRepositoryPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
@@ -60,7 +61,7 @@ const queryClient = new QueryClient({
 const DOMAIN_PATHS = [
   '/authorities', '/issuers', '/profiles', '/requests', '/issuance', '/lifecycle', '/confirmations',
   '/revocation', '/status', '/publication', '/principals', '/access', '/approvals', '/break-glass',
-  '/disclosure', '/audit', '/acme', '/ocsp', '/repository', '/configuration',
+  '/disclosure', '/audit', '/acme', '/ocsp', '/est', '/scep', '/cmp', '/enrollment', '/repository', '/configuration',
 ];
 
 export function App() {
@@ -74,6 +75,7 @@ export function App() {
               <Route element={<AppLayout />}>
                 <Route index element={<DashboardPage />} />
                 <Route path="/realm" element={<RealmPage />} />
+                <Route path="/backup" element={<BackupPage />} />
                 <Route path="/operations" element={<OperationsExplorerPage />} />
                 <Route path="/public" element={<PublicRepositoryPage />} />
                 {DOMAIN_PATHS.map((path) => (

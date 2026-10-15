@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
+import zeroecho.pkix.cmp.CrmfRequest;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 import java.util.Optional;
 
 import zeroecho.pkix.Pkix;
@@ -40,12 +42,10 @@ import zeroecho.pkix.Pkix;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
-import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionReason;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
-import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
@@ -53,64 +53,21 @@ import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 
 /**
- * Bouncy Castle backed proof-of-possession verifier for X.509 PKCS#10
- * certification requests.
+ * Immutable proof verifier for exact PKCS#10 and signing-key CRMF requests.
+ * The sole original transport attribute and syntax-specific digest identity are
+ * checked before parsing. Both syntaxes use the requested SPKI and exact signed
+ * bytes through the injected authority's algorithm bindings, immutable security
+ * floor, configured policy and verification executor.
  *
- * <p>
- * This verifier evaluates whether a parsed certification request demonstrates
- * possession of the private key corresponding to the public key carried in the
- * CSR. For PKCS#10 requests, this is done by validating the CSR's
- * self-signature using the {@code SubjectPublicKeyInfo} embedded in the request
- * itself.
- * </p>
+ * <p>CRMF supports a complete subject/key CertRequest without PoPInput.
+ * Verification proves possession only; it does not authorize enrollment or
+ * replace certificate-profile validation. When proof is not required by the
+ * supplied verification policy, the result is NOT_PRESENT without parsing.
+ * Untrusted request diagnostics are reduced to stable failure reasons.</p>
  *
- * <p>
- * The verifier expects the original CSR payload to be present in the parsed
- * request attributes under {@link BcX509Attributes#CSR_DER} as a DER-encoded
- * byte sequence. The parsed request object is otherwise treated only as a
- * carrier of normalized request metadata and of the original CSR encoding
- * needed for cryptographic proof-of-possession verification.
- * </p>
- *
- * <h2>Verification policy handling</h2>
- * <ul>
- * <li>When {@link VerificationPolicy#requireProofOfPossession()} returns
- * {@code false}, this implementation does not attempt CSR signature validation
- * and instead returns {@link ProofOfPossessionStatus#NOT_PRESENT}.</li>
- * <li>When proof of possession is required, the verifier performs cryptographic
- * validation of the PKCS#10 signature.</li>
- * </ul>
- *
- * <h2>Failure model</h2>
- * <p>
- * This implementation does not throw framework-specific verification failures
- * for malformed, unsigned, or unverifiable CSRs during normal verification
- * flow. Instead, such conditions are mapped to {@link ProofOfPossessionResult}
- * with status {@link ProofOfPossessionStatus#FAILED} and a stable textual
- * reason. Only caller contract violations such as {@code null} input arguments
- * are surfaced as immediate argument exceptions.
- * </p>
- *
- * <h2>Security considerations</h2>
- * <ul>
- * <li>This verifier validates only proof of possession of the CSR key pair. It
- * does not perform issuance policy validation, trust evaluation, subject
- * authorization checks, or profile compliance checks.</li>
- * <li>The presence of a valid PKCS#10 self-signature does not by itself imply
- * that the requester is entitled to receive the requested certificate.</li>
- * <li>Algorithm identity, X.509 binding, immutable security-floor, capability,
- * and configured-policy decisions are taken from one injected
- * {@link X509AuthoritySnapshot}. Bouncy Castle remains only the structural and
- * cryptographic adapter at this Phase A boundary.</li>
- * <li>The CSR payload carried under {@link BcX509Attributes#CSR_DER} may be
- * operationally sensitive and must not be logged unsafely.</li>
- * </ul>
- *
- * <h2>Thread-safety</h2>
- * <p>
- * This class is immutable and thread-safe when its authority snapshot is shared
- * as part of one immutable runtime graph.
- * </p>
+ * <p>Instances are thread-safe with their immutable runtime authority graph.
+ * Parsing and defensive snapshots use linear time and memory in the bounded
+ * request size, in addition to cryptographic verification costs.</p>
  */
 public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionVerifier {
 
@@ -132,52 +89,14 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
     }
 
     /**
-     * Verifies proof of possession for a parsed PKCS#10 certification request.
-     *
-     * <p>
-     * If the supplied {@link VerificationPolicy} does not require proof of
-     * possession, the method returns {@link ProofOfPossessionStatus#NOT_PRESENT}
-     * without attempting CSR signature validation.
-     * </p>
-     *
-     * <p>
-     * Otherwise, the method expects the original CSR DER payload to be present in
-     * {@code request.attributes()} under {@link BcX509Attributes#CSR_DER} as an
-     * {@link AttributeValue.BytesValue}. It then parses the CSR, creates a Bouncy
-     * Castle content verifier from the CSR's embedded subject public
-     * key information, and validates the PKCS#10 signature.
-     * </p>
-     *
-     * <p>
-     * Verification outcomes are mapped as follows:
-     * </p>
-     * <ul>
-     * <li>missing or wrongly typed CSR payload attribute -
-     * {@link ProofOfPossessionStatus#FAILED} with reason
-     * {@code "CSR payload not present"},</li>
-     * <li>structurally invalid CSR - {@link ProofOfPossessionStatus#FAILED} with
-     * reason {@code "Invalid CSR"},</li>
-     * <li>verifier construction failure - {@link ProofOfPossessionStatus#FAILED}
-     * with reason {@code "Verifier unavailable"},</li>
-     * <li>signature validation failure - {@link ProofOfPossessionStatus#FAILED}
-     * with reason {@code "CSR signature invalid"},</li>
-     * <li>successful signature validation -
-     * {@link ProofOfPossessionStatus#VERIFIED}.</li>
-     * </ul>
-     *
-     * <p>
-     * Any other unexpected verification problem is mapped to
-     * {@link ProofOfPossessionStatus#FAILED} with reason
-     * {@code "Verification failed"}.
-     * </p>
-     *
-     * @param request parsed certification request to verify; must not be
-     *                {@code null}
-     * @param policy  verification policy controlling whether proof of possession is
-     *                required; must not be {@code null}
-     * @return proof-of-possession verification result, never {@code null}
-     * @throws IllegalArgumentException if {@code request} or {@code policy} is
-     *                                  {@code null}
+     * Verifies the retained request's original self-signature or signing-key PoP.
+     * Exactly one bounded byte-valued {@link BcX509Attributes#CSR_DER} or
+     * {@link BcX509Attributes#CRMF_DER} attribute is accepted. Malformed payloads,
+     * unsupported algorithms and invalid signatures produce stable failed results.
+     * @param request normalized request retaining its original signed bytes
+     * @param policy whether proof is required for this verification invocation
+     * @return proof outcome, never null
+     * @throws IllegalArgumentException if either argument is null
      */
     @Override
     public ProofOfPossessionResult verify(ParsedCertificationRequest request, VerificationPolicy policy) {
@@ -191,37 +110,52 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
             return ProofOfPossessionResult.of(ProofOfPossessionReason.NOT_PRESENT);
         }
 
-        Optional<AttributeValue> csrDerOpt = request.attributes().get(BcX509Attributes.CSR_DER);
-        if (csrDerOpt.isEmpty() || !(csrDerOpt.get() instanceof AttributeValue.BytesValue)) {
+        X509EnrollmentPayload payload;
+        try {
+            payload = BcX509RequestPayloads.extract(request);
+        } catch (IllegalArgumentException invalid) {
             return ProofOfPossessionResult.of(ProofOfPossessionReason.CSR_PAYLOAD_MISSING, "CSR payload not present");
         }
-        byte[] csrDer = ((AttributeValue.BytesValue) csrDerOpt.get()).value();
+        byte[] csrDer = payload.der();
 
         try {
-            zeroecho.pkix.csr.CertificationRequest csr;
+            byte[] spkiDer;
+            byte[] signedBytes;
+            byte[] signature;
+            zeroecho.pkix.AlgorithmIdentifier signatureAlgorithm;
             try {
                 new StreamingDerReader().validate(csrDer,
                         BcX509CertificationRequestParser.MAXIMUM_CSR_DER_BYTES);
-                csr = Pkix.parseCertificationRequest(csrDer);
+                if (payload.kind() == X509EnrollmentPayload.Kind.PKCS10) {
+                    zeroecho.pkix.csr.CertificationRequest csr = Pkix.parseCertificationRequest(csrDer);
+                    spkiDer = csr.subjectPublicKeyInfo();
+                    signedBytes = csr.certificationRequestInfo();
+                    signatureAlgorithm = csr.signatureAlgorithm();
+                    signature = csr.signature();
+                } else {
+                    CrmfRequest crmf = CrmfRequest.parse(csrDer);
+                    spkiDer = crmf.subjectPublicKeyInfo();
+                    signedBytes = crmf.signedRequest();
+                    signatureAlgorithm = crmf.signatureAlgorithm();
+                    signature = crmf.signature();
+                }
             } catch (Exception ex) {
                 return ProofOfPossessionResult.of(ProofOfPossessionReason.CSR_MALFORMED, "Invalid CSR");
             }
             BcX509AlgorithmAdapter algorithmAdapter = new BcX509AlgorithmAdapter(authority.bindings());
-            byte[] spkiDer = csr.subjectPublicKeyInfo();
             try {
-                AlgorithmIdentity signatureIdentity = algorithmAdapter.decode(csr.signatureAlgorithm(),
+                AlgorithmIdentity signatureIdentity = algorithmAdapter.decode(signatureAlgorithm,
                         X509AlgorithmRole.SIGNATURE_ALGORITHM);
                 AlgorithmIdentity keyIdentity = algorithmAdapter.decode(Pkix.subjectPublicKeyAlgorithm(spkiDer),
                         X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
                 X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(signatureIdentity, keyIdentity,
                         AlgorithmExecutionCapability.Direction.VERIFY,
                         Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "csr-proof",
-                        authority.bindings().bindingId(BcX509AlgorithmAdapter.fromLib(csr.signatureAlgorithm()),
+                        authority.bindings().bindingId(BcX509AlgorithmAdapter.fromLib(signatureAlgorithm),
                                 X509AlgorithmRole.SIGNATURE_ALGORITHM),
                         BcX509VerificationExecutor.class);
-                byte[] signedBytes = csr.certificationRequestInfo();
                 boolean valid = executor.verify(authority, plan, spkiDer,
-                        csr.signatureAlgorithm(), new ImmutableByteContent(signedBytes), csr.signature());
+                        signatureAlgorithm, new ImmutableByteContent(signedBytes), signature);
                 if (!valid) {
                     return ProofOfPossessionResult.of(ProofOfPossessionReason.SIGNATURE_INVALID,
                             "CSR signature invalid");

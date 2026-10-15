@@ -84,6 +84,19 @@ import zeroecho.pki.server.scep.ScepEndpoint;
 /** Closed strict HTTP decoding for operations exposed by the existing gateway. */
 @SuppressWarnings("PMD")
 final class HttpOperationCodec {
+    static final class LegacyBackupLimitException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+        LegacyBackupLimitException() { super("BACKUP_LEGACY_LIMIT_USE_STREAMING"); }
+    }
+
+    private static byte[] legacyBackup(String encoded) {
+        int maximum = zeroecho.pki.api.backup.BackupLimits.defaults().legacyBytes();
+        int characters = Math.multiplyExact((maximum + 2) / 3, 4);
+        if (encoded.length() > characters) throw new LegacyBackupLimitException();
+        byte[] decoded = Base64.getDecoder().decode(encoded);
+        if (decoded.length > maximum) throw new LegacyBackupLimitException();
+        return decoded;
+    }
     /** Fully decoded gateway input excluding authenticated principal and request ID. */
     record Decoded(AdministrativeOperation operation, Permission.Resource resource, Permission.Context context,
             Optional<String> approvalId, Optional<Duration> requestedDeadline) { }
@@ -93,7 +106,16 @@ final class HttpOperationCodec {
 
     static Decoded decode(String operationId, byte[] document, int maximumBytes, RealmId realmId,
             java.util.function.Function<String, OperationSecurityDescriptors.Descriptor> descriptors) {
-        Fields root = Fields.of(StrictJson.parse(document, maximumBytes));
+        Fields root;
+        try { root = Fields.of(StrictJson.parse(document, maximumBytes)); }
+        catch (IllegalArgumentException invalid) {
+            if ((ServerControlOperation.VerifyBackup.NAME.equals(operationId)
+                    || ServerControlOperation.ExecuteRestore.NAME.equals(operationId))
+                    && invalid.getCause() instanceof tools.jackson.core.exc.StreamConstraintsException) {
+                throw new LegacyBackupLimitException();
+            }
+            throw invalid;
+        }
         root.allowed(Set.of("version", "authorityId", "approvalId", "deadline", "arguments"));
         if (root.integer("version") != 1) throw new IllegalArgumentException("Request version is unsupported");
         Optional<PkiId> authority = root.optionalText("authorityId").map(PkiId::new);
@@ -263,11 +285,11 @@ final class HttpOperationCodec {
                 yield new PkiOperation.ListRequests(fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.SearchCredentials.NAME -> {
-                fields.allowed(Set.of("limit", "after", "subjectFilter", "serialFilter", "fingerprintFilter", "statusFilter", "profileIdFilter"));
+                fields.allowed(Set.of("limit", "after", "subjectFilter", "serialFilter", "fingerprintFilter", "statusFilter", "profileIdFilter", "sanFilter"));
                 yield new PkiOperation.SearchCredentials(authority.orElseThrow(), fields.integer("limit"), fields.optionalText("after"),
                         fields.optionalText("subjectFilter"), fields.optionalText("serialFilter"),
                         fields.optionalText("fingerprintFilter"), fields.optionalText("statusFilter"),
-                        fields.optionalText("profileIdFilter"));
+                        fields.optionalText("profileIdFilter"), fields.optionalText("sanFilter"));
             }
             case PkiOperation.ListIssuerGenerations.NAME -> {
                 fields.allowed(Set.of("limit", "after"));
@@ -315,6 +337,14 @@ final class HttpOperationCodec {
                 fields.allowed(Set.of("credentialId", "justification"));
                 yield new PkiOperation.RevokePendingCredentialConfirmation(
                         fields.pkiId("credentialId"), fields.optionalText("justification"));
+            }
+            case PkiOperation.HoldCredential.NAME -> {
+                fields.allowed(Set.of("credentialId", "justification"));
+                yield new PkiOperation.HoldCredential(fields.pkiId("credentialId"), fields.optionalText("justification"));
+            }
+            case PkiOperation.UnholdCredential.NAME -> {
+                fields.allowed(Set.of("credentialId", "justification"));
+                yield new PkiOperation.UnholdCredential(fields.pkiId("credentialId"), fields.optionalText("justification"));
             }
             case PkiOperation.RevokeCredential.NAME -> {
                 fields.allowed(Set.of("credentialId", "reason", "justification"));
@@ -704,11 +734,11 @@ final class HttpOperationCodec {
                         fields.text("expectedCurrentCommitment"));
             }
             case ServerControlOperation.RegisterAcmeDirectory.NAME -> {
-                fields.allowed(Set.of("alias", "authorityId", "profileId", "dnsNamespaces",
+                fields.allowed(Set.of("alias", "authorityId", "profileId", "enrollmentProfileId", "dnsNamespaces",
                         "maximumValidityMillis", "publicKeyAlgorithms", "x509BindingPolicies",
                         "challengeTypes", "challengeProviderIds", "eabProviderId", "eabRequired"));
                 yield new ServerControlOperation.RegisterAcmeDirectory(new AcmeService.DirectoryRegistration(
-                        fields.text("alias"), fields.pkiId("authorityId"), fields.text("profileId"),
+                        fields.text("alias"), fields.pkiId("authorityId"), fields.text("profileId"), fields.text("enrollmentProfileId"),
                         fields.stringSet("dnsNamespaces"), Duration.ofMillis(fields.longValue("maximumValidityMillis")),
                         fields.stringSet("publicKeyAlgorithms"), fields.stringSet("x509BindingPolicies"),
                         fields.enumSet("challengeTypes", AcmeState.ChallengeType.class),
@@ -807,9 +837,26 @@ final class HttpOperationCodec {
                             @Override public java.util.List<zeroecho.pki.api.attr.AttributeValue> getAll(zeroecho.pki.api.attr.AttributeId id) { return List.of(); }
                         });
             }
+            case ServerControlOperation.ReserveBackupUpload.NAME -> {
+                fields.exact("backupId", "length", "sha256");
+                yield new ServerControlOperation.ReserveBackupUpload(new PkiId(fields.text("backupId")),
+                        fields.longValue("length"), fields.text("sha256"));
+            }
+            case ServerControlOperation.ExportBackupStream.NAME -> {
+                fields.exact("label");
+                yield new ServerControlOperation.ExportBackupStream(fields.text("label"));
+            }
+            case "backup.stream.upload", "backup.stream.download", "backup.stream.verify", "backup.stream.restore",
+                    "backup.stream.status", "backup.stream.acknowledge" -> {
+                fields.exact("artifactHandle");
+                ServerControlOperation.BackupArtifactCommand.Action action = java.util.Arrays.stream(
+                        ServerControlOperation.BackupArtifactCommand.Action.values())
+                        .filter(value -> value.operationId().equals(id)).findFirst().orElseThrow();
+                yield new ServerControlOperation.BackupArtifactCommand(action, fields.text("artifactHandle"), Optional.empty());
+            }
             case ServerControlOperation.VerifyBackup.NAME -> {
                 fields.exact("backupId", "payload");
-                byte[] verifyBytes = Base64.getDecoder().decode(fields.text("payload"));
+                byte[] verifyBytes = legacyBackup(fields.text("payload"));
                 yield new ServerControlOperation.VerifyBackup(
                         new zeroecho.pki.api.backup.BackupArtifact(
                                 new PkiId(fields.text("backupId")),
@@ -817,7 +864,7 @@ final class HttpOperationCodec {
             }
             case ServerControlOperation.ExecuteRestore.NAME -> {
                 fields.exact("backupId", "payload");
-                byte[] restoreBytes = Base64.getDecoder().decode(fields.text("payload"));
+                byte[] restoreBytes = legacyBackup(fields.text("payload"));
                 zeroecho.pki.api.backup.BackupArtifact artifact = new zeroecho.pki.api.backup.BackupArtifact(
                         new PkiId(fields.text("backupId")),
                         new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.BINARY, restoreBytes));
@@ -830,7 +877,7 @@ final class HttpOperationCodec {
                                 }));
             }
             case ServerControlOperation.RegisterEstEndpoint.NAME -> {
-                fields.allowed(Set.of("label", "authorityId", "profileId", "keygen"));
+                fields.allowed(Set.of("label", "authorityId", "profileId", "enrollmentProfileId", "keygen"));
                 KeygenPolicy keygen;
                 if (fields.contains("keygen")) {
                     Fields kg = fields.object("keygen");
@@ -844,7 +891,7 @@ final class HttpOperationCodec {
                 }
                 yield new ServerControlOperation.RegisterEstEndpoint(new EstEndpoint(
                         fields.text("label"), fields.text("authorityId"),
-                        fields.text("profileId"), keygen));
+                        fields.text("profileId"), fields.text("enrollmentProfileId"), keygen));
             }
             case ServerControlOperation.DeregisterEstEndpoint.NAME -> {
                 fields.exact("label");
@@ -860,10 +907,10 @@ final class HttpOperationCodec {
                         fields.integer("offset"), fields.integer("limit"));
             }
             case ServerControlOperation.RegisterScepEndpoint.NAME -> {
-                fields.allowed(Set.of("label", "authorityId", "profileId", "challengePasswordHash"));
+                fields.allowed(Set.of("label", "authorityId", "profileId", "enrollmentProfileId", "challengePasswordHash"));
                 yield new ServerControlOperation.RegisterScepEndpoint(new ScepEndpoint(
                         fields.text("label"), fields.text("authorityId"),
-                        fields.text("profileId"), fields.text("challengePasswordHash")));
+                        fields.text("profileId"), fields.text("enrollmentProfileId"), fields.text("challengePasswordHash")));
             }
             case ServerControlOperation.DeregisterScepEndpoint.NAME -> {
                 fields.exact("label");
@@ -879,10 +926,10 @@ final class HttpOperationCodec {
                         fields.integer("offset"), fields.integer("limit"));
             }
             case ServerControlOperation.RegisterCmpEndpoint.NAME -> {
-                fields.allowed(Set.of("label", "authorityId", "profileId", "protectionPolicy"));
+                fields.allowed(Set.of("label", "authorityId", "profileId", "enrollmentProfileId", "protectionPolicy"));
                 yield new ServerControlOperation.RegisterCmpEndpoint(new CmpEndpoint(
                         fields.text("label"), fields.text("authorityId"),
-                        fields.text("profileId"),
+                        fields.text("profileId"), fields.text("enrollmentProfileId"),
                         CmpProtectionPolicy.valueOf(fields.text("protectionPolicy"))));
             }
             case ServerControlOperation.DeregisterCmpEndpoint.NAME -> {
@@ -941,6 +988,18 @@ final class HttpOperationCodec {
                 fields.exact("id");
                 yield new ServerControlOperation.InspectEnrollmentProfile(fields.text("id"));
             }
+            case ServerControlOperation.InspectEnrollmentRequest.NAME -> {
+                fields.exact("id"); yield new ServerControlOperation.InspectEnrollmentRequest(fields.text("id"));
+            }
+            case ServerControlOperation.ListEnrollmentRequests.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListEnrollmentRequests(fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.DecideEnrollmentRequest.APPROVE, ServerControlOperation.DecideEnrollmentRequest.REJECT -> {
+                fields.exact("id", "expectedCommitment", "justification");
+                yield new ServerControlOperation.DecideEnrollmentRequest(fields.text("id"), fields.text("expectedCommitment"),
+                        id.equals(ServerControlOperation.DecideEnrollmentRequest.APPROVE) ? ApprovalService.Choice.APPROVE : ApprovalService.Choice.REJECT,
+                        fields.text("justification"));
+            }
             case ServerControlOperation.ListEnrollmentProfiles.NAME -> {
                 fields.exact("offset", "limit");
                 yield new ServerControlOperation.ListEnrollmentProfiles(
@@ -960,6 +1019,9 @@ final class HttpOperationCodec {
 
     private static Permission.Scope controlScope(ServerControlOperation operation, RealmId realmId,
             Optional<PkiId> authority) {
+        if (operation.name().startsWith("backup.stream.") && authority.isPresent()) {
+            throw new IllegalArgumentException("Backup transfers require realm scope");
+        }
         return switch (operation) {
             case ServerControlOperation.ConfigurationChoices ignored -> {
                 if (authority.isPresent()) { throw new IllegalArgumentException("Configuration choices require realm scope"); }
@@ -1083,6 +1145,8 @@ final class HttpOperationCodec {
             case PkiOperation.RevokePendingCredentialConfirmation value ->
                 Optional.of(value.credentialId());
             case PkiOperation.RevokeCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.HoldCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.UnholdCredential value -> Optional.of(value.credentialId());
             case PkiOperation.InspectRequest value -> Optional.of(value.requestId());
             case PkiOperation.VerifyRequest value -> Optional.of(value.requestId());
             case PkiOperation.ReadRevocationHistory value -> Optional.of(value.credentialId());
@@ -1105,6 +1169,8 @@ final class HttpOperationCodec {
     private static Optional<String> operatorJustification(PkiOperation operation) {
         return switch (operation) {
             case PkiOperation.RevokeCredential value -> value.operatorJustification();
+            case PkiOperation.HoldCredential value -> value.operatorJustification();
+            case PkiOperation.UnholdCredential value -> value.operatorJustification();
             case PkiOperation.RevokePendingCredentialConfirmation value ->
                 value.operatorJustification();
             case PkiOperation.TransitionAuthority value -> Optional.of(value.reason());

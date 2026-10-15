@@ -27,6 +27,7 @@ and profile and sets its enrolment policy:
 | `alias` | The directory's stable alias. |
 | `authorityId` | The issuing authority — also the operation's target authority. |
 | `profileId` | The profile enrolled certificates are issued under. |
+| `enrollmentProfileId` | Required active enrollment profile; it must select the same certificate profile and permit the authority. |
 | `dnsNamespaces` | The DNS namespaces the directory will issue within. |
 | `maximumValidityMillis` | The maximum validity of issued certificates. |
 | `publicKeyAlgorithms` | The accepted subject public-key algorithms. |
@@ -112,6 +113,37 @@ digest. CNAME redelegation is followed up to the configured depth.
 | `maximumRecordBytes` | Yes | integer | 43–4 096 | Maximum bytes per TXT record value. |
 | `maximumCnameDepth` | Yes | integer | 0–8 | Maximum CNAME redelegation depth. Set to 0 to disable CNAME following. |
 
+## Enrollment profiles and endpoint persistence
+
+ACME directory and EST, SCEP and CMP endpoint registration requires an explicit
+`enrollmentProfileId`, distinct from the certificate issuance `profileId`.
+Create and activate the enrollment profile before registering its endpoints.
+The enrollment profile must select the same certificate profile and permit the
+endpoint's authority. A suspended profile prevents enrollment admission.
+
+Enrollment profiles and endpoint bindings are persisted in the server-control
+store and validated on startup. Profile registration is create-only; use
+`enrollment.profile.update` to replace an existing profile. Deregistering an
+endpoint writes a tombstone and preserves the monotonic revision counter.
+Registering that label again receives a new revision and commitment; the endpoint
+record is not a history of previous bindings. These records are outside the PKI
+backup archive; preserve the server-control authority separately.
+
+An active endpoint prevents changes to its enrollment profile that would select
+a different certificate profile or exclude its authority. Deregister the affected
+endpoints before making such a change, then register their new bindings. Suspending
+and reactivating a profile remains possible while endpoints reference it.
+
+Profile subject patterns match the whole subject string using literal text and
+`.*` wildcards, with optional outer `^`/`$` anchors and escaped regex punctuation.
+General regular expressions, groups, character classes and backreferences are
+rejected. Required DNS suffixes are normalized to sorted lowercase ASCII values;
+duplicates are rejected. Each configured suffix declares a requirement for a
+matching DNS SAN on a label boundary, distinct from an allowlist of every permitted
+name. The shared enrollment coordinator checks the subject pattern and every
+required DNS suffix before durably admitting a request through the enrollment
+protocol adapters.
+
 ## EST (RFC 7030)
 
 EST provides certificate enrolment over HTTPS using mTLS client authentication.
@@ -126,6 +158,7 @@ Endpoints are exposed under `/.well-known/est/{label}/`.
 | `label` | URL-safe identifier (1–64 chars, `[A-Za-z0-9._-]+`) |
 | `authorityId` | The CA authority to issue from |
 | `profileId` | The issuance profile to apply |
+| `enrollmentProfileId` | Required active enrollment profile governing this endpoint |
 
 The endpoint is immediately active upon registration.
 
@@ -144,6 +177,45 @@ The endpoint is immediately active upon registration.
 EST uses mutual TLS: the client presents its certificate over the TLS connection.
 The server authenticates the client using the client certificate chain.
 
+### Enrollment approval and retries
+
+`simpleenroll` and `simplereenroll` use the durable enrollment coordinator. While
+approval or issuance is pending, the response is HTTP `202` with the configured
+`Retry-After` interval in seconds. Retry the same CSR using the same authenticated
+client certificate; the server resumes the retained transaction after restart.
+Successful retries return the same issued certificate in a certificates-only CMS
+response (HTTP `200`). Rejected requests return `403`, expired requests return
+`410`, and a failed issuance returns `500`; these outcomes do not restart issuance.
+
+Renewal checks the supplied CSR against the stored predecessor's identity and
+public key and verifies its proof against the frozen certificate profile. A new
+request cannot change those values through the renewal endpoint.
+
+### Server-generated keys
+
+`serverkeygen` requires configured `keygenArtifacts` storage and an explicitly
+selected EST generator signing credential. The authenticated client's CSR template
+must identify that client's TLS certificate encryption key with
+`AsymmetricDecryptKeyIdentifier` and offer a supported algorithm in
+`SMIMECapabilities`. Recipient key usage must permit the selected RSA key transport
+or EC key agreement. Another recipient cannot be substituted.
+
+The server preserves the authorized subject and SANs, ignores the template's
+original public-key and signature values, and verifies the newly generated CSR.
+It stores only the client-encrypted key package before admitting the request to
+approval and signing. Pending requests return `202` with `Retry-After`; retry the
+same template with the same authenticated certificate. Retries and restarts retain
+the original generated key, generator credential and issuance transaction.
+
+Successful delivery is `multipart/mixed`: a base64
+`application/pkcs7-mime; smime-type=server-generated-key` part contains a
+generator-signed RFC 5958 key package inside CMS EnvelopedData; the other part is
+the certificates-only response. Verify the generator signature and the delivered
+key's correspondence with the issued certificate. The configured delivery window
+is also bounded by recipient and generator-chain validity. Expired delivery returns
+`410`; it does not generate a replacement key. Interrupted generation before
+durable attachment leaves a terminal retry record instead of silently regenerating.
+
 ---
 
 ## SCEP (RFC 8894)
@@ -161,40 +233,60 @@ profile, and hashed challenge password.
 | `label` | URL-safe identifier (1–64 chars, `[A-Za-z0-9._-]+`) |
 | `authorityId` | The CA authority to issue from |
 | `profileId` | The issuance profile to apply |
+| `enrollmentProfileId` | Required active enrollment profile governing this endpoint |
 | `challengePasswordHash` | SHA-256 hex digest of the SCEP challenge password (64 lower-case hex chars) |
 
 !!! note "Challenge password security"
-    The plaintext challenge password is never stored. Only its SHA-256 hex digest
-    is retained and compared against the hash of the password embedded in each
-    PKCSReq message. Rotate the endpoint to change the password.
+    Endpoint and control metadata retain only the SHA-256 digest, which is
+    compared with the submitted challenge password. Durable enrollment retains
+    the exact signed CSR, including its challenge password attribute, in the
+    protected PKI request store and its backups. Protect access to those files
+    accordingly. Ordinary request inspection and listing omit the raw CSR;
+    backup export requires separate permission. Removing that attribute would
+    invalidate the original signature.
+    Update the endpoint's challenge digest to rotate the password.
 
 ### SCEP operations
 
 | Operation | HTTP method | Description |
 |---|---|---|
-| `GetCACert` | `GET /scep/{label}?operation=GetCACert` | Returns the issuing CA certificate (DER) |
+| `GetCACaps` | `GET /scep/{label}?operation=GetCACaps` | Advertises `POSTPKIOperation`, `SHA-256` and `AES` |
+| `GetCACert` | `GET /scep/{label}?operation=GetCACert` | Returns the provisioned RA and its issuing CA chain (CMS certs-only) |
 | `GetCACertChain` | `GET /scep/{label}?operation=GetCACertChain` | Returns RA + CA chain (CMS certs-only) |
-| `PKIOperation` | `GET` or `POST /scep/{label}?operation=PKIOperation` | Enrolment (PKCSReq), polling (GetCertInitial), CRL fetch (GetCRL) |
+| `PKIOperation` | `GET` or `POST /scep/{label}?operation=PKIOperation` | Enrolment (PKCSReq) and polling (GetCertInitial) |
 
 ### Authentication
 
-SCEP authenticates using the challenge password embedded in the PKCS#10 CSR
-attribute `challengePassword` (OID 1.2.840.113549.1.9.7). The server verifies
-the SHA-256 digest of the submitted password against the stored hash.
+The server verifies the request's single CMS signature before decrypting it with
+the selected RA key. New enrollment also requires the challenge password embedded
+in the PKCS#10 CSR attribute `challengePassword` (OID 1.2.840.113549.1.9.7); its
+SHA-256 digest must match the endpoint configuration. The CSR proof of possession
+and bound enrollment policy must pass before admission. A self-signed requester
+certificate proves control of its key, not an independently trusted device identity.
 
 ### RA key
 
-Each SCEP service generates an ephemeral RSA-2048 signing key pair at startup.
-The RA certificate is self-signed and returned in `GetCACertChain`. It is not
-persisted across server restarts; SCEP clients should re-fetch the CA chain after
-a server restart.
+Configure an authority-specific SCEP credential set in the enrollment companion
+configuration. `GetCACert` and `GetCACertChain` return that RA certificate and its
+validated issuing chain with media type `application/x-x509-ca-ra-cert`. Requests
+use RSA/SHA-256 signatures and AES-128-CBC encryption addressed to that RA.
+Each admitted transaction retains its credential selection across restart and
+rollover. Keep every referenced credential set available, including for completed
+transactions with retained delivery obligations. Issuance completion alone does
+not permit retirement; the current configuration has no credential-retirement
+mechanism.
 
 ### Pending enrolment
 
-When a PKCSReq cannot be processed synchronously (e.g., capacity pressure), the
-server returns `pkiStatus=PENDING`. The client should poll using `GetCertInitial`
-with the same `transactionID`. Pending state is tracked in memory; it is not
-durable across server restarts.
+While approval or issuance is pending, the server returns a signed
+`pkiStatus=PENDING`. Poll using `GetCertInitial` with the same `transactionID`,
+original signer certificate, issuing CA and requested subject. The coordinator
+retains the request, decisions and signing correlation across restart. Retrying
+the original PKCSReq must preserve the exact CSR. A successful response encrypts
+the issued certificate for the original requester; repeated delivery does not
+issue another certificate. Rejected, expired and failed transactions return a
+signed failure. Each reply echoes the current request's sender nonce; SCEP polls
+do not chain response nonces.
 
 ---
 
@@ -214,25 +306,35 @@ profile, and protection policy.
 | `label` | URL-safe identifier (1–64 chars, `[A-Za-z0-9._-]+`) |
 | `authorityId` | The CA authority to issue from |
 | `profileId` | The issuance profile to apply |
+| `enrollmentProfileId` | Required active enrollment profile governing this endpoint |
 | `protectionPolicy` | `SIGNATURE_BASED` or `SHARED_SECRET_MAC` |
 
 ### CMP body types
 
 | Body type | Description |
 |---|---|
-| ir (0) | Initialization Request — server-side key generation; returns ip |
-| cr (2) | Certification Request — server-side key generation; returns cp |
-| kur (7) | Key Update Request — treated as cr (server-keygen); returns kup |
+| ir (0) | Initialization Request — verifies the original client CRMF and proof; returns ip |
+| cr (2) | Certification Request — verifies the original client CRMF and proof; returns cp |
+| kur (7) | Key Update Request — replaces the identified predecessor with the proven new key; returns kup |
 | rr (11) | Revocation Request — permanently revokes by issuer+serial; returns rp |
-| genm (21) | General Message — returns CA chain in genp |
+| genm (21) | General Message — returns CA certificates for id-it-caCerts in genp |
+| certConf (24) | Confirms the issued certificate hash; returns pkiConf |
+| pollReq (25) | Continues the retained enrollment transaction after waiting |
 
-!!! note "Server-side key generation"
-    CMP ir and cr use server-side EC P-256 key generation because the CertTemplate
-    body is not a self-signed PKCS#10 CSR and cannot satisfy the server's
-    proof-of-possession check. The generated private key is currently NOT returned
-    to the client in the response (a future phase will add CMS EnvelopedData key
-    transport). Clients requiring client-side keys should use EST serverkeygen
-    or SCEP.
+Requests and responses use the endpoint's provisioned signature or PBM protection.
+Key update and revocation require the exact certificate owner's signature or an
+explicitly authorized, authority-scoped RA. PBM authenticates enrollment and its
+continuation; knowledge of its secret grants no ownership of existing certificates.
+
+Approval, polling, certificate delivery and confirmation use durable transaction
+state with the original requester, CRMF and credential selection. Exact authenticated
+retransmissions of the most recently retained request receive its stored response,
+including after restart or active credential rollover. Earlier requests cannot be
+replayed after a continuation replaces that response. Continuations must preserve
+transaction/request identifiers
+and nonce linkage. Explicit confirmation checks the actual issued certificate;
+signatures without an implied digest require CMP version 3 with a supported
+explicit `hashAlg`. Implicit confirmation is honored when requested and accepted.
 
 ### CMP transport
 
@@ -242,21 +344,28 @@ All CMP messages use `Content-Type: application/pkixcmp` over HTTP POST.
 
 ## Enrollment profiles
 
-An enrollment profile is a named policy envelope that sits between an enrollment endpoint (SCEP,
-CMP, EST, or ACME) and the certificate issuance engine. Where an endpoint determines *how* a
-client communicates, a profile determines *what* the server will accept and issue.
+An enrollment profile stores policy for an enrollment endpoint separately from
+its certificate issuance profile. Durable bindings cover EST, SCEP and CMP
+endpoints and ACME directories.
 
-Profiles are created once and referenced by enrollment endpoints and protocol adapters. When a
-request arrives, the server resolves the active profile and enforces:
+Profiles are created and referenced by enrollment endpoints. The current endpoint
+admission checks enforce active state, certificate-profile binding and permitted
+authority. The shared enrollment coordinator additionally enforces subject and
+DNS SAN requirements before durable request admission. EST enrollment, renewal and
+server-keygen, SCEP enrollment, CMP enrollment/key update and ACME finalization use
+this coordinator and its durable approval workflow.
 
 - **Allowed authorities** — the request may only issue from the listed CA authorities (empty means no restriction).
 - **Certificate profile** — the issuance profile applied to every certificate issued under this enrollment profile.
-- **Subject DN pattern** — an optional regular expression the requested subject DN must satisfy.
-- **Required SAN domains** — DNS names that must appear in the certificate's Subject Alternative Name.
-- **Approval requirement** — whether a durable human approval must be granted before the certificate is issued.
+- **Subject DN pattern** — an optional whole-subject policy pattern using the restricted syntax described above.
+- **Required SAN domains** — each configured DNS suffix requires a matching DNS SAN on a label boundary.
+- **Approval requirement** — policy selection for the durable human-approval workflow.
 
-A profile has two states: `ACTIVE` (accepts new requests) and `SUSPENDED` (rejections only; no new
-issuance). Existing in-flight requests are unaffected by suspension.
+A profile has two states: `ACTIVE` permits new admissions and `SUSPENDED` blocks
+them. For coordinated requests, the durable dispatch claim is the admission
+boundary: suspension blocks later claims, while already claimed work may finish.
+Recovery first reconciles the original signing receipt; if signing was definitely
+not accepted, a new attempt must pass current policy checks.
 
 ### Managing enrollment profiles
 
@@ -277,9 +386,36 @@ issuance). Existing in-flight requests are unaffected by suspension.
 | `displayName` | Yes | Human-readable name |
 | `certificateProfileId` | Yes | The certificate profile applied at issuance |
 | `allowedAuthorityIds` | No | Set of CA authority IDs permitted to issue; empty means any |
-| `subjectDnPattern` | No | Regular expression the subject DN must match |
-| `requiredSanDomains` | No | DNS names that must appear in the SAN |
-| `requireApproval` | No | `true` if a durable approval is required before issuance (default `false`) |
+| `subjectDnPattern` | No | Whole-subject pattern with literal text and `.*` wildcards |
+| `requiredSanDomains` | No | Required DNS suffixes, normalized to lowercase ASCII |
+| `requireApproval` | No | Requires human approval even when the certificate profile does not (default `false`) |
+
+### Reviewing enrollment requests
+
+The shared workflow exposes separate operations for protocol requests:
+
+| Operation | Purpose |
+|---|---|
+| `enrollment.request.list` | Read a page of retained requests (nonnegative `offset`, `limit` from 1 to 256) |
+| `enrollment.request.inspect` | Inspect the request identified by `id` and obtain its current commitment |
+| `enrollment.request.approve` | Approve the inspected `id` with its exact `expectedCommitment` and a `justification` |
+| `enrollment.request.reject` | Reject the inspected `id` with its exact `expectedCommitment` and a `justification` |
+
+The server derives the authority and profile from the stored request and checks
+the administrator's permissions and eligibility. A stale commitment is rejected;
+inspect the request again before making another decision. Provide a reason when
+the frozen approval policy requires one, and never include credentials or secrets.
+Decisions are persisted before acknowledgement and survive restart.
+
+The requester cannot approve their own enrollment: the server excludes the same
+certificate, the same mathematical public key and known administrative aliases.
+One key cannot supply multiple votes under different administrator identities.
+This separation is mandatory for enrollment even if the generic administrative
+approval policy disables requester separation.
+
+Approval permits the protocol workflow to continue; it is not evidence that a
+certificate has already been issued. Protocol clients must continue their retry
+or polling flow to obtain the retained issuance result.
 
 ---
 

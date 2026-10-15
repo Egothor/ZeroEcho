@@ -35,6 +35,7 @@ package zeroecho.pki.spi.framework;
 
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 
 /**
  * Parses and normalizes framework-specific certification requests into the core
@@ -53,4 +54,14 @@ public interface CertificationRequestParser {
      *                                  unsupported features)
      */
     ParsedCertificationRequest parse(CertificationRequest request);
+
+    /**
+     * Parses an explicitly typed X.509 enrollment request when supported by this framework.
+     * @param request bounded immutable PKCS#10 or CRMF payload
+     * @return normalized request retaining its exact original syntax
+     * @throws UnsupportedOperationException if this framework has no typed X.509 parser
+     */
+    default ParsedCertificationRequest parseX509(X509EnrollmentPayload request) {
+        throw new UnsupportedOperationException("Typed X.509 enrollment parsing is unavailable");
+    }
 }

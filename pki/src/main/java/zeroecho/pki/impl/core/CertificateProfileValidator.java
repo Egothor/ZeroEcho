@@ -56,7 +56,6 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
-import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.profile.CertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileRef;
@@ -69,7 +68,6 @@ import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
-import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
@@ -130,10 +128,10 @@ final class CertificateProfileValidator {
     }
 
     private static void requireCanonicalRequestAttributes(ParsedCertificationRequest request) {
-        if (request.attributes().ids().size() != 1 || !request.attributes().ids().contains(BcX509Attributes.CSR_DER)
-                || request.attributes().getAll(BcX509Attributes.CSR_DER).size() != 1 || !(request.attributes()
-                        .get(BcX509Attributes.CSR_DER).orElse(null) instanceof AttributeValue.BytesValue)) {
-            throw reject("REQUEST_ATTRIBUTE_UNSUPPORTED");
+        try {
+            zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(request);
+        } catch (IllegalArgumentException invalid) {
+            throw reject("REQUEST_ATTRIBUTE_UNSUPPORTED"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         }
     }
 

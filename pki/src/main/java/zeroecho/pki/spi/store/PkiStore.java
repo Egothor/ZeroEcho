@@ -108,6 +108,33 @@ import zeroecho.pki.api.status.StatusObjectType;
 public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, AutoCloseable { // NOPMD - TooManyMethods: one cohesive strict-schema or store-transaction ownership contract.
 
     /**
+     * Discards an unpublished restore attempt after cold coordinator recovery.
+     * The current restore identifier must still equal {@code previousRestoreId};
+     * a published or uncertain attempt must never be discarded. Implementations
+     * remove only the exact unreferenced staging data and matching role marker,
+     * durably and idempotently. Callers invoke this before admitting new work.
+     * @param restoreId fresh canonical UUID assigned to the unpublished attempt
+     * @param previousRestoreId authoritative identifier observed before that attempt
+     * @param manifestSha256 expected lowercase SHA-256 manifest digest
+     * @throws java.io.IOException if identity, markers, or durable cleanup cannot be established
+     * @throws UnsupportedOperationException if this recovery capability is unsupported
+     */
+    default void discardUnpublishedRestore(PkiId restoreId, Optional<PkiId> previousRestoreId,
+            String manifestSha256) throws java.io.IOException {
+        throw new UnsupportedOperationException("Unpublished restore cleanup is unsupported");
+    }
+    /**
+     * Returns the exact source identity persisted with the latest restore.
+     * Existing implementations return empty until they support reconciliation.
+     * @return source identity and its outcome, or empty
+     * @throws java.io.IOException if reading the restore coordinator fails
+     */
+    default Optional<zeroecho.pki.api.backup.RestoreIdentity> latestRestoreIdentity()
+            throws java.io.IOException {
+        return Optional.empty();
+    }
+
+    /**
      * Stages a verified replacement for cold activation on the next open.
      * The source remains caller-owned; known live safety authority cannot regress.
      * @param source bounded archive source
@@ -119,6 +146,28 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
             zeroecho.pki.api.backup.BackupSource source) throws java.io.IOException {
         throw new UnsupportedOperationException("Local restore staging is unsupported");
     }
+
+    /**
+     * Stages a restore with a caller-persisted correlation identifier.
+     * The identifier must be a fresh canonical UUID and must never be reused,
+     * including after an uncertain result. This is not a retry API: reconcile
+     * through {@link #latestRestoreIdentity()} after interrupted acknowledgement.
+     * The source remains caller-owned and activation requires a subsequent open.
+     * Existing implementations must opt in to exact-identity staging.
+     *
+     * @param source bounded archive source
+     * @param restoreId fresh canonical UUID persisted before dispatch
+     * @return staged status containing exactly the supplied identifier
+     * @throws java.io.IOException if verification or durable publication fails
+     * @throws IllegalArgumentException if the identifier is not a canonical UUID
+     * @throws UnsupportedOperationException if exact-identity staging is unsupported
+     */
+    default zeroecho.pki.api.backup.RestoreStatus stageRestore(
+            zeroecho.pki.api.backup.BackupSource source, PkiId restoreId)
+            throws java.io.IOException {
+        throw new UnsupportedOperationException("Exact-identity restore staging is unsupported");
+    }
+
 
     /**
      * Returns the latest local restore status without activating a candidate.
@@ -271,6 +320,30 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @return immutable bounded page
      */
     List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<Credential> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Reports whether the explicitly configured derived credential search index is ready.
+     * @return false when disabled, unavailable or fenced
+     */
+    default boolean credentialSearchAvailable() { return false; }
+
+    /**
+     * Searches current authoritative credentials using the configured derived index.
+     * Authorization and metadata filters are applied before the page limit. No scan
+     * fallback is permitted when indexing is disabled or unavailable.
+     * @param query immutable inventory and exact typed SAN filters
+     * @param after exclusive credential-ID cursor
+     * @param limit maximum rows, 1 through 1001
+     * @param include synchronous authorization predicate, never retained
+     * @param cancellation cooperative cancellation within the configured whole-call deadline
+     * @return immutable authorized page in ascending credential-ID order
+     * @throws IllegalStateException if indexing is unavailable or the query fails
+     */
+    default List<Credential> searchCredentials(zeroecho.pki.api.credential.CredentialSearchQuery query,
+            Optional<String> after, int limit, java.util.function.Predicate<Credential> include,
+            zeroecho.core.io.CancellationSignal cancellation) {
+        throw new IllegalStateException("Credential search is unavailable");
+    }
 
     /**
      * Lists historical issuer generations in ascending issuer-ID order.

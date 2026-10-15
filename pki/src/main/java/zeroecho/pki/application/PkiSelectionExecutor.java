@@ -40,6 +40,12 @@ import zeroecho.core.io.CancellationSignal;
 @FunctionalInterface
 public interface PkiSelectionExecutor {
     /**
+     * Reports an explicitly activated, currently usable credential search index.
+     * @return false when the executor does not support indexed search or it is unavailable
+     */
+    default boolean credentialSearchAvailable() { return false; }
+
+    /**
      * Executes one selection operation, authorizing metadata before limiting and computing continuation.
      * @param operation typed pageable selection operation
      * @param include authorization predicate over allowlisted metadata only

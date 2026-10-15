@@ -37,7 +37,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.List;
-import java.util.UUID;
 
 import zeroecho.pkix.CertificationRequestException;
 import zeroecho.pkix.Pkix;
@@ -55,7 +54,6 @@ final class EstCmsCodec {
     /* default */ static final String CONTENT_TYPE_PKCS10 = "application/pkcs10";
     /* default */ static final String CONTENT_TYPE_CERTS_ONLY = "application/pkcs7-mime; smime-type=certs-only";
     /* default */ static final String CONTENT_TYPE_CSRATTRS = "application/csrattrs";
-    /* default */ static final String CONTENT_TYPE_PKCS8 = "application/pkcs8";
 
     private static final Base64.Encoder MIME_B64 =
             Base64.getMimeEncoder(76, "\r\n".getBytes(StandardCharsets.US_ASCII));
@@ -94,43 +92,4 @@ final class EstCmsCodec {
         return MIME_B64.encode(Pkix.encodeCsrAttrs(attributes));
     }
 
-    /**
-     * Encrypts a PKCS#8 private key for the recipient using CMS EnvelopedData with AES-256-GCM.
-     *
-     * @param pkcs8Der      DER-encoded PKCS#8 private key (caller must zero after this returns)
-     * @param recipientCert the recipient's certificate (public key used to wrap the content key)
-     * @return base64-encoded DER CMS ContentInfo wrapping EnvelopedData
-     */
-    /* default */ static byte[] encryptPrivateKey(byte[] pkcs8Der, X509Certificate recipientCert) {
-        return MIME_B64.encode(Pkix.encryptPrivateKeyForRecipient(pkcs8Der, recipientCert));
-    }
-
-    /**
-     * Builds a {@code multipart/mixed} response body for POST {@code /serverkeygen}.
-     *
-     * <p>Part 1: encrypted private key ({@code application/pkcs8}, base64). <br>
-     * Part 2: issued certificate chain ({@code application/pkcs7-mime; smime-type=certs-only}, base64).</p>
-     *
-     * @param encryptedKeyBase64  MIME-base64 CMS EnvelopedData bytes (from {@link #encryptPrivateKey})
-     * @param certsCmsBase64      MIME-base64 CMS certs-only bytes (from {@link #encodeCertsOnly})
-     * @return two-element array: {@code [0]} = body bytes, {@code [1]} = boundary bytes
-     */
-    /* default */ static byte[][] buildServerKeygenMultipart(byte[] encryptedKeyBase64, byte[] certsCmsBase64) {
-        String boundary = "estboundary-" + UUID.randomUUID().toString().replace("-", "");
-        String crlf = "\r\n";
-        StringBuilder sb = new StringBuilder(256);
-        sb.append("--").append(boundary).append(crlf)
-                .append("Content-Type: ").append(CONTENT_TYPE_PKCS8).append(crlf)
-                .append("Content-Transfer-Encoding: base64").append(crlf).append(crlf)
-                .append(new String(encryptedKeyBase64, StandardCharsets.US_ASCII)).append(crlf)
-                .append("--").append(boundary).append(crlf)
-                .append("Content-Type: ").append(CONTENT_TYPE_CERTS_ONLY).append(crlf)
-                .append("Content-Transfer-Encoding: base64").append(crlf).append(crlf)
-                .append(new String(certsCmsBase64, StandardCharsets.US_ASCII)).append(crlf)
-                .append("--").append(boundary).append("--").append(crlf);
-        return new byte[][]{
-                sb.toString().getBytes(StandardCharsets.US_ASCII),
-                boundary.getBytes(StandardCharsets.US_ASCII)
-        };
-    }
 }

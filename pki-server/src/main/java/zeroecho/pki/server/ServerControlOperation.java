@@ -82,9 +82,13 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.RegisterEnrollmentProfile, ServerControlOperation.UpdateEnrollmentProfile,
         ServerControlOperation.InspectEnrollmentProfile, ServerControlOperation.ListEnrollmentProfiles,
         ServerControlOperation.ActivateEnrollmentProfile, ServerControlOperation.SuspendEnrollmentProfile,
+        ServerControlOperation.InspectEnrollmentRequest, ServerControlOperation.ListEnrollmentRequests,
+        ServerControlOperation.DecideEnrollmentRequest,
         ServerControlOperation.SearchAudit,
         ServerControlOperation.VerifyAuditIntegrity, ServerControlOperation.ExportBackup,
         ServerControlOperation.VerifyBackup, ServerControlOperation.ExecuteRestore,
+        ServerControlOperation.ReserveBackupUpload, ServerControlOperation.ExportBackupStream,
+        ServerControlOperation.BackupArtifactCommand,
         ServerControlOperation.ConfigurationChoices,
         ServerControlOperation.ListCapabilities {
 
@@ -648,6 +652,96 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
     }
 
     /**
+     * Reserves bounded storage for a streaming archive upload.
+     * The supplied commitment is verified against bytes before domain validation.
+     * @param backupId claimed manifest backup identifier
+     * @param length exact compressed byte count
+     * @param sha256 lowercase archive SHA-256
+     */
+    record ReserveBackupUpload(PkiId backupId, long length, String sha256) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "backup.stream.reserve";
+        /** Validates the bounded declaration without allocating archive storage. */
+        public ReserveBackupUpload {
+            Objects.requireNonNull(backupId, "backupId");
+            Permission.requireBounded(backupId.value(), 1024, "backupId");
+            if (length < 1 || length > zeroecho.pki.api.backup.BackupLimits.defaults().compressedBytes()
+                    || sha256 == null || !isCommitment(sha256)) {
+                throw new IllegalArgumentException("Invalid backup upload declaration");
+            }
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Creates a file-backed export for a subsequent authorized download.
+     * @param label bounded operator label
+     */
+    record ExportBackupStream(String label) implements ServerControlOperation {
+        /** Stable operation identity. */
+        public static final String NAME = "backup.stream.export";
+        /** Validates the export label. */
+        public ExportBackupStream { Permission.requireBounded(label, 256, "label"); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Requests an action on an owned opaque archive or restore workflow.
+     * The gateway replaces any supplied commitment with current authoritative
+     * metadata before authorization and approval canonicalization.
+     * @param action requested workflow phase
+     * @param artifactHandle opaque owner-bound handle, never a filesystem path
+     * @param commitment server-resolved metadata commitment; empty on the wire
+     */
+    record BackupArtifactCommand(Action action, String artifactHandle, Optional<String> commitment)
+            implements ServerControlOperation {
+        /** Upload backup archive operation identity. */
+        public static final String UPLOAD = "backup.stream.upload";
+        /** Download backup archive operation identity. */
+        public static final String DOWNLOAD = "backup.stream.download";
+        /** Verify uploaded archive operation identity. */
+        public static final String VERIFY = "backup.stream.verify";
+        /** Stage backup restoration operation identity. */
+        public static final String RESTORE = "backup.stream.restore";
+        /** Inspect restore workflow operation identity. */
+        public static final String STATUS = "backup.stream.status";
+        /** Acknowledge restore outcome operation identity. */
+        public static final String ACKNOWLEDGE = "backup.stream.acknowledge";
+        /** Closed workflow actions and their stable operation identities. */
+        public enum Action {
+            /** Receives an archive through the binary upload route. */
+            UPLOAD(BackupArtifactCommand.UPLOAD),
+            /** Consumes a single authorized archive download. */
+            DOWNLOAD(BackupArtifactCommand.DOWNLOAD),
+            /** Performs domain archive verification. */
+            VERIFY(BackupArtifactCommand.VERIFY),
+            /** Stages a verified archive with high-risk approval. */
+            RESTORE(BackupArtifactCommand.RESTORE),
+            /** Reads a retained restore outcome, including after archive expiry. */
+            STATUS(BackupArtifactCommand.STATUS),
+            /** Removes an acknowledged, authoritatively terminal workflow. */
+            ACKNOWLEDGE(BackupArtifactCommand.ACKNOWLEDGE);
+            private final String operationId;
+            Action(String operationId) { this.operationId = operationId; }
+            /** Returns the stable operation identity.
+             * @return stable operation identity
+             */
+            public String operationId() { return operationId; }
+        }
+        /** Validates shape; ownership and phase are checked by the server. */
+        public BackupArtifactCommand {
+            Objects.requireNonNull(action, "action");
+            Objects.requireNonNull(commitment, "commitment");
+            if (artifactHandle == null || !isCommitment(artifactHandle)
+                    || commitment.isPresent() && !isCommitment(commitment.orElseThrow())) {
+                throw new IllegalArgumentException("Invalid backup artifact reference");
+            }
+        }
+        @Override public String name() { return action.operationId(); }
+        @Override public String toString() { return "BackupArtifactCommand[redacted]"; }
+    }
+
+    /**
      * Exact repository alias inspection.
      *
      * @param authorityId exact logical authority identifier
@@ -710,7 +804,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         public static final String NAME = "repository.alias.remove";
         /** Validates the operation's immutable input. */
         public RemoveRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type);
-            if (expectedCurrentCommitment == null || !expectedCurrentCommitment.matches("[0-9a-f]{64}")) throw invalid(); }
+            if (expectedCurrentCommitment == null || !isCommitment(expectedCurrentCommitment)) throw invalid(); }
         @Override public String name() { return NAME; }
     }
 
@@ -727,7 +821,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         public AcmeDirectoryProfilePrecondition {
             Objects.requireNonNull(expectedProfile, "expectedProfile");
             if (expectedPolicyCommitment == null
-                    || !expectedPolicyCommitment.matches("[0-9a-f]{64}")) {
+                    || !isCommitment(expectedPolicyCommitment)) {
                 throw invalid();
             }
         }
@@ -1081,6 +1175,47 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         @Override public String name() { return NAME; }
     }
     /**
+     * Inspects a durable protocol request using its authoritative persisted scope.
+     * @param id enrollment request identity
+     */
+    record InspectEnrollmentRequest(String id) implements ServerControlOperation {
+        /** Stable operation identity. */ public static final String NAME = "enrollment.request.inspect";
+        /** Validates the stable reference. */
+        public InspectEnrollmentRequest { Permission.requireId(id, "enrollment request"); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Lists retained enrollment requests within the authorized scope.
+     * @param offset zero-based page offset
+     * @param limit page size, at most 256
+     */
+    record ListEnrollmentRequests(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity. */ public static final String NAME = "enrollment.request.list";
+        /** Validates bounded pagination. */
+        public ListEnrollmentRequests { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * Independently approves or rejects the exact record reviewed by an administrator.
+     * Trusted end-client evidence is supplied by authentication, never this DTO.
+     * @param id durable request identity
+     * @param expectedCommitment complete reviewed record commitment
+     * @param choice explicit approval or rejection
+     * @param justification bounded operator justification
+     */
+    record DecideEnrollmentRequest(String id, String expectedCommitment, ApprovalService.Choice choice,
+            String justification) implements ServerControlOperation {
+        /** Stable approval operation identity. */ public static final String APPROVE = "enrollment.request.approve";
+        /** Stable rejection operation identity. */ public static final String REJECT = "enrollment.request.reject";
+        /** Validates all caller-controlled decision fields. */
+        public DecideEnrollmentRequest {
+            Permission.requireId(id, "enrollment request"); Objects.requireNonNull(choice, "choice");
+            if (expectedCommitment == null || !isCommitment(expectedCommitment)) throw new IllegalArgumentException("Enrollment record commitment is invalid");
+            justification = Permission.requireBounded(justification, 2048, "justification");
+        }
+        @Override public String name() { return choice == ApprovalService.Choice.APPROVE ? APPROVE : REJECT; }
+    }
+    /**
      * Lists enrollment profiles.
      *
      * @param offset zero-based page offset
@@ -1123,5 +1258,9 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
     }
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("Server-control operation input is invalid");
+    }
+
+    private static boolean isCommitment(String value) {
+        return value.matches("[0-9a-f]{64}");
     }
 }

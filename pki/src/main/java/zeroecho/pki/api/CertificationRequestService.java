@@ -42,6 +42,7 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.RequestQuery;
 import zeroecho.pki.api.request.RequestStorePolicy;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 
 /**
  * Processes certification requests (CSR-like objects) into a normalized
@@ -78,6 +79,52 @@ public interface CertificationRequestService {
     ParsedCertificationRequest parse(CertificationRequest request);
 
     /**
+     * Parses an explicitly typed X.509 PKCS#10 or CRMF enrollment payload.
+     * @param request immutable bounded original payload
+     * @return normalized request retaining the exact original syntax and bytes
+     * @throws RuntimeException if parsing fails or the active framework does not support the syntax
+     */
+    ParsedCertificationRequest parseX509(X509EnrollmentPayload request);
+
+    /**
+     * Restores the exact typed X.509 enrollment payload from a stored parse result.
+     * Requires one canonical byte attribute and the matching syntax-specific digest identity.
+     * Performs no proof verification or authorization.
+     * @param parsed parsed request retaining the original payload
+     * @return immutable independently owned original payload
+     * @throws IllegalArgumentException if syntax, attribute, size, or identity is invalid
+     */
+    X509EnrollmentPayload encodedX509Request(ParsedCertificationRequest parsed);
+
+    /**
+     * Requires an original X.509 request to describe the exact authoritative
+     * renewal predecessor subject, ordered RDNs, SAN presence/entries and DER
+     * public key. Re-parses the retained original payload and rejects fabricated
+     * normalized fields. Resolves and validates bounded predecessor content and
+     * leaf metadata from this service's store. This equality check grants no
+     * authentication, proof verification, approval or predecessor status validity;
+     * correlated renewal independently performs those applicable domain checks.
+     * @param parsed request retaining its exact original typed payload
+     * @param predecessorId exact stored end-entity credential identity
+     * @throws IllegalArgumentException if either input or its identity is inconsistent
+     * @throws PkiException if the predecessor is missing or content cannot be validated
+     */
+    void requireRenewalIdentity(ParsedCertificationRequest parsed, PkiId predecessorId);
+
+    /**
+     * Verifies the exact retained original proof and its CSR-signature binding
+     * against an immutable imported profile version. Re-extracts and reparses the
+     * original typed payload; caller-supplied normalized fields confer no trust.
+     * Uses this session's configured algorithm authority and binding registry.
+     * Performs no writes, serial allocation, signing preparation or authorization;
+     * subject, issuer, validity and other issuance policies remain separate checks.
+     * @param parsed request retaining the exact original typed payload
+     * @param profile exact imported profile identity, version and commitment
+     * @throws RuntimeException if the profile, proof, binding or configured verifier is unavailable or invalid
+     */
+    void requireProfileProof(ParsedCertificationRequest parsed, zeroecho.pki.api.profile.CertificateProfileRef profile);
+
+    /**
      * Restores the exact bounded X.509 CSR DER snapshot retained in a parsed request.
      * Requires one byte-valued CSR attribute, between one byte and one MiB, and
      * the exact {@code csr:} SHA-256 identity of the returned snapshot. The snapshot
@@ -86,7 +133,8 @@ public interface CertificationRequestService {
      * does not make the parsed request an authorization credential.
      * @param parsed parsed request containing its original CSR bytes
      * @return independently owned DER request with the same X.509 format
-     * @throws IllegalArgumentException if the input, format, attribute or identity is invalid
+     * @throws IllegalArgumentException if the input, format, attribute or identity is invalid,
+     *         or the request carries CRMF; use {@link #encodedX509Request} for typed recovery
      * @throws PkiException if SHA-256 is unavailable
      */
     CertificationRequest encodedRequest(ParsedCertificationRequest parsed);

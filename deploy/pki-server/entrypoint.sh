@@ -60,7 +60,16 @@ BOOTSTRAP_BIN="${ZEROECHO_APP_HOME}/bin/zeroecho-pki-profile-bootstrap"
 [ -x "${SERVER_BIN}" ] || die "server launcher is missing"
 [ -f "${ZEROECHO_SERVER_CONFIG}" ] || die "server configuration is missing"
 log "validating server configuration"
-"${SERVER_BIN}" --validate-config --config "${ZEROECHO_SERVER_CONFIG}" \
+set -- --config "${ZEROECHO_SERVER_CONFIG}"
+if [ -n "${ZEROECHO_BACKUP_TRANSFER_CONFIG:-}" ]; then
+    [ -f "${ZEROECHO_BACKUP_TRANSFER_CONFIG}" ] || die "backup transfer configuration is missing"
+    set -- "$@" --backup-transfer-config "${ZEROECHO_BACKUP_TRANSFER_CONFIG}"
+fi
+if [ -n "${ZEROECHO_ENROLLMENT_CONFIG:-}" ]; then
+    [ -f "${ZEROECHO_ENROLLMENT_CONFIG}" ] || die "enrollment configuration is missing"
+    set -- "$@" --enrollment-config "${ZEROECHO_ENROLLMENT_CONFIG}"
+fi
+"${SERVER_BIN}" --validate-config "$@" \
     || die "server configuration is invalid; refusing to start"
 
 case "${ZEROECHO_PROFILE_RECONCILE:-on}" in
@@ -77,4 +86,4 @@ case "${ZEROECHO_PROFILE_RECONCILE:-on}" in
 esac
 
 log "starting zeroecho-pki-server"
-exec "${SERVER_BIN}" --config "${ZEROECHO_SERVER_CONFIG}"
+exec "${SERVER_BIN}" "$@"

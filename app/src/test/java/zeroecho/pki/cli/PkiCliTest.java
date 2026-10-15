@@ -603,6 +603,9 @@ class PkiCliTest {
                 @Override public zeroecho.pki.application.PkiRepository repository() {
                     throw new UnsupportedOperationException();
                 }
+                @Override public zeroecho.pki.api.credential.EffectiveCredentialStatusResolver credentialStatuses() {
+                    throw new UnsupportedOperationException();
+                }
                 @Override public void close() { }
             };
         }
@@ -681,6 +684,9 @@ class PkiCliTest {
 
                 @Override
                 public zeroecho.pki.application.PkiRepository repository() {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public zeroecho.pki.api.credential.EffectiveCredentialStatusResolver credentialStatuses() {
                     throw new UnsupportedOperationException();
                 }
 

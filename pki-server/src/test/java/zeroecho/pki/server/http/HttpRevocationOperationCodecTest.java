@@ -109,6 +109,29 @@ class HttpRevocationOperationCodecTest {
         return assertInstanceOf(PkiOperation.RevokeCredential.class, family.operation());
     }
 
+    @Test
+    void holdTransitionsDecodeStrictArgumentsAndPreserveJustification() {
+        for (String name : java.util.List.of("credential.hold", "credential.unhold")) {
+            String json = "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"credentialId\":\"credential-a\",\"justification\":\"ticket-300\"}}";
+            HttpOperationCodec.Decoded decoded = HttpOperationCodec.decode(name, json.getBytes(StandardCharsets.UTF_8),
+                    16_384, REALM, DESCRIPTORS::require);
+            PkiOperation value = assertInstanceOf(AdministrativeOperation.Pki.class, decoded.operation()).operation();
+            assertEquals(name, value.name());
+            assertEquals(Optional.of("ticket-300"), decoded.context().operatorJustification());
+            assertEquals("credential-a", decoded.resource().objectId().orElseThrow().value());
+            for (String field : java.util.List.of("reason", "revocationDate", "evidence", "unexpected")) {
+                String invalid = json.replace("\"justification\":\"ticket-300\"", "\"" + field + "\":\"invalid\"");
+                assertThrows(IllegalArgumentException.class, () -> HttpOperationCodec.decode(name,
+                        invalid.getBytes(StandardCharsets.UTF_8), 16_384, REALM, DESCRIPTORS::require));
+            }
+            for (String justification : java.util.List.of("", " ", "x".repeat(1025))) {
+                String invalid = json.replace("ticket-300", justification);
+                assertThrows(IllegalArgumentException.class, () -> HttpOperationCodec.decode(name,
+                        invalid.getBytes(StandardCharsets.UTF_8), 16_384, REALM, DESCRIPTORS::require));
+            }
+        }
+    }
+
     private static HttpOperationCodec.Decoded decode(String json) {
         return HttpOperationCodec.decode(PkiOperation.RevokeCredential.NAME,
                 json.getBytes(StandardCharsets.UTF_8), 16_384, REALM, DESCRIPTORS::require);

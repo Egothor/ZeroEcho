@@ -54,13 +54,13 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
  * families project through the same generic audit-projection framework.</p>
  *
  * @param actorType authenticated actor classification
- * @param actorId authenticated actor identifier (principal or ACME account)
+ * @param actorId authenticated administrative or protocol requester identifier
  * @param realmId realm identity
  * @param requestId trusted originating invocation correlation identifier
  * @param authentication authentication classification
  * @param authorization authorization classification
- * @param authorizationPath administrative authorization path (absent for ACME)
- * @param operationCommitment exact operation commitment (absent for ACME)
+ * @param authorizationPath exact administrative or enrollment path (absent for legacy ACME ownership evidence)
+ * @param operationCommitment exact durable operation commitment (absent for legacy ACME ownership evidence)
  * @param issuerCaId issuing authority identity
  * @param profileId frozen certificate-profile identity governing issuance
  * @param outcome outcome committed atomically with the credential
@@ -74,7 +74,11 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
         /** Authenticated administrative principal. */
         ADMIN_PRINCIPAL,
         /** Protocol-native ACME account. */
-        ACME_ACCOUNT
+        ACME_ACCOUNT,
+        /** Authenticated EST certificate holder. */ EST_CLIENT,
+        /** Verified SCEP CMS signer. */ SCEP_SIGNER,
+        /** Trusted CMP message signature identity. */ CMP_SIGNER,
+        /** Explicitly provisioned CMP PBM requester identity. */ CMP_PBM
     }
     /** Stable evidence authentication classifications. */
     public enum Authentication {
@@ -83,23 +87,29 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
         /** Identity asserted by a trusted reverse proxy. */
         TRUSTED_REVERSE_PROXY,
         /** ACME account JSON Web Signature authentication. */
-        ACME_ACCOUNT_JWS
+        ACME_ACCOUNT_JWS,
+        /** EST protocol client certificate authentication. */ EST_MTLS,
+        /** Verified SCEP CMS message signature. */ SCEP_CMS,
+        /** Verified authority-scoped CMP signature protection. */ CMP_SIGNATURE,
+        /** Verified authority-scoped CMP password-based MAC. */ CMP_PBM
     }
     /** Stable evidence authorization classifications. */
     public enum Authorization {
         /** Administrative policy allowed issuance. */
         ALLOWED,
         /** ACME account ownership authorized issuance. */
-        ACME_OWNERSHIP
+        ACME_OWNERSHIP,
+        /** Exact durable enrollment policy admitted this protocol request. */ ENROLLMENT_POLICY
     }
-    /** Administrative authorization path, with break-glass taking precedence. */
+    /** Exact administrative or enrollment authorization path; administrative break-glass takes precedence. */
     public enum AuthorizationPath {
         /** Ordinary administrative grant. */
         ORDINARY_GRANT,
         /** Explicit approval workflow. */
         APPROVAL,
         /** Audited emergency break-glass path. */
-        BREAK_GLASS
+        BREAK_GLASS,
+        /** Enrollment policy explicitly permits issuance without administrative approval. */ ENROLLMENT_POLICY
     }
     /** Outcome committed atomically with the credential. */
     public enum Outcome {
@@ -151,14 +161,26 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
         requireBounded(profileId, "profile ID");
         Objects.requireNonNull(outcome, "outcome");
         boolean administrative = actorType == ActorType.ADMIN_PRINCIPAL
-                && authentication != Authentication.ACME_ACCOUNT_JWS
+                && (authentication == Authentication.DIRECT_MTLS || authentication == Authentication.TRUSTED_REVERSE_PROXY)
                 && authorization == Authorization.ALLOWED
-                && authorizationPath.isPresent() && operationCommitment.isPresent();
+                && authorizationPath.isPresent() && authorizationPath.orElseThrow() != AuthorizationPath.ENROLLMENT_POLICY
+                && operationCommitment.isPresent();
         boolean acme = actorType == ActorType.ACME_ACCOUNT
                 && authentication == Authentication.ACME_ACCOUNT_JWS
                 && authorization == Authorization.ACME_OWNERSHIP
                 && authorizationPath.isEmpty() && operationCommitment.isEmpty();
-        if (!administrative && !acme) {
+        boolean enrollmentAuthentication = switch (actorType) {
+            case ADMIN_PRINCIPAL -> false;
+            case ACME_ACCOUNT -> authentication == Authentication.ACME_ACCOUNT_JWS;
+            case EST_CLIENT -> authentication == Authentication.EST_MTLS;
+            case SCEP_SIGNER -> authentication == Authentication.SCEP_CMS;
+            case CMP_SIGNER -> authentication == Authentication.CMP_SIGNATURE;
+            case CMP_PBM -> authentication == Authentication.CMP_PBM;
+        };
+        boolean enrollment = enrollmentAuthentication && authorization == Authorization.ENROLLMENT_POLICY
+                && operationCommitment.isPresent() && authorizationPath.filter(path ->
+                        path == AuthorizationPath.APPROVAL || path == AuthorizationPath.ENROLLMENT_POLICY).isPresent();
+        if (!administrative && !acme && !enrollment) {
             throw new IllegalArgumentException("Issuance evidence classification is inconsistent");
         }
     }
@@ -169,7 +191,7 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
      * @param principalId bounded authenticated administrator identifier
      * @param realmId bounded authorization realm identifier
      * @param requestId trusted originating invocation correlation identifier
-     * @param authentication non-ACME authentication mechanism
+     * @param authentication direct mutual TLS or trusted reverse-proxy mutual TLS
      * @param path administrative grant, approval, or break-glass path
      * @param operationCommitment lowercase 64-hex-character operation commitment
      * @param issuerCaId issuing authority identifier
@@ -202,6 +224,30 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
         return new IssuanceExecutionEvidence(ActorType.ACME_ACCOUNT, accountId, realmId, requestId,
                 Authentication.ACME_ACCOUNT_JWS, Authorization.ACME_OWNERSHIP, Optional.empty(), Optional.empty(),
                 issuerCaId, profileId, Outcome.ISSUED);
+    }
+
+    /**
+     * Creates evidence for a verified protocol requester admitted through an
+     * exact durable enrollment policy and, when required, independent approval.
+     * This factory grants no authority and cannot represent an administrator.
+     * @param actorType protocol-native requester classification
+     * @param actorId authenticated protocol identity
+     * @param realmId owning realm
+     * @param requestId durable enrollment request identity
+     * @param authentication matching verified protocol mechanism
+     * @param approved whether the frozen policy required and obtained approval
+     * @param operationCommitment complete frozen enrollment intent commitment
+     * @param issuerCaId frozen issuing authority
+     * @param profileId frozen certificate profile
+     * @return immutable evidence suitable for exact signing-context validation
+     */
+    // Preserves the public source/binary contract for named persisted identity coordinates.
+    @SuppressWarnings("PMD.UseObjectForClearerAPI")
+    public static IssuanceExecutionEvidence enrollment(ActorType actorType, String actorId, String realmId, String requestId,
+            Authentication authentication, boolean approved, String operationCommitment, String issuerCaId, String profileId) {
+        return new IssuanceExecutionEvidence(actorType, actorId, realmId, requestId, authentication, Authorization.ENROLLMENT_POLICY,
+                Optional.of(approved ? AuthorizationPath.APPROVAL : AuthorizationPath.ENROLLMENT_POLICY),
+                Optional.of(operationCommitment), issuerCaId, profileId, Outcome.ISSUED);
     }
 
     /**

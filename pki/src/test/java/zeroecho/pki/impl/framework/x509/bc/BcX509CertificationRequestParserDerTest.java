@@ -57,6 +57,30 @@ import zeroecho.pki.api.request.CertificationRequest;
 final class BcX509CertificationRequestParserDerTest {
 
     @Test
+    void acceptsOneBoundedChallengePasswordWithoutOpeningOtherAttributeGrammar() throws Exception {
+        java.security.SecureRandom random = java.security.SecureRandom.getInstance("SHA1PRNG");
+        random.setSeed(new byte[] {81, 41, 7});
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048, random);
+        KeyPair key = generator.generateKeyPair();
+        BcX509CertificationRequestParser parser = new BcX509CertificationRequestParser();
+        for (String variant : java.util.List.of("valid", "duplicate", "wrong-type", "oversize", "other")) {
+            PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=Challenge CSR"), key.getPublic());
+            org.bouncycastle.asn1.ASN1ObjectIdentifier oid = org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_challengePassword;
+            org.bouncycastle.asn1.ASN1Encodable value = "wrong-type".equals(variant) ? new org.bouncycastle.asn1.ASN1Integer(1)
+                    : new org.bouncycastle.asn1.DERUTF8String("oversize".equals(variant) ? "x".repeat(256) : "distinctive-private-challenge");
+            builder.addAttribute(oid, value);
+            if ("duplicate".equals(variant)) builder.addAttribute(oid, value);
+            if ("other".equals(variant)) builder.addAttribute(new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.2.3.4"), value);
+            byte[] der = builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate())).getEncoded();
+            if ("valid".equals(variant)) assertEquals(Encoding.DER, parser.parse(request(Encoding.DER, der)).publicKeyInfo().encoding());
+            else {
+                PkiException failure = assertThrows(PkiException.class, () -> parser.parse(request(Encoding.DER, der)), variant);
+                org.junit.jupiter.api.Assertions.assertFalse(failure.toString().contains("distinctive-private-challenge"));
+            }
+        }
+    }
+
+    @Test
     void acceptsOnlyExactSingleCsrPemObject() throws Exception {
         System.out.println("acceptsOnlyExactSingleCsrPemObject");
         byte[] der = certificationRequest();

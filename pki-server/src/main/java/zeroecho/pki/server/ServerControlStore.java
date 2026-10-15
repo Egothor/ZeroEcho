@@ -105,6 +105,20 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String ACME_EVIDENCE = "io.zeroecho.server.acme-evidence";
     /** Stable namespace for durable OCSP responder bindings. */
     public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
+    /** Stable namespace for durable enrollment policy profiles. */
+    public static final String ENROLLMENT_PROFILE = "io.zeroecho.server.enrollment-profile";
+    /** Stable namespace for revisioned enrollment endpoint bindings and tombstones. */
+    public static final String ENROLLMENT_ENDPOINT = "io.zeroecho.server.enrollment-endpoint";
+    /** Stable namespace for immutable enrollment credential-set commitments. */
+    public static final String ENROLLMENT_CREDENTIAL = "io.zeroecho.server.enrollment-credential";
+    /** Stable namespace for durable enrollment transactions and replay tombstones. */
+    public static final String ENROLLMENT_REQUEST = "io.zeroecho.server.enrollment-request";
+    /** Stable namespace for quota-reserved CMP transaction manifests. */
+    public static final String CMP_TRANSACTION = "io.zeroecho.server.cmp-transaction";
+    /** Stable namespace for fixed CMP response slots owned by a manifest. */
+    public static final String CMP_RESPONSE = "io.zeroecho.server.cmp-response";
+    /** Immutable server-keygen reservations and encrypted delivery lifecycle. */
+    public static final String ENROLLMENT_KEYGEN = "io.zeroecho.server.enrollment-keygen";
     /** Stable namespace for non-authoritative revocation-audit projection state. */
     public static final String REVOCATION_AUDIT_PROJECTION =
             "io.zeroecho.server.revocation-audit-projection";
@@ -165,7 +179,8 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static final Set<String> PROTOCOL_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
             ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER,
-            REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, AUDIT_EVIDENCE_PROJECTION);
+            REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, AUDIT_EVIDENCE_PROJECTION, ENROLLMENT_PROFILE,
+            ENROLLMENT_ENDPOINT, ENROLLMENT_CREDENTIAL, ENROLLMENT_REQUEST, CMP_TRANSACTION, CMP_RESPONSE, ENROLLMENT_KEYGEN);
 
     /**
      * Durable realm-control identity and commitments.
@@ -643,6 +658,77 @@ public final class ServerControlStore implements AutoCloseable {
     public synchronized Page<ProtocolRecord> protocolRecords(String namespace, int offset, int limit) {
         requireProtocolNamespace(namespace);
         return scanPage(namespace, KIND_PROTOCOL, input -> readProtocol(input, namespace), offset, limit);
+    }
+
+    /**
+     * Opens a single consistent protocol snapshot for linear-time startup accounting.
+     * The caller must close the thread-confined cursor before closing this store.
+     * Traversal and caller processing occur outside the control monitor. Each step
+     * retains one bounded record; the metadata provider owns snapshot resources.
+     * @param namespace closed protocol namespace
+     * @return caller-owned snapshot cursor
+     */
+    public synchronized ProtocolCursor protocolSnapshot(String namespace) {
+        requireOpen();
+        requireProtocolNamespace(namespace);
+        MetadataSnapshot snapshot = null;
+        try {
+            snapshot = metadata.snapshot();
+            return new ProtocolCursor(namespace, snapshot,
+                    snapshot.scan(MetadataSnapshot.KeyRange.all(namespace), CancellationSignal.NONE));
+        } catch (IOException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Failure cleanup must retain the original ownership, release and fencing guarantees for unchecked failures too.
+            if (snapshot != null) {
+                try { snapshot.close(); } catch (RuntimeException suppressed) { failure.addSuppressed(suppressed); } // NOPMD AvoidCatchingGenericException - Failure cleanup must retain the original ownership, release and fencing guarantees for unchecked failures too.
+            }
+            throw new IllegalStateException("Server-control protocol snapshot failed");
+        }
+    }
+
+    /** Thread-confined, closeable iterator over one immutable protocol snapshot. */
+    public static final class ProtocolCursor implements AutoCloseable {
+        private final String namespace;
+        private final MetadataSnapshot snapshot;
+        private final MetadataCursor cursor;
+        private boolean closed;
+
+        private ProtocolCursor(String namespace, MetadataSnapshot snapshot, MetadataCursor cursor) {
+            this.namespace = namespace;
+            this.snapshot = snapshot;
+            this.cursor = cursor;
+        }
+
+        /**
+         * Reads and validates the next record without retaining previously read records.
+         * @return next record, or empty at the end of the snapshot
+         * @throws IllegalStateException if closed or if a record cannot be validated
+         */
+        public Optional<ProtocolRecord> next() {
+            if (closed) throw new IllegalStateException("Protocol snapshot is closed");
+            try {
+                Optional<MetadataSnapshot.Record> next = cursor.next(CancellationSignal.NONE);
+                if (next.isEmpty()) return Optional.empty();
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                    ProtocolRecord value = decode(record, KIND_PROTOCOL, input -> readProtocol(input, namespace));
+                    if (!record.key().equals(key(namespace, value.recordId()))) {
+                        throw new IllegalStateException("Server-control protocol key mismatch");
+                    }
+                    return Optional.of(value);
+                }
+            } catch (IOException failure) {
+                throw new IllegalStateException("Server-control protocol snapshot read failed");
+            }
+        }
+
+        /** Releases the cursor and snapshot; repeated close is harmless. */
+        @Override public void close() {
+            if (closed) return;
+            closed = true;
+            try (snapshot) {
+                cursor.close();
+            } catch (RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Failure cleanup must retain the original ownership, release and fencing guarantees for unchecked failures too.
+                throw new IllegalStateException("Server-control protocol snapshot close failed");
+            }
+        }
     }
 
     /**

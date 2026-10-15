@@ -52,6 +52,62 @@ import zeroecho.pki.server.PkiServerConfiguration;
 
 /** Deterministic bounded-admission, queue, cancellation and worker-close tests. */
 class ServerRuntimeTest {
+    @Test void publicExecutionValidatesDeadlineAndPreservesFailuresAndRejection() throws Exception {
+        try (ServerRuntime runtime = new ServerRuntime(configuration())) {
+            assertThrows(IllegalArgumentException.class, () -> runtime.execute(Duration.ZERO, signal -> "unused"));
+            assertThrows(IllegalArgumentException.class, () -> runtime.execute(Duration.ofDays(1), signal -> "unused"));
+            assertEquals("result", runtime.execute(Duration.ofSeconds(1), signal -> "result"));
+            java.util.concurrent.ExecutionException failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> runtime.execute(Duration.ofSeconds(1), signal -> { throw new IllegalArgumentException("test failure"); }));
+            assertTrue(failure.getCause() instanceof IllegalArgumentException);
+            runtime.quiesce();
+            assertThrows(RejectedExecutionException.class, () -> runtime.execute(Duration.ofSeconds(1), signal -> "unused"));
+        }
+    }
+
+    @Test void interruptedPublicExecutionKeepsRunningWorkerTrackedUntilActualExit() throws Exception {
+        ServerRuntime runtime = new ServerRuntime(configuration());
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interruptedWorker = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean callerInterrupted = new AtomicBoolean();
+        AtomicBoolean tokenCancelled = new AtomicBoolean();
+        Thread caller = Thread.ofPlatform().unstarted(() -> {
+            try {
+                runtime.execute(Duration.ofSeconds(1), signal -> {
+                    started.countDown();
+                    try { release.await(); }
+                    catch (InterruptedException interrupted) {
+                        tokenCancelled.set(signal.isCancelled());
+                        interruptedWorker.countDown();
+                        release.await();
+                    }
+                    return "late resource-free result";
+                });
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                callerInterrupted.set(Thread.currentThread().isInterrupted());
+            } catch (Exception failure) { throw new AssertionError(failure); }
+        });
+        try {
+            caller.start();
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            caller.interrupt();
+            caller.join(5000);
+            assertFalse(caller.isAlive());
+            assertTrue(callerInterrupted.get());
+            assertTrue(interruptedWorker.await(5, TimeUnit.SECONDS));
+            assertTrue(tokenCancelled.get());
+            assertEquals(1, runtime.trackedOperationFutures());
+            assertEquals(1, runtime.trackedCancellationTokens());
+        } finally {
+            release.countDown();
+            runtime.close();
+        }
+        assertEquals(0, runtime.trackedOperationFutures());
+        assertEquals(0, runtime.trackedCancellationTokens());
+    }
+
     @Test
     void queuedCancellationAndRejectionRetireExactOperationTracking() throws Exception {
         ServerRuntime runtime = new ServerRuntime(configuration());

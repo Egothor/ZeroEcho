@@ -1,5 +1,13 @@
 # PKI CLI configuration and remote execution
 
+For opt-in remote backups, the JSON CLI supports reservation, export preparation,
+verification, restore staging, status and acknowledgement. Archive upload/download
+requires the administration console or the dedicated binary HTTP routes described
+in [backup and restore](../documentation/admin/backup-restore.md#opt-in-http-transfer).
+The CLI rejects `backup.stream.upload` and `backup.stream.download` locally with
+`BACKUP_BINARY_ROUTE_USE_WEB_CONSOLE_OR_HTTP`; it never posts archive bytes into
+an ordinary JSON operation envelope. The bundled schema remains complete.
+
 The CLI distinguishes local commands from remote administrative API requests.
 It uses the current PKI operation catalog and rejects obsolete configuration
 documents. The [deployment and CLI contracts](pki-deployment-cli-contracts.md) define

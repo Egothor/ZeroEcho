@@ -83,7 +83,7 @@ describe('buildRequest', () => {
     const { request } = buildRequest(
       spec('acme.directory.register'),
       {
-        alias: 'tls', authorityId: 'ca-1', profileId: 'p', dnsNamespaces: ['example.org'],
+        alias: 'tls', authorityId: 'ca-1', profileId: 'p', enrollmentProfileId: 'enrollment-p', dnsNamespaces: ['example.org'],
         maximumValidityMillis: '86400000', publicKeyAlgorithms: ['EC'], x509BindingPolicies: ['default'],
         challengeTypes: ['HTTP_01', 'DNS_01'], challengeProviderIds: ['http'], eabRequired: false,
       },

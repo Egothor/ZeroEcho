@@ -47,6 +47,16 @@ vi.mock('@/components/operation/OperationRunner', () => ({
   OperationRunner: () => <div data-testid="runner" />,
 }));
 
+it.each(['backup.stream.upload', 'backup.stream.download'])('routes %s to the file workflow instead of JSON execution', (operation) => {
+  discovery.isError = false;
+  discovery.data = { count: 1, operations: [{ operation, family: 'SERVER_CONTROL_OPERATION',
+    mutating: true, resourceType: 'BACKUP', approval: 'NONE', dataView: 'METADATA_REDACTED' }] };
+  render(<OperationBrowser operations={OPERATIONS} />);
+  expect(screen.getByRole('link', { name: 'Backup and restore' })).toHaveAttribute('href', '/backup');
+  expect(screen.queryByTestId('runner')).not.toBeInTheDocument();
+  discovery.data = { count: 0, operations: [] };
+});
+
 it('never substitutes built-in operations for empty or failed discovery', () => {
   const view = render(<OperationBrowser operations={OPERATIONS} />);
   expect(screen.getByText('No operations in this area are available to your identity.')).toBeInTheDocument();

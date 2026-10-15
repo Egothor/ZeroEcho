@@ -84,6 +84,44 @@ import zeroecho.pki.testkit.SemanticIssuanceFixture;
 
 final class PkiOperationAdministrationTest {
     @Test
+    void indexedSelectionComposesLegacyFiltersAndAuthorizationAcrossBothExecutorPaths(@TempDir Path temporary) throws Exception {
+        ObservedBootstrap bootstrap = new ObservedBootstrap();
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
+                new ProviderConfig("fs", Map.of("root", temporary.resolve("store").toString(), "credentialSearch", "h2",
+                        "credentialSearchCacheKiB", "1024", "credentialSearchQueryTimeoutMillis", "5000",
+                        "credentialSearchMaximumCertificateBytes", "1048576")),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of());
+        try (PkiSession session = DefaultPkiSession.open(configuration, IntermediateCreationFixture.CLOCK, bootstrap)) {
+            Fixture fixture = fixture(bootstrap.store);
+            Credential credential = bootstrap.store.getCredential(fixture.first().credentialId()).orElseThrow();
+            PkiSelectionExecutor selection = (PkiSelectionExecutor) session.operations();
+            assertTrue(selection.credentialSearchAvailable());
+            PkiOperation.SearchCredentials query = new PkiOperation.SearchCredentials(ROOT, 20, Optional.empty(),
+                    Optional.of(credential.subjectRef().value().toUpperCase(java.util.Locale.ROOT)),
+                    Optional.of(credential.serialOrUniqueId()), Optional.of(credential.credentialId().value()),
+                    Optional.of(credential.status().name()), Optional.of("profile"));
+            PkiOperationOutcome local = session.operations().execute(query, CancellationSignal.NONE);
+            assertInstanceOf(PkiOperationOutcome.Completed.class, local);
+            assertEquals(local, selection.executeSelection(query, row -> true, CancellationSignal.NONE));
+            assertEquals(new PkiOperationValue.IntegerValue(1),
+                    ((PkiOperationOutcome.Completed) local).result().fields().get("count"));
+            java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+            PkiOperationOutcome cancelledOutcome = selection.executeSelection(query,
+                    row -> { cancelled.set(true); return true; }, cancelled::get);
+            assertEquals(PkiOperationFailure.CANCELLED,
+                    assertInstanceOf(PkiOperationOutcome.Failed.class, cancelledOutcome).classification());
+            PkiOperationResult denied = assertInstanceOf(PkiOperationOutcome.Completed.class,
+                    selection.executeSelection(query, row -> false, CancellationSignal.NONE)).result();
+            assertEquals(new PkiOperationValue.IntegerValue(0), denied.fields().get("count"));
+            PkiOperation.SearchCredentials mismatch = new PkiOperation.SearchCredentials(ROOT, 20, Optional.empty(),
+                    Optional.of("does-not-match"), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+            PkiOperationResult empty = assertInstanceOf(PkiOperationOutcome.Completed.class,
+                    selection.executeSelection(mismatch, row -> true, CancellationSignal.NONE)).result();
+            assertEquals(new PkiOperationValue.IntegerValue(0), empty.fields().get("count"));
+        }
+    }
+
+    @Test
     void dashboardPublicationsAreScopedByAuthoritativeSourceAndExpiredCredentialsAreNotActive(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
         try (PkiSession session = open(temporary, bootstrap)) {

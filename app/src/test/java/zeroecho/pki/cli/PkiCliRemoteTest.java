@@ -51,6 +51,18 @@ class PkiCliRemoteTest {
         throw new AssertionError("Remote mode must not open a local session");
     };
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"backup.stream.upload", "backup.stream.download"})
+    void binaryArchiveOperationsFailBeforeOpeningJsonTransport(String operation) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { operation, "--url", "https://pki.example.org:8443",
+                "--client-cert", "client.pem", "--client-key", "client.key", "--output", "json",
+                "--arg", "artifactHandle=" + "0".repeat(64) }, output, FORBIDDEN_OPENER, () -> false,
+                target -> { throw new AssertionError("Binary operations must not open a JSON transport"); });
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, code);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("BACKUP_BINARY_ROUTE_USE_WEB_CONSOLE_OR_HTTP"));
+    }
+
     @Test
     void remoteModeIsSelectedByUrlAndClientMaterialAndPostsEnvelope() {
         System.out.println("remoteModeIsSelectedByUrlAndClientMaterialAndPostsEnvelope");

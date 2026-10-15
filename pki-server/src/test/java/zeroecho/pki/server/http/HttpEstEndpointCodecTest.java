@@ -62,12 +62,14 @@ class HttpEstEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"internal-devices\","
                 + "\"authorityId\":\"ca:device-issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"device-tls\"}}";
         HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterEstEndpoint.NAME, json);
         ServerControlOperation.RegisterEstEndpoint operation = assertInstanceOf(
                 ServerControlOperation.RegisterEstEndpoint.class,
                 ((AdministrativeOperation.Control) decoded.operation()).operation());
         EstEndpoint endpoint = operation.endpoint();
+        assertEquals("enrollment-test", endpoint.enrollmentProfileId());
         assertEquals("internal-devices", endpoint.label());
         assertEquals("ca:device-issuer", endpoint.authorityId());
         assertEquals("device-tls", endpoint.profileId());
@@ -83,6 +85,7 @@ class HttpEstEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"server-keygen\","
                 + "\"authorityId\":\"ca:issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"tls\","
                 + "\"keygen\":{"
                 + "\"enabled\":true,"
@@ -105,6 +108,7 @@ class HttpEstEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"internal-devices\","
                 + "\"authorityId\":\"ca:device-issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"device-tls\","
                 + "\"unexpected\":true}}";
         assertThrows(IllegalArgumentException.class,
@@ -116,6 +120,7 @@ class HttpEstEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"internal-devices\","
                 + "\"authorityId\":\"ca:issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"tls\","
                 + "\"keygen\":{"
                 + "\"enabled\":true,"
@@ -133,6 +138,7 @@ class HttpEstEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + badLabel + ","
                 + "\"authorityId\":\"ca:issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"tls\"}}";
         assertThrows(IllegalArgumentException.class,
                 () -> decode(ServerControlOperation.RegisterEstEndpoint.NAME, json));
@@ -202,5 +208,12 @@ class HttpEstEndpointCodecTest {
         return HttpOperationCodec.decode(operation, json.getBytes(StandardCharsets.UTF_8),
                 PkiServerConfiguration.Listener.MINIMUM_BODY_BYTES,
                 REALM, DESCRIPTORS::require);
+    }
+
+    @Test
+    void rejectsRegistrationWithoutExplicitEnrollmentProfile() {
+        String json = "{\"version\":1,\"arguments\":{\"label\":\"endpoint\",\"authorityId\":\"authority\","
+                + "\"profileId\":\"certificate\"}}";
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.RegisterEstEndpoint.NAME, json));
     }
 }

@@ -40,6 +40,8 @@ describe('readable selection labels', () => {
     expect(displayLabel('issuerCaId')).toBe('Issuing authority');
     expect(displayLabel('CRL')).toBe('Certificate revocation list (CRL)');
     expect(displayLabel('KEY_COMPROMISE')).toBe('Key compromise');
+    expect(displayLabel('fingerprintFilter')).toBe('Credential ID prefix');
+    expect(displayLabel('sanFilter')).toBe('Subject alternative name');
   });
   it('searches by readable label and code without changing submitted values', () => {
     expect(filterChoices(['CRL', 'DELTA_CRL'], 'revocation')).toEqual(['CRL', 'DELTA_CRL']);

@@ -57,11 +57,19 @@ class OpenApiCatalogParityTest {
         Set<String> paths = new HashSet<>();
         Matcher path = Pattern.compile("(?m)^  '/operations/([a-z][a-z0-9.-]+)':$").matcher(yaml);
         while (path.find()) assertTrue(paths.add(path.group(1)));
+        for (String action : java.util.List.of("upload", "download")) {
+            String binary = block(yaml, "  '/backup/" + action + "':", 2);
+            assertTrue(binary.contains("operationId: \"backup.stream." + action + "\""));
+            assertTrue(binary.contains("application/zip:"));
+            assertTrue(paths.add("backup.stream." + action));
+        }
         Set<String> expectedIds = new HashSet<>();
         for (OperationDescriptorCatalog.Entry entry : OperationDescriptorCatalog.current().entries()) {
             String id = entry.security().operationId();
             expectedIds.add(id);
-            String endpoint = block(yaml, "  '/operations/" + id + "':", 2);
+            String endpointPath = id.equals("backup.stream.upload") ? "/backup/upload"
+                    : id.equals("backup.stream.download") ? "/backup/download" : "/operations/" + id;
+            String endpoint = block(yaml, "  '" + endpointPath + "':", 2);
             assertTrue(endpoint.contains("x-zeroecho-available: " + entry.available()), id);
             assertTrue(endpoint.contains("x-zeroecho-permission-action: \"" + entry.security().action().name() + "\""), id);
             assertTrue(endpoint.contains("x-zeroecho-resource-type: \"" + entry.security().resourceType().name() + "\""), id);

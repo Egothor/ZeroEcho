@@ -58,7 +58,6 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cms.CMSAbsentContent;
 import org.bouncycastle.cms.CMSEnvelopedData;
 import org.bouncycastle.cms.CMSEnvelopedDataGenerator;
-import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
@@ -84,7 +83,10 @@ import org.bouncycastle.util.Store;
  * @since 1.0
  */
 @SuppressWarnings("PMD.SignatureDeclareThrowsException")
-public final class ScepCodec {
+public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP cryptographic facade; individual message grammar and signing steps remain complexity-checked.
+    private static final int MAXIMUM_CERTIFICATE_COUNT = 16;
+    private static final int SINGLE_SIGNER_COUNT = 1;
+    private static final int SINGLE_RECIPIENT_COUNT = 1;
 
     // SCEP authenticated attribute OIDs (RFC 8894 / Cisco SCEP)
     private static final ASN1ObjectIdentifier ID_MESSAGE_TYPE =
@@ -125,101 +127,294 @@ public final class ScepCodec {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
+    /** Maximum accepted encoded request size, before CMS parsing or decryption. */
+    public static final int MAXIMUM_REQUEST_BYTES = 1_048_576;
+
     private ScepCodec() {
     }
 
     /**
-     * Parses a DER-encoded CMS SignedData SCEP PKIOperation message, decrypting
-     * the inner EnvelopedData using the RA's private key for message types that
-     * encrypt their content (PKCSReq, GetCertInitial).
-     *
-     * @param cmsDer       DER-encoded outer CMS SignedData
-     * @param raPrivateKey RA private key for decrypting inner EnvelopedData content;
-     *                     required only for PKCSReq and GetCertInitial
-     * @return parsed SCEP PKIMessage
-     * @throws ScepCodecException if the message is malformed or decryption fails
+     * Authenticated outer request. Instances can only be produced by successful
+     * CMS verification; content remains encrypted until an exact RA is selected.
      */
-    public static ScepPkiMessage parsePkiOperationDer(byte[] cmsDer, PrivateKey raPrivateKey)
-            throws ScepCodecException {
+    public static final class VerifiedRequest { // NOPMD DataClass - Private construction makes this immutable verified-message proof unforgeable; a publicly constructible record would lose that boundary.
+        private final int messageType;
+        private final String transactionId;
+        private final byte[] senderNonce;
+        private final byte[] encryptedContent;
+        private final X509Certificate requesterCertificate;
+
+        private VerifiedRequest(int type, String transaction, byte[] nonce, byte[] content, X509Certificate certificate) {
+            messageType = type; transactionId = transaction; senderNonce = nonce.clone();
+            encryptedContent = content.clone(); requesterCertificate = certificate;
+        }
+        /** Returns the authenticated operation.
+         * @return supported message type
+         */
+        public int messageType() { return messageType; }
+        /** Returns the authenticated transaction.
+         * @return bounded transaction identifier
+         */
+        public String transactionId() { return transactionId; }
+        /** Copies the current request nonce.
+         * @return independent nonce bytes
+         */
+        public byte[] senderNonce() { return senderNonce.clone(); }
+        /** Returns verified key-control evidence, without a trust assertion.
+         * @return signer certificate
+         */
+        public X509Certificate requesterCertificate() { return requesterCertificate; }
+        /** @return redacted message description */
+        @Override public String toString() { return "VerifiedRequest[messageType=" + messageType + "]"; }
+    }
+
+    /**
+     * Verifies a bounded CMS request before any private-key decryption. Requires
+     * one signer and one matching certificate, SHA-256/RSA, authenticated
+     * id-data content, and strictly typed singular SCEP attributes.
+     * Certificate possession is proven; identity authorization is the caller's job.
+     * @param cmsDer complete encoded CMS message
+     * @return authenticated outer envelope
+     * @throws ScepCodecException for malformed or unsupported messages or invalid signatures
+     */
+    public static VerifiedRequest verifyRequest(byte[] cmsDer) throws ScepCodecException {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         try {
-            return parseSignedRequest(new CMSSignedData(cmsDer), raPrivateKey);
-        } catch (Exception e) {
-            throw new ScepCodecException("Failed to parse SCEP PKIOperation CMS message", e);
+            CMSSignedData data = signedRequest(cmsDer);
+            SignerInformation signer = data.getSignerInfos().getSigners().iterator().next();
+            requireSupportedSignature(signer);
+            RequestAttributes attributes = requestAttributes(signer.getSignedAttributes());
+            X509Certificate certificate = verifySigner(data, signer);
+            byte[] encrypted = (byte[]) data.getSignedContent().getContent();
+            requireBound(encrypted);
+            return new VerifiedRequest(attributes.messageType(), attributes.transactionId(),
+                    attributes.nonce(), encrypted, certificate);
+        } catch (IOException | java.security.cert.CertificateException | org.bouncycastle.cms.CMSException
+                | org.bouncycastle.operator.OperatorCreationException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Provider failures must not disclose raw enrollment input.
+            throw invalid(); // NOPMD PreserveStackTrace - Malformed enrollment input may contain secrets; expose only the fixed protocol failure.
         }
     }
 
-    private static ScepPkiMessage parseSignedRequest(CMSSignedData signedData, PrivateKey raPrivateKey)
-            throws ScepCodecException {
-        Collection<SignerInformation> signers = signedData.getSignerInfos().getSigners();
-        if (signers.isEmpty()) {
-            throw new ScepCodecException("SCEP PKIMessage has no signers");
+    private static CMSSignedData signedRequest(byte[] cmsDer)
+            throws IOException, org.bouncycastle.cms.CMSException, ScepCodecException {
+        requireBound(cmsDer);
+        org.bouncycastle.asn1.cms.ContentInfo outer = org.bouncycastle.asn1.cms.ContentInfo.getInstance(
+                org.bouncycastle.asn1.ASN1Primitive.fromByteArray(cmsDer));
+        if (!PKCSObjectIdentifiers.signedData.equals(outer.getContentType())) {
+            throw invalid();
         }
-        SignerInformation signer = signers.iterator().next();
-        AttributeTable attributes = signer.getSignedAttributes();
-        if (attributes == null) {
-            throw new ScepCodecException("SCEP PKIMessage has no authenticated attributes");
+        CMSSignedData data = new CMSSignedData(outer);
+        if (data.getSignerInfos().getSigners().size() != 1 || data.getSignedContent() == null
+                || !PKCSObjectIdentifiers.data.getId().equals(data.getSignedContentTypeOID())
+                || !data.getCRLs().getMatches(null).isEmpty()) {
+            throw invalid();
         }
-        int messageType = messageType(attributes);
-        String transactionId = getAttrPrintableString(attributes, ID_TRANS_ID);
-        if (transactionId == null) {
-            throw new ScepCodecException("SCEP PKIMessage missing transactionId attribute");
-        }
-        byte[] senderNonce = getAttrOctetString(attributes, ID_SENDER_NONCE);
-        byte[] encapsulated = (byte[]) signedData.getSignedContent().getContent();
-        byte[] innerContent = decryptContent(encapsulated, messageType, raPrivateKey);
-        return new ScepPkiMessage(messageType, transactionId, senderNonce, innerContent,
-                requesterCertificate(signedData, signer));
+        return data;
     }
 
-    private static int messageType(AttributeTable attributes) throws ScepCodecException {
-        String value = getAttrPrintableString(attributes, ID_MESSAGE_TYPE);
-        if (value == null) {
-            throw new ScepCodecException("SCEP PKIMessage missing messageType attribute");
-        }
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException invalid) {
-            throw new ScepCodecException("SCEP messageType is not numeric: " + value, invalid);
+    private static void requireSupportedSignature(SignerInformation signer) throws IOException, ScepCodecException {
+        if (!"2.16.840.1.101.3.4.2.1".equals(signer.getDigestAlgOID())
+                || !nullParameters(signer.getDigestAlgParams())
+                || !(PKCSObjectIdentifiers.rsaEncryption.getId().equals(signer.getEncryptionAlgOID())
+                || PKCSObjectIdentifiers.sha256WithRSAEncryption.getId().equals(signer.getEncryptionAlgOID()))
+                || !nullParameters(signer.getEncryptionAlgParams())
+                || signer.getUnsignedAttributes() != null) {
+            throw invalid();
         }
     }
 
-    private static byte[] decryptContent(byte[] content, int messageType, PrivateKey raPrivateKey)
-            throws ScepCodecException {
-        if (messageType != MSG_PKCS_REQ && messageType != MSG_GET_CERT_INITIAL) {
-            return content;
+    private static RequestAttributes requestAttributes(AttributeTable attributes) throws ScepCodecException {
+        validateAttributeSet(attributes);
+        if (!PKCSObjectIdentifiers.data.equals(single(attributes, CMSAttributes.contentType))) {
+            throw invalid();
         }
-        if (raPrivateKey == null) {
-            throw new ScepCodecException("RA private key required to decrypt SCEP message type " + messageType);
+        if (!(single(attributes, CMSAttributes.messageDigest) instanceof org.bouncycastle.asn1.ASN1OctetString digest)
+                || digest.getOctets().length != 32) {
+            throw invalid();
         }
-        try {
-            CMSEnvelopedData envelope = new CMSEnvelopedData(content);
-            Collection<org.bouncycastle.cms.RecipientInformation> recipients =
-                    envelope.getRecipientInfos().getRecipients();
-            if (recipients.isEmpty()) {
-                throw new ScepCodecException("SCEP EnvelopedData has no recipients");
+        if (attributes.get(CMSAttributes.signingTime) != null) {
+            org.bouncycastle.asn1.cms.Time.getInstance(single(attributes, CMSAttributes.signingTime)).getDate();
+        }
+        String type = printable(single(attributes, ID_MESSAGE_TYPE));
+        int messageType = switch (type) {
+            case "19" -> MSG_PKCS_REQ;
+            case "20" -> MSG_GET_CERT_INITIAL;
+            default -> throw invalid();
+        };
+        String transaction = printable(single(attributes, ID_TRANS_ID));
+        if (transaction.isEmpty() || transaction.length() > 128) {
+            throw invalid();
+        }
+        byte[] nonce = nonce(single(attributes, ID_SENDER_NONCE));
+        if (attributes.get(ID_RECIPIENT_NONCE) != null) {
+            nonce(single(attributes, ID_RECIPIENT_NONCE));
+        }
+        return new RequestAttributes(messageType, transaction, nonce);
+    }
+
+    private static void validateAttributeSet(AttributeTable attributes) throws ScepCodecException {
+        if (attributes == null || attributes.size() < 5 || attributes.size() > 8) {
+            throw invalid();
+        }
+        ASN1EncodableVector entries = attributes.toASN1EncodableVector();
+        java.util.Set<ASN1ObjectIdentifier> seen = new java.util.HashSet<>();
+        for (int index = 0; index < entries.size(); index++) {
+            Attribute entry = Attribute.getInstance(entries.get(index));
+            if (!seen.add(entry.getAttrType()) || entry.getAttrValues().size() != 1
+                    || !supportedAttribute(entry.getAttrType())) {
+                throw invalid();
             }
-            return recipients.iterator().next()
-                    .getContent(new JceKeyTransEnvelopedRecipient(raPrivateKey).setProvider("BC"));
-        } catch (CMSException failure) {
-            throw new ScepCodecException("SCEP inner EnvelopedData decryption failed", failure);
         }
     }
 
-    private static X509Certificate requesterCertificate(CMSSignedData signedData, SignerInformation signer) {
-        try {
-            Store<X509CertificateHolder> certificates = signedData.getCertificates();
-            Collection<X509CertificateHolder> matches = certificates.getMatches(signer.getSID());
-            if (!matches.isEmpty()) {
-                return new JcaX509CertificateConverter().setProvider("BC")
-                        .getCertificate(matches.iterator().next());
-            }
-        } catch (Exception absent) {
-            // Non-fatal: CertRep encryption validates the optional requester certificate later.
-            return null;
-        }
-        return null;
+    private static boolean supportedAttribute(ASN1ObjectIdentifier oid) {
+        return oid.equals(CMSAttributes.contentType) || oid.equals(CMSAttributes.messageDigest)
+                || oid.equals(CMSAttributes.signingTime) || oid.equals(CMSAttributes.cmsAlgorithmProtect)
+                || oid.equals(ID_MESSAGE_TYPE) || oid.equals(ID_TRANS_ID)
+                || oid.equals(ID_SENDER_NONCE) || oid.equals(ID_RECIPIENT_NONCE);
     }
+
+    private static X509Certificate verifySigner(CMSSignedData data, SignerInformation signer)
+            throws java.security.cert.CertificateException, org.bouncycastle.cms.CMSException,
+            org.bouncycastle.operator.OperatorCreationException, ScepCodecException {
+        Store<X509CertificateHolder> certificates = data.getCertificates();
+        if (certificates.getMatches(null).size() > MAXIMUM_CERTIFICATE_COUNT) {
+            throw invalid();
+        }
+        Collection<X509CertificateHolder> matches = certificates.getMatches(signer.getSID());
+        if (matches.size() != SINGLE_SIGNER_COUNT) {
+            throw invalid();
+        }
+        X509CertificateHolder holder = matches.iterator().next();
+        X509Certificate certificate = new JcaX509CertificateConverter().setProvider("BC").getCertificate(holder);
+        requireRsa(certificate);
+        if (!signer.verify(new org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder().setProvider("BC").build(holder))) {
+            throw invalid();
+        }
+        return certificate;
+    }
+
+    private record RequestAttributes(int messageType, String transactionId, byte[] nonce) { }
+    /**
+     * Decrypts an already verified request using one exact provisioned RA recipient.
+     * Requires AES-128-CBC, RSA key transport, and exactly one matching recipient;
+     * there is no trial decryption or fallback to another credential.
+     * @param request authenticated envelope
+     * @param raCertificate exact provisioned recipient certificate
+     * @param raPrivateKey matching private key borrowed under its custody lease
+     * @return verified attributes and independently owned plaintext request
+     * @throws ScepCodecException for an invalid envelope, recipient or decryption
+     */
+    public static ScepPkiMessage decryptRequest(VerifiedRequest request, X509Certificate raCertificate, PrivateKey raPrivateKey)
+            throws ScepCodecException {
+        try {
+            java.util.Objects.requireNonNull(request, "request");
+            requireRsa(raCertificate);
+            org.bouncycastle.asn1.cms.ContentInfo inner = org.bouncycastle.asn1.cms.ContentInfo.getInstance(
+                    org.bouncycastle.asn1.ASN1Primitive.fromByteArray(request.encryptedContent));
+            if (!PKCSObjectIdentifiers.envelopedData.equals(inner.getContentType())
+                    || !PKCSObjectIdentifiers.data.equals(org.bouncycastle.asn1.cms.EnvelopedData.getInstance(inner.getContent())
+                    .getEncryptedContentInfo().getContentType())) {
+                throw invalid();
+            }
+            CMSEnvelopedData envelope = new CMSEnvelopedData(inner);
+            if (!org.bouncycastle.cms.CMSAlgorithm.AES128_CBC.getId().equals(envelope.getEncryptionAlgOID())
+                    || !(org.bouncycastle.asn1.ASN1Primitive.fromByteArray(envelope.getEncryptionAlgParams())
+                    instanceof org.bouncycastle.asn1.ASN1OctetString iv) || iv.getOctets().length != 16
+                    || envelope.getUnprotectedAttributes() != null || envelope.getOriginatorInfo() != null) {
+                throw invalid();
+            }
+            org.bouncycastle.cms.RecipientInformation recipient = recipient(envelope, raCertificate);
+            byte[] plaintext = recipient.getContent(new JceKeyTransEnvelopedRecipient(raPrivateKey).setProvider("BC"));
+            requireBound(plaintext);
+            return new ScepPkiMessage(request.messageType, request.transactionId, request.senderNonce, plaintext, request.requesterCertificate);
+        } catch (IOException | java.security.cert.CertificateEncodingException
+                | org.bouncycastle.cms.CMSException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Recipient and provider failures share the fixed protocol failure.
+            throw invalid(); // NOPMD PreserveStackTrace - Recipient and provider causes can expose protected content; preserve the fixed protocol failure.
+        }
+    }
+
+    private static org.bouncycastle.cms.RecipientInformation recipient(CMSEnvelopedData envelope,
+            X509Certificate raCertificate) throws IOException, java.security.cert.CertificateEncodingException, ScepCodecException {
+        Collection<org.bouncycastle.cms.RecipientInformation> recipients = envelope.getRecipientInfos().getRecipients();
+        if (recipients.size() != SINGLE_RECIPIENT_COUNT) {
+            throw invalid();
+        }
+        org.bouncycastle.cms.RecipientInformation recipient = recipients.iterator().next();
+        if (!(recipient instanceof org.bouncycastle.cms.KeyTransRecipientInformation)
+                || !recipient.getRID().match(new X509CertificateHolder(raCertificate.getEncoded()))
+                || !PKCSObjectIdentifiers.rsaEncryption.getId().equals(recipient.getKeyEncryptionAlgOID())
+                || !nullParameters(recipient.getKeyEncryptionAlgParams())) {
+            throw invalid();
+        }
+        return recipient;
+    }
+
+    /**
+     * Validates an IssuerAndSubject poll against the frozen issuer and original CSR.
+     * @param encoded exact decrypted poll
+     * @param issuer frozen issuing CA subject
+     * @param subject original CSR subject
+     * @throws ScepCodecException if either name differs or the encoding is malformed
+     */
+    public static void requireIssuerAndSubject(byte[] encoded, javax.security.auth.x500.X500Principal issuer,
+            javax.security.auth.x500.X500Principal subject) throws ScepCodecException {
+        try {
+            requireBound(encoded);
+            org.bouncycastle.asn1.ASN1Sequence sequence = org.bouncycastle.asn1.ASN1Sequence.getInstance(
+                    org.bouncycastle.asn1.ASN1Primitive.fromByteArray(encoded));
+            if (sequence.size() != 2
+                    || !new javax.security.auth.x500.X500Principal(org.bouncycastle.asn1.x500.X500Name.getInstance(sequence.getObjectAt(0)).getEncoded()).equals(issuer)
+                    || !new javax.security.auth.x500.X500Principal(org.bouncycastle.asn1.x500.X500Name.getInstance(sequence.getObjectAt(1)).getEncoded()).equals(subject)) {
+                throw invalid();
+            }
+        } catch (IOException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Provider and untrusted-input failures are normalized before crossing the public trust boundary.
+            throw invalid(); // NOPMD PreserveStackTrace - Malformed enrollment input may contain secrets; expose only the fixed protocol failure.
+        }
+    }
+
+    private static ASN1Encodable single(AttributeTable attributes, ASN1ObjectIdentifier oid) throws ScepCodecException {
+        if (attributes.getAll(oid).size() != 1 || attributes.get(oid).getAttrValues().size() != 1) {
+            throw invalid();
+        }
+        return attributes.get(oid).getAttrValues().getObjectAt(0);
+    }
+
+    private static String printable(ASN1Encodable value) throws ScepCodecException {
+        if (!(value instanceof org.bouncycastle.asn1.ASN1PrintableString string)
+                || !org.bouncycastle.asn1.ASN1PrintableString.isPrintableString(string.getString())) {
+            throw invalid();
+        }
+        return string.getString();
+    }
+
+    private static byte[] nonce(ASN1Encodable value) throws ScepCodecException {
+        if (!(value instanceof org.bouncycastle.asn1.ASN1OctetString octets) || octets.getOctets().length != 16) {
+            throw invalid();
+        }
+        return octets.getOctets();
+    }
+
+    private static boolean nullParameters(byte[] parameters) throws IOException {
+        return parameters == null || org.bouncycastle.asn1.ASN1Primitive.fromByteArray(parameters) instanceof org.bouncycastle.asn1.ASN1Null;
+    }
+
+    private static void requireRsa(X509Certificate certificate) throws ScepCodecException {
+        if (!(certificate.getPublicKey() instanceof java.security.interfaces.RSAPublicKey key)
+                || key.getModulus().bitLength() < 2048 || key.getModulus().bitLength() > 8192) {
+            throw invalid();
+        }
+        zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(zeroecho.pkix.Pkix.subjectPublicKeyInfo(certificate));
+    }
+
+    private static void requireBound(byte[] value) throws ScepCodecException {
+        if (value == null || value.length == 0 || value.length > MAXIMUM_REQUEST_BYTES) {
+            throw invalid();
+        }
+    }
+
+    private static ScepCodecException invalid() { return new ScepCodecException("Invalid or unsupported SCEP message"); }
+
     /**
      * Extracts the PKCS#9 challengePassword attribute string from a DER-encoded
      * PKCS#10 CSR. Returns {@code null} if the attribute is absent.
@@ -231,30 +426,20 @@ public final class ScepCodec {
     public static String extractChallengePassword(byte[] csrDer) throws ScepCodecException {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         try {
+            requireBound(csrDer);
             PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrDer);
             org.bouncycastle.asn1.pkcs.Attribute[] attrs =
                     csr.getAttributes(PKCSObjectIdentifiers.pkcs_9_at_challengePassword);
-            if (attrs == null || attrs.length == 0) {
+            if (attrs.length == 0) {
                 return null;
             }
-            ASN1Encodable[] values = attrs[0].getAttributeValues();
-            if (values == null || values.length == 0) {
-                return null;
+            if (attrs.length != 1 || attrs[0].getAttrValues().size() != 1) {
+                throw invalid();
             }
-            // DirectoryString: PrintableString, UTF8String, BMPString, etc.
-            ASN1Encodable val = values[0];
-            if (val instanceof DERPrintableString ps) {
-                return ps.getString();
-            } else if (val instanceof org.bouncycastle.asn1.DERUTF8String us) {
-                return us.getString();
-            } else if (val instanceof org.bouncycastle.asn1.DERIA5String is) {
-                return is.getString();
-            } else if (val instanceof org.bouncycastle.asn1.DERBMPString bs) {
-                return bs.getString();
-            }
-            return val.toString();
-        } catch (Exception e) {
-            throw new ScepCodecException("Cannot extract challengePassword from CSR", e);
+            return new zeroecho.pkix.csr.CsrAttribute(PKCSObjectIdentifiers.pkcs_9_at_challengePassword.getId(),
+                    List.of(attrs[0].getAttrValues().getObjectAt(0).toASN1Primitive().getEncoded())).challengePassword();
+        } catch (IOException | RuntimeException e) { // NOPMD AvoidCatchingGenericException - Provider and untrusted-input failures are normalized before crossing the public trust boundary.
+            throw new ScepCodecException("Cannot extract challengePassword from CSR"); // NOPMD PreserveStackTrace - Malformed enrollment input may contain secrets; expose only the fixed protocol failure.
         }
     }
 
@@ -291,7 +476,7 @@ public final class ScepCodec {
                     new JceKeyTransRecipientInfoGenerator(requesterCert).setProvider("BC"));
             CMSEnvelopedData enveloped = edGen.generate(
                     new CMSProcessableByteArray(degenerateCmsDer),
-                    new JceCMSContentEncryptorBuilder(org.bouncycastle.cms.CMSAlgorithm.AES256_CBC)
+                    new JceCMSContentEncryptorBuilder(org.bouncycastle.cms.CMSAlgorithm.AES128_CBC)
                             .setProvider("BC").build());
             byte[] envelopedDer = enveloped.toASN1Structure().getEncoded(
                     org.bouncycastle.asn1.ASN1Encoding.DER);
@@ -418,30 +603,8 @@ public final class ScepCodec {
             case "RSA" -> "SHA256withRSA";
             case "EC", "ECDSA" -> "SHA256withECDSA";
             case "ED25519" -> "Ed25519";
-            default -> "SHA256withRSA";
+            default -> throw new IllegalArgumentException("Unsupported SCEP response signing algorithm");
         };
-    }
-
-    private static String getAttrPrintableString(AttributeTable attrs, ASN1ObjectIdentifier oid) {
-        Attribute attr = attrs.get(oid);
-        if (attr == null) { return null; }
-        ASN1Encodable[] values = attr.getAttributeValues();
-        if (values == null || values.length == 0) { return null; }
-        ASN1Encodable val = values[0];
-        if (val instanceof DERPrintableString ps) { return ps.getString(); }
-        return val.toString();
-    }
-
-    // Absent/malformed nonce is null; a present empty OCTET STRING is a distinct wire value.
-    @SuppressWarnings("PMD.ReturnEmptyCollectionRatherThanNull")
-    private static byte[] getAttrOctetString(AttributeTable attrs, ASN1ObjectIdentifier oid) {
-        Attribute attr = attrs.get(oid);
-        if (attr == null) { return null; }
-        ASN1Encodable[] values = attr.getAttributeValues();
-        if (values == null || values.length == 0) { return null; }
-        ASN1Encodable val = values[0];
-        if (val instanceof DEROctetString os) { return os.getOctets(); }
-        return null;
     }
 
     private static X509Certificate parseCert(byte[] der) throws ScepCodecException {

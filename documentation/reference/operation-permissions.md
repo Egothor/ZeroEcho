@@ -59,6 +59,8 @@ For the full grant model — scopes, conditions, data-view levels, and the decis
 | `credential.replace` | `CERTIFICATE_REKEY` | `CERTIFICATE` | |
 | `credential.reissue` | `CERTIFICATE_ISSUE` | `CERTIFICATE` | ✓ |
 | `credential.revoke` | `CERTIFICATE_REVOKE` | `CERTIFICATE` | |
+| `credential.hold` | `CERTIFICATE_HOLD` | `CERTIFICATE` | |
+| `credential.unhold` | `CERTIFICATE_RELEASE_HOLD` | `CERTIFICATE` | |
 | `credential.confirmation.pending.list` | `CERTIFICATE_SEARCH` | `CERTIFICATE` | |
 | `credential.confirmation.challenge.issue` | `CERTIFICATE_PUBLICATION_CHANGE` | `CERTIFICATE` | |
 | `credential.confirmation.proof.complete` | `CERTIFICATE_CONFIRM` | `CERTIFICATE` | |
@@ -73,6 +75,18 @@ For the full grant model — scopes, conditions, data-view levels, and the decis
 | `request.inspect` | `REQUEST_READ_ANY` | `REQUEST` | |
 | `request.import` | `REQUEST_SUBMIT` | `REQUEST` | |
 | `request.verify` | `REQUEST_READ_ANY` | `REQUEST` | |
+
+## Enrollment requests
+
+These operations act on durable protocol enrollment transactions. Requester
+separation and the frozen approval policy apply in addition to the listed grants.
+
+| Operation ID | Required action | Resource type | HIGH_RISK |
+| --- | --- | --- | --- |
+| `enrollment.request.list` | `REQUEST_READ_ANY` | `ENROLLMENT_REQUEST` | |
+| `enrollment.request.inspect` | `REQUEST_READ_ANY` | `ENROLLMENT_REQUEST` | |
+| `enrollment.request.approve` | `REQUEST_APPROVE` | `ENROLLMENT_REQUEST` | |
+| `enrollment.request.reject` | `REQUEST_REJECT` | `ENROLLMENT_REQUEST` | |
 
 ## Revocation and status objects
 

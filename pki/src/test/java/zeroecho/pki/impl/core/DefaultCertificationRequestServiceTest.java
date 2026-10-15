@@ -80,6 +80,28 @@ final class DefaultCertificationRequestServiceTest {
     }
 
     @Test
+    void typedRecoveryRejectsMixedAttributesWrongIdentityAndMutation() throws Exception {
+        DefaultCertificationRequestService service = isolated();
+        byte[] bytes = { 1, 2, 3 };
+        String crmfId = "crmf:" + identity(bytes).substring(4);
+        AttributeSet crmf = new SimpleAttributeSet(List.of(new SimpleAttributeSet.Entry(BcX509Attributes.CRMF_DER,
+                List.of(new AttributeValue.BytesValue(bytes)))));
+        ParsedCertificationRequest parsed = parsed(BcX509CredentialFramework.FORMAT_ID, crmfId, crmf);
+        assertEquals(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, service.encodedX509Request(parsed).kind());
+        assertArrayEquals(bytes, service.encodedX509Request(parsed).der());
+        assertThrows(IllegalArgumentException.class, () -> service.encodedRequest(parsed));
+        assertThrows(IllegalArgumentException.class, () -> service.encodedX509Request(
+                parsed(BcX509CredentialFramework.FORMAT_ID, identity(bytes), crmf)));
+        AttributeSet mixed = new SimpleAttributeSet(List.of(
+                new SimpleAttributeSet.Entry(BcX509Attributes.CRMF_DER, List.of(new AttributeValue.BytesValue(bytes))),
+                new SimpleAttributeSet.Entry(BcX509Attributes.CSR_DER, List.of(new AttributeValue.BytesValue(bytes)))));
+        assertThrows(IllegalArgumentException.class, () -> service.encodedX509Request(
+                parsed(BcX509CredentialFramework.FORMAT_ID, crmfId, mixed)));
+        bytes[0] ^= 1;
+        assertThrows(IllegalArgumentException.class, () -> service.encodedX509Request(parsed));
+    }
+
+    @Test
     void encodedRequestRejectsWrongFormatCardinalityTypeSizeAndIdentity() throws Exception {
         DefaultCertificationRequestService service = isolated();
         byte[] bytes = { 1, 2, 3 };

@@ -1,8 +1,8 @@
 # Revocation and status
 
 This page covers withdrawing trust from credentials and publishing the resulting
-status: revoking credentials with the correct RFC 5280 reason (including
-certificate hold and its release), inspecting revocation state and history,
+status: permanently revoking credentials, placing and releasing certificate
+holds, inspecting revocation state and history,
 generating and inspecting CRLs and delta CRLs, and administering OCSP responders.
 
 Revocation is managed under **Revocation**, CRLs and delta CRLs under **Status &
@@ -16,7 +16,7 @@ Revocation area and directly by `credentialId`. Complete:
 | Field | Meaning |
 |---|---|
 | `credentialId` | The credential to revoke. |
-| `reason` | An RFC 5280 revocation reason (see below). |
+| `reason` | A permanent RFC 5280 revocation reason (see below). |
 | `justification` | *(Optional)* Operator justification, retained for audit. |
 
 Revocation is ordinarily approval-free. However, a matching RBAC grant may
@@ -36,29 +36,38 @@ The `reason` is one of the standard code points:
 | `AFFILIATION_CHANGED` | The subject's affiliation or attributes changed. |
 | `SUPERSEDED` | The credential has been replaced. |
 | `CESSATION_OF_OPERATION` | The subject no longer operates. |
-| `CERTIFICATE_HOLD` | Temporary hold — reversible (see hold/unhold below). |
-| `REMOVE_FROM_CRL` | Release a certificate previously placed on hold. |
 | `PRIVILEGE_WITHDRAWN` | A privilege in the credential has been withdrawn. |
 | `AA_COMPROMISE` | An attribute authority's key is compromised. |
 
 ### Placing and releasing a hold
 
-Certificate hold is a *reversible* revocation:
+Certificate hold is a *reversible* revocation. Both operations take a
+`credentialId` and an optional `justification`; neither accepts a `reason`.
 
 === "Hold"
 
-    Revoke the credential with reason `CERTIFICATE_HOLD`. The credential is treated
-    as revoked in status output but can be reinstated.
+    Use **Hold credential** (`credential.hold`). This requires
+    `CERTIFICATE_HOLD` permission. The credential is treated as revoked in status
+    output with reason `CERTIFICATE_HOLD`, but the hold can be released.
 
 === "Release (unhold)"
 
-    Revoke again with reason `REMOVE_FROM_CRL` to lift a hold and restore the
-    credential. Only a credential currently on hold can be released.
+    Use **Release credential hold** (`credential.unhold`). This requires
+    `CERTIFICATE_RELEASE_HOLD` permission. Only a credential currently on hold can
+    be released. A subsequent full CRL omits the released credential; a delta CRL
+    covering the release records `REMOVE_FROM_CRL` when applicable.
 
-!!! warning "Compromise reasons are effectively permanent"
-    `KEY_COMPROMISE`, `CA_COMPROMISE`, and `AA_COMPROMISE` reflect key-compromise
-    events and are not reversible. Reserve `CERTIFICATE_HOLD` for genuinely
-    temporary situations.
+Like permanent revocation, hold and release can require approval when the matching
+grant imposes that condition. Approval is bound to the exact operation, credential
+and justification. A successful transition is durable; it does not mean a new CRL
+has already been published. Use the existing status generation and publication
+workflow or configured schedules to distribute the updated status.
+
+!!! warning "Permanent revocation cannot be reversed"
+    Every reason accepted by `credential.revoke` is permanent. Hold and release
+    cannot reactivate a permanently revoked credential. `credential.revoke`
+    rejects `CERTIFICATE_HOLD` and `REMOVE_FROM_CRL`; use the separate operations
+    above for temporary holds.
 
 ## Inspecting revocation
 

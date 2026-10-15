@@ -38,132 +38,121 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.cmp.CmpEndpoint;
 import zeroecho.pki.server.cmp.CmpProtocolException;
 import zeroecho.pki.server.cmp.CmpService;
+import zeroecho.pkix.cmp.CmpProtectedMessage;
 
-/**
- * CMP RFC 4210/9480 route adapter over the jdk.httpserver API (RFC 6712 HTTP transport).
- *
- * <p>Routes POST requests to {@code /pkix/{label}} by label. Decodes the DER-encoded
- * PKIMessage body, dispatches to {@link CmpService#processMessage}, and returns a
- * DER-encoded PKIMessage response with content type {@code application/pkixcmp}.</p>
- *
- * @since 1.0
- */
-@SuppressWarnings("PMD")
+/** Bounded RFC 6712 transport with owned admission, deadlines and cancellation. */
 final class CmpHttpHandler implements HttpHandler {
-
-    private static final Logger LOG = Logger.getLogger(CmpHttpHandler.class.getName());
-
-    private static final String TEXT_PLAIN = "text/plain; charset=utf-8";
-    private static final String CONTENT_TYPE_PKIXCMP = "application/pkixcmp";
-    private static final String PKIX_PREFIX = "/pkix/";
-
+    private static final int METHOD_NOT_ALLOWED_STATUS = 405;
+    private static final String TEXT = "text/plain; charset=utf-8";
     private final PkiServerConfiguration.CmpListener configuration;
-    private final ServerRealmContext realm;
     private final CmpService service;
     private final ServerRuntime runtime;
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
-    CmpHttpHandler(PkiServerConfiguration.CmpListener configuration, ServerRealmContext realm,
+    /* default */ CmpHttpHandler(PkiServerConfiguration.CmpListener configuration, ServerRealmContext realm,
             CmpService service, ServerRuntime runtime, RequestIds requestIds, BooleanSupplier ready) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
-        this.realm = Objects.requireNonNull(realm, "realm");
+        Objects.requireNonNull(realm, "realm");
         this.service = Objects.requireNonNull(service, "service");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.requestIds = Objects.requireNonNull(requestIds, "requestIds");
         this.ready = Objects.requireNonNull(ready, "ready");
     }
 
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        try {
-            if (!ready.getAsBoolean()) {
-                sendText(exchange, 503, "CMP service is not ready");
-                return;
-            }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.getResponseHeaders().set("Allow", "POST");
-                sendText(exchange, 405, "CMP requires POST");
-                return;
-            }
-            String path = exchange.getRequestURI().getPath();
-            if (!path.startsWith(PKIX_PREFIX)) {
-                sendText(exchange, 404, "Not found");
-                return;
-            }
-            String after = path.substring(PKIX_PREFIX.length());
-            int slash = after.indexOf('/');
-            String label = slash < 0 ? after : after.substring(0, slash);
-            if (label.isEmpty()) {
-                sendText(exchange, 404, "CMP label is required");
-                return;
-            }
-            Optional<CmpEndpoint> endpointOpt = service.find(label);
-            if (endpointOpt.isEmpty()) {
-                sendText(exchange, 404, "CMP endpoint not found: " + label);
-                return;
-            }
-            CmpEndpoint endpoint = endpointOpt.get();
-
-            byte[] body;
-            try (InputStream in = exchange.getRequestBody()) {
-                body = in.readAllBytes();
-            }
-            if (body.length == 0) {
-                sendText(exchange, 400, "CMP request body is empty");
-                return;
-            }
-
-            byte[] response;
+    @Override public void handle(HttpExchange exchange) throws IOException {
+        try (exchange) {
             try {
-                response = service.processMessage(endpoint, body);
-            } catch (CmpProtocolException e) {
-                LOG.log(Level.INFO, "CMP protocol error: {0}", e.getMessage());
-                sendText(exchange, e.httpStatus(), e.getMessage());
-                return;
-            }
-
-            sendBinary(exchange, 200, CONTENT_TYPE_PKIXCMP, response);
-        } catch (Exception unexpected) {
-            LOG.log(Level.WARNING, "Unexpected error in CMP handler", unexpected);
-            try {
-                sendText(exchange, 500, "Internal CMP error");
-            } catch (IOException ignored) {
-                // Already sent response; nothing to do
-            }
-        } finally {
-            exchange.close();
+                exchange.getResponseHeaders().set(RequestIds.HEADER, requestIds.resolve(exchange.getRequestHeaders().get(RequestIds.HEADER)));
+                long headerBytes = 0;
+                for (java.util.Map.Entry<String, java.util.List<String>> header : exchange.getRequestHeaders().entrySet()) {
+                    headerBytes += header.getKey().length();
+                    for (String value : header.getValue()) {
+                        headerBytes += value.length();
+                    }
+                    if (headerBytes > configuration.maximumHeaderBytes()) { send(exchange, error(431, "CMP headers exceed the configured limit")); return; }
+                }
+                if (!ready.getAsBoolean()) { send(exchange, error(503, "CMP service is not ready")); return; }
+                if (!runtime.tryAdmit()) { send(exchange, error(503, "CMP service is overloaded")); return; }
+                try {
+                    ServerRuntime.Submitted<Response> submitted = runtime.submit(cancellation -> route(exchange, cancellation));
+                    try {
+                        Response response;
+                        try {
+                            response = submitted.future().get(configuration.execution().maximumDeadline().toMillis(), TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException timeout) {
+                            submitted.cancellation().cancel(); submitted.future().cancel(true);
+                            response = error(504, "CMP request timed out");
+                        } catch (InterruptedException interrupted) {
+                            submitted.cancellation().cancel(); submitted.future().cancel(true);
+                            Thread.currentThread().interrupt(); response = error(503, "CMP request interrupted"); // NOPMD DoNotUseThreads - Restores caller cancellation after interruption; this standalone component creates no thread.
+                        } catch (ExecutionException failure) {
+                            Throwable cause = failure.getCause();
+                            response = cause instanceof CmpProtocolException protocol ? error(protocol.httpStatus(), protocol.getMessage())
+                                    : cause instanceof IllegalArgumentException ? error(400, "Invalid CMP request") : error(503, "CMP request unavailable");
+                        }
+                        send(exchange, response);
+                    } finally { submitted.finish(); }
+                } catch (RejectedExecutionException overloaded) { send(exchange, error(503, "CMP service is overloaded")); }
+                finally { runtime.releaseAdmission(); }
+            } catch (IllegalArgumentException invalid) { send(exchange, error(400, "Invalid CMP request")); }
         }
     }
 
-    private static void sendBinary(HttpExchange exchange, int status, String contentType, byte[] body)
-            throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.sendResponseHeaders(status, body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
+    private Response route(HttpExchange exchange, ServerRuntime.CancellationToken cancellation) throws IOException, CmpProtocolException {
+        cancellation.throwIfCancelled();
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            return error(405, "CMP requires POST");
         }
+        String type = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (type == null || !"application/pkixcmp".equalsIgnoreCase(type.trim())) {
+            return error(415, "CMP content type is required");
+        }
+        String path = exchange.getRequestURI().getPath();
+        if (!path.startsWith("/pkix/")) {
+            return error(404, "CMP endpoint not found");
+        }
+        String label = path.substring(6);
+        if (label.isEmpty() || label.contains("/")) {
+            return error(404, "CMP endpoint not found");
+        }
+        CmpEndpoint endpoint = service.find(label).orElse(null);
+        if (endpoint == null) {
+            return error(404, "CMP endpoint not found");
+        }
+        int limit = Math.min(configuration.maximumBodyBytes(), CmpProtectedMessage.MAXIMUM_MESSAGE_BYTES);
+        byte[] body;
+        try (InputStream input = exchange.getRequestBody()) { body = input.readNBytes(limit + 1); }
+        if (body.length > limit) {
+            return error(413, "CMP message exceeds the configured limit");
+        }
+        if (body.length == 0) {
+            return error(400, "CMP message is empty");
+        }
+        cancellation.throwIfCancelled();
+        return new Response(200, "application/pkixcmp", service.processMessage(endpoint, body, cancellation));
     }
 
-    private static void sendText(HttpExchange exchange, int status, String body) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", TEXT_PLAIN);
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(bytes);
+    private static Response error(int status, String message) { return new Response(status, TEXT, message.getBytes(StandardCharsets.UTF_8)); }
+    private static void send(HttpExchange exchange, Response response) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", response.contentType());
+        if (response.status() == METHOD_NOT_ALLOWED_STATUS) {
+            exchange.getResponseHeaders().set("Allow", "POST");
         }
+        exchange.sendResponseHeaders(response.status(), response.body().length);
+        try (OutputStream output = exchange.getResponseBody()) { output.write(response.body()); }
     }
+    private record Response(int status, String contentType, byte[] body) { }
 }

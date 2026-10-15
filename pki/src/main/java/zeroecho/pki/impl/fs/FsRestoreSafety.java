@@ -123,6 +123,7 @@ final class FsRestoreSafety {
         MessageDigest files = FsBackupFiles.digest();
         FsBackupFiles.Budget budget = new FsBackupFiles.Budget(limits);
         addFile(files, root, root.resolve("revocations/transitions.log"), budget);
+        addRequests(files, root, limits, budget);
         Path workflows = root.resolve("workflows");
         if (Files.exists(workflows)) {
             try (java.util.stream.Stream<Path> entries = Files.walk(workflows, 5)) {
@@ -150,6 +151,44 @@ final class FsRestoreSafety {
             }
         }
         return HexFormat.of().formatHex(files.digest());
+    }
+
+    // Immutable enrollment inputs are authority even when signing has not yet accepted them.
+    private static void addRequests(MessageDigest digest, Path root, BackupLimits limits,
+            FsBackupFiles.Budget budget) throws IOException {
+        Path requests = root.resolve("requests");
+        Path byId = requests.resolve("by-id");
+        if (!Files.exists(requests)) {
+            return;
+        }
+        List<Path> ordered = new ArrayList<>();
+        try (java.util.stream.Stream<Path> entries = Files.walk(requests, 2)) {
+            java.util.Iterator<Path> iterator = entries.iterator();
+            int count = 0;
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                if (++count > limits.entryCount()) {
+                    throw new IOException("RESTORE_REQUEST_LIMIT");
+                }
+                if (Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    if (!path.equals(requests) && !path.equals(byId)) {
+                        throw new IOException("RESTORE_REQUEST_INVALID");
+                    }
+                } else {
+                    if (!path.getParent().equals(byId)
+                            || !Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        throw new IOException("RESTORE_REQUEST_INVALID");
+                    }
+                    String relative = root.relativize(path).toString().replace(java.io.File.separatorChar, '/');
+                    FsBackupFiles.validatePath(relative, limits);
+                    ordered.add(path);
+                }
+            }
+        }
+        ordered.sort(Path::compareTo);
+        for (Path path : ordered) {
+            addFile(digest, root, path, budget);
+        }
     }
 
 

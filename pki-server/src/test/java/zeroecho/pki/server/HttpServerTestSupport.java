@@ -80,6 +80,10 @@ public final class HttpServerTestSupport {
     private HttpServerTestSupport() { }
 
     public static Fixture tls() throws Exception {
+        return tls(null);
+    }
+
+    static Fixture tls(X509Certificate additionalClientRoot) throws Exception {
         KeyPair rootKey = keyPair((byte) 1);
         X509Certificate root = certificate(rootKey, rootKey, "CN=ZeroEcho Test Root", "CN=ZeroEcho Test Root",
                 BigInteger.ONE, true, false);
@@ -89,7 +93,7 @@ public final class HttpServerTestSupport {
         KeyPair clientKey = keyPair((byte) 3);
         X509Certificate client = certificate(clientKey, rootKey, "CN=client", "CN=ZeroEcho Test Root",
                 BigInteger.valueOf(3), false, false);
-        SSLContext serverContext = context(serverKey, server, root, true);
+        SSLContext serverContext = context(serverKey, server, root, true, additionalClientRoot);
         SSLContext clientContext = context(clientKey, client, root, true);
         SSLContext anonymousContext = context(clientKey, client, root, false);
         KeyPair proxyKey = keyPair((byte) 4);
@@ -218,7 +222,7 @@ public final class HttpServerTestSupport {
         return random;
     }
 
-    private static KeyPair keyPair(byte identity) throws Exception {
+    static KeyPair keyPair(byte identity) throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         SecureRandom deterministic = SecureRandom.getInstance("SHA1PRNG");
         deterministic.setSeed(new byte[] { 1, 3, 5, 7, 9, identity });
@@ -247,17 +251,25 @@ public final class HttpServerTestSupport {
 
     private static SSLContext context(KeyPair identity, X509Certificate certificate, X509Certificate root,
             boolean includeIdentity) throws Exception {
+        return context(identity, certificate, root, includeIdentity, null);
+    }
+
+    static SSLContext context(KeyPair identity, X509Certificate certificate, X509Certificate root,
+            boolean includeIdentity, X509Certificate additionalTrustRoot) throws Exception {
         KeyStore keys = KeyStore.getInstance("PKCS12");
         keys.load(null, PASSWORD);
         if (includeIdentity) {
+            X509Certificate issuer = additionalTrustRoot != null
+                    && !certificate.getIssuerX500Principal().equals(root.getSubjectX500Principal()) ? additionalTrustRoot : root;
             keys.setKeyEntry("identity", identity.getPrivate(), PASSWORD,
-                    new java.security.cert.Certificate[] { certificate, root });
+                    new java.security.cert.Certificate[] { certificate, issuer });
         }
         KeyManagerFactory keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         keyManagers.init(keys, PASSWORD);
         KeyStore trust = KeyStore.getInstance("PKCS12");
         trust.load(null, PASSWORD);
         trust.setCertificateEntry("root", root);
+        if (additionalTrustRoot != null) trust.setCertificateEntry("additional", additionalTrustRoot);
         TrustManagerFactory trustManagers = TrustManagerFactory.getInstance(
                 TrustManagerFactory.getDefaultAlgorithm());
         trustManagers.init(trust);

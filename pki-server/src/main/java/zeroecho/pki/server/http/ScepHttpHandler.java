@@ -38,207 +38,168 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.scep.ScepEndpoint;
 import zeroecho.pki.server.scep.ScepProtocolException;
 import zeroecho.pki.server.scep.ScepService;
 
-/**
- * SCEP RFC 8894 route adapter over the jdk.httpserver API.
- *
- * <p>Routes incoming requests by label and operation query parameter.
- * Supported operations: {@code GetCACert}, {@code GetCACertChain}, {@code PKIOperation}.
- * SCEP does not use mTLS — authentication is via the challenge password embedded
- * in the SCEP PKIMessage. The TLS layer provides confidentiality only.</p>
- *
- * <p>Content types per RFC 8894:</p>
- * <ul>
- *   <li>GetCACert (single CA): {@code application/x-x509-ca-cert}</li>
- *   <li>GetCACertChain: {@code application/x-x509-ca-ra-cert}</li>
- *   <li>PKIOperation: {@code application/x-pki-message}</li>
- * </ul>
- *
- * @since 1.0
- */
-@SuppressWarnings("PMD")
+/** Bounded RFC 8894 HTTPS transport; CMS authenticates requests before enrollment. */
 final class ScepHttpHandler implements HttpHandler {
-
-    private static final Logger LOG = Logger.getLogger(ScepHttpHandler.class.getName());
-
-    private static final String TEXT_PLAIN = "text/plain; charset=utf-8";
-    private static final String CONTENT_TYPE_CA_CERT = "application/x-x509-ca-cert";
-    private static final String CONTENT_TYPE_CA_RA_CERT = "application/x-x509-ca-ra-cert";
-    private static final String CONTENT_TYPE_PKI_MESSAGE = "application/x-pki-message";
-    private static final String SCEP_PREFIX = "/scep/";
-
+    private static final String HTTP_GET = "GET";
+    private static final String HTTP_POST = "POST";
+    private static final String TEXT = "text/plain; charset=utf-8";
     private final PkiServerConfiguration.ScepListener configuration;
-    private final ServerRealmContext realm;
     private final ScepService service;
     private final ServerRuntime runtime;
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
-    ScepHttpHandler(PkiServerConfiguration.ScepListener configuration, ServerRealmContext realm,
+    /* default */ ScepHttpHandler(PkiServerConfiguration.ScepListener configuration, ServerRealmContext realm,
             ScepService service, ServerRuntime runtime, RequestIds requestIds, BooleanSupplier ready) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
-        this.realm = Objects.requireNonNull(realm, "realm");
+        Objects.requireNonNull(realm, "realm");
         this.service = Objects.requireNonNull(service, "service");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.requestIds = Objects.requireNonNull(requestIds, "requestIds");
         this.ready = Objects.requireNonNull(ready, "ready");
     }
 
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        try {
-            if (!ready.getAsBoolean()) {
-                sendText(exchange, 503, "SCEP service is not ready");
-                return;
-            }
-            String path = exchange.getRequestURI().getPath();
-            if (!path.startsWith(SCEP_PREFIX)) {
-                sendText(exchange, 404, "Not found");
-                return;
-            }
-            String after = path.substring(SCEP_PREFIX.length());
-            int slash = after.indexOf('/');
-            String label = slash < 0 ? after : after.substring(0, slash);
-            if (label.isEmpty()) {
-                sendText(exchange, 404, "SCEP label is required");
-                return;
-            }
-            Optional<ScepEndpoint> endpointOpt = service.find(label);
-            if (endpointOpt.isEmpty()) {
-                sendText(exchange, 404, "SCEP endpoint not found: " + label);
-                return;
-            }
-            ScepEndpoint endpoint = endpointOpt.get();
-
-            String query = exchange.getRequestURI().getQuery();
-            String operation = extractOperation(query);
-            if (operation == null) {
-                sendText(exchange, 400, "SCEP operation query parameter is required");
-                return;
-            }
-
-            switch (operation) {
-                case "GetCACert" -> handleGetCaCert(exchange, endpoint);
-                case "GetCACertChain" -> handleGetCaCertChain(exchange, endpoint);
-                case "PKIOperation" -> handlePkiOperation(exchange, endpoint);
-                default -> sendText(exchange, 400, "Unknown SCEP operation: " + operation);
-            }
-        } catch (Exception unexpected) {
-            LOG.log(Level.WARNING, "Unexpected error in SCEP handler", unexpected);
+    @Override public void handle(HttpExchange exchange) throws IOException {
+        try (exchange) {
             try {
-                sendText(exchange, 500, "Internal SCEP error");
-            } catch (IOException ignored) {
-                // Already sent response; nothing to do
-            }
-        } finally {
-            exchange.close();
+                exchange.getResponseHeaders().set(RequestIds.HEADER, requestIds.resolve(exchange.getRequestHeaders().get(RequestIds.HEADER)));
+                long headerBytes = 0;
+                for (java.util.Map.Entry<String, java.util.List<String>> header : exchange.getRequestHeaders().entrySet()) {
+                    headerBytes += header.getKey().length();
+                    for (String value : header.getValue()) {
+                        headerBytes += value.length();
+                    }
+                    if (headerBytes > configuration.maximumHeaderBytes()) { send(exchange, error(431, "SCEP headers exceed the configured limit")); return; }
+                }
+                if (!ready.getAsBoolean()) { send(exchange, error(503, "SCEP service is not ready")); return; }
+                if (!runtime.tryAdmit()) { send(exchange, error(503, "SCEP service is overloaded")); return; }
+                try {
+                    ServerRuntime.Submitted<Response> submitted = runtime.submit(cancellation -> route(exchange, cancellation));
+                    try {
+                        Response response;
+                        try {
+                            response = submitted.future().get(configuration.execution().maximumDeadline().toMillis(), TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException timeout) {
+                            submitted.cancellation().cancel(); submitted.future().cancel(true);
+                            response = error(504, "SCEP request timed out");
+                        } catch (InterruptedException interrupted) {
+                            submitted.cancellation().cancel(); submitted.future().cancel(true);
+                            Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Restores caller cancellation after interruption; this standalone component creates no thread.
+                            response = error(503, "SCEP request interrupted");
+                        } catch (ExecutionException failure) {
+                            Throwable cause = failure.getCause();
+                            response = cause instanceof ScepProtocolException protocol ? error(protocol.httpStatus(), protocol.getMessage())
+                                    : cause instanceof IllegalArgumentException ? error(400, "Invalid SCEP request") : error(503, "SCEP request unavailable");
+                        }
+                        send(exchange, response);
+                    } finally { submitted.finish(); }
+                } catch (RejectedExecutionException overloaded) { send(exchange, error(503, "SCEP service is overloaded")); }
+                finally { runtime.releaseAdmission(); }
+            } catch (IllegalArgumentException invalid) { send(exchange, error(400, "Invalid SCEP request")); }
         }
     }
 
-    private void handleGetCaCert(HttpExchange exchange, ScepEndpoint endpoint) throws IOException {
-        try {
-            byte[] certDer = service.getCaCert(endpoint);
-            sendBinary(exchange, 200, CONTENT_TYPE_CA_CERT, certDer);
-        } catch (ScepProtocolException e) {
-            LOG.log(Level.INFO, "SCEP GetCACert error: {0}", e.getMessage());
-            sendText(exchange, e.httpStatus(), e.getMessage());
+    private Response route(HttpExchange exchange, ServerRuntime.CancellationToken cancellation) throws IOException, ScepProtocolException {
+        cancellation.throwIfCancelled();
+        String path = exchange.getRequestURI().getPath();
+        if (!path.startsWith("/scep/")) {
+            return error(404, "SCEP endpoint not found");
         }
+        String label = path.substring(6);
+        if (label.endsWith("/")) {
+            label = label.substring(0, label.length() - 1);
+        }
+        if (label.isEmpty() || label.contains("/")) {
+            return error(404, "SCEP endpoint not found");
+        }
+        ScepEndpoint endpoint = service.find(label).orElse(null);
+        if (endpoint == null) {
+            return error(404, "SCEP endpoint not found");
+        }
+        int limit = Math.min(configuration.maximumBodyBytes(), zeroecho.pkix.scep.ScepCodec.MAXIMUM_REQUEST_BYTES);
+        String query = exchange.getRequestURI().getRawQuery();
+        if (query != null && query.length() > 4L * limit + 1024) {
+            return error(413, "SCEP query exceeds the configured limit");
+        }
+        String operation = parameter(query, "operation");
+        if (operation == null) {
+            return error(400, "SCEP operation is required");
+        }
+        if (!"PKIOperation".equals(operation) && !HTTP_GET.equals(exchange.getRequestMethod())) {
+            return error(405, "SCEP discovery requires GET");
+        }
+        return switch (operation) {
+            case "GetCACaps" -> new Response(200, TEXT, service.getCaCaps());
+            case "GetCACert", "GetCACertChain" -> {
+                ScepService.CaCertificateResponse response = service.getCaCert(endpoint);
+                yield new Response(200, response.contentType(), response.body());
+            }
+            case "PKIOperation" -> operation(exchange, endpoint, query, limit, cancellation);
+            default -> error(400, "Unsupported SCEP operation");
+        };
     }
 
-    private void handleGetCaCertChain(HttpExchange exchange, ScepEndpoint endpoint) throws IOException {
-        try {
-            byte[] chainCms = service.getCaCertChain(endpoint);
-            sendBinary(exchange, 200, CONTENT_TYPE_CA_RA_CERT, chainCms);
-        } catch (ScepProtocolException e) {
-            LOG.log(Level.INFO, "SCEP GetCACertChain error: {0}", e.getMessage());
-            sendText(exchange, e.httpStatus(), e.getMessage());
-        }
-    }
-
-    private void handlePkiOperation(HttpExchange exchange, ScepEndpoint endpoint) throws IOException {
-        byte[] messageData;
-        String method = exchange.getRequestMethod().toUpperCase();
-        if ("POST".equals(method)) {
-            try (InputStream in = exchange.getRequestBody()) {
-                messageData = in.readAllBytes();
+    private Response operation(HttpExchange exchange, ScepEndpoint endpoint, String query, int limit,
+            ServerRuntime.CancellationToken cancellation) throws IOException, ScepProtocolException {
+        byte[] message;
+        if (HTTP_POST.equals(exchange.getRequestMethod())) {
+            try (InputStream input = exchange.getRequestBody()) { message = input.readNBytes(limit + 1); }
+        } else if (HTTP_GET.equals(exchange.getRequestMethod())) {
+            String encoded = parameter(query, "message");
+            if (encoded == null) {
+                return error(400, "SCEP message is required");
             }
-        } else if ("GET".equals(method)) {
-            // RFC 8894 §4.1: GET with message parameter (base64-encoded)
-            String query = exchange.getRequestURI().getQuery();
-            String messageParam = extractParam(query, "message");
-            if (messageParam == null) {
-                sendText(exchange, 400, "SCEP PKIOperation GET requires message parameter");
-                return;
+            if (encoded.length() > 4L * ((limit + 2L) / 3)) {
+                return error(413, "SCEP message exceeds the configured limit");
             }
-            try {
-                messageData = java.util.Base64.getDecoder().decode(messageParam);
-            } catch (IllegalArgumentException e) {
-                sendText(exchange, 400, "SCEP PKIOperation message is not valid base64");
-                return;
-            }
+            message = java.util.Base64.getDecoder().decode(encoded);
         } else {
-            exchange.getResponseHeaders().set("Allow", "GET, POST");
-            sendText(exchange, 405, "SCEP PKIOperation requires GET or POST");
-            return;
+            return error(405, "SCEP PKIOperation requires GET or POST");
         }
-
-        if (messageData == null || messageData.length == 0) {
-            sendText(exchange, 400, "SCEP PKIOperation message body is empty");
-            return;
+        if (message.length > limit) {
+            return error(413, "SCEP message exceeds the configured limit");
         }
-
-        try {
-            byte[] response = service.processPkiOperation(endpoint, messageData);
-            sendBinary(exchange, 200, CONTENT_TYPE_PKI_MESSAGE, response);
-        } catch (ScepProtocolException e) {
-            LOG.log(Level.INFO, "SCEP PKIOperation error: {0}", e.getMessage());
-            sendText(exchange, e.httpStatus(), e.getMessage());
+        if (message.length == 0) {
+            return error(400, "SCEP message is empty");
         }
+        cancellation.throwIfCancelled();
+        return new Response(200, "application/x-pki-message", service.processPkiOperation(endpoint, message, cancellation));
     }
 
-    private static String extractOperation(String query) {
-        return extractParam(query, "operation");
-    }
-
-    private static String extractParam(String query, String name) {
-        if (query == null || query.isBlank()) return null;
-        String prefix = name + "=";
+    private static String parameter(String query, String name) {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        String result = null;
         for (String part : query.split("&")) {
-            if (part.startsWith(prefix)) {
-                return part.substring(prefix.length());
+            if (part.startsWith(name + "=")) {
+                if (result != null) {
+                    throw new IllegalArgumentException("Duplicate SCEP parameter");
+                }
+                result = java.net.URLDecoder.decode(part.substring(name.length() + 1), StandardCharsets.UTF_8);
             }
         }
-        return null;
+        return result;
     }
 
-    private static void sendBinary(HttpExchange exchange, int status, String contentType, byte[] body)
-            throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.sendResponseHeaders(status, body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
-        }
+    private static Response error(int status, String message) { return new Response(status, TEXT, message.getBytes(StandardCharsets.UTF_8)); }
+    private static void send(HttpExchange exchange, Response response) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", response.contentType());
+        exchange.sendResponseHeaders(response.status(), response.body().length);
+        try (OutputStream output = exchange.getResponseBody()) { output.write(response.body()); }
     }
-
-    private static void sendText(HttpExchange exchange, int status, String body) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", TEXT_PLAIN);
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(bytes);
-        }
-    }
+    private record Response(int status, String contentType, byte[] body) { }
 }

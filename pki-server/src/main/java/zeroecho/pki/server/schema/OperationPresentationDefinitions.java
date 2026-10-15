@@ -41,12 +41,18 @@ import zeroecho.pki.server.schema.OperationDescriptorCatalog.TransportSemantics;
 
 /** Reviewed request semantics and presentation for every canonical operation. */
 final class OperationPresentationDefinitions {
+    private static final String TEXT_WIDGET = "text";
+    private static final String PARAM_JUSTIFICATION = "justification";
+    private static final String REVOCATION_SECTION = "revocation";
+    private static final String BACKUP_SECTION = "backup";
+    private static final String PARAM_ARTIFACT_HANDLE = "artifactHandle";
+
     private static final String TEXT_PROFILES = "profiles";
     private static final String TEXT_REALM = "realm";
     private static final String TEXT_LIMIT = "limit";
     private static final String TEXT_INTEGER = "integer";
     private static final String TEXT_AFTER = "after";
-    private static final String TEXT_TEXT = "text";
+    private static final String TEXT_TEXT = TEXT_WIDGET;
     private static final String TEXT_AUTHORITY = "authority";
     private static final String TEXT_ENUM = "enum";
     private static final String TEXT_ISSUERS = "issuers";
@@ -96,7 +102,8 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry("subjectFilter", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Case-insensitive substring match on subject DN (e.g. CN=, O=, OU=).", "")),
                                 Map.entry("serialFilter", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Case-insensitive substring match on serial number.", "")),
-                                Map.entry("fingerprintFilter", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Case-insensitive fingerprint prefix (hex).", "")),
+                                Map.entry("fingerprintFilter", new FieldSemantics(TEXT_TEXT, "", false, false, false, "Credential ID prefix", "Case-insensitive credential ID prefix; this is not a certificate digest.", "")),
+                                Map.entry("sanFilter", new FieldSemantics(TEXT_TEXT, "", false, false, false, "Subject alternative name", "Exact typed issued-certificate SAN: DNS_NAME, IP_ADDRESS, URI or RFC822_NAME, followed by a colon and value.", "DNS_NAME:api.example.test")),
                                 Map.entry("statusFilter", new FieldSemantics(TEXT_ENUM, "", false, false, false, "", "Filter by credential status.", "")),
                                 Map.entry("profileIdFilter", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Exact profile logical ID.", "")),
                                 Map.entry(TEXT_AFTER, new FieldSemantics(TEXT_TEXT, "", false, true, false, "", "", ""))
@@ -273,24 +280,34 @@ final class OperationPresentationDefinitions {
                 new Presentation("credential.confirmation.pending.revoke", "Revoke pending confirmation", "Revoke a pending credential confirmation.", "confirmations",
                         new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
                                 Map.entry(TEXT_CREDENTIAL_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", "")),
-                                Map.entry("justification", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
+                                Map.entry(PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
                         ))),
-                new Presentation("credential.revoke", "Revoke credential", "Revoke an issued credential.", "revocation",
+                new Presentation("credential.hold", "Hold credential", "Temporarily hold an issued credential.", REVOCATION_SECTION,
+                        new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
+                                Map.entry(TEXT_CREDENTIAL_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", "")),
+                                Map.entry(PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
+                        ))),
+                new Presentation("credential.unhold", "Release credential hold", "Release a temporary hold without reversing permanent revocation.", REVOCATION_SECTION,
+                        new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
+                                Map.entry(TEXT_CREDENTIAL_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", "")),
+                                Map.entry(PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
+                        ))),
+                new Presentation("credential.revoke", "Revoke credential", "Revoke an issued credential.", REVOCATION_SECTION,
                         new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
                                 Map.entry(TEXT_CREDENTIAL_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", "")),
                                 Map.entry("reason", new FieldSemantics(TEXT_ENUM, "", false, false, false, "", "", "")),
-                                Map.entry("justification", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
+                                Map.entry(PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
                         ))),
-                new Presentation("revocation.inspect", "Inspect revocation", "Show the revocation state of a credential.", "revocation",
+                new Presentation("revocation.inspect", "Inspect revocation", "Show the revocation state of a credential.", REVOCATION_SECTION,
                         new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
                                 Map.entry(TEXT_CREDENTIAL_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", ""))
                         ))),
-                new Presentation("revocation.history", "Revocation history", "Read the revocation history of a credential.", "revocation",
+                new Presentation("revocation.history", "Revocation history", "Read the revocation history of a credential.", REVOCATION_SECTION,
                         new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
                                 Map.entry(TEXT_CREDENTIAL_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", "")),
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", ""))
                         ))),
-                new Presentation("revocation.snapshot", "Snapshot revocations", "Take a realm-wide revocation snapshot.", "revocation",
+                new Presentation("revocation.snapshot", "Snapshot revocations", "Take a realm-wide revocation snapshot.", REVOCATION_SECTION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", ""))
                         ))),
@@ -489,12 +506,12 @@ final class OperationPresentationDefinitions {
                 new Presentation("security.approval.approve", "Approve", "Approve a pending approval.", TEXT_APPROVALS,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("approvalId", new FieldSemantics(TEXT_TEXT, "approval", false, false, false, "", "", "")),
-                                Map.entry("justification", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
+                                Map.entry(PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
                         ))),
                 new Presentation("security.approval.reject", "Reject", "Reject a pending approval.", TEXT_APPROVALS,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("approvalId", new FieldSemantics(TEXT_TEXT, "approval", false, false, false, "", "", "")),
-                                Map.entry("justification", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
+                                Map.entry(PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
                         ))),
                 new Presentation("security.approval.cancel", "Cancel approval", "Cancel a pending approval.", TEXT_APPROVALS,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
@@ -694,7 +711,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_LABEL, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AUTHORITY_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
                                 Map.entry(TEXT_PROFILE_ID, new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
-                                Map.entry("challengePasswordHash", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "SHA-256 hex digest of the challenge password (plaintext is never stored).", ""))
+                                Map.entry("challengePasswordHash", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "SHA-256 challenge digest in endpoint metadata. The exact signed CSR retains its challenge in the protected request store and backups; ordinary request projections omit it.", ""))
                         ))),
                 new Presentation("scep.endpoint.inspect", "Inspect SCEP endpoint", "Show one SCEP endpoint.", "scep",
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
@@ -779,6 +796,22 @@ final class OperationPresentationDefinitions {
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("id", new FieldSemantics(TEXT_TEXT, "enrollmentProfile", false, false, false, "", "", ""))
                         ))),
+                new Presentation("enrollment.request.inspect", "Inspect enrollment request", "Inspect the frozen protocol request and approval state.", TEXT_ENROLLMENT,
+                        new TransportSemantics(TEXT_REALM, "", Map.of("id", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")))),
+                new Presentation("enrollment.request.list", "List enrollment requests", "List retained protocol requests in the authorized scope.", TEXT_ENROLLMENT,
+                        new TransportSemantics(TEXT_REALM, "", Map.of(
+                                TEXT_OFFSET, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", ""),
+                                TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")))),
+                new Presentation("enrollment.request.approve", "Approve enrollment request", "Approve the exact inspected record using the authenticated administrator's credential.", TEXT_ENROLLMENT,
+                        new TransportSemantics(TEXT_REALM, "", Map.of(
+                                "id", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""),
+                                "expectedCommitment", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Commitment returned by inspection.", ""),
+                                PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")))),
+                new Presentation("enrollment.request.reject", "Reject enrollment request", "Reject the exact inspected protocol request.", TEXT_ENROLLMENT,
+                        new TransportSemantics(TEXT_REALM, "", Map.of(
+                                "id", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""),
+                                "expectedCommitment", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Commitment returned by inspection.", ""),
+                                PARAM_JUSTIFICATION, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")))),
                 new Presentation("enrollment.profile.suspend", "Suspend enrollment profile", "Suspend an active enrollment profile; enrollment requests will be rejected.", TEXT_ENROLLMENT,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("id", new FieldSemantics(TEXT_TEXT, "enrollmentProfile", false, false, false, "", "", ""))
@@ -801,16 +834,32 @@ final class OperationPresentationDefinitions {
                         ))),
                 new Presentation("dashboard.server", "Server metrics", "JVM heap, approval queue depth, admin requests, audit health, and schedule-worker health, with explicit unavailable or failed measurement states.", "dashboard",
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries())),
-                new Presentation("backup.export", "Export backup", "Export a logical PKI backup.", "backup",
+                new Presentation("backup.stream.reserve", "Reserve backup upload", "Reserve backup upload using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry("backupId", new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", "")), Map.entry("length", new FieldSemantics("integer", "", false, false, false, "", "", "")), Map.entry("sha256", new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.export", "Export streaming backup", "Export streaming backup using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry("label", new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.upload", "Upload backup archive", "Upload backup archive using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry(PARAM_ARTIFACT_HANDLE, new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.download", "Download backup archive", "Download backup archive using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry(PARAM_ARTIFACT_HANDLE, new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.verify", "Verify uploaded archive", "Verify uploaded archive using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry(PARAM_ARTIFACT_HANDLE, new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.restore", "Stage backup restoration", "Stage backup restoration using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry(PARAM_ARTIFACT_HANDLE, new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.status", "Inspect restore workflow", "Inspect restore workflow using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry(PARAM_ARTIFACT_HANDLE, new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.stream.acknowledge", "Acknowledge restore outcome", "Acknowledge restore outcome using explicitly configured bounded transfer storage.", BACKUP_SECTION,
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(Map.entry(PARAM_ARTIFACT_HANDLE, new FieldSemantics(TEXT_WIDGET, "", false, false, false, "", "", ""))))),
+                new Presentation("backup.export", "Export backup", "Export a logical PKI backup.", BACKUP_SECTION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry(TEXT_LABEL, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", ""))
                         ))),
-                new Presentation("backup.verify", "Verify backup", "Verify a logical PKI backup.", "backup",
+                new Presentation("backup.verify", "Verify backup", "Verify a logical PKI backup.", BACKUP_SECTION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("backupId", new FieldSemantics(TEXT_PKI_ID, "", false, false, false, "", "", "")),
                                 Map.entry("payload", new FieldSemantics("base64", "", false, false, false, "", "", ""))
                         ))),
-                new Presentation("backup.restore", "Restore backup", "Remote restoration is unavailable.", "backup",
+                new Presentation("backup.restore", "Restore backup", "Remote restoration is unavailable.", BACKUP_SECTION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("backupId", new FieldSemantics(TEXT_PKI_ID, "", false, false, false, "", "", "")),
                                 Map.entry("payload", new FieldSemantics("base64", "", false, false, false, "", "", ""))

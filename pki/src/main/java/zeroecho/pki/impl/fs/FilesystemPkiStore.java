@@ -327,6 +327,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final StoreOwnership ownership;
     private final FsRestoreCoordinator restoreCoordinator;
     private final StoreMutationBarrier mutationBarrier = new StoreMutationBarrier();
+    private CredentialSearchIndex credentialSearch;
     private final zeroecho.pki.api.backup.BackupLimits backupLimits;
 
     /** Optional CT journal; {@code null} when CT Mode A is not configured. */
@@ -599,6 +600,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 publishVersionFile();
             }
 
+            if (!snapshotAssembly && options.credentialSearch().isPresent()) {
+                credentialSearch = new CredentialSearchIndex(this.paths.root(),
+                        options.credentialSearch().orElseThrow(), this::certificateHolder);
+                credentialSearch.rebuild(new CredentialMetadataAuthority(metadataStore, stagedContent));
+            }
+
             LOG.log(Level.INFO, "Filesystem PKI store opened");
             this.ownership = acquiredOwnership;
             ownershipTransferred = true;
@@ -609,6 +616,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             throw new IllegalStateException("Filesystem store open failed: code=STORE_OPEN_FAILED", e);
         } finally {
             if (!ownershipTransferred) {
+                if (credentialSearch != null) {
+                    try { credentialSearch.close(); }
+                    catch (IOException ignored) { LOG.log(Level.WARNING, "Search-index cleanup failed during initialization"); }
+                }
                 if (openedRevocations != null) {
                     try {
                         openedRevocations.close();
@@ -1438,6 +1449,26 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
+    public boolean credentialSearchAvailable() {
+        return !closing.get() && !durabilityUncertain.get() && credentialSearch != null && credentialSearch.available();
+    }
+
+    @Override
+    public List<Credential> searchCredentials(zeroecho.pki.api.credential.CredentialSearchQuery query,
+            Optional<String> after, int limit, java.util.function.Predicate<Credential> include,
+            CancellationSignal cancellation) {
+        requireStoreUsable();
+        if (!credentialSearchAvailable()) throw new IllegalStateException("Credential search is unavailable");
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                options.credentialSearch().orElseThrow().queryTimeoutMillis());
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter(deadline, cancellation)) {
+            return credentialSearch.search(query, after, limit, this::getCredential, include, cancellation, deadline);
+        } catch (InterruptedIOException failure) {
+            throw new java.util.concurrent.CancellationException("Credential search cancelled");
+        } catch (IOException failure) { throw new IllegalStateException("Credential search failed", failure); }
+    }
+
+    @Override
     public List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<IssuerGeneration> include, CancellationSignal cancellation) {
         try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
             Objects.requireNonNull(authorityId, "authorityId");
@@ -1732,6 +1763,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private void putCredentialMetadata(Credential credential, boolean exactReplay) {
         CredentialStateLockEntry lock = acquireCredentialStateLock(credential.credentialId());
+        if (credentialSearch != null) credentialSearch.lockPublication();
+        boolean publicationAttempted = false;
         try (FilesystemStagedContentStore.TransactionalReservation reservation = stagedContent.reserveTransactionalPublication(credential.content())) {
             boolean commitAttempted = false;
             try {
@@ -1746,6 +1779,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     }
                     authority.stageCreate(snapshot, transaction, credential);
                     commitAttempted = true;
+                    publicationAttempted = true;
                     MetadataCommitResult result = transaction.commit();
                     commitAttempted = result.outcome() == MetadataCommitResult.Outcome.UNKNOWN;
                     if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) { reservation.preserveUntilRecovery(); }
@@ -1753,6 +1787,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
                         throw new IllegalStateException("Credential metadata transaction was not committed");
                     }
+                    if (credentialSearch != null) credentialSearch.published(credential);
+                    publicationAttempted = false;
                 }
             } catch (IOException failure) {
                 boolean uncertainStorage = failure instanceof MetadataStoreException metadataFailure
@@ -1764,8 +1800,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 throw signingDurabilityFailure(failure);
             }
         } catch (IOException failure) {
+            if (publicationAttempted && credentialSearch != null) credentialSearch.fence();
             throw new IllegalStateException("Credential content reservation failed", failure);
+        } catch (RuntimeException failure) {
+            if (publicationAttempted && credentialSearch != null) credentialSearch.fence();
+            throw failure;
         } finally {
+            if (credentialSearch != null) credentialSearch.unlockPublication();
             releaseCredentialStateLock(credential.credentialId(), lock);
         }
     }
@@ -6295,21 +6336,36 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source)
             throws IOException {
+        return stageRestore(source, new PkiId(java.util.UUID.randomUUID().toString()));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source,
+            PkiId restoreId) throws IOException {
         Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(restoreId, "restoreId");
+        if (!java.util.UUID.fromString(restoreId.value()).toString().equals(restoreId.value())) {
+            throw new IllegalArgumentException("Restore identifier must be a canonical UUID");
+        }
         zeroecho.pki.api.backup.BackupPreparation candidate;
         try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
             requireStoreUsable();
             if (restoreCoordinator == null) throw new UnsupportedOperationException("RESTORE_BORROWED_STORE");
-            candidate = FsBackupEngine.prepare(restoreCoordinator.work(), source, backupLimits, options, clock);
+            try { candidate = FsBackupEngine.prepare(restoreCoordinator.work(), source, backupLimits, options, clock); }
+            catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
         }
         try (zeroecho.pki.api.backup.BackupPreparation prepared = candidate;
                 StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
             requireStoreUsable();
             Path work = restoreCoordinator.work();
-            Path baseline = Files.createTempDirectory(work, ".baseline-");
+            Path baseline;
+            try { baseline = Files.createTempDirectory(work, ".baseline-"); }
+            catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
             try {
-                freezeBackup(baseline, false);
-                return restoreCoordinator.stage(prepared, baseline);
+                try { freezeBackup(baseline, false); }
+                catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
+                return restoreCoordinator.stage(prepared, baseline, restoreId);
             } finally { FsBackupFiles.deleteTree(baseline); }
         }
     }
@@ -6320,6 +6376,26 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
             requireStoreUsable();
             return restoreCoordinator == null ? Optional.empty() : restoreCoordinator.status();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void discardUnpublishedRestore(PkiId restoreId, Optional<PkiId> previousRestoreId,
+            String manifestSha256) throws IOException {
+        try (StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
+            requireStoreUsable();
+            if (restoreCoordinator == null) throw new UnsupportedOperationException("RESTORE_BORROWED_STORE");
+            restoreCoordinator.discardUnpublished(restoreId, previousRestoreId, manifestSha256);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Optional<zeroecho.pki.api.backup.RestoreIdentity> latestRestoreIdentity() throws IOException {
+        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+            requireStoreUsable();
+            return restoreCoordinator == null ? Optional.empty() : restoreCoordinator.identity();
         }
     }
 
@@ -6416,10 +6492,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try (StoreMutationBarrier.Lease admission = mutationBarrier.stop()) {
             if (!closing.compareAndSet(false, true)) return;
             IOException failure = null;
+            if (credentialSearch != null) {
+                try { credentialSearch.close(); }
+                catch (IOException exception) { failure = exception; }
+            }
             try {
                 revocations.close();
             } catch (IOException exception) {
-                failure = exception;
+                if (failure == null) failure = exception;
+                else failure.addSuppressed(exception);
             }
             try {
                 metadataStore.close();

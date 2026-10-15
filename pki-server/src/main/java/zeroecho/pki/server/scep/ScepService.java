@@ -33,506 +33,275 @@
  ******************************************************************************/
 package zeroecho.pki.server.scep;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
-import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-
-import javax.security.auth.x500.X500Principal;
-
+import java.util.Set;
 import zeroecho.core.io.CancellationSignal;
-import zeroecho.pkix.AlgorithmIdentifier;
-import zeroecho.pkix.CertificationRequestException;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.scep.ScepCodec;
 import zeroecho.pkix.scep.ScepCodecException;
 import zeroecho.pkix.scep.ScepPkiMessage;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.SemanticSigningService;
-import zeroecho.pki.api.audit.AccessContext;
-import zeroecho.pki.api.audit.Principal;
-import zeroecho.pki.api.audit.Purpose;
-import zeroecho.pki.api.ca.CaRecord;
-import zeroecho.pki.api.ca.IssuerChainPath;
-import zeroecho.pki.api.issuance.EndEntityIssuanceRequest;
-import zeroecho.pki.api.signing.PreparedSemanticSigningRequest;
-import zeroecho.pki.api.signing.SemanticSigningOperation;
-import zeroecho.pki.api.signing.SigningAcceptanceDisposition;
-import zeroecho.pki.api.signing.SigningAcceptanceResult;
-import zeroecho.pki.application.PkiRepository;
+import zeroecho.pki.application.IssuanceExecutionEvidence;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.application.PkiRepositoryContent;
-import zeroecho.pki.server.RepositoryAliasService;
 import zeroecho.pki.server.ServerRealmContext;
+import zeroecho.pki.server.CertificateIdentityEvidence;
+import zeroecho.pki.server.enrollment.EnrollmentCoordinator;
+import zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry;
+import zeroecho.pki.server.enrollment.EnrollmentIdentityAliases;
+import zeroecho.pki.server.enrollment.EnrollmentRuntime;
+import zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration;
+import zeroecho.pki.server.enrollment.EnrollmentTransaction;
 
 /**
- * SCEP RFC 8894 protocol service.
- *
- * <p>Manages the endpoint registry and coordinates SCEP protocol operations.
- * The RA signing key pair is generated once at startup (ephemeral RSA-2048);
- * no BouncyCastle imports appear in this class — all codec work is delegated
- * to {@link ScepCodec} in the lib module.</p>
- *
- * @since 1.0
+ * SCEP enrollment adapter with provisioned authority-scoped RA custody and durable
+ * enrollment continuation. CMS verification precedes credential selection and
+ * decryption; the shared coordinator owns approval, signing and recovery.
+ * No request, private key or transaction state is retained in this service.
  */
-@SuppressWarnings("PMD.SignatureDeclareThrowsException")
-public final class ScepService { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
-
-    /** SHA-256withRSA OID. */
-    private static final String OID_SHA256_WITH_RSA = "1.2.840.113549.1.1.11";
-
-    /** Maximum wait for signing completion. */
-    private static final long SIGNING_POLL_TIMEOUT_MS = 60_000L;
-    /** Interval between signing completion polls. */
-    private static final long SIGNING_POLL_INTERVAL_MS = 100L;
-
+public final class ScepService {
     private final ServerRealmContext realm;
-    private final ConcurrentMap<String, ScepEndpoint> endpoints = new ConcurrentHashMap<>();
-    /** Maps transactionId → operationId for pending GetCertInitial tracking. */
-    private final ConcurrentMap<String, PkiId> pendingOperations = new ConcurrentHashMap<>();
+    private final EnrollmentEndpointRegistry endpoints;
 
-    private final PrivateKey raPrivateKey;
-    private final X509Certificate raCert;
+    /** Creates a stateless adapter.
 
-    /**
-     * Creates a SCEP service over the given realm.
-     * An ephemeral RSA-2048 RA signing key pair is generated at construction time.
-     *
      * @param realm lifecycle-owned realm context
+
      */
     public ScepService(ServerRealmContext realm) {
         this.realm = Objects.requireNonNull(realm, "realm");
-        KeyPair raKeyPair = generateRaKeyPair();
-        this.raPrivateKey = raKeyPair.getPrivate();
-        this.raCert = buildRaCert(raKeyPair);
+        endpoints = Objects.requireNonNull(realm.enrollmentEndpoints(), "enrollmentEndpoints");
     }
 
-    // -------------------------------------------------------------------------
-    // Endpoint registry
-    // -------------------------------------------------------------------------
+    /** Registers or replaces an endpoint.
 
-    /**
-     * Registers a SCEP endpoint, replacing an existing entry with the same label.
-     * @param endpoint non-null endpoint configuration
+     * @param endpoint validated configuration
+
      */
-    public void register(ScepEndpoint endpoint) {
-        Objects.requireNonNull(endpoint, "endpoint");
-        endpoints.put(endpoint.label(), endpoint);
-    }
+    public void register(ScepEndpoint endpoint) { endpoints.register(Objects.requireNonNull(endpoint, "endpoint")); }
 
-    /**
-     * Removes the endpoint with the given label.
-     * @param label non-null registry label
-     * @return the removed endpoint, or empty if no entry existed
+    /** Removes an endpoint.
+
+     * @param label endpoint label
+     * @return removed endpoint, if present
      */
     public Optional<ScepEndpoint> deregister(String label) {
-        return Optional.ofNullable(endpoints.remove(Objects.requireNonNull(label, "label")));
+        return endpoints.deregister(EnrollmentEndpointRegistry.Protocol.SCEP, label).map(value -> (ScepEndpoint) value);
     }
 
-    /**
-     * Looks up the endpoint for the given label.
-     * @param label non-null registry label
-     * @return the observed endpoint, or empty if absent
+    /** Finds an endpoint.
+
+     * @param label endpoint label
+     * @return current endpoint, if present
      */
     public Optional<ScepEndpoint> find(String label) {
-        return Optional.ofNullable(endpoints.get(Objects.requireNonNull(label, "label")));
+        return endpoints.find(EnrollmentEndpointRegistry.Protocol.SCEP, label).map(value -> (ScepEndpoint) value);
     }
 
-    /**
-     * Copies endpoints observed during a weakly consistent registry traversal.
-     * @return an immutable list in unspecified order; concurrent changes are not
-     *         represented as an atomic point-in-time snapshot
+    /** Collects current endpoints.
+
+     * @return immutable endpoints from bounded store pages
+
      */
     public List<ScepEndpoint> list() {
-        return List.copyOf(endpoints.values());
-    }
-
-    // -------------------------------------------------------------------------
-    // SCEP protocol operations
-    // -------------------------------------------------------------------------
-
-    /**
-     * Returns the SCEP RA certificate DER for {@code GetCACert} when only a single
-     * CA cert is needed, or a degenerate CMS certs-only chain for multi-CA.
-     *
-     * <p>RFC 8894 §4.2: a single CA cert is returned as plain DER (content-type
-     * {@code application/x-x509-ca-cert}); a chain returns CMS certs-only
-     * ({@code application/x-x509-ca-ra-cert}).</p>
-     *
-     * @param endpoint the SCEP endpoint
-     * @return DER-encoded issuing CA certificate
-     * @throws ScepProtocolException if the CA is unavailable
-     */
-    public byte[] getCaCert(ScepEndpoint endpoint) throws ScepProtocolException {
-        Objects.requireNonNull(endpoint, "endpoint");
-        List<X509Certificate> chain = caChain(new PkiId(endpoint.authorityId()));
-        if (chain.isEmpty()) {
-            throw new ScepProtocolException("SCEP CA chain is empty for authority: " + endpoint.authorityId());
-        }
-        try {
-            return chain.get(0).getEncoded();
-        } catch (Exception e) {
-            throw new ScepProtocolException("Failed to encode SCEP CA certificate", e);
-        }
+        return endpoints.list(EnrollmentEndpointRegistry.Protocol.SCEP).stream().map(value -> (ScepEndpoint) value).toList();
     }
 
     /**
-     * Returns a degenerate CMS certs-only SignedData for {@code GetCACertChain}.
-     *
-     * @param endpoint the SCEP endpoint
-     * @return DER-encoded CMS certs-only content
-     * @throws ScepProtocolException if the chain is unavailable or encoding fails
+     * Public RA advertisement with explicit media type.
+     * @param contentType RFC 8894 media type
+     * @param body certificates-only CMS bytes
      */
-    public byte[] getCaCertChain(ScepEndpoint endpoint) throws ScepProtocolException {
-        Objects.requireNonNull(endpoint, "endpoint");
-        List<X509Certificate> chain = caChain(new PkiId(endpoint.authorityId()));
-        try {
-            List<byte[]> certsDer = new ArrayList<>();
-            certsDer.add(raCert.getEncoded());
-            for (X509Certificate c : chain) {
-                certsDer.add(c.getEncoded());
-            }
-            return ScepCodec.buildDegenerateCertsCms(certsDer);
-        } catch (Exception e) {
-            throw new ScepProtocolException("Failed to build SCEP CA cert chain", e);
+    public record CaCertificateResponse(String contentType, byte[] body) {
+        /** Validates and copies the response body. */
+        public CaCertificateResponse {
+            Objects.requireNonNull(contentType, "contentType"); body = body.clone();
         }
+        /** Copies the response.
+         * @return independent encoded certificate set
+         */
+        @Override public byte[] body() { return body.clone(); }
+        /** @return description without certificate data */
+        @Override public String toString() { return "CaCertificateResponse[certificates-only]"; }
     }
 
     /**
-     * Processes a SCEP {@code PKIOperation} request (PKCSReq, GetCertInitial,
-     * GetCert, GetCRL) and returns a CertRep CMS SignedData response.
-     *
-     * @param endpoint    the SCEP endpoint
-     * @param messageData raw CMS SignedData bytes from the HTTP request body
-     * @return DER-encoded CertRep CMS response
-     * @throws ScepProtocolException if message decoding or issuance fails
+     * Advertises the actual active RA and its exact issuing CA chain.
+     * @param endpoint current endpoint
+     * @return typed degenerate CMS response
+     * @throws ScepProtocolException if configuration or custody is unavailable
      */
-    public byte[] processPkiOperation(ScepEndpoint endpoint, byte[] messageData)
-            throws ScepProtocolException {
-        Objects.requireNonNull(endpoint, "endpoint");
-        Objects.requireNonNull(messageData, "messageData");
-
-        ScepPkiMessage request;
+    public CaCertificateResponse getCaCert(ScepEndpoint endpoint) throws ScepProtocolException {
         try {
-            request = ScepCodec.parsePkiOperationDer(messageData, raPrivateKey);
-        } catch (ScepCodecException e) {
-            throw new ScepProtocolException("Failed to parse SCEP PKIOperation", e);
-        }
-
-        return switch (request.messageType()) {
-            case ScepCodec.MSG_PKCS_REQ -> handlePkcsReq(endpoint, request);
-            case ScepCodec.MSG_GET_CERT_INITIAL -> handleGetCertInitial(request);
-            case ScepCodec.MSG_GET_CERT -> buildFailure(request, ScepCodec.FAIL_BAD_CERT_ID,
-                    "GetCert not supported via SCEP; use EST");
-            case ScepCodec.MSG_GET_CRL -> handleGetCrl(endpoint, request);
-            default -> buildFailure(request, ScepCodec.FAIL_BAD_REQUEST,
-                    "Unknown SCEP message type: " + request.messageType());
-        };
-    }
-
-    // -------------------------------------------------------------------------
-    // Private: PKCSReq handler
-    // -------------------------------------------------------------------------
-
-    private byte[] handlePkcsReq(ScepEndpoint endpoint, ScepPkiMessage request)
-            throws ScepProtocolException {
-        byte[] csrDer = request.innerContent();
-        if (csrDer == null || csrDer.length == 0) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "PKCSReq inner content is empty");
-        }
-
-        // Validate CSR self-signature via Pkix facade
-        try {
-            Pkix.parseCsr(csrDer);
-        } catch (CertificationRequestException e) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "PKCSReq CSR is invalid: " + e.getMessage());
-        }
-
-        // Verify challenge password if configured
-        String challenge;
-        try {
-            challenge = ScepCodec.extractChallengePassword(csrDer);
-        } catch (ScepCodecException e) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "Failed to extract challenge password");
-        }
-        if (!verifyChallengePassword(challenge, endpoint.challengePasswordHash())) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "Challenge password mismatch");
-        }
-
-        // Submit issuance request
-        AccessContext access = new AccessContext(
-                new Principal("SCEP", request.transactionId()),
-                new Purpose("SCEP_PKCSREQ"),
-                Optional.of(new PkiId(endpoint.authorityId())),
-                Optional.empty());
-        EndEntityIssuanceRequest issuanceRequest = new EndEntityIssuanceRequest(
-                new PkiId(endpoint.authorityId()), csrDer, endpoint.profileId(), Optional.empty());
-
-        SemanticSigningService signing = requireSigning();
-        PreparedSemanticSigningRequest prepared;
-        try {
-            prepared = signing.prepareEndEntity(access, issuanceRequest, Optional.empty(), CancellationSignal.NONE);
-        } catch (Exception e) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "SCEP issuance preparation failed: " + e.getMessage());
-        }
-
-        SigningAcceptanceResult accepted;
-        try {
-            accepted = signing.accept(prepared);
-        } catch (Exception e) {
-            throw new ScepProtocolException("SCEP signing acceptance failed", e);
-        }
-
-        if (accepted.disposition() == SigningAcceptanceDisposition.CAPACITY_REJECTED) {
-            // Return PENDING — client should poll with GetCertInitial
-            pendingOperations.put(request.transactionId(), accepted.receipt().operationId());
-            return buildPending(request);
-        }
-        if (accepted.disposition() == SigningAcceptanceDisposition.CONFLICT) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "SCEP signing conflict");
-        }
-
-        // Poll for completion
-        SemanticSigningOperation completed;
-        try {
-            completed = pollForCompletion(signing, accepted.receipt().operationId());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Restore cancellation before the protocol response.
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, "SCEP signing interrupted");
-        } catch (Exception e) {
-            // Operation still in progress — return PENDING and track it
-            pendingOperations.put(request.transactionId(), accepted.receipt().operationId());
-            return buildPending(request);
-        }
-
-        byte[] issuedCertDer;
-        try {
-            issuedCertDer = completed.result()
-                    .orElseThrow(() -> new ScepProtocolException("SCEP signing result is absent"))
-                    .bytes();
-        } catch (ScepProtocolException e) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, e.getMessage());
-        }
-
-        // Build success response
-        X509Certificate requesterCert = request.requesterCert();
-        if (requesterCert == null) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_REQUEST,
-                    "PKCSReq requester certificate not found in CMS");
-        }
-        try {
-            return ScepCodec.buildCertRepSuccess(request.transactionId(), request.senderNonce(),
-                    issuedCertDer, requesterCert, raCert, raPrivateKey);
-        } catch (ScepCodecException e) {
-            throw new ScepProtocolException("Failed to encode SCEP CertRep SUCCESS", e);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Private: GetCertInitial handler (poll for pending operations)
-    // -------------------------------------------------------------------------
-
-    private byte[] handleGetCertInitial(ScepPkiMessage request) throws ScepProtocolException {
-        PkiId operationId = pendingOperations.get(request.transactionId());
-        if (operationId == null) {
-            // No pending operation known; return PENDING for client to retry later
-            return buildPending(request);
-        }
-
-        SemanticSigningService signing = requireSigning();
-        Optional<SemanticSigningOperation> snapshot = signing.find(operationId);
-        if (snapshot.isEmpty()) {
-            return buildPending(request);
-        }
-        SemanticSigningOperation op = snapshot.get();
-        return switch (op.state()) {
-            case COMPLETED -> {
-                pendingOperations.remove(request.transactionId());
-                byte[] issuedCertDer;
-                try {
-                    issuedCertDer = op.result()
-                            .orElseThrow(() -> new ScepProtocolException("SCEP result absent"))
-                            .bytes();
-                } catch (ScepProtocolException e) {
-                    yield buildFailure(request, ScepCodec.FAIL_BAD_REQUEST, e.getMessage());
+            endpoints.requireCurrent(endpoint);
+            EnrollmentRuntime runtime = runtime();
+            String id = runtime.activeCredentialId(EnrollmentRuntimeConfiguration.Protocol.SCEP, endpoint.authorityId());
+            try (EnrollmentRuntime.CredentialLease lease = runtime.acquire(id)) {
+                List<byte[]> chain = new ArrayList<>();
+                for (X509Certificate certificate : lease.responseChain()) {
+                    chain.add(certificate.getEncoded());
                 }
-                X509Certificate requesterCert = request.requesterCert();
-                if (requesterCert == null) {
-                    yield buildFailure(request, ScepCodec.FAIL_BAD_REQUEST,
-                            "GetCertInitial requester cert not found");
-                }
-                try {
-                    yield ScepCodec.buildCertRepSuccess(request.transactionId(), request.senderNonce(),
-                            issuedCertDer, requesterCert, raCert, raPrivateKey);
-                } catch (ScepCodecException e) {
-                    throw new ScepProtocolException("Failed to encode SCEP CertRep SUCCESS", e);
-                }
+                return new CaCertificateResponse("application/x-x509-ca-ra-cert", ScepCodec.buildDegenerateCertsCms(chain));
             }
-            case FAILED, EXPIRED -> {
-                pendingOperations.remove(request.transactionId());
-                yield buildFailure(request, ScepCodec.FAIL_BAD_REQUEST,
-                        "SCEP pending operation " + op.state().name().toLowerCase(java.util.Locale.ROOT));
-            }
-            default -> buildPending(request);
-        };
+        } catch (Exception unavailable) { throw new ScepProtocolException(503, "SCEP CA advertisement is unavailable"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 
-    // -------------------------------------------------------------------------
-    // Private: GetCRL handler
-    // -------------------------------------------------------------------------
+    /** Returns the same provisioned certificate set as GetCACert.
+     * @param endpoint current endpoint
+     * @return certificates-only CMS
+     * @throws ScepProtocolException if custody is unavailable
+     */
+    public byte[] getCaCertChain(ScepEndpoint endpoint) throws ScepProtocolException { return getCaCert(endpoint).body(); }
 
-    private byte[] handleGetCrl(ScepEndpoint endpoint, ScepPkiMessage request)
+    /** Advertises implemented capabilities.
+
+     * @return ASCII capability list
+
+     */
+    public byte[] getCaCaps() {
+        return "POSTPKIOperation\nSHA-256\nAES\n".getBytes(StandardCharsets.US_ASCII);
+    }
+
+    /**
+     * Processes authenticated PKCSReq or GetCertInitial with durable replay and
+     * frozen credential selection. A retry may deliver a retained completed result.
+     * @param endpoint routed endpoint
+     * @param messageData bounded encoded CMS request
+     * @return signed CertRep, pending, failure or encrypted completed certificate
+     * @throws ScepProtocolException for unauthenticated input or unavailable custody
+     */
+    public byte[] processPkiOperation(ScepEndpoint endpoint, byte[] messageData) throws ScepProtocolException {
+        return processPkiOperation(endpoint, messageData, () -> Thread.currentThread().isInterrupted()); // NOPMD DoNotUseThreads - Observes caller cancellation while owning a bounded lease; this standalone component creates no thread.
+    }
+
+    /**
+     * Processes a request with cancellation before durable signing admission.
+     * @param endpoint routed endpoint
+     * @param messageData bounded encoded CMS request
+     * @param cancellation request cancellation signal
+     * @return signed CertRep
+     * @throws ScepProtocolException for invalid input or unavailable processing
+     */
+    public byte[] processPkiOperation(ScepEndpoint endpoint, byte[] messageData, CancellationSignal cancellation)
             throws ScepProtocolException {
-        PkiId authorityId = new PkiId(endpoint.authorityId());
+        Objects.requireNonNull(endpoint, "endpoint"); Objects.requireNonNull(cancellation, "cancellation");
+        ScepCodec.VerifiedRequest verified;
+        try { verified = ScepCodec.verifyRequest(messageData); }
+        catch (ScepCodecException invalid) { throw new ScepProtocolException(400, "Invalid SCEP message"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         try {
-            // Look up the current CRL alias directly from the repository alias service
-            RepositoryAliasService.Record alias =
-                    realm.repositoryAliases().require(authorityId, RepositoryAliasService.Type.CURRENT_CRL);
-            PkiRepository repository = realm.session().repository();
-            byte[] crlDer;
-            try (PkiRepositoryContent content = repository.openStatusObject(alias.targetObjectId());
-                 InputStream in = content.openStream()) {
-                crlDer = in.readAllBytes();
-            }
-            // Build CertRep with the CRL as inner content (RFC 8894 §4.4)
-            return ScepCodec.buildCertRepSuccess(request.transactionId(), request.senderNonce(),
-                    crlDer, raCert, raCert, raPrivateKey);
-        } catch (ScepCodecException e) {
-            throw new ScepProtocolException("Failed to encode SCEP GetCRL response", e);
-        } catch (Exception e) {
-            return buildFailure(request, ScepCodec.FAIL_BAD_CERT_ID,
-                    "CRL unavailable: " + e.getMessage());
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------------------------
-
-    private byte[] buildFailure(ScepPkiMessage request, String failInfo, String reason)
-            throws ScepProtocolException {
-        try {
-            return ScepCodec.buildCertRepFailure(request.transactionId(),
-                    request.senderNonce(), failInfo, raCert, raPrivateKey);
-        } catch (ScepCodecException e) {
-            throw new ScepProtocolException("Failed to build SCEP failure response for: " + reason, e);
-        }
-    }
-
-    private byte[] buildPending(ScepPkiMessage request) throws ScepProtocolException {
-        try {
-            return ScepCodec.buildCertRepPending(request.transactionId(),
-                    request.senderNonce(), raCert, raPrivateKey);
-        } catch (ScepCodecException e) {
-            throw new ScepProtocolException("Failed to build SCEP pending response", e);
-        }
-    }
-
-    private static boolean verifyChallengePassword(String challenge, String storedHash) {
-        if (challenge == null || challenge.isBlank()) {
-            return false;
-        }
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(challenge.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            String hex = HexFormat.of().formatHex(digest);
-            return hex.equals(storedHash);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private SemanticSigningService requireSigning() throws ScepProtocolException {
-        return realm.session().semanticSigning()
-                .orElseThrow(() -> new ScepProtocolException("SCEP signing capability is unavailable"));
-    }
-
-    private SemanticSigningOperation pollForCompletion(SemanticSigningService signing,
-            PkiId operationId) throws Exception {
-        long deadline = System.currentTimeMillis() + SIGNING_POLL_TIMEOUT_MS;
-        while (System.currentTimeMillis() < deadline) {
-            Optional<SemanticSigningOperation> snapshot = signing.find(operationId);
-            if (snapshot.isPresent()) {
-                SemanticSigningOperation op = snapshot.get();
-                switch (op.state()) {
-                    case COMPLETED -> { return op; }
-                    case FAILED, EXPIRED -> throw new ScepProtocolException(
-                            "SCEP signing " + op.state().name().toLowerCase(java.util.Locale.ROOT));
-                    default -> { /* still pending */ }
+            CertificateIdentityEvidence evidence = CertificateIdentityEvidence.fromCertificate(realm.configuration().realmId(),
+                    verified.requesterCertificate());
+            EnrollmentTransaction.Requester requester = new EnrollmentTransaction.Requester(IssuanceExecutionEvidence.ActorType.SCEP_SIGNER,
+                    evidence.certificateSha256(), IssuanceExecutionEvidence.Authentication.SCEP_CMS, Optional.of(evidence),
+                    Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(),
+                    new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), Set.of()));
+            String transactionHash = digest(verified.transactionId().getBytes(StandardCharsets.US_ASCII));
+            EnrollmentCoordinator coordinator = realm.enrollmentCoordinator().orElseThrow(); // NOPMD CloseResource - Borrowed realm coordinator; the realm owns its shutdown.
+            Optional<EnrollmentTransaction> retained = coordinator.find(EnrollmentTransaction.Protocol.SCEP, endpoint.label(),
+                    requester.type(), requester.actorId(), transactionHash, EnrollmentTransaction.Operation.ISSUE);
+            EnrollmentRuntime runtime = runtime();
+            String credential = retained.map(value -> value.intent().source().credentialId().orElseThrow()).orElseGet(
+                    () -> runtime.activeCredentialId(EnrollmentRuntimeConfiguration.Protocol.SCEP, endpoint.authorityId()));
+            try (EnrollmentRuntime.CredentialLease lease = runtime.acquire(credential)) {
+                X509Certificate ra = lease.responseChain().getFirst();
+                PrivateKey key = lease.privateKey();
+                ScepPkiMessage request = ScepCodec.decryptRequest(verified, ra, key);
+                if (retained.isPresent()) {
+                    requireRetained(retained.orElseThrow(), requester, lease);
                 }
+                EnrollmentTransaction value;
+                if (request.messageType() == ScepCodec.MSG_GET_CERT_INITIAL) {
+                    if (retained.isEmpty()) {
+                        return failure(request, ra, key);
+                    }
+                    value = retained.orElseThrow();
+                    byte[] csr = originalRequest(value);
+                    ScepCodec.requireIssuerAndSubject(request.innerContent(), lease.responseChain().get(1).getSubjectX500Principal(),
+                            Pkix.parseCsr(csr).subject());
+                } else {
+                    String expected;
+                    if (retained.isEmpty()) {
+                        EnrollmentEndpointRegistry.Snapshot snapshot = endpoints.requireCurrent(endpoint);
+                        if (!challengeMatches(ScepCodec.extractChallengePassword(request.innerContent()), endpoint.challengePasswordHash())) {
+                            return failure(request, ra, key);
+                        }
+                        expected = snapshot.commitment();
+                    } else {
+                        expected = retained.orElseThrow().intent().source().commitment();
+                    }
+                    value = coordinator.admit(new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, endpoint.label(), requester,
+                            transactionHash, EnrollmentTransaction.Operation.ISSUE,
+                            new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, request.innerContent()), Optional.empty(), Optional.empty()), expected);
+                    requireRetained(value, requester, lease);
+                }
+                value = coordinator.dispatch(value.id(), cancellation);
+                return switch (value.state()) {
+                    case ISSUED -> ScepCodec.buildCertRepSuccess(request.transactionId(), request.senderNonce(),
+                            issuedCertificate(value), request.requesterCert(), ra, key);
+                    case REJECTED, EXPIRED, FAILED -> failure(request, ra, key);
+                    default -> ScepCodec.buildCertRepPending(request.transactionId(), request.senderNonce(), ra, key);
+                };
             }
-            Thread.sleep(SIGNING_POLL_INTERVAL_MS); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
-        }
-        throw new ScepProtocolException("SCEP signing timed out");
+        } catch (ScepCodecException | IllegalArgumentException invalid) {
+            throw new ScepProtocolException(400, "Invalid SCEP enrollment request"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        } catch (Exception unavailable) { throw new ScepProtocolException(503, "SCEP enrollment is unavailable"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 
-    private List<X509Certificate> caChain(PkiId authorityId) throws ScepProtocolException {
-        PkiRepository repository = realm.session().repository();
-        CaRecord authority = repository.authority(authorityId)
-                .orElseThrow(() -> new ScepProtocolException(
-                        "SCEP CA authority is unavailable: " + authorityId));
-        IssuerChainPath path = repository.chainPath(authority.issuanceChainPathId())
-                .orElseThrow(() -> new ScepProtocolException(
-                        "SCEP CA chain path is unavailable: " + authorityId));
-        List<X509Certificate> chain = new ArrayList<>();
-        for (PkiId credId : path.orderedCredentialIds()) {
-            try (PkiRepositoryContent content = repository.openCredential(credId);
-                 InputStream in = content.openStream()) {
-                chain.add(parseCert(in.readAllBytes()));
-            } catch (IOException e) {
-                throw new ScepProtocolException("SCEP CA certificate is unreadable", e);
+    private static void requireRetained(EnrollmentTransaction value, EnrollmentTransaction.Requester requester,
+            EnrollmentRuntime.CredentialLease lease) {
+        EnrollmentRuntimeConfiguration.CredentialSet credential = lease.configuration();
+        if (!value.intent().requester().certificate().equals(requester.certificate())
+                || !value.intent().requester().canonicalKeySha256().equals(requester.canonicalKeySha256())
+                || !value.intent().source().credentialId().equals(Optional.of(credential.credentialId()))
+                || !value.intent().authorityId().value().equals(credential.authorityId())
+                || !value.intent().issuerId().value().equals(credential.issuerId())
+                || !value.intent().pathId().value().equals(credential.chainPathId())) {
+            throw new IllegalStateException("SCEP binding unavailable");
+        }
+    }
+
+    private byte[] originalRequest(EnrollmentTransaction value) {
+        zeroecho.pki.api.CertificationRequestService requests = realm.session().requests().orElseThrow();
+        X509EnrollmentPayload payload = requests.encodedX509Request(requests.get(value.intent().requestId()).orElseThrow());
+        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10 || !digest(payload.der()).equals(value.intent().requestSha256())) {
+            throw new IllegalStateException("SCEP retained request unavailable");
+        }
+        return payload.der();
+    }
+
+    private byte[] issuedCertificate(EnrollmentTransaction value) throws IOException {
+        try (PkiRepositoryContent content = realm.session().repository().openCredential(value.credentialId().orElseThrow());
+                InputStream input = content.openStream()) {
+            byte[] der = input.readNBytes(1_048_577);
+            if (der.length == 0 || der.length > 1_048_576) {
+                throw new IOException("SCEP credential size is invalid");
             }
-        }
-        return List.copyOf(chain);
-    }
-
-    private static X509Certificate parseCert(byte[] der) throws ScepProtocolException {
-        try {
-            return (X509Certificate) CertificateFactory.getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(der));
-        } catch (Exception e) {
-            throw new ScepProtocolException("Cannot parse X.509 certificate", e);
+            return der;
         }
     }
 
-    private static KeyPair generateRaKeyPair() {
-        try {
-            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
-            kpg.initialize(2048);
-            return kpg.generateKeyPair();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to generate SCEP RA key pair", e);
-        }
+    private static byte[] failure(ScepPkiMessage request, X509Certificate ra, PrivateKey key) throws ScepCodecException {
+        return ScepCodec.buildCertRepFailure(request.transactionId(), request.senderNonce(), ScepCodec.FAIL_BAD_REQUEST, ra, key);
     }
 
-    private static X509Certificate buildRaCert(KeyPair raKeyPair) {
-        try {
-            Instant now = Instant.now();
-            X500Principal subject = new X500Principal("CN=SCEP-RA, O=ZeroEcho");
-            AlgorithmIdentifier sigAlg = AlgorithmIdentifier.derNull(OID_SHA256_WITH_RSA);
-            zeroecho.pkix.cert.CertificateBuilder builder = Pkix.certificateBuilder()
-                    .subject(subject)
-                    .issuer(subject)
-                    .publicKey(raKeyPair.getPublic())
-                    .serialNumber(BigInteger.valueOf(1L))
-                    .validity(now, now.plus(3650, ChronoUnit.DAYS));
-            return builder.build(Pkix.signer(raKeyPair.getPrivate(), sigAlg));
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to build SCEP RA self-signed certificate", e);
-        }
+    private static boolean challengeMatches(String challenge, String expected) {
+        return challenge != null && MessageDigest.isEqual(HexFormat.of().parseHex(expected),
+                HexFormat.of().parseHex(digest(challenge.getBytes(StandardCharsets.UTF_8))));
     }
+
+    private static String digest(byte[] value) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
+        catch (java.security.NoSuchAlgorithmException unavailable) { throw new IllegalStateException("SHA-256 unavailable", unavailable); }
+    }
+
+    private EnrollmentRuntime runtime() { return realm.enrollmentRuntime().orElseThrow(); }
 }

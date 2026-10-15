@@ -64,4 +64,72 @@ public record CsrAttribute(String oid, List<byte[]> derValues) {
     public List<byte[]> derValues() {
         return derValues.stream().map(byte[]::clone).toList();
     }
+
+    /**
+     * Decodes one standard PKCS#9 challengePassword DirectoryString, bounded to
+     * 255 characters. This validates syntax only; the returned secret must not
+     * enter diagnostics or ordinary request projections.
+     * @return challenge text
+     * @throws IllegalArgumentException for a different OID, multiplicity, type or size
+     */
+    public String challengePassword() {
+        if (!"1.2.840.113549.1.9.7".equals(oid) || derValues.size() != 1
+                || derValues.getFirst().length > 1024) {
+            throw invalidChallenge();
+        }
+        org.bouncycastle.asn1.ASN1Primitive value;
+        try {
+            value = org.bouncycastle.asn1.ASN1Primitive.fromByteArray(derValues.getFirst());
+        } catch (java.io.IOException malformed) { throw invalidChallenge(); } // NOPMD PreserveStackTrace - Malformed enrollment input may contain secrets; expose only the fixed protocol failure.
+        return challengeText(value);
+    }
+
+    private static String challengeText(org.bouncycastle.asn1.ASN1Primitive value) {
+        if (!(value instanceof org.bouncycastle.asn1.ASN1PrintableString
+                || value instanceof org.bouncycastle.asn1.ASN1UTF8String
+                || value instanceof org.bouncycastle.asn1.ASN1BMPString
+                || value instanceof org.bouncycastle.asn1.ASN1UniversalString)) {
+            throw invalidChallenge();
+        }
+        String text = value instanceof org.bouncycastle.asn1.ASN1UniversalString universal
+                ? universalText(universal.getOctets()) : ((org.bouncycastle.asn1.ASN1String) value).getString();
+        if (text.isEmpty() || text.codePointCount(0, text.length()) > 255
+                || value instanceof org.bouncycastle.asn1.ASN1PrintableString
+                && !org.bouncycastle.asn1.ASN1PrintableString.isPrintableString(text)) {
+            throw invalidChallenge();
+        }
+        requireValidSurrogates(text, value instanceof org.bouncycastle.asn1.ASN1BMPString);
+        return text;
+    }
+
+    private static void requireValidSurrogates(String text, boolean bmp) {
+        int index = 0;
+        while (index < text.length()) {
+            char character = text.charAt(index++);
+            if (Character.isSurrogate(character) && (bmp || !Character.isHighSurrogate(character)
+                    || index >= text.length() || !Character.isLowSurrogate(text.charAt(index++)))) {
+                throw invalidChallenge();
+            }
+        }
+    }
+
+    private static String universalText(byte[] encoded) {
+        if (encoded.length % 4 != 0) {
+            throw invalidChallenge();
+        }
+        StringBuilder text = new StringBuilder(encoded.length / 4);
+        java.nio.ByteBuffer values = java.nio.ByteBuffer.wrap(encoded);
+        while (values.hasRemaining()) {
+            int scalar = values.getInt();
+            if (!Character.isValidCodePoint(scalar) || scalar >= 0xD800 && scalar <= 0xDFFF) {
+                throw invalidChallenge();
+            }
+            text.appendCodePoint(scalar);
+        }
+        return text.toString();
+    }
+
+    private static IllegalArgumentException invalidChallenge() {
+        return new IllegalArgumentException("Invalid PKCS#9 challengePassword attribute");
+    }
 }

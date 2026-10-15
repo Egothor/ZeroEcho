@@ -74,6 +74,34 @@ class IssuanceExecutionEvidenceTest {
     }
 
     @Test
+    void protocolEvidenceRetainsRealRequesterAndExactApprovalPath() {
+        java.util.Map<IssuanceExecutionEvidence.ActorType, IssuanceExecutionEvidence.Authentication> mechanisms = java.util.Map.of(
+                IssuanceExecutionEvidence.ActorType.ACME_ACCOUNT, IssuanceExecutionEvidence.Authentication.ACME_ACCOUNT_JWS,
+                IssuanceExecutionEvidence.ActorType.EST_CLIENT, IssuanceExecutionEvidence.Authentication.EST_MTLS,
+                IssuanceExecutionEvidence.ActorType.SCEP_SIGNER, IssuanceExecutionEvidence.Authentication.SCEP_CMS,
+                IssuanceExecutionEvidence.ActorType.CMP_SIGNER, IssuanceExecutionEvidence.Authentication.CMP_SIGNATURE,
+                IssuanceExecutionEvidence.ActorType.CMP_PBM, IssuanceExecutionEvidence.Authentication.CMP_PBM);
+        mechanisms.forEach((actor, authentication) -> {
+            for (boolean approved : java.util.List.of(false, true)) {
+                IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.enrollment(actor, "protocol-requester", "realm",
+                        "enrollment-id", authentication, approved, COMMITMENT, "ca", "profile");
+                assertEquals(evidence, IssuanceExecutionEvidence.decode(evidence.attributes()).orElseThrow());
+                assertEquals(IssuanceExecutionEvidence.Authorization.ENROLLMENT_POLICY, evidence.authorization());
+                assertEquals(Optional.of(approved ? IssuanceExecutionEvidence.AuthorizationPath.APPROVAL
+                        : IssuanceExecutionEvidence.AuthorizationPath.ENROLLMENT_POLICY), evidence.authorizationPath());
+            }
+            assertThrows(IllegalArgumentException.class, () -> IssuanceExecutionEvidence.administrative("admin", "realm", "request",
+                    authentication, IssuanceExecutionEvidence.AuthorizationPath.APPROVAL, COMMITMENT, "ca", "profile"));
+        });
+        assertThrows(IllegalArgumentException.class, () -> IssuanceExecutionEvidence.enrollment(
+                IssuanceExecutionEvidence.ActorType.ADMIN_PRINCIPAL, "admin", "realm", "request",
+                IssuanceExecutionEvidence.Authentication.DIRECT_MTLS, true, COMMITMENT, "ca", "profile"));
+        assertThrows(IllegalArgumentException.class, () -> IssuanceExecutionEvidence.enrollment(
+                IssuanceExecutionEvidence.ActorType.CMP_PBM, "requester", "realm", "request",
+                IssuanceExecutionEvidence.Authentication.CMP_SIGNATURE, true, COMMITMENT, "ca", "profile"));
+    }
+
+    @Test
     void decodeReturnsEmptyWhenNoEvidencePresent() {
         assertTrue(IssuanceExecutionEvidence.decode(SimpleAttributeSet.builder().build()).isEmpty());
     }

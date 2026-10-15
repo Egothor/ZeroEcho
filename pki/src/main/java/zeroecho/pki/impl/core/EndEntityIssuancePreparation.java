@@ -34,6 +34,7 @@
 
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.security.cert.X509Certificate;
@@ -44,8 +45,6 @@ import java.util.Optional;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiFailureReason;
@@ -70,12 +69,10 @@ import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
-import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
-import zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509SecurityFloor;
@@ -101,7 +98,7 @@ final class EndEntityIssuancePreparation {
     private final EffectiveCredentialStatusResolver status;
     private final X509AuthoritySnapshot authority;
     private final BcX509ProofOfPossessionVerifier proofVerifier;
-    private final X509AlgorithmBindingRegistry bindings;
+    private final X509ProfileBindingMatcher bindingMatcher;
     private final AlgorithmIdentity signature;
 
     /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
@@ -110,7 +107,7 @@ final class EndEntityIssuancePreparation {
         this.status = new StoreBackedEffectiveCredentialStatusResolver(store, clock);
         this.authority = Objects.requireNonNull(authority, "authority");
         this.proofVerifier = new BcX509ProofOfPossessionVerifier(authority, verifier);
-        this.bindings = Objects.requireNonNull(bindings, "bindings");
+        this.bindingMatcher = new X509ProfileBindingMatcher(authority, bindings);
         this.signature = authority.resolveIdentity(signatureAlgorithm);
         if (!signature.canonicalForm().equals(signatureAlgorithm)
                 || signature.kind() != AlgorithmIdentity.Kind.SIGNATURE) {
@@ -134,16 +131,22 @@ final class EndEntityIssuancePreparation {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
-        byte[] csrDer = input.csrDer();
-        VerifiedIssuanceCandidate candidate = verifyCsr(input.issuerCaId(), csrDer, input.profileId(),
+        X509EnrollmentPayload payload = input.payload();
+        VerifiedIssuanceCandidate candidate = verifyRequest(input.issuerCaId(), payload, input.profileId(),
                 input.validityOverride(), cancellation);
-        return prepareCandidate(access, candidate, evaluation, Optional.of(csrDer), intent, cancellation);
+        return prepareCandidate(access, candidate, evaluation, Optional.of(payload), intent, cancellation);
     }
 
     /* default */ VerifiedIssuanceCandidate verifyCsr(zeroecho.pki.api.PkiId issuerCaId, byte[] csrDer, String profileId,
             Optional<zeroecho.pki.api.Validity> validityOverride, CancellationSignal cancellation) throws IOException {
-        ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parse(new CertificationRequest(
-                BcX509CredentialFramework.FORMAT_ID, new EncodedObject(Encoding.DER, csrDer)));
+        return verifyRequest(issuerCaId, new X509EnrollmentPayload(
+                X509EnrollmentPayload.Kind.PKCS10, csrDer), profileId, validityOverride, cancellation);
+    }
+
+    /* default */ VerifiedIssuanceCandidate verifyRequest(zeroecho.pki.api.PkiId issuerCaId,
+            X509EnrollmentPayload payload, String profileId,
+            Optional<zeroecho.pki.api.Validity> validityOverride, CancellationSignal cancellation) throws IOException {
+        ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parseX509(payload);
         ProofOfPossessionResult proof = proofVerifier.verify(parsed, new VerificationPolicy(true, Optional.empty()));
         if (proof.status() != ProofOfPossessionStatus.VERIFIED) {
             throw new PkiException("End-entity preparation rejected: code=CSR_PROOF_INVALID");
@@ -155,15 +158,15 @@ final class EndEntityIssuancePreparation {
     }
 
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
-            EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<byte[]> csrDer,
+            EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
             CancellationSignal cancellation) throws IOException {
         return prepareCandidate(access, candidate, evaluation, csrDer, Optional.empty(), cancellation);
     }
 
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
-    private Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
-            EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<byte[]> csrDer,
+    /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
+            EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
             Optional<IssuanceIntent> intent, CancellationSignal cancellation) throws IOException {
         CaRecord ca = store.getCa(candidate.issuerCaId()).orElseThrow(
                 () -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
@@ -173,12 +176,7 @@ final class EndEntityIssuancePreparation {
         IssuerGeneration generation = IssuerAuthorities.current(store, ca);
         IssuerChainPath path = IssuerAuthorities.issuancePath(store, ca);
         if (intent.isPresent()) {
-            IssuanceIntent expected = intent.orElseThrow();
-            if (!expected.expectedIssuerId().equals(generation.issuerId())
-                    || !expected.expectedChainPathId().equals(path.pathId())
-                    || !expected.expectedChainPathCommitment().equals(path.pathCommitment())) {
-                throw new PkiException("Correlated issuance rejected: code=ISSUANCE_SELECTION_STALE");
-            }
+            requireSelectedIssuance(intent.orElseThrow(), generation, path);
         }
         Credential issuer = store.getCredential(generation.credentialId()).orElseThrow(
                 () -> new PkiException("Issuer credential not found", PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
@@ -211,18 +209,29 @@ final class EndEntityIssuancePreparation {
             signingBinding = selectBinding(signature, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
                     policy.certificateSignature());
             if (csrDer.isPresent()) {
-                zeroecho.pkix.csr.CertificationRequest exact = Pkix.parseCertificationRequest(csrDer.orElseThrow());
-                requireRequestBinding(exact.signatureAlgorithm(), X509AlgorithmBinding.Role.CSR_SIGNATURE,
-                        policy.csrSignature(), adapter);
+                X509EnrollmentPayload payload = csrDer.orElseThrow();
+                AlgorithmIdentifier proofAlgorithm = payload.kind() == X509EnrollmentPayload.Kind.PKCS10
+                        ? Pkix.parseCertificationRequest(payload.der()).signatureAlgorithm()
+                        : zeroecho.pkix.cmp.CrmfRequest.parse(payload.der()).signatureAlgorithm();
+                requireRequestBinding(proofAlgorithm, X509AlgorithmBinding.Role.CSR_SIGNATURE,
+                        policy.csrSignature());
             }
             requireRequestBinding(Pkix.subjectPublicKeyAlgorithm(candidate.exactPublicKey().bytes()),
-                    X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY, policy.subjectPublicKey(), adapter);
+                    X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY, policy.subjectPublicKey());
         } catch (IllegalArgumentException | IOException invalid) {
             throw new PkiException("End-entity preparation rejected: code=ISSUANCE_BINDING_INVALID");
         }
         cancellation.throwIfCancelled();
         return new Prepared(access, approved, generation.signingKeyRef(), signature, signingBinding,
                 CertificateSerialAllocator.allocate(), evaluation.evaluationTime(), issuerDer, issuer.content());
+    }
+
+    private static void requireSelectedIssuance(IssuanceIntent expected, IssuerGeneration generation, IssuerChainPath path) {
+        if (!expected.expectedIssuerId().equals(generation.issuerId())
+                || !expected.expectedChainPathId().equals(path.pathId())
+                || !expected.expectedChainPathCommitment().equals(path.pathCommitment())) {
+            throw new PkiException("Correlated issuance rejected: code=ISSUANCE_SELECTION_STALE");
+        }
     }
 
     private ActiveCertificateProfile selectProfile(String profileId, Optional<IssuanceIntent> intent) {
@@ -271,27 +280,12 @@ final class EndEntityIssuancePreparation {
 
     private AlgorithmIdentifier selectBinding(AlgorithmIdentity algorithm, X509AlgorithmBinding.Role role,
             Optional<X509AlgorithmBindingPolicy.BindingReference> reference) {
-        X509AlgorithmBinding selected = reference.map(value -> bindings.require(value.bindingId(), value.semanticCommitment()))
-                .orElseGet(() -> bindings.standard(algorithm, role).orElseThrow(
-                        () -> new IllegalArgumentException("Required standard binding unavailable")));
-        if (selected.role() != role || !selected.algorithmIdentity().equals(algorithm)
-                || reference.isPresent() && selected.origin() == X509AlgorithmBinding.Origin.STANDARD) {
-            throw new IllegalArgumentException("Binding role or algorithm mismatch");
-        }
-        X509AlgorithmRole x509Role = role == X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY
-                ? X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM : X509AlgorithmRole.SIGNATURE_ALGORITHM;
-        X509AlgorithmIdentifier encoded = authority.bindings().resolve(selected.bindingId(), algorithm, x509Role);
-        return BcX509AlgorithmAdapter.toLib(encoded);
+        return bindingMatcher.select(algorithm, role, reference);
     }
 
     private void requireRequestBinding(AlgorithmIdentifier actual, X509AlgorithmBinding.Role role,
-            Optional<X509AlgorithmBindingPolicy.BindingReference> reference, BcX509AlgorithmAdapter adapter) {
-        X509AlgorithmRole x509Role = role == X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY
-                ? X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM : X509AlgorithmRole.SIGNATURE_ALGORITHM;
-        AlgorithmIdentifier expected = selectBinding(adapter.decode(actual, x509Role), role, reference);
-        if (!expected.equals(actual)) {
-            throw new IllegalArgumentException("Request binding differs from profile");
-        }
+            Optional<X509AlgorithmBindingPolicy.BindingReference> reference) {
+        bindingMatcher.require(actual, role, reference);
     }
 
     /** Frozen, bounded inputs for the subsequent TBS construction step. */

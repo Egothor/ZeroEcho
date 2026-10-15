@@ -31,36 +31,38 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pkix.cmp;
 
-import java.math.BigInteger;
+package zeroecho.pki.server.enrollment;
 
-/**
- * Parsed representation of a CMP PKIMessage (RFC 4210 / RFC 9480).
- *
- * <p>Captures the fields most relevant to server-side processing. The raw
- * DER bytes are also preserved so the server can re-verify protection if
- * needed without re-encoding.</p>
- *
- * @param bodyType        CMP PKIBody type integer:
- *                        ir=0, ip=1, cr=2, cp=3, kur=7, kup=8,
- *                        rr=11, rp=12, genm=21, genp=22
- * @param senderNonce     senderNonce bytes from PKIHeader (nullable)
- * @param transactionId   transactionId bytes from PKIHeader (nullable)
- * @param certTemplateDer DER-encoded CertTemplate (for ir/cr/kur), nullable
- * @param issuerDer       DER-encoded issuer Name (for kur/rr), nullable
- * @param serialNumber    certificate serial number (for kur/rr), nullable
- * @param genMsgOid       first InfoType OID string from genm body (nullable)
- * @param hasProtection   true if the PKIMessage contained a protection value
- * @since 1.0
- */
-public record CmpPkiMessage(
-        int bodyType,
-        byte[] senderNonce,
-        byte[] transactionId,
-        byte[] certTemplateDer,
-        byte[] issuerDer,
-        BigInteger serialNumber,
-        String genMsgOid,
-        boolean hasProtection) {
+import java.io.IOException;
+import static org.mockito.Mockito.when;
+
+/** Package-local custody bridge for server-level coordinator persistence fixtures. */
+public final class KeygenSpoolTestSupport {
+    private KeygenSpoolTestSupport() { }
+    /**
+     * Installs real ciphertext ownership behind a mocked credential runtime.
+     * @param runtime existing mocked runtime
+     * @param configuration explicit artifact limits and directory
+     * @return owned spool to close with the fixture
+     * @throws IOException if exclusive storage cannot be opened
+     */
+    public static AutoCloseable install(EnrollmentRuntime runtime, EnrollmentRuntimeConfiguration configuration) throws IOException {
+        EnrollmentKeygenSpool spool = new EnrollmentKeygenSpool(configuration.keygenArtifacts().orElseThrow(),
+                configuration.budgets().maximumConcurrentDispatches());
+        when(runtime.keygenSpool()).thenReturn(spool);
+        return spool;
+    }
+
+    /** @param value workflow state to persist in corruption/recovery fixtures
+     * @return canonical control record */
+    public static zeroecho.pki.server.ServerControlStore.ProtocolRecord record(EnrollmentTransaction value) {
+        return EnrollmentTransactionCodec.record(value);
+    }
+
+    /** @param value descriptor to persist in corruption/recovery fixtures
+     * @return canonical control record */
+    public static zeroecho.pki.server.ServerControlStore.ProtocolRecord record(EnrollmentKeygenArtifact value) {
+        return EnrollmentKeygenCodec.record(value);
+    }
 }

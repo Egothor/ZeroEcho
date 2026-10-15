@@ -37,6 +37,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.pki.server.AdministrativeAuthenticationMode;
+import zeroecho.pki.server.CertificateIdentityEvidence;
 
 /**
  * Safe closed mutual-TLS authentication result.
@@ -60,15 +61,18 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
      * @param mode administrative authentication topology
      * @param transportPrincipalId trusted proxy principal in proxy mode
      * @param endClientPrincipalId authenticated end-client principal
+     * @param credentialEvidence trusted end-client evidence, absent for unsupported identity algorithms
      */
     record Authenticated(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
-            String endClientPrincipalId) implements PkiServerAuthenticationResult {
+            String endClientPrincipalId, Optional<CertificateIdentityEvidence> credentialEvidence)
+            implements PkiServerAuthenticationResult {
         /** Validates the finite principal identity. */
         public Authenticated {
             Objects.requireNonNull(mode, "mode");
             transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
             transportPrincipalId.ifPresent(Authenticated::requirePrincipal);
             requirePrincipal(endClientPrincipalId);
+            credentialEvidence = Objects.requireNonNull(credentialEvidence, "credentialEvidence");
             if (mode == AdministrativeAuthenticationMode.DIRECT_MTLS && transportPrincipalId.isPresent()
                     || mode == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY
                     && transportPrincipalId.isEmpty()) {
@@ -82,8 +86,22 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
          * @param principalId authenticated end-client principal
          */
         public Authenticated(String principalId) {
-            this(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), principalId);
+            this(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), principalId, Optional.empty());
         }
+
+        /**
+         * Creates an authentication result without enrollment credential evidence.
+         * @param mode authentication topology
+         * @param transportPrincipalId trusted proxy principal, when applicable
+         * @param endClientPrincipalId authenticated end-client principal
+         */
+        public Authenticated(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
+                String endClientPrincipalId) {
+            this(mode, transportPrincipalId, endClientPrincipalId, Optional.empty());
+        }
+
+        /** @return redacted diagnostic description */
+        @Override public String toString() { return "Authenticated[redacted]"; }
 
         private static void requirePrincipal(String principalId) {
             if (principalId == null || !principalId.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) {

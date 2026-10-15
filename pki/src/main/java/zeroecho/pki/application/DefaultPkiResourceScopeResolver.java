@@ -38,6 +38,7 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.credential.EndEntityProfileBinding;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.status.StatusObject;
@@ -71,6 +72,17 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
         openCheck.run();
         return store.getStatusObject(Objects.requireNonNull(statusObjectId, "statusObjectId"))
                 .map(StatusObject::issuerCaId);
+    }
+
+    @Override
+    public Optional<CredentialScope> holdCredentialScope(PkiId credentialId) {
+        openCheck.run();
+        return store.getCredential(Objects.requireNonNull(credentialId, "credentialId"))
+                .map(credential -> new CredentialScope(credential.issuerRef().caId(),
+                        switch (credential.profileBinding()) {
+                            case EndEntityProfileBinding binding -> binding.reference().profileId();
+                            case CaProfileBinding binding -> binding.reference().profileId();
+                        }));
     }
 
     @Override

@@ -34,6 +34,8 @@
 package zeroecho.pki.impl.core;
 
 import java.security.MessageDigest;
+import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -42,19 +44,22 @@ import java.util.Optional;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.attr.AttributeValue;
-import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
-import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.RequestQuery;
 import zeroecho.pki.api.request.RequestStorePolicy;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pkix.Pkix;
 
 /**
  * Default implementation of {@link CertificationRequestService}.
@@ -87,8 +92,9 @@ import zeroecho.pki.spi.store.PkiStore;
  *
  * <h2>Security considerations</h2>
  * <ul>
- * <li>This service does not interpret request contents on its own beyond
- * fingerprinting the encoded payload.</li>
+ * <li>Renewal identity checks reparse the original request and compare it with
+ * the authoritative predecessor; caller-supplied normalized fields are not
+ * trusted as proof of identity.</li>
  * <li>Request parsing and proof-of-possession verification semantics depend on
  * the configured {@link CredentialFramework} implementation.</li>
  * <li>The fingerprint produced by this class is an identifier for PKI request
@@ -111,10 +117,52 @@ public final class DefaultCertificationRequestService implements CertificationRe
 
     private final PkiStore store;
     private final CredentialFramework framework;
+    private final Optional<X509ProfileBindingMatcher> bindingMatcher;
+
+    /** {@inheritDoc} */
+    @Override public void requireRenewalIdentity(ParsedCertificationRequest parsed, PkiId predecessorId) {
+        Objects.requireNonNull(parsed, "parsed"); Objects.requireNonNull(predecessorId, "predecessorId");
+        ParsedCertificationRequest original = parseX509(encodedX509Request(parsed));
+        requireSameRenewalIdentity(original, parsed);
+        try {
+            Credential credential = store.getCredential(predecessorId).orElseThrow(() -> new PkiException("Renewal predecessor is unavailable"));
+            if (!credential.credentialId().equals(predecessorId) || !credential.formatId().equals(BcX509CredentialFramework.FORMAT_ID)
+                    || !(credential.profileBinding() instanceof EndEntityProfileBinding)) {
+                throw new IllegalArgumentException("Renewal predecessor is invalid");
+            }
+            byte[] der = CredentialContent.materializeForBc(store, credential.content());
+            String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(der));
+            X509Certificate certificate = Pkix.parseCertificate(der);
+            ParsedCertificationRequest expected = BcX509CertificationRequestParser.reconstructForRenewal(certificate, credential.formatId());
+            if (certificate.getBasicConstraints() >= 0 || !predecessorId.value().equals("x509:" + digest)
+                    || !credential.content().sha256().equals(digest) || !credential.subjectRef().equals(expected.subjectRef())
+                    || !credential.publicKeyId().value().equals("spki:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(expected.publicKeyInfo().bytes())))
+                    || !credential.serialOrUniqueId().equals(certificate.getSerialNumber().toString())
+                    || !credential.validity().notBefore().equals(certificate.getNotBefore().toInstant())
+                    || !credential.validity().notAfter().equals(certificate.getNotAfter().toInstant())) {
+                throw new IllegalArgumentException("Renewal predecessor is invalid");
+            }
+            requireSameRenewalIdentity(expected, original);
+        } catch (java.security.NoSuchAlgorithmException failure) {
+            throw new PkiException("Renewal predecessor cannot be validated"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
+        }
+    }
+
+    private static void requireSameRenewalIdentity(ParsedCertificationRequest expected, ParsedCertificationRequest actual) {
+        if (!expected.subjectRef().equals(actual.subjectRef()) || !expected.subjectRdns().equals(actual.subjectRdns())
+                || !expected.subjectAlternativeNames().equals(actual.subjectAlternativeNames())
+                || expected.subjectAlternativeNamePresent() != actual.subjectAlternativeNamePresent()
+                || !Arrays.equals(expected.publicKeyInfo().bytes(), actual.publicKeyInfo().bytes())) {
+            throw new IllegalArgumentException("Renewal request identity differs from authoritative content");
+        }
+    }
 
     /**
      * Creates a certification request service bound to the supplied persistence and
      * framework collaborators.
+     * This constructor does not configure frozen profile-proof validation;
+     * {@link #requireProfileProof} fails closed until the explicit registry
+     * constructor is used.
      *
      * @param store     PKI store used for optional request persistence and lookup;
      *                  must not be {@code null}
@@ -127,6 +175,47 @@ public final class DefaultCertificationRequestService implements CertificationRe
     public DefaultCertificationRequestService(PkiStore store, CredentialFramework framework) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
+        this.bindingMatcher = Optional.empty();
+    }
+
+    /**
+     * Creates a request service with the same explicit binding registry used by
+     * session issuance. The framework must carry the session's X.509 authority.
+     * @param store authoritative request and imported-profile store
+     * @param framework configured X.509 parsing and verification framework
+     * @param bindings immutable session binding registry
+     */
+    public DefaultCertificationRequestService(PkiStore store, BcX509CredentialFramework framework,
+            zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry bindings) {
+        this.store = Objects.requireNonNull(store, "store");
+        this.framework = Objects.requireNonNull(framework, "framework");
+        this.bindingMatcher = Optional.of(new X509ProfileBindingMatcher(framework.authority(), bindings));
+    }
+
+    /** {@inheritDoc} */
+    @Override public void requireProfileProof(ParsedCertificationRequest parsed, zeroecho.pki.api.profile.CertificateProfileRef profile) {
+        Objects.requireNonNull(profile, "profile");
+        X509ProfileBindingMatcher matcher = bindingMatcher.orElseThrow(() -> new IllegalStateException("Profile proof validation is not configured"));
+        zeroecho.pki.api.profile.ImportedCertificateProfileVersion imported = store.getProfileVersion(profile.profileId(), profile.profileVersion())
+                .orElseThrow(() -> new IllegalArgumentException("Frozen request profile is unavailable"));
+        if (!profile.equals(imported.reference()) || !imported.definition().formatId().equals(BcX509CredentialFramework.FORMAT_ID)) {
+            throw new IllegalArgumentException("Frozen request profile is inconsistent");
+        }
+        X509EnrollmentPayload payload = encodedX509Request(parsed);
+        ParsedCertificationRequest original = parseX509(payload);
+        if (verifyProofOfPossession(original, new VerificationPolicy(true, Optional.empty())).status()
+                != zeroecho.pki.api.request.ProofOfPossessionStatus.VERIFIED) {
+            throw new IllegalArgumentException("Request proof is invalid");
+        }
+        try {
+            zeroecho.pkix.AlgorithmIdentifier signature = payload.kind() == X509EnrollmentPayload.Kind.PKCS10
+                    ? Pkix.parseCertificationRequest(payload.der()).signatureAlgorithm()
+                    : zeroecho.pkix.cmp.CrmfRequest.parse(payload.der()).signatureAlgorithm();
+            matcher.require(signature, zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.CSR_SIGNATURE,
+                    imported.definition().algorithmBindingPolicy().csrSignature());
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalArgumentException("Request proof binding differs from frozen profile"); // NOPMD PreserveStackTrace, AvoidThrowingNewInstanceOfSameException - Expose the policy rejection without retaining request or provider diagnostics.
+        }
     }
 
     /**
@@ -189,6 +278,18 @@ public final class DefaultCertificationRequestService implements CertificationRe
         return framework.requestParser().parse(request);
     }
 
+    /** {@inheritDoc} */
+    @Override
+    public ParsedCertificationRequest parseX509(X509EnrollmentPayload request) {
+        return framework.requestParser().parseX509(Objects.requireNonNull(request, "request"));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public X509EnrollmentPayload encodedX509Request(ParsedCertificationRequest parsed) {
+        return zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(parsed);
+    }
+
     /**
      * Returns a bounded, fingerprint-checked copy of the retained X.509 CSR.
      * Attribute lookup is O(A) for the current list-backed attribute set; copying
@@ -200,28 +301,11 @@ public final class DefaultCertificationRequestService implements CertificationRe
      */
     @Override
     public CertificationRequest encodedRequest(ParsedCertificationRequest parsed) {
-        if (parsed == null || !BcX509CredentialFramework.FORMAT_ID.equals(parsed.formatId())) {
-            throw new IllegalArgumentException("Retained certification request format is invalid");
+        X509EnrollmentPayload payload = encodedX509Request(parsed);
+        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10) {
+            throw new IllegalArgumentException("CRMF requires the typed enrollment recovery API");
         }
-        List<AttributeValue> values = parsed.attributes().getAll(BcX509Attributes.CSR_DER);
-        if (values.size() != 1 || !(values.getFirst() instanceof AttributeValue.BytesValue bytes)) {
-            throw new IllegalArgumentException("Retained certification request payload is invalid");
-        }
-        byte[] source = bytes.value();
-        if (source.length == 0 || source.length > 1024 * 1024) {
-            throw new IllegalArgumentException("Retained certification request payload is invalid");
-        }
-        byte[] snapshot = source.clone();
-        final String identity;
-        try {
-            identity = "csr:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(snapshot));
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new PkiException("Retained certification request fingerprint is unavailable", impossible);
-        }
-        if (!identity.equals(parsed.requestId().value())) {
-            throw new IllegalArgumentException("Retained certification request identity differs");
-        }
-        return new CertificationRequest(parsed.formatId(), new EncodedObject(Encoding.DER, snapshot));
+        return new CertificationRequest(parsed.formatId(), new EncodedObject(Encoding.DER, payload.der()));
     }
 
     /**

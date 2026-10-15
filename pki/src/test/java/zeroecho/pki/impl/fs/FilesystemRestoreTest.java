@@ -71,11 +71,88 @@ class FilesystemRestoreTest {
     }
     @AfterEach void clearObserver() { FsRestoreCoordinator.observeWith(null); }
 
+    @ParameterizedTest
+    @EnumSource(value = FsRestoreCoordinator.Phase.class,
+            names = {"AFTER_STAGE_MOVE", "AFTER_CANDIDATE_MARKER", "AFTER_ORIGINAL_MARKER"})
+    void unpublishedStageIsDiscardedExactlyAfterColdRecovery(FsRestoreCoordinator.Phase crash) throws Exception {
+        PkiId expected = new PkiId("ad52d431-4394-41e1-90d2-7e6ed0f59c44");
+        String manifest;
+        try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
+            try (zeroecho.pki.api.backup.BackupPreparation prepared = store.prepareBackup(source)) {
+                manifest = prepared.manifestSha256();
+            }
+            FsRestoreCoordinator.observeWith(phase -> { if (phase == crash) throw new Crash(); });
+            assertThrows(Crash.class, () -> store.stageRestore(source, expected));
+        }
+        FsRestoreCoordinator.observeWith(null);
+        Path stage = directory.resolve(".store.restore-stage-" + expected.value());
+        assertTrue(Files.isDirectory(stage));
+        // A process crash can leave preparation workspace even before dispatch.
+        Path work = directory.resolve(".store.restore-control/work");
+        Files.createDirectories(work.resolve(".verification-abandoned"));
+        Files.writeString(work.resolve(".verification-abandoned/input.zip"), "partial");
+        try (FilesystemPkiStore store = open()) {
+            assertTrue(store.latestRestoreIdentity().isEmpty());
+            assertFalse(Files.exists(work.resolve(".verification-abandoned")));
+            store.discardUnpublishedRestore(expected, Optional.empty(), manifest);
+            store.discardUnpublishedRestore(expected, Optional.empty(), manifest);
+            assertFalse(Files.exists(stage));
+            assertFalse(Files.exists(directory.resolve("store/.restore-role-" + expected.value())));
+            try (BackupSource next = store.createBackupSource(request())) {
+                assertEquals(RestoreStatus.State.STAGED, store.stageRestore(next).state());
+            }
+        }
+    }
+
+    @Test void unpublishedCleanupRejectsMismatchedMarkerAndPublishedIdentity() throws Exception {
+        PkiId expected = new PkiId("ad52d431-4394-41e1-90d2-7e6ed0f59c44");
+        String manifest = "a".repeat(64);
+        try (FilesystemPkiStore store = open()) {
+            Path marker = directory.resolve("store/.restore-role-" + expected.value());
+            Files.writeString(marker, "wrong marker");
+            assertThrows(IOException.class, () -> store.discardUnpublishedRestore(expected, Optional.empty(), manifest));
+            assertEquals("wrong marker", Files.readString(marker));
+            Files.delete(marker);
+            try (BackupSource source = store.createBackupSource(request())) { store.stageRestore(source, expected); }
+        }
+        try (FilesystemPkiStore store = open()) {
+            assertThrows(IOException.class, () -> store.discardUnpublishedRestore(expected, Optional.empty(), manifest));
+            assertEquals(expected, store.latestRestoreStatus().orElseThrow().restoreId());
+            assertTrue(Files.exists(directory.resolve(".store.restore-old-" + expected.value())));
+        }
+    }
+
+    @Test void callerRestoreIdentityIsPreservedAndCannotBeReused() throws Exception {
+        PkiId chosen = new PkiId("ad52d431-4394-41e1-90d2-7e6ed0f59c44");
+        try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
+            assertThrows(IllegalArgumentException.class, () -> store.stageRestore(source, new PkiId("../escape")));
+            assertTrue(store.latestRestoreIdentity().isEmpty());
+            assertEquals(chosen, store.stageRestore(source, chosen).restoreId());
+        }
+        try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
+            assertEquals(chosen, store.latestRestoreIdentity().orElseThrow().status().restoreId());
+            assertEquals("RESTORE_IDENTIFIER_ALREADY_USED",
+                    assertThrows(IOException.class, () -> store.stageRestore(source, chosen)).getMessage());
+            assertEquals(RestoreStatus.State.ACTIVATED, store.latestRestoreStatus().orElseThrow().state());
+            PkiId next = new PkiId("349a6ee1-51a6-4a4c-94e5-3948a51cfc2a");
+            assertEquals(next, store.stageRestore(source, next).restoreId());
+        }
+    }
+
     @Test void stagedStatusBecomesActivatedOnlyAfterColdRecoveryAndRetainsRollback() throws Exception {
         PkiId restore;
+        PkiId backup;
+        String manifest;
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             assertTrue(store.latestRestoreStatus().isEmpty());
+            assertTrue(store.latestRestoreIdentity().isEmpty());
+            backup = source.backupId();
             RestoreStatus status = store.stageRestore(source);
+            zeroecho.pki.api.backup.RestoreIdentity identity = store.latestRestoreIdentity().orElseThrow();
+            assertEquals(backup, identity.sourceBackupId());
+            assertEquals(status, identity.status());
+            manifest = identity.manifestSha256();
+            assertTrue(manifest.matches("[0-9a-f]{64}"));
             assertEquals(RestoreStatus.State.STAGED, status.state());
             restore = status.restoreId();
             assertEquals(status, store.latestRestoreStatus().orElseThrow());
@@ -85,6 +162,10 @@ class FilesystemRestoreTest {
             try (FilesystemPkiStore store = open()) {
                 assertEquals(RestoreStatus.State.ACTIVATED, store.latestRestoreStatus().orElseThrow().state());
                 assertEquals(restore, store.latestRestoreStatus().orElseThrow().restoreId());
+                assertEquals(backup, store.latestRestoreIdentity().orElseThrow().sourceBackupId());
+                assertEquals(manifest, store.latestRestoreIdentity().orElseThrow().manifestSha256());
+                assertEquals(store.latestRestoreStatus().orElseThrow(),
+                        store.latestRestoreIdentity().orElseThrow().status());
             }
         }
         assertTrue(Files.isDirectory(directory.resolve(".store.restore-old-" + restore)));
@@ -119,6 +200,48 @@ class FilesystemRestoreTest {
             assertEquals(RestoreStatus.State.FAILED, store.latestRestoreStatus().orElseThrow().state());
             assertTrue(store.getPolicyTrace(new PkiId("post-stage")).isPresent());
         }
+    }
+
+    @Test void backupBeforeImportedRequestCannotEraseRetainedEnrollmentInput() throws Exception {
+        try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
+            store.putRequest(enrollmentRequest("after-backup"));
+            assertEquals("RESTORE_SAFETY_AUTHORITY_MISMATCH",
+                    assertThrows(IOException.class, () -> store.stageRestore(source)).getMessage());
+            assertTrue(store.getRequest(new PkiId("after-backup")).isPresent());
+        }
+    }
+
+    @Test void requestImportedAfterStagingPreventsColdActivation() throws Exception {
+        try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
+            store.stageRestore(source);
+            store.putRequest(enrollmentRequest("after-stage"));
+        }
+        try (FilesystemPkiStore store = open()) {
+            assertEquals(RestoreStatus.State.FAILED, store.latestRestoreStatus().orElseThrow().state());
+            assertTrue(store.getRequest(new PkiId("after-stage")).isPresent());
+        }
+    }
+
+    @Test void exactRequestProjectionSurvivesRestoreAndRejectsUnexpectedEntries() throws Exception {
+        try (FilesystemPkiStore store = open()) {
+            store.putRequest(enrollmentRequest("retained"));
+            try (BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
+        }
+        try (FilesystemPkiStore store = open()) {
+            assertEquals(RestoreStatus.State.ACTIVATED, store.latestRestoreStatus().orElseThrow().state());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(FsCodec.encode(FsCodec.PARSED_REQUEST, enrollmentRequest("retained")),
+                    FsCodec.encode(FsCodec.PARSED_REQUEST, store.getRequest(new PkiId("retained")).orElseThrow()));
+        }
+        Path unexpected = directory.resolve("store/requests/by-id/unexpected.txt");
+        Files.writeString(unexpected, "invalid");
+        assertThrows(IOException.class, () -> FsRestoreSafety.project(directory.resolve("store"),
+                zeroecho.pki.api.backup.BackupLimits.defaults()));
+    }
+
+    private static zeroecho.pki.api.request.ParsedCertificationRequest enrollmentRequest(String id) {
+        return new zeroecho.pki.api.request.ParsedCertificationRequest(new PkiId(id), new zeroecho.pki.api.FormatId("fmt-x509"),
+                new zeroecho.pki.api.SubjectRef("CN=retained-input"), new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }),
+                Optional.empty(), Optional.empty(), FilesystemPkiStoreTest.TestObjects.emptyAttributes());
     }
 
     @Test void recoveryFailureRollsBackAndNeverClaimsActivation() throws Exception {
@@ -173,6 +296,9 @@ class FilesystemRestoreTest {
             IOException failure = assertThrows(IOException.class, () -> store.stageRestore(source));
             assertEquals("RESTORE_OUTCOME_UNCERTAIN", failure.getMessage());
             assertEquals(RestoreStatus.State.UNCERTAIN, store.latestRestoreStatus().orElseThrow().state());
+            assertEquals(source.backupId(), store.latestRestoreIdentity().orElseThrow().sourceBackupId());
+            assertEquals(RestoreStatus.State.UNCERTAIN,
+                    store.latestRestoreIdentity().orElseThrow().status().state());
             assertEquals(List.of("RESTORE_OUTCOME_UNCERTAIN"), store.latestRestoreStatus().orElseThrow().issues());
             FsRestoreCoordinator.observeWith(null);
             assertThrows(IOException.class, () -> store.stageRestore(source));

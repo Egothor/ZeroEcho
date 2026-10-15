@@ -43,6 +43,8 @@ import java.util.Objects;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.issuance.CorrelatedEndEntityIssuanceRequest;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest;
 import zeroecho.pki.api.issuance.EndEntityIssuanceRequest;
 import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.profile.CertificateProfileRef;
@@ -71,7 +73,8 @@ public record CorrelatedIssuanceIdentity(String correlationId, String effectiveC
         EndEntityIssuanceRequest request = correlated.request();
         IssuanceIntent intent = correlated.intent();
         MessageDigest commitment = sha256();
-        field(commitment, "zeroecho:pki:issuance-effective-command:v1");
+        field(commitment, request.payload().kind() == zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10
+                ? "zeroecho:pki:issuance-effective-command:v1" : "zeroecho:pki:issuance-effective-command:crmf:v1");
         field(commitment, intent.issuanceId());
         field(commitment, request.issuerCaId().value());
         field(commitment, intent.commandCommitment());
@@ -82,7 +85,7 @@ public record CorrelatedIssuanceIdentity(String correlationId, String effectiveC
         field(commitment, intent.expectedIssuerId().value());
         field(commitment, intent.expectedChainPathId().value());
         field(commitment, intent.expectedChainPathCommitment());
-        field(commitment, sha256().digest(request.csrDer()));
+        field(commitment, sha256().digest(request.payload().der()));
         field(commitment, request.validityOverride().isPresent() ? "present" : "absent");
         if (request.validityOverride().isPresent()) {
             Validity validity = request.validityOverride().orElseThrow();
@@ -110,6 +113,71 @@ public record CorrelatedIssuanceIdentity(String correlationId, String effectiveC
         field(key, authorityId.value());
         field(key, issuanceId);
         return "issuance." + HexFormat.of().formatHex(key.digest());
+    }
+
+    /**
+     * Derives a domain-separated renewal identity without store reads. Work and
+     * transient memory are linear in the bounded frozen fields and optional original request.
+     * @param renewal immutable predecessor binding and frozen selection
+     * @return deterministic correlation key and exact renewal commitment
+     * @throws NullPointerException if the request is null
+     */
+    public static CorrelatedIssuanceIdentity derive(CorrelatedEndEntityRenewalRequest renewal) {
+        Objects.requireNonNull(renewal, "renewal");
+        IssuanceIntent intent = renewal.intent();
+        MessageDigest commitment = sha256();
+        field(commitment, renewal.originalRequest().isPresent() ? "zeroecho:pki:renewal-original-command:v1" : "zeroecho:pki:renewal-effective-command:v1");
+        field(commitment, intent.issuanceId());
+        field(commitment, renewal.issuerCaId().value());
+        field(commitment, intent.commandCommitment());
+        field(commitment, intent.expectedProfile().profileId());
+        field(commitment, Long.toString(intent.expectedProfile().profileVersion()));
+        field(commitment, intent.expectedProfile().canonicalSha256());
+        field(commitment, intent.expectedIssuerId().value());
+        field(commitment, intent.expectedChainPathId().value());
+        field(commitment, intent.expectedChainPathCommitment());
+        field(commitment, renewal.request().existingCredentialId().value());
+        field(commitment, renewal.predecessorSha256());
+        field(commitment, renewal.request().validityOverride().isPresent() ? "present" : "absent");
+        renewal.request().validityOverride().ifPresent(validity -> {
+            field(commitment, validity.notBefore().toString());
+            field(commitment, validity.notAfter().toString());
+        });
+        renewal.originalRequest().ifPresent(payload -> {
+            field(commitment, payload.kind().name());
+            field(commitment, payload.der());
+        });
+        return new CorrelatedIssuanceIdentity(correlationId(renewal.issuerCaId(), intent.issuanceId()),
+                HexFormat.of().formatHex(commitment.digest()));
+    }
+
+    /**
+     * Derives an exact replacement commitment without store reads or authorization.
+     * Time and transient memory are linear in bounded input fields and request DER.
+     * @param replacement exact predecessor, request and frozen selection
+     * @return stable correlation key and domain-separated replacement commitment
+     * @throws NullPointerException if the input is null
+     */
+    public static CorrelatedIssuanceIdentity derive(CorrelatedEndEntityReplacementRequest replacement) {
+        Objects.requireNonNull(replacement, "replacement");
+        IssuanceIntent intent = replacement.intent();
+        MessageDigest commitment = sha256();
+        field(commitment, "zeroecho:pki:replacement-effective-command:v1");
+        field(commitment, intent.issuanceId());
+        field(commitment, replacement.issuerCaId().value());
+        field(commitment, intent.commandCommitment());
+        field(commitment, intent.expectedProfile().profileId());
+        field(commitment, Long.toString(intent.expectedProfile().profileVersion()));
+        field(commitment, intent.expectedProfile().canonicalSha256());
+        field(commitment, intent.expectedIssuerId().value());
+        field(commitment, intent.expectedChainPathId().value());
+        field(commitment, intent.expectedChainPathCommitment());
+        field(commitment, replacement.request().existingCredentialId().value());
+        field(commitment, replacement.predecessorSha256());
+        field(commitment, replacement.request().payload().kind().name());
+        field(commitment, replacement.request().payload().der());
+        return new CorrelatedIssuanceIdentity(correlationId(replacement.issuerCaId(), intent.issuanceId()),
+                HexFormat.of().formatHex(commitment.digest()));
     }
 
     private static MessageDigest sha256() {

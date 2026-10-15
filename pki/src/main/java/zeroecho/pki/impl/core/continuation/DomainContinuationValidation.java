@@ -51,7 +51,7 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
 /** Central fail-closed validation for recovered durable domain continuations. */
-public final class DomainContinuationValidation {
+public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity - One persisted command grammar validates correlated domain continuations; individual methods remain checked.
     private static final int MAXIMUM_TOTAL_BYTES = 2 * 1_048_576;
     private static final String CREATE_ROOT = "CREATE_ROOT";
     private static final String ROLLOVER_ROOT = "ROLLOVER_ROOT";
@@ -155,7 +155,8 @@ public final class DomainContinuationValidation {
                 throw new IllegalStateException("Lifecycle predecessor is not an X.509 credential identity");
             }
             digest(predecessor.substring(5));
-            if (!command.field(15).isEmpty() || !command.field(16).isEmpty()) {
+            if ("REISSUE_END_ENTITY".equals(command.operation())
+                    && (!command.field(15).isEmpty() || !command.field(16).isEmpty())) {
                 throw new IllegalStateException("Lifecycle continuation cannot contain an external publication identity");
             }
         }

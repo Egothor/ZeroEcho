@@ -71,6 +71,28 @@ final class SelectionGatewayTest {
     @TempDir Path directory;
 
     @Test
+    void disabledSearchIsAbsentFromDiscoveryAndCannotInvokeTheExecutor() throws Exception {
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("operator"));
+            PkiOperation.SearchCredentials operation = new PkiOperation.SearchCredentials(ServerTestSupport.AUTHORITY,
+                    10, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+            OperationSecurityDescriptors.Descriptor descriptor = new OperationSecurityDescriptors().require(operation);
+            allow(opened, descriptor.action(), descriptor.resourceType());
+            PkiOperationExecutor executor = selectionExecutor();
+            ServerOperationGateway gateway = gateway(opened, executor);
+            assertFalse(gateway.operationAvailable(operation.name()));
+            assertTrue(gateway.discoverableOperations("operator").stream().noneMatch(value -> value.operationId().equals(operation.name())));
+            assertInstanceOf(ServerOperationGateway.Outcome.Denied.class, gateway.execute(request(
+                    new AdministrativeOperation.Pki(operation), descriptor.resourceType(), ServerTestSupport.scope(), Optional.empty()),
+                    CancellationSignal.NONE));
+            org.mockito.Mockito.verify((PkiSelectionExecutor) executor, org.mockito.Mockito.never()).executeSelection(any(), any(), any());
+            when(((PkiSelectionExecutor) executor).credentialSearchAvailable()).thenReturn(true);
+            assertTrue(gateway.operationAvailable(operation.name()));
+            assertTrue(gateway.discoverableOperations("operator").stream().anyMatch(value -> value.operationId().equals(operation.name())));
+        }
+    }
+
+    @Test
     void broadCollectionAllowStillFiltersEveryGenerationAndPublicationBeforeThePageLimit() throws Exception {
         for (boolean publication : List.of(false, true)) {
             try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(java.nio.file.Files.createDirectory(directory.resolve(publication ? "publication" : "generation")))) {

@@ -839,8 +839,12 @@ class PkiHttpsServerTest {
                 base.realm(), base.listener(), base.authentication(), base.execution(), base.runtime(),
                 Optional.empty(), Optional.of(acme));
         seed(configuration);
+        assertThrows(IllegalArgumentException.class, () -> PkiHttpsServer.start(configuration,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, HttpServerTestSupport.random(),
+                TestTlsProvider.class.getClassLoader()));
         try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
-                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader())) {
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader(),
+                Optional.empty(), Optional.of(EnrollmentTestSupport.runtimeConfiguration()))) {
             HttpClient anonymous = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
             HttpClient administrator = HttpClient.newBuilder().sslContext(tls.clientContext()).build();
             URI acmeAdmin = URI.create("https://localhost:" + server.acmeAddress().orElseThrow().getPort()

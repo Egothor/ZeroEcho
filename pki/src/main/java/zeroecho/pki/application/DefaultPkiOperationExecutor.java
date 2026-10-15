@@ -182,6 +182,23 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     }
 
     @Override
+    public boolean supportsHoldTransitions() { return true; }
+
+    @Override
+    public PkiOperationOutcome executeHold(PkiOperation.HoldCredential operation,
+            RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+        return executeEvidence(operation.name(), cancellation,
+                () -> hold(operation, Objects.requireNonNull(evidence, "evidence").attributes()));
+    }
+
+    @Override
+    public PkiOperationOutcome executeUnhold(PkiOperation.UnholdCredential operation,
+            RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+        return executeEvidence(operation.name(), cancellation,
+                () -> unhold(operation, Objects.requireNonNull(evidence, "evidence").attributes()));
+    }
+
+    @Override
     public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
             RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
         return executeEvidence(operation.name(), cancellation,
@@ -231,6 +248,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         } catch (RuntimeException failure) { return classify(operation.name(), failure); }
     }
 
+    @Override
+    public boolean credentialSearchAvailable() { openCheck.run(); return store.credentialSearchAvailable(); }
+
     private PkiOperationResult selection(PkiOperation operation,
             java.util.function.Predicate<PkiOperationValue.ObjectValue> include, CancellationSignal cancellation) {
         return switch (operation) {
@@ -247,7 +267,10 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                             value -> include.test(requestSelection(value)), cancellation).stream()
                             .map(DefaultPkiOperationExecutor::requestSelection).toList());
             case PkiOperation.SearchCredentials query -> page(query.name(), "credentials", "credentialId", query.limit(),
-                    store.listCredentialsPage(query.authorityId(), query.after(), query.limit() + 1,
+                    store.searchCredentials(new zeroecho.pki.api.credential.CredentialSearchQuery(query.authorityId(),
+                            query.subjectFilter(), query.serialFilter(), query.fingerprintFilter(), query.statusFilter(),
+                            query.profileIdFilter(), query.sanFilter().map(
+                                    zeroecho.pki.api.credential.CredentialSearchQuery::parseSanFilter)), query.after(), query.limit() + 1,
                             value -> include.test(object(credentialFields(value))), cancellation).stream()
                             .map(value -> object(credentialFields(value))).toList());
             case PkiOperation.ListIssuerGenerations query -> page(query.name(), "generations", ISSUER_ID, query.limit(),
@@ -470,37 +493,6 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return result;
     }
 
-    private static java.util.function.Predicate<PkiOperationValue.ObjectValue> credentialSearchFilter(
-            PkiOperation.SearchCredentials q) {
-        java.util.function.Predicate<PkiOperationValue.ObjectValue> p = row -> true;
-        if (q.subjectFilter().isPresent()) {
-            String sub = q.subjectFilter().get().toLowerCase(java.util.Locale.ROOT);
-            p = p.and(row -> textField(row, "subjectRef").toLowerCase(java.util.Locale.ROOT).contains(sub));
-        }
-        if (q.serialFilter().isPresent()) {
-            String ser = q.serialFilter().get().toLowerCase(java.util.Locale.ROOT);
-            p = p.and(row -> textField(row, "serialOrUniqueId").toLowerCase(java.util.Locale.ROOT).contains(ser));
-        }
-        if (q.fingerprintFilter().isPresent()) {
-            String fp = q.fingerprintFilter().get().toLowerCase(java.util.Locale.ROOT);
-            p = p.and(row -> textField(row, CREDENTIAL_ID).toLowerCase(java.util.Locale.ROOT).startsWith(fp));
-        }
-        if (q.statusFilter().isPresent()) {
-            String status = q.statusFilter().get();
-            p = p.and(row -> textField(row, STATUS).equals(status));
-        }
-        if (q.profileIdFilter().isPresent()) {
-            String profile = q.profileIdFilter().get();
-            p = p.and(row -> textField(row, PROFILE_ID).equals(profile));
-        }
-        return p;
-    }
-
-    private static String textField(PkiOperationValue.ObjectValue row, String key) {
-        PkiOperationValue val = row.fields().get(key);
-        return val instanceof PkiOperationValue.Text t ? t.value() : "";
-    }
-
     private PkiOperationResult inspectIssuerGeneration(PkiOperation.InspectIssuerGeneration request) {
         IssuerGeneration generation = store.getIssuerGeneration(request.issuerId()).orElseThrow(Missing::new);
         return result(request.name(), generationFields(generation));
@@ -690,6 +682,14 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         Map<String, PkiOperationValue> result = fields();
         result.put("confirmationResult", text(confirmations.verifyAndComplete(request.submission()).name()));
         return result(request.name(), result);
+    }
+
+    private PkiOperationResult hold(PkiOperation.HoldCredential request, zeroecho.pki.api.attr.AttributeSet evidence) {
+        return revocationResult(request.name(), revocations.hold(new RevocationCommand.Hold(request.credentialId(), evidence)));
+    }
+
+    private PkiOperationResult unhold(PkiOperation.UnholdCredential request, zeroecho.pki.api.attr.AttributeSet evidence) {
+        return revocationResult(request.name(), revocations.unhold(new RevocationCommand.Unhold(request.credentialId(), evidence)));
     }
 
     private PkiOperationResult revoke(PkiOperation.RevokeCredential request,
@@ -937,7 +937,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
             case PkiOperation.ListAlgorithmBindings request -> selection(request, row -> true, signal);
             case PkiOperation.ListProfiles request -> selection(request, row -> true, signal);
             case PkiOperation.ListRequests request -> selection(request, row -> true, signal);
-            case PkiOperation.SearchCredentials request -> selection(request, credentialSearchFilter(request), signal);
+            case PkiOperation.SearchCredentials request -> selection(request, row -> true, signal);
             case PkiOperation.ListIssuerGenerations request -> selection(request, row -> true, signal);
             case PkiOperation.InspectAlgorithmBinding request -> inspectAlgorithmBinding(request);
             case PkiOperation.ValidateAlgorithmBindings request -> validateAlgorithmBindings(request);
@@ -968,6 +968,8 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                     zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
             case PkiOperation.RevokeCredential request -> revoke(request,
                     zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
+            case PkiOperation.HoldCredential request -> hold(request, zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
+            case PkiOperation.UnholdCredential request -> unhold(request, zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
             case PkiOperation.InspectRevocation request -> inspectRevocation(request);
             case PkiOperation.ReadRevocationHistory request -> readHistory(request, signal);
             case PkiOperation.SnapshotRevocations request -> snapshotRevocations(request, signal);

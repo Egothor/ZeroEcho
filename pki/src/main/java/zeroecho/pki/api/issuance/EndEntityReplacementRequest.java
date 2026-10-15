@@ -35,37 +35,55 @@
 package zeroecho.pki.api.issuance;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 
 /**
- * Immutable, thread-safe replacement input with a fresh exact DER PKCS#10 request.
+ * Immutable, thread-safe replacement input with a fresh, explicitly typed request.
  * Preparation verifies proof of possession and the selected active profile. The
  * predecessor's logical authority is retained. Reusing its SPKI is permitted only
  * when it is neither held nor permanently revoked; a different verified key may
  * replace either status. Construction alone does not validate the CSR or policy.
  *
  * @param existingCredentialId authoritative predecessor identifier
- * @param csrDer exact DER CSR, from one byte through one MiB inclusive
+ * @param payload exact typed request, from one byte through one MiB inclusive
  * @param profileId nonblank selected logical profile identifier
  */
-public record EndEntityReplacementRequest(PkiId existingCredentialId, byte[] csrDer, String profileId) {
+public record EndEntityReplacementRequest(PkiId existingCredentialId, X509EnrollmentPayload payload, String profileId) {
     /** Maximum CSR size, checked before creating a defensive copy. */
     public static final int MAXIMUM_CSR_DER_BYTES = EndEntityIssuanceRequest.MAXIMUM_CSR_DER_BYTES;
 
     /**
-     * Validates and snapshots the input in linear time and auxiliary memory in CSR size.
+     * Validates coordinates and retains the immutable payload in constant time and memory.
      * @throws IllegalArgumentException if an argument is null, the profile is blank,
      *         or the CSR is empty or exceeds the size limit
      */
     public EndEntityReplacementRequest {
-        if (existingCredentialId == null || csrDer == null || profileId == null || profileId.isBlank()
-                || csrDer.length == 0 || csrDer.length > MAXIMUM_CSR_DER_BYTES) {
+        if (existingCredentialId == null || payload == null || profileId == null || profileId.isBlank()) {
             throw new IllegalArgumentException("Invalid end-entity replacement request");
         }
-        csrDer = csrDer.clone();
     }
 
-    /** {@return a caller-owned defensive copy of the exact DER CSR} */
-    @Override public byte[] csrDer() { return csrDer.clone(); }
+    /**
+     * Creates a replacement from a bounded PKCS#10 request, defensively copied.
+     * @param existingCredentialId authoritative predecessor identity
+     * @param csrDer exact PKCS#10 DER
+     * @param profileId selected certificate profile
+     */
+    public EndEntityReplacementRequest(PkiId existingCredentialId, byte[] csrDer, String profileId) {
+        this(existingCredentialId, new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, csrDer), profileId);
+    }
+
+    /**
+     * Returns the original PKCS#10 request.
+     * @return a caller-owned defensive DER copy
+     * @throws IllegalStateException if the payload is CRMF
+     */
+    public byte[] csrDer() {
+        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10) {
+            throw new IllegalStateException("Request is not PKCS#10");
+        }
+        return payload.der();
+    }
 
     /** {@return a redacted diagnostic representation} */
     @Override public String toString() { return "EndEntityReplacementRequest[redacted]"; }

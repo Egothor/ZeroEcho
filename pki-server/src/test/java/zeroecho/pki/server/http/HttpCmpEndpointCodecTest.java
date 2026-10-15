@@ -62,6 +62,7 @@ class HttpCmpEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"enterprise-cmp\","
                 + "\"authorityId\":\"ca:root\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"cmp-enroll\","
                 + "\"protectionPolicy\":\"SIGNATURE_BASED\"}}";
         HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterCmpEndpoint.NAME, json);
@@ -69,6 +70,7 @@ class HttpCmpEndpointCodecTest {
                 ServerControlOperation.RegisterCmpEndpoint.class,
                 ((AdministrativeOperation.Control) decoded.operation()).operation());
         CmpEndpoint endpoint = operation.endpoint();
+        assertEquals("enrollment-test", endpoint.enrollmentProfileId());
         assertEquals("enterprise-cmp", endpoint.label());
         assertEquals("ca:root", endpoint.authorityId());
         assertEquals("cmp-enroll", endpoint.profileId());
@@ -83,6 +85,7 @@ class HttpCmpEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"iot-cmp\","
                 + "\"authorityId\":\"ca:iot-issuer\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"iot-enroll\","
                 + "\"protectionPolicy\":\"SHARED_SECRET_MAC\"}}";
         HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterCmpEndpoint.NAME, json);
@@ -97,6 +100,7 @@ class HttpCmpEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"enterprise-cmp\","
                 + "\"authorityId\":\"ca:root\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"cmp-enroll\","
                 + "\"protectionPolicy\":\"SIGNATURE_BASED\","
                 + "\"unexpected\":true}}";
@@ -109,6 +113,7 @@ class HttpCmpEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"bad label with spaces\","
                 + "\"authorityId\":\"ca:root\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"cmp-enroll\","
                 + "\"protectionPolicy\":\"SIGNATURE_BASED\"}}";
         assertThrows(IllegalArgumentException.class,
@@ -120,6 +125,7 @@ class HttpCmpEndpointCodecTest {
         String json = "{\"version\":1,\"arguments\":{"
                 + "\"label\":\"enterprise-cmp\","
                 + "\"authorityId\":\"ca:root\","
+                + "\"enrollmentProfileId\":\"enrollment-test\","
                 + "\"profileId\":\"cmp-enroll\","
                 + "\"protectionPolicy\":\"UNKNOWN_POLICY\"}}";
         assertThrows(IllegalArgumentException.class,
@@ -190,5 +196,12 @@ class HttpCmpEndpointCodecTest {
         return HttpOperationCodec.decode(operation, json.getBytes(StandardCharsets.UTF_8),
                 PkiServerConfiguration.Listener.MINIMUM_BODY_BYTES,
                 REALM, DESCRIPTORS::require);
+    }
+
+    @Test
+    void rejectsRegistrationWithoutExplicitEnrollmentProfile() {
+        String json = "{\"version\":1,\"arguments\":{\"label\":\"endpoint\",\"authorityId\":\"authority\","
+                + "\"profileId\":\"certificate\",\"protectionPolicy\":\"SIGNATURE_BASED\"}}";
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.RegisterCmpEndpoint.NAME, json));
     }
 }

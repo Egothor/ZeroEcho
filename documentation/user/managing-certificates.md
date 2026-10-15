@@ -38,6 +38,30 @@ Use the identifier to inspect the credential's details.
 `credential.inspect` returns *metadata*. To obtain the certificate bytes
 themselves, download them from the public repository (below).
 
+### Search by certificate attributes
+
+When the administrator enables the optional search index, `credential.search`
+searches one authority and returns only credentials you are authorized to see.
+The web console provides the same generated filters. Search is unavailable when
+the index is disabled; a known credential ID can still be inspected directly.
+
+`sanFilter` matches an exact typed SAN from the issued certificate. Examples are
+`DNS_NAME:api.example.test`, `IP_ADDRESS:192.0.2.10`,
+`URI:https://example.test/service` and `RFC822_NAME:operator@example.test`.
+Matching uses the supported SAN type's canonical representation; it does not
+perform DNS lookup, regex matching or wildcard expansion.
+
+The existing `subjectFilter` and `serialFilter` are case-insensitive substrings;
+`profileIdFilter` and `statusFilter` are exact matches. Status is the stored
+inventory status; use `revocation.inspect` for revocation state. The historical
+wire parameter `fingerprintFilter`, labeled **Credential ID prefix** in the
+console, matches a case-insensitive prefix of the credential ID. It does not
+compute or compare a certificate digest. Supplied filters are combined.
+
+Results retain ascending credential-ID order. Use `nextCursor` as `after` to
+continue, keeping the same authority and filters. A timeout is an error, not a
+successful incomplete result.
+
 ## Download certificates and chains
 
 The public repository serves published material over plain, cacheable HTTPS `GET`

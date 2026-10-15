@@ -66,6 +66,7 @@ import zeroecho.pki.application.PkiOperationValue;
 // A single closed registry keeps every stable external operation name visibly bound to its typed parser.
 @SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.TooManyMethods", "PMD.UnusedFormalParameter"})
 final class PkiOperationRegistry {
+    private static final String PARAM_JUSTIFICATION = "justification";
     private static final String TEXT_CA_ID = "caId";
 
     private static final String AFTER = "after";
@@ -141,6 +142,8 @@ final class PkiOperationRegistry {
 
     private void registerStatusBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.RevokeCredential.NAME, this::revoke);
+        add(configured, PkiOperation.HoldCredential.NAME, this::hold);
+        add(configured, PkiOperation.UnholdCredential.NAME, this::unhold);
         add(configured, PkiOperation.InspectRevocation.NAME, this::inspectRevocation);
         add(configured, PkiOperation.ReadRevocationHistory.NAME, this::history);
         add(configured, PkiOperation.SnapshotRevocations.NAME, this::snapshotRevocations);
@@ -388,17 +391,34 @@ final class PkiOperationRegistry {
     private PkiOperation revoke(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
         if (!supplied.containsAll(Set.of(CREDENTIAL_ID, FAILURE_REASON))
-                || !Set.of(CREDENTIAL_ID, FAILURE_REASON, "justification").containsAll(supplied)) {
+                || !Set.of(CREDENTIAL_ID, FAILURE_REASON, PARAM_JUSTIFICATION).containsAll(supplied)) {
             throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         RevocationReason reason = RevocationReason.valueOf(text(arguments, FAILURE_REASON));
         return new PkiOperation.RevokeCredential(new PkiId(text(arguments, CREDENTIAL_ID)), reason,
-                optionalText(arguments, "justification"));
+                optionalText(arguments, PARAM_JUSTIFICATION));
     }
 
     private PkiOperation history(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         requireFields(arguments, Set.of(CREDENTIAL_ID, LIMIT));
         return new PkiOperation.ReadRevocationHistory(new PkiId(text(arguments, CREDENTIAL_ID)), limit(arguments));
+    }
+
+    private PkiOperation hold(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireHoldFields(arguments);
+        return new PkiOperation.HoldCredential(new PkiId(text(arguments, CREDENTIAL_ID)), optionalText(arguments, PARAM_JUSTIFICATION));
+    }
+
+    private PkiOperation unhold(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireHoldFields(arguments);
+        return new PkiOperation.UnholdCredential(new PkiId(text(arguments, CREDENTIAL_ID)), optionalText(arguments, PARAM_JUSTIFICATION));
+    }
+
+    private static void requireHoldFields(PkiOperationValue.ObjectValue arguments) {
+        Set<String> supplied = arguments.fields().keySet();
+        if (!supplied.contains(CREDENTIAL_ID) || !Set.of(CREDENTIAL_ID, PARAM_JUSTIFICATION).containsAll(supplied)) {
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        }
     }
 
     private PkiOperation inspectRevocation(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
@@ -556,12 +576,12 @@ final class PkiOperationRegistry {
     private PkiOperation searchCredentials(PkiOperationValue.ObjectValue arguments, Path base) {
         allowedFields(arguments, Set.of(SCOPE_AUTHORITY_ID, LIMIT),
                 Set.of(SCOPE_AUTHORITY_ID, LIMIT, AFTER, "subjectFilter", "serialFilter",
-                        "fingerprintFilter", "statusFilter", "profileIdFilter"));
+                        "fingerprintFilter", "statusFilter", "profileIdFilter", "sanFilter"));
         return new PkiOperation.SearchCredentials(new PkiId(text(arguments, SCOPE_AUTHORITY_ID)),
                 limit(arguments), optionalText(arguments, AFTER),
                 optionalText(arguments, "subjectFilter"), optionalText(arguments, "serialFilter"),
                 optionalText(arguments, "fingerprintFilter"), optionalText(arguments, "statusFilter"),
-                optionalText(arguments, "profileIdFilter"));
+                optionalText(arguments, "profileIdFilter"), optionalText(arguments, "sanFilter"));
     }
 
     private PkiOperation listGenerations(PkiOperationValue.ObjectValue arguments, Path base) {
@@ -604,9 +624,9 @@ final class PkiOperationRegistry {
     }
 
     private PkiOperation revokePending(PkiOperationValue.ObjectValue arguments, Path base) {
-        allowedFields(arguments, Set.of(CREDENTIAL_ID), Set.of(CREDENTIAL_ID, "justification"));
+        allowedFields(arguments, Set.of(CREDENTIAL_ID), Set.of(CREDENTIAL_ID, PARAM_JUSTIFICATION));
         return new PkiOperation.RevokePendingCredentialConfirmation(new PkiId(text(arguments, CREDENTIAL_ID)),
-                optionalText(arguments, "justification"));
+                optionalText(arguments, PARAM_JUSTIFICATION));
     }
 
     private static Instant instant(String value) {

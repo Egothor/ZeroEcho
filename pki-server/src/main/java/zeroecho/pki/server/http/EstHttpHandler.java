@@ -45,7 +45,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 
@@ -104,29 +103,33 @@ final class EstHttpHandler implements HttpHandler {
             }
             try {
                 String exactRequestId = requestId;
-                ServerRuntime.Submitted<EstResponse> submitted = runtime.submit(cancellation ->
-                        route((HttpsExchange) exchange, exactRequestId));
+                java.util.concurrent.atomic.AtomicBoolean deliveryClaimed = new java.util.concurrent.atomic.AtomicBoolean();
                 EstResponse response;
                 try {
-                    response = submitted.future().get(configuration.execution().maximumDeadline().toMillis(),
-                            TimeUnit.MILLISECONDS);
+                    response = runtime.execute(configuration.execution().maximumDeadline(), cancellation -> {
+                        EstResponse routed = route((HttpsExchange) exchange, exactRequestId, cancellation);
+                        if (routed.keygen().isPresent() && routed.status() == 200) {
+                            cancellation.throwIfCancelled();
+                            if (!deliveryClaimed.compareAndSet(false, true)) throw new java.io.InterruptedIOException("EST delivery cancelled");
+                            sendKeygen(exchange, routed.keygen().orElseThrow(), exactRequestId, cancellation);
+                            return null;
+                        }
+                        return routed;
+                    });
                 } catch (TimeoutException timeout) {
-                    submitted.cancellation().cancel();
-                    submitted.future().cancel(true);
+                    if (!deliveryClaimed.compareAndSet(false, true)) { exchange.close(); return; }
                     response = errorResponse(504, "EST request timed out");
                 } catch (InterruptedException interrupted) {
-                    submitted.cancellation().cancel();
-                    submitted.future().cancel(true);
                     Thread.currentThread().interrupt();
+                    if (!deliveryClaimed.compareAndSet(false, true)) { exchange.close(); return; }
                     response = errorResponse(503, "EST request interrupted");
                 } catch (ExecutionException failure) {
+                    if (!deliveryClaimed.compareAndSet(false, true)) { exchange.close(); return; }
                     response = protocolFailure(failure.getCause());
                 }
-                try {
-                    send(exchange, response.status(), response.contentType(), response.body(), requestId);
-                } finally {
-                    submitted.finish();
-                }
+                if (response == null) return;
+                response.retryAfterSeconds().ifPresent(value -> exchange.getResponseHeaders().set("Retry-After", Long.toString(value)));
+                send(exchange, response.status(), response.contentType(), response.body(), requestId);
             } catch (RejectedExecutionException overloaded) {
                 send(exchange, 503, TEXT_PLAIN, "EST service is overloaded".getBytes(StandardCharsets.UTF_8), requestId);
             } finally {
@@ -139,7 +142,7 @@ final class EstHttpHandler implements HttpHandler {
         }
     }
 
-    private EstResponse route(HttpsExchange exchange, String requestId) throws Exception {
+    private EstResponse route(HttpsExchange exchange, String requestId, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
         if (exchange.getRequestURI().getRawQuery() != null) {
             return errorResponse(400, "EST requests must not include query parameters");
         }
@@ -168,10 +171,10 @@ final class EstHttpHandler implements HttpHandler {
         String method = exchange.getRequestMethod();
         switch (operation) {
             case "cacerts": return handleCacerts(method, endpoint, label);
-            case "simpleenroll": return handleSimpleenroll(method, endpoint, label, exchange);
-            case "simplereenroll": return handleSimplereenroll(method, endpoint, label, exchange);
+            case "simpleenroll": return handleSimpleenroll(method, endpoint, label, exchange, cancellation);
+            case "simplereenroll": return handleSimplereenroll(method, endpoint, label, exchange, cancellation);
             case "csrattrs": return handleCsrattrs(method, endpoint, label);
-            case "serverkeygen": return handleServerkeygen(method, endpoint, label, exchange);
+            case "serverkeygen": return handleServerkeygen(method, endpoint, label, exchange, cancellation);
             default: return errorResponse(404, "EST operation not recognized: " + operation);
         }
     }
@@ -184,25 +187,25 @@ final class EstHttpHandler implements HttpHandler {
     }
 
     private EstResponse handleSimpleenroll(String method, EstEndpoint endpoint, String label,
-            HttpsExchange exchange) throws Exception {
+            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
         if (!"POST".equals(method)) return errorResponse(405, "Only POST is allowed for /simpleenroll");
         if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
         X509Certificate clientCert = extractClientCert(exchange);
         if (clientCert == null) return errorResponse(401, "EST simpleenroll requires a valid mTLS client certificate");
         byte[] csrBody = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
-        byte[] body = service.simpleenroll(endpoint, csrBody, clientCert);
-        return new EstResponse(200, CERTS_ONLY, body);
+        EstService.EnrollmentResult result = service.simpleenroll(endpoint, csrBody, clientCert, cancellation);
+        return new EstResponse(result.status(), result.status() == 200 ? CERTS_ONLY : TEXT_PLAIN, result.body(), result.retryAfterSeconds());
     }
 
     private EstResponse handleSimplereenroll(String method, EstEndpoint endpoint, String label,
-            HttpsExchange exchange) throws Exception {
+            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
         if (!"POST".equals(method)) return errorResponse(405, "Only POST is allowed for /simplereenroll");
         if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
         X509Certificate clientCert = extractClientCert(exchange);
         if (clientCert == null) return errorResponse(401, "EST simplereenroll requires a valid mTLS client certificate");
         byte[] csrBody = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
-        byte[] body = service.simplereenroll(endpoint, csrBody, clientCert);
-        return new EstResponse(200, CERTS_ONLY, body);
+        EstService.EnrollmentResult result = service.simplereenroll(endpoint, csrBody, clientCert, cancellation);
+        return new EstResponse(result.status(), result.status() == 200 ? CERTS_ONLY : TEXT_PLAIN, result.body(), result.retryAfterSeconds());
     }
 
     private EstResponse handleCsrattrs(String method, EstEndpoint endpoint, String label) {
@@ -213,15 +216,14 @@ final class EstHttpHandler implements HttpHandler {
     }
 
     private EstResponse handleServerkeygen(String method, EstEndpoint endpoint, String label,
-            HttpsExchange exchange) throws Exception {
+            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
         if (!"POST".equals(method)) return errorResponse(405, "Only POST is allowed for /serverkeygen");
         if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
         X509Certificate clientCert = extractClientCert(exchange);
         if (clientCert == null) return errorResponse(401, "EST serverkeygen requires a valid mTLS client certificate");
         byte[] csrBody = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
-        EstServerKeygenResponse keygen = service.serverkeygen(endpoint, csrBody, clientCert);
-        String contentType = "multipart/mixed; boundary=" + keygen.multipartBoundary();
-        return new EstResponse(200, contentType, keygen.encryptedPrivateKeyDer());
+        EstServerKeygenResponse keygen = service.serverkeygen(endpoint, csrBody, clientCert, cancellation);
+        return new EstResponse(keygen.status(), keygen.contentType(), new byte[0], keygen.retryAfterSeconds(), java.util.Optional.of(keygen));
     }
 
     private static X509Certificate extractClientCert(HttpsExchange exchange) {
@@ -274,13 +276,35 @@ final class EstHttpHandler implements HttpHandler {
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Content-Type", contentType);
+        if (CERTS_ONLY.equals(contentType)) exchange.getResponseHeaders().set("Content-Transfer-Encoding", "base64");
         exchange.sendResponseHeaders(status, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
         }
     }
 
-    private record EstResponse(int status, String contentType, byte[] body) {
+    private static void sendKeygen(HttpExchange exchange, EstServerKeygenResponse response, String requestId,
+            zeroecho.core.io.CancellationSignal cancellation) throws IOException {
+        try (EstServerKeygenResponse.Body body = response.openDelivery()) {
+            cancellation.throwIfCancelled();
+            exchange.getResponseHeaders().set(RequestIds.HEADER, requestId);
+            exchange.getResponseHeaders().set("Content-Type", response.contentType());
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream output = exchange.getResponseBody()) { body.writeTo(output, cancellation); }
+        } catch (EstProtocolException unavailable) {
+            cancellation.throwIfCancelled();
+            send(exchange, unavailable.httpStatus(), TEXT_PLAIN, unavailable.getMessage().getBytes(StandardCharsets.UTF_8), requestId);
+        }
+    }
+
+    private record EstResponse(int status, String contentType, byte[] body, java.util.Optional<Long> retryAfterSeconds,
+            java.util.Optional<EstServerKeygenResponse> keygen) {
+        EstResponse(int status, String contentType, byte[] body) { this(status, contentType, body, java.util.Optional.empty()); }
+        EstResponse(int status, String contentType, byte[] body, java.util.Optional<Long> retryAfterSeconds) {
+            this(status, contentType, body, retryAfterSeconds, java.util.Optional.empty());
+        }
         EstResponse {
             body = body.clone();
         }

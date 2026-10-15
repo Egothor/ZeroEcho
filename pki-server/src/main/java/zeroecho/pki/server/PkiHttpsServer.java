@@ -138,7 +138,49 @@ public final class PkiHttpsServer implements AutoCloseable {
     static PkiHttpsServer start(PkiServerConfiguration configuration,
             PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
             ClassLoader loader) {
+        return start(configuration, runtimeDependencies, clock, random, loader, Optional.empty());
+    }
+
+    /**
+     * Starts the server with optional, explicitly budgeted backup transfer.
+     * @param configuration validated schema-8 server settings
+     * @param runtimeDependencies process-local PKI capabilities
+     * @param transfer optional separately validated transfer settings
+     * @return fully ready server lifecycle owner
+     */
+    public static PkiHttpsServer start(PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies, Optional<BackupTransferConfiguration> transfer) {
+        return start(configuration, runtimeDependencies, Clock.systemUTC(), new SecureRandom(),
+                Thread.currentThread().getContextClassLoader(), Objects.requireNonNull(transfer));
+    }
+
+    static PkiHttpsServer start(PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
+            ClassLoader loader, Optional<BackupTransferConfiguration> transfer) {
+        return start(configuration, runtimeDependencies, clock, random, loader, transfer, Optional.empty());
+    }
+
+    /**
+     * Starts a server with explicit independent backup and enrollment capabilities.
+     * @param configuration schema-8 server settings
+     * @param runtimeDependencies process-local unlock and runtime capabilities
+     * @param transfer optional backup transfer budgets
+     * @param enrollment mandatory companion for enabled enrollment listeners
+     * @return fully ready server owning all opened resources
+     */
+    public static PkiHttpsServer start(PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies, Optional<BackupTransferConfiguration> transfer,
+            Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment) {
+        return start(configuration, runtimeDependencies, Clock.systemUTC(), new SecureRandom(),
+                Thread.currentThread().getContextClassLoader(), transfer, enrollment);
+    }
+
+    static PkiHttpsServer start(PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
+            ClassLoader loader, Optional<BackupTransferConfiguration> transfer,
+            Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment) {
         PkiServerConfiguration exact = Objects.requireNonNull(configuration, "configuration");
+        zeroecho.pki.server.enrollment.EnrollmentRuntime.validateConfiguration(exact, enrollment, transfer);
         Objects.requireNonNull(runtimeDependencies, "runtimeDependencies");
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(random, "random");
@@ -180,6 +222,14 @@ public final class PkiHttpsServer implements AutoCloseable {
             };
             PkiSessionRuntimeDependencies resolvedDependencies = runtimeDependencies.withDashboardLiveSource(liveSource);
             realm = ServerRealmContext.open(exact.realm(), resolvedDependencies, clock, random);
+            if (transfer.isPresent()) {
+                try { realm.installBackupTransfer(transfer.orElseThrow(), clock, random); }
+                catch (java.io.IOException failure) { throw new IllegalStateException("Backup transfer startup failed", failure); }
+            }
+            if (enrollment.isPresent()) {
+                realm.installEnrollmentRuntime(enrollment.orElseThrow(), resolvedDependencies, clock);
+                realm.installEnrollmentCoordinator(exact.authentication(), clock);
+            }
             metricsRealm.set(realm);
             schedulingConfigured.set(realm.session().statusSchedules().isPresent());
             realm.auditTransport("SERVER_STARTUP", "system", Map.of("state", "STARTING"));

@@ -75,6 +75,10 @@ final class FsRestoreInventory {
     }
 
     private static boolean allowed(String path, boolean directory, boolean partial) {
+        if (!partial && (directory && "credential-search".equals(path)
+                || !directory && path.matches("credential-search/index[.](mv[.]db([.](newFile|tempFile))?|lock[.]db|trace[.]db)"))) {
+            return true;
+        }
         if (path.startsWith(".backup-work/")) {
             return backupWorkAllowed(path, directory, partial);
         }

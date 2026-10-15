@@ -166,10 +166,11 @@ class PkiFoundationTest {
         PkiOperationRegistry registry = new PkiOperationRegistry();
         PkiOperation.SearchCredentials search = assertInstanceOf(PkiOperation.SearchCredentials.class,
                 core(registry.bind("credential.search", arguments("""
-                        {"authorityId":"root","limit":20,"after":"certificate"}
+                        {"authorityId":"root","limit":20,"after":"certificate","sanFilter":"DNS_NAME:API.EXAMPLE.TEST"}
                         """), temporaryDirectory)));
         assertEquals(new PkiId("root"), search.authorityId());
         assertEquals(Optional.of("certificate"), search.after());
+        assertEquals(Optional.of("DNS_NAME:API.EXAMPLE.TEST"), search.sanFilter());
         String commitment = "a".repeat(64);
         PkiOperation.CompleteCredentialConfirmationProof proof = assertInstanceOf(
                 PkiOperation.CompleteCredentialConfirmationProof.class,

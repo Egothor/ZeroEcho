@@ -34,6 +34,8 @@
 
 package zeroecho.pki.impl.core.signing; // NOPMD - CouplingBetweenObjects: one semantic facade binds prepared commands to durable continuation ownership.
 
+import zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest;
 import java.security.MessageDigest;
 import java.io.IOException;
 import zeroecho.pki.api.ca.CaRolloverCommand;
@@ -96,6 +98,7 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
  * and I/O costs remain those of the existing store. No operation registry is kept.
  */
 public final class DefaultSemanticSigningService implements SemanticSigningService { // NOPMD - CyclomaticComplexity totals independent cohesive operations; method-level checks remain enabled.
+    private static final String REQUEST_PARAMETER = "request";
     private static final String ACCESS_ARGUMENT = "access";
     private static final String CANCELLATION_ARGUMENT = "cancellation";
     private static final String ROLLOVER_ROOT = "ROLLOVER_ROOT";
@@ -358,7 +361,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             CancellationSignal cancellation) {
         signing.requireAvailable();
         Objects.requireNonNull(access, ACCESS_ARGUMENT);
-        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
         Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
         DomainSigningRequest domain;
         try {
@@ -382,7 +385,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             CancellationSignal cancellation) {
         signing.requireAvailable();
         Objects.requireNonNull(access, ACCESS_ARGUMENT);
-        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
         Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
         PreparedFullCrlTbs prepared;
         try {
@@ -399,7 +402,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             CancellationSignal cancellation) {
         signing.requireAvailable();
         Objects.requireNonNull(access, ACCESS_ARGUMENT);
-        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
         Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
         PreparedFullCrlTbs prepared;
         try {
@@ -478,7 +481,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             CancellationSignal cancellation) {
         signing.requireAvailable();
         Objects.requireNonNull(access, ACCESS_ARGUMENT);
-        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
         EndEntitySigningPreparation.validateEvidence(evidence, access, request.request().issuerCaId().value(),
                 request.intent().expectedProfile().profileId());
         Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
@@ -493,6 +496,54 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
                     signing.signingTtl(), evidence, cancellation);
         } catch (IOException failure) {
             throw new PkiException("Correlated end-entity preparation failed", failure);
+        }
+        return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
+    }
+
+    @Override public CorrelatedIssuancePreparation prepareCorrelatedRenewal(AccessContext access,
+            CorrelatedEndEntityRenewalRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT);
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.issuerCaId().value(),
+                request.intent().expectedProfile().profileId());
+        Optional<SemanticSigningOperation> existing = findRenewal(request);
+        if (existing.isPresent()) {
+            return new CorrelatedIssuancePreparation.Existing(existing.orElseThrow());
+        }
+        DomainSigningRequest domain;
+        try {
+            cancellation.throwIfCancelled();
+            domain = endEntity.prepareCorrelatedRenewal(access, request, signing.newSubmissionId(),
+                    signing.signingTtl(), evidence, cancellation);
+        } catch (IOException failure) {
+            throw new PkiException("Correlated renewal preparation failed", failure);
+        }
+        return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
+    }
+
+    @Override public CorrelatedIssuancePreparation prepareCorrelatedReplacement(AccessContext access,
+            CorrelatedEndEntityReplacementRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT);
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.issuerCaId().value(),
+                request.intent().expectedProfile().profileId());
+        Optional<SemanticSigningOperation> existing = findReplacement(request);
+        if (existing.isPresent()) {
+            return new CorrelatedIssuancePreparation.Existing(existing.orElseThrow());
+        }
+        DomainSigningRequest domain;
+        try {
+            cancellation.throwIfCancelled();
+            domain = endEntity.prepareCorrelatedReplacement(access, request, signing.newSubmissionId(),
+                    signing.signingTtl(), evidence, cancellation);
+        } catch (IOException failure) {
+            throw new PkiException("Correlated replacement preparation failed", failure);
         }
         return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
     }
@@ -566,7 +617,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
      */
     public PreparedSemanticSigningRequest prepare(DomainSigningRequest request, PkiId fairnessAuthorityId) {
         signing.requireAvailable();
-        DomainSigningRequest exact = Objects.requireNonNull(request, "request");
+        DomainSigningRequest exact = Objects.requireNonNull(request, REQUEST_PARAMETER);
         DomainContinuationTemplate template = exact.domainTemplate();
         DomainCommandEncoding.Decoded command = DomainContinuationValidation.validate(template);
         if (template.kind() == DomainContinuationStore.Kind.KEY_PROOF) {
@@ -747,6 +798,32 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
     }
 
     @Override public Optional<SemanticSigningOperation> findIssuance(RetainedIssuanceBinding binding) {
+        return findCorrelated(binding, "ISSUE_END_ENTITY", Optional.empty());
+    }
+
+    @Override public Optional<SemanticSigningOperation> findRenewal(
+            CorrelatedEndEntityRenewalRequest request) {
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
+        CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(request);
+        IssuanceIntent intent = request.intent();
+        RetainedIssuanceBinding binding = new RetainedIssuanceBinding(request.issuerCaId(), intent.issuanceId(),
+                intent.expectedProfile(), intent.expectedIssuerId(), intent.expectedChainPathId(),
+                intent.expectedChainPathCommitment(), identity.effectiveCommitment());
+        return findCorrelated(binding, "RENEW_END_ENTITY", Optional.of(request.request().existingCredentialId()));
+    }
+
+    @Override public Optional<SemanticSigningOperation> findReplacement(CorrelatedEndEntityReplacementRequest request) {
+        Objects.requireNonNull(request, REQUEST_PARAMETER);
+        CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(request);
+        IssuanceIntent intent = request.intent();
+        RetainedIssuanceBinding binding = new RetainedIssuanceBinding(request.issuerCaId(), intent.issuanceId(),
+                intent.expectedProfile(), intent.expectedIssuerId(), intent.expectedChainPathId(),
+                intent.expectedChainPathCommitment(), identity.effectiveCommitment());
+        return findCorrelated(binding, "REPLACE_END_ENTITY", Optional.of(request.request().existingCredentialId()));
+    }
+
+    private Optional<SemanticSigningOperation> findCorrelated(RetainedIssuanceBinding binding,
+            String operation, Optional<PkiId> predecessor) {
         signing.requireAvailable();
         Objects.requireNonNull(binding, "binding");
         String correlationId = CorrelatedIssuanceIdentity.correlationId(binding.authorityId(), binding.issuanceId());
@@ -763,7 +840,15 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         DomainCommandEncoding.Decoded command = DomainContinuationValidation.validate(
                 new DomainContinuationTemplate(domain.kind(), domain.correlationId(), domain.command(),
                         domain.commandCommitment()));
-        if (!"ISSUE_END_ENTITY".equals(command.operation())
+        requireCorrelatedBinding(binding, operation, predecessor, command);
+        // A concurrent purge can remove the workflow after the correlation read.
+        return signing.workflow(domain.operationId()).map(workflow -> snapshot(workflow, domain));
+    }
+
+    private static void requireCorrelatedBinding(RetainedIssuanceBinding binding, String operation,
+            Optional<PkiId> predecessor, DomainCommandEncoding.Decoded command) {
+        if (!operation.equals(command.operation())
+                || predecessor.isPresent() && !predecessor.orElseThrow().value().equals(command.field(23))
                 || !binding.authorityId().value().equals(command.field(0))
                 || !binding.expectedIssuerId().value().equals(command.field(1))
                 || !binding.expectedChainPathId().value().equals(command.field(2))
@@ -775,8 +860,6 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
                 || !binding.effectiveCommitment().equals(command.field(16))) {
             throw new PkiException("Issuance correlation conflict: code=ISSUANCE_CONFLICT");
         }
-        // A concurrent purge can remove the workflow after the correlation read.
-        return signing.workflow(domain.operationId()).map(workflow -> snapshot(workflow, domain));
     }
 
     @Override public SigningAcceptanceResolution resolve(SigningAcceptanceReceipt receipt) {

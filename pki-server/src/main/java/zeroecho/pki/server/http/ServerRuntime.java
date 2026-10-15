@@ -35,11 +35,13 @@ package zeroecho.pki.server.http;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
@@ -48,6 +50,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -136,6 +139,58 @@ public final class ServerRuntime implements AutoCloseable {
      */
     public void releaseAdmission() {
         admitted.release();
+    }
+
+    /**
+     * Executes one operation through the owned bounded queue and waits for its result.
+     * The caller owns admission pairing. A timeout or interruption requests cooperative
+     * cancellation and interrupts the worker; execution tracking remains until the
+     * worker actually exits. Already committed side effects are not rolled back.
+     *
+     * <p>The operation must release its resources itself and must not transfer a live
+     * resource through the return value: a result produced after cancellation can be
+     * discarded. The caller must restore or propagate interruption.</p>
+     *
+     * @param <T> independently owned, resource-free result type
+     * @param deadline positive wait bound no greater than the configured maximum
+     * @param operation operation receiving the lifecycle-owned cancellation signal
+     * @return completed operation result
+     * @throws IllegalArgumentException if the deadline is outside the configured bound
+     * @throws RejectedExecutionException if the runtime is closing or its queue is full
+     * @throws TimeoutException if the deadline expires
+     * @throws InterruptedException if the waiting caller is interrupted
+     * @throws ExecutionException if operation execution fails
+     */
+    public <T> T execute(Duration deadline, CancellableOperation<T> operation)
+            throws TimeoutException, InterruptedException, ExecutionException {
+        Objects.requireNonNull(deadline, "deadline");
+        Objects.requireNonNull(operation, "operation");
+        if (deadline.isNegative() || deadline.isZero() || deadline.compareTo(configuration.maximumDeadline()) > 0) {
+            throw new IllegalArgumentException("Operation deadline exceeds the configured bound");
+        }
+        Submitted<T> submitted = submit(operation::call);
+        try {
+            return submitted.future().get(deadline.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException | InterruptedException failure) {
+            submitted.cancellation().cancel();
+            submitted.future().cancel(true);
+            throw failure;
+        } finally { submitted.finish(); }
+    }
+
+    /**
+     * Operation executed on this runtime's bounded worker lane.
+     * @param <T> independently owned, resource-free result type
+     */
+    @FunctionalInterface
+    public interface CancellableOperation<T> {
+        /**
+         * Computes a result, releasing every acquired resource before returning.
+         * @param cancellation cooperative cancellation and interruption signal
+         * @return resource-free result; a late result may be discarded
+         * @throws Exception if execution fails
+         */
+        T call(CancellationSignal cancellation) throws Exception;
     }
 
     <T> Submitted<T> submit(CancellableCallable<T> task) {

@@ -67,7 +67,7 @@ public record X509AlgorithmBinding(String bindingId, AlgorithmIdentity algorithm
     public enum Role {
         /** SubjectPublicKeyInfo algorithm and public-key BIT STRING. */
         SUBJECT_PUBLIC_KEY,
-        /** PKCS#10 certification-request signature. */
+        /** PKCS#10 self-signature or CRMF signing-key proof signature. */
         CSR_SIGNATURE,
         /** Certificate signature. */
         CERTIFICATE_SIGNATURE,

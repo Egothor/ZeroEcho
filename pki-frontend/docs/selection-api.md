@@ -2,8 +2,9 @@
 
 The frontend consumes the generated server catalog across PKI, signing and
 server-control families, filtering unavailable operations. Read operations use the same admin
-POST envelope, gateway authorization and audit path; no separate selection
-service, persistent registry, index or server-held cursor is introduced.
+POST envelope, gateway authorization and audit path. Credential search uses an
+optional embedded SQL index; other selections retain their existing storage
+paths. No separate selection service or server-held cursor is introduced.
 
 | Operation | Scope / permission | Rows under `result` |
 |---|---|---|
@@ -47,7 +48,23 @@ require returning to the first page; this is not a cross-request frozen snapshot
 
 ## Resource behavior
 
-Without a new index, persisted ID selections scan N candidates per page and
+Credential search is available only when the filesystem provider's embedded H2
+index is explicitly enabled. Exact typed `sanFilter` values refer to issued
+certificate SANs; `fingerprintFilter` remains a credential-ID prefix. SQL returns
+candidates in bounded batches, then authoritative records and permissions are
+rechecked before page limiting. A single configured deadline covers admission,
+SQL and authorization; timeout fails the whole page. No unindexed fallback runs
+when search is disabled or the index is unavailable.
+
+The derived index is rebuilt at store open. Startup reads the authoritative
+credential content and constructs indexes; persistent space is proportional to
+credentials and SAN entries. Exact SAN predicates have an index, but legacy
+substring filters can require linear scans. Application buffers retain a bounded
+candidate batch, at most L+1 selected rows and one size-limited certificate;
+database cache and query working memory are additional. The cache setting is not
+a total heap quota.
+
+Other persisted ID selections scan N candidates per page and
 retain at most L+1 records: O(N log L) comparisons and O(L) retained records,
 plus one decoded candidate and existing cursor state. Authorization can add
 O(N·G) grant checks; decoding and existing integrity validation add payload I/O.

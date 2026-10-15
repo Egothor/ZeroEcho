@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
+import zeroecho.pkix.cmp.CrmfRequest;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
@@ -62,6 +63,7 @@ import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.framework.CertificationRequestParser;
 
@@ -105,6 +107,39 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     /** Creates a stateless PKCS#10 request parser. */
     public BcX509CertificationRequestParser() {
         // Stateless.
+    }
+
+    /**
+     * Parses an explicitly typed original X.509 enrollment request.
+     * CRMF requires signing-key PoP over its complete subject/key CertRequest;
+     * parsing retains the proof but does not verify it.
+     * @param request bounded immutable original payload
+     * @return normalized request with one syntax-specific transport attribute
+     * @throws PkiException if the request or supported subject/SAN grammar is invalid
+     */
+    @Override
+    public ParsedCertificationRequest parseX509(X509EnrollmentPayload request) {
+        Objects.requireNonNull(request, "request");
+        if (request.kind() == X509EnrollmentPayload.Kind.PKCS10) {
+            return parse(new CertificationRequest(BcX509CredentialFramework.FORMAT_ID,
+                    new EncodedObject(Encoding.DER, request.der())));
+        }
+        byte[] der = request.der();
+        try {
+            new StreamingDerReader().validate(der, MAXIMUM_CSR_DER_BYTES);
+            CrmfRequest crmf = CrmfRequest.parse(der);
+            List<SubjectRdn> subject = parseSubject(crmf.subject());
+            List<SubjectAlternativeName> sans = parseRequestedExtensions(crmf.requestedExtensions());
+            return new ParsedCertificationRequest(new PkiId("crmf:" + sha256Hex(der)),
+                    BcX509CredentialFramework.FORMAT_ID, subjectReference(subject),
+                    new EncodedObject(Encoding.DER, crmf.subjectPublicKeyInfo()), Optional.empty(), Optional.empty(),
+                    subject, sans, !sans.isEmpty(), SimpleAttributeSet.builder()
+                            .put(BcX509Attributes.CRMF_DER, new AttributeValue.BytesValue(der.clone())).build());
+        } catch (java.io.IOException | IllegalArgumentException malformed) {
+            throw new PkiException("Invalid CRMF certification request: code=CRMF_MALFORMED");
+        } finally {
+            java.util.Arrays.fill(der, (byte) 0);
+        }
     }
 
     /**
@@ -275,20 +310,33 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     }
 
     // The branches enforce the closed PKCS#10 extensionRequest grammar.
-    @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidRethrowingException" })
+    @SuppressWarnings("PMD.CyclomaticComplexity")
     private static List<SubjectAlternativeName> parseSubjectAlternativeNames(
             zeroecho.pkix.csr.CertificationRequest csr) {
         List<zeroecho.pkix.csr.CsrAttribute> extensionRequests = new ArrayList<>();
         boolean otherAttributePresent = false;
+        boolean challengePresent = false;
+        boolean estKeygenAttributes = false;
         for (zeroecho.pkix.csr.CsrAttribute attribute : csr.rawAttributes()) {
             if (EXTENSION_REQUEST_OID.equals(attribute.oid())) {
                 extensionRequests.add(attribute);
+            } else if ("1.2.840.113549.1.9.7".equals(attribute.oid()) && !challengePresent) {
+                try { attribute.challengePassword(); }
+                catch (IllegalArgumentException invalid) { throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_MALFORMED"); }
+                challengePresent = true;
+            } else if (zeroecho.pkix.EstKeygen.CAPABILITIES_OID.equals(attribute.oid())
+                    || zeroecho.pkix.EstKeygen.RECIPIENT_KEY_ID_OID.equals(attribute.oid())) {
+                estKeygenAttributes = true;
             } else {
                 otherAttributePresent = true;
             }
         }
         if (extensionRequests.size() > 1 || otherAttributePresent) {
             throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_UNSUPPORTED");
+        }
+        if (estKeygenAttributes) {
+            try { zeroecho.pkix.EstKeygen.requireAttributes(csr.encoded()); }
+            catch (IllegalArgumentException malformed) { throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_MALFORMED"); }
         }
         if (extensionRequests.isEmpty()) {
             return List.of();
@@ -302,6 +350,16 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             extensions = Pkix.parseExtensions(values.get(0));
         } catch (IllegalArgumentException exception) {
             throw new PkiException("CSR extensions rejected: code=EXTENSION_REQUEST_MALFORMED");
+        }
+        if (extensions.isEmpty()) {
+            throw new PkiException("CSR extensions rejected: code=EXTENSION_UNSUPPORTED");
+        }
+        return parseRequestedExtensions(extensions);
+    }
+
+    private static List<SubjectAlternativeName> parseRequestedExtensions(List<zeroecho.pkix.CertificateExtension> extensions) {
+        if (extensions.isEmpty()) {
+            return List.of();
         }
         if (extensions.size() != 1 || !SUBJECT_ALTERNATIVE_NAME_OID.equals(extensions.get(0).oid())) {
             throw new PkiException("CSR extensions rejected: code=EXTENSION_UNSUPPORTED");
@@ -333,8 +391,6 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
                 }
                 result.add(parsed);
             }
-        } catch (PkiException exception) {
-            throw exception;
         } catch (IllegalArgumentException | IllegalStateException exception) {
             throw new PkiException("CSR extensions rejected: code=SAN_MALFORMED");
         }

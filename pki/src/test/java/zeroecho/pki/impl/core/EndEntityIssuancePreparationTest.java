@@ -175,6 +175,115 @@ final class EndEntityIssuancePreparationTest {
     }
 
     @Test
+    void crmfProofAndProfileChecksPrecedeAnyWrites(@TempDir Path root) throws Exception {
+        byte[] der;
+        try (java.io.InputStream source = getClass().getResourceAsStream("/crmf/rsa2048-nosan.der")) {
+            der = java.util.Objects.requireNonNull(source).readAllBytes();
+        }
+        try (FilesystemPkiStore store = fixture(root)) {
+            EndEntityIssuancePreparation preparation = preparer(readOnly(store), CLOCK,
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
+            zeroecho.pki.api.request.X509EnrollmentPayload payload = new zeroecho.pki.api.request.X509EnrollmentPayload(
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, der);
+            EndEntityIssuanceRequest input = new EndEntityIssuanceRequest(CA, payload, PROFILE, Optional.empty());
+            assertThrows(IllegalStateException.class, input::csrDer);
+            assertEquals(PROFILE, preparation.prepare(ACCESS, input, CancellationSignal.NONE).request().profileId());
+            byte[] subjectTamper = der.clone();
+            byte[] subjectText = "Applicant".getBytes(StandardCharsets.US_ASCII);
+            int subjectOffset = byteSequence(subjectTamper, subjectText);
+            subjectTamper[subjectOffset] = 'B';
+            byte[] keyTamper = der.clone();
+            byte[] spki = zeroecho.pkix.cmp.CrmfRequest.parse(der).subjectPublicKeyInfo();
+            byte[] spkiContent = java.util.Arrays.copyOfRange(spki, 4, spki.length);
+            keyTamper[byteSequence(keyTamper, spkiContent) + spkiContent.length - 10] ^= 1;
+            for (byte[] invalid : List.of(subjectTamper, keyTamper)) {
+                PkiException failure = assertThrows(PkiException.class, () -> preparation.prepare(ACCESS,
+                        new EndEntityIssuanceRequest(CA, new zeroecho.pki.api.request.X509EnrollmentPayload(
+                                zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, invalid), PROFILE, Optional.empty()),
+                        CancellationSignal.NONE));
+                assertTrue(failure.getMessage().contains("CSR_PROOF_INVALID"));
+            }
+            byte[] tampered = der.clone();
+            tampered[tampered.length - 1] ^= 1;
+            assertThrows(PkiException.class, () -> preparation.prepare(ACCESS, new EndEntityIssuanceRequest(CA,
+                    new zeroecho.pki.api.request.X509EnrollmentPayload(
+                            zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, tampered),
+                    PROFILE, Optional.empty()), CancellationSignal.NONE));
+            try (java.io.InputStream source = getClass().getResourceAsStream("/crmf/rsa2048-sha256.der")) {
+                byte[] withSan = java.util.Objects.requireNonNull(source).readAllBytes();
+                byte[] changedSan = withSan.clone();
+                // The domain occurs in subject and SAN; mutate the final occurrence (the signed SAN).
+                byte[] domain = "leaf.example.test".getBytes(StandardCharsets.US_ASCII);
+                int last = -1;
+                for (int index = 0; index <= changedSan.length - domain.length; index++) {
+                    if (java.util.Arrays.equals(changedSan, index, index + domain.length, domain, 0, domain.length)) last = index;
+                }
+                assertTrue(last >= 0);
+                changedSan[last] = 'x';
+                PkiException altered = assertThrows(PkiException.class, () -> preparation.prepare(ACCESS,
+                        new EndEntityIssuanceRequest(CA, new zeroecho.pki.api.request.X509EnrollmentPayload(
+                                zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, changedSan), PROFILE, Optional.empty()),
+                        CancellationSignal.NONE));
+                assertTrue(altered.getMessage().contains("CSR_PROOF_INVALID"));
+                assertThrows(PkiException.class, () -> preparation.prepare(ACCESS, new EndEntityIssuanceRequest(CA,
+                        new zeroecho.pki.api.request.X509EnrollmentPayload(
+                                zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, withSan),
+                        PROFILE, Optional.empty()), CancellationSignal.NONE));
+            }
+        }
+    }
+
+    private static int byteSequence(byte[] container, byte[] target) {
+        for (int index = 0; index <= container.length - target.length; index++) {
+            if (java.util.Arrays.equals(container, index, index + target.length, target, 0, target.length)) return index;
+        }
+        throw new AssertionError("Fixture sequence not found");
+    }
+
+    @Test
+    void validCrmfProofCannotBypassFrozenCsrSignatureBinding(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = fixture(root)) {
+            zeroecho.pki.api.algorithm.X509AlgorithmBinding source = zeroecho.pki.testkit.AcceptancePrivateBinding.DESCRIPTOR;
+            zeroecho.pki.api.algorithm.X509AlgorithmBinding binding = new zeroecho.pki.api.algorithm.X509AlgorithmBinding(
+                    "test.crmf.proof.v1", source.algorithmIdentity(), zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.CSR_SIGNATURE,
+                    source.oid(), source.origin(), source.encodingVersion(), source.parameterRule(), source.publicKeyEncoding(),
+                    source.signatureEncoding(), source.interoperability(), source.providerId(), "test-crmf-proof-v1");
+            List<zeroecho.pki.api.algorithm.X509AlgorithmBinding> descriptors = new java.util.ArrayList<>(StandardX509Bindings.descriptors());
+            descriptors.add(binding);
+            zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry registry = ImmutableX509AlgorithmBindingRegistry.create(descriptors);
+            zeroecho.pki.api.profile.CertificateProfileDefinition base = store.requireActiveProfile(PROFILE).definition();
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy policy = new zeroecho.pki.api.profile.X509AlgorithmBindingPolicy(
+                    zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.Mode.EXPLICIT, Optional.empty(),
+                    Optional.of(new zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference(
+                            binding.bindingId(), binding.semanticCommitment())), Optional.empty(), Optional.empty());
+            zeroecho.pki.api.profile.CertificateProfileDefinition definition = new zeroecho.pki.api.profile.CertificateProfileDefinition(
+                    base.certificateType(), "crmf-sha256", 1, base.formatId(), "CRMF proof binding", base.maximumValidity(),
+                    base.approvalRequirement(), base.subjectPolicy(), base.certificatePolicy(), policy, base.confirmationPolicy());
+            DefaultProfileService profiles = new DefaultProfileService(store, CLOCK, new InMemoryAuditSink(), registry);
+            profiles.importProfile(CertificateProfileDocumentCodec.writeCanonical(definition));
+            profiles.activateProfile("crmf-sha256", 1);
+            BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
+            X509AuthoritySnapshot authority = X509AuthoritySnapshot.compose(List.of(), List.of(verifier),
+                    List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                            AlgorithmExecutionCapability.Direction.VERIFY, verifier)), new X509AlgorithmResolver.Policy() {
+                        @Override public boolean permits(AlgorithmSuite suite, AlgorithmExecutionCapability.Direction direction) { return true; }
+                        @Override public String semanticFingerprint() { return "crmf-binding-test"; }
+                    });
+            EndEntityIssuancePreparation preparation = new EndEntityIssuancePreparation(readOnly(store), CLOCK,
+                    authority, verifier, registry, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
+            try (java.io.InputStream fixtureSource = getClass().getResourceAsStream("/crmf/rsa2048-sha384.der")) {
+                zeroecho.pki.api.request.X509EnrollmentPayload payload = new zeroecho.pki.api.request.X509EnrollmentPayload(
+                        zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, java.util.Objects.requireNonNull(fixtureSource).readAllBytes());
+                assertEquals(PROFILE, preparation.prepare(ACCESS,
+                        new EndEntityIssuanceRequest(CA, payload, PROFILE, Optional.empty()), CancellationSignal.NONE).request().profileId());
+                PkiException rejected = assertThrows(PkiException.class, () -> preparation.prepare(ACCESS,
+                        new EndEntityIssuanceRequest(CA, payload, "crmf-sha256", Optional.empty()), CancellationSignal.NONE));
+                assertTrue(rejected.getMessage().contains("ISSUANCE_BINDING_INVALID"), rejected.getMessage());
+            }
+        }
+    }
+
+    @Test
     void freezesVerifiedPolicyAndAuthoritativeSelectionWithoutWrites(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             AtomicInteger clockReads = new AtomicInteger();

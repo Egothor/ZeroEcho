@@ -34,6 +34,7 @@
 package zeroecho.pki.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,6 +48,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -61,6 +64,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +111,7 @@ import zeroecho.pki.api.ca.CaCreateCommand;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.revocation.RevocationQuery;
 import zeroecho.pki.api.revocation.RevocationReason;
+import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
@@ -138,6 +143,968 @@ class AcmeEndToEndTest {
             .getBytes(StandardCharsets.US_ASCII);
 
     @TempDir Path temporaryDirectory;
+
+
+
+    @Test
+    void cmpProtectedApprovalRestartConfirmationReplacementAndRevocationUseRealDomain() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        KeyPair rootKey = rsa((byte) 101);
+        KeyPair requesterKey = rsa((byte) 102);
+        KeyPair issuedKey = rsa((byte) 103);
+        Fixture base = fixture(tls, reservePort(), reservePort(), reservePort(), rootKey);
+        seed(base);
+        int port = reservePort();
+        PkiServerConfiguration source = base.configuration();
+        PkiServerConfiguration.CmpListener listener = new PkiServerConfiguration.CmpListener("cmp-test",
+                InetAddress.getLoopbackAddress(), port, new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 8192);
+        Fixture fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(),
+                source.listener(), source.authentication(), source.execution(), source.runtime(), source.publicListener(),
+                source.acmeListener(), source.estListener(), source.scepListener(), Optional.of(listener), source.auditProjection()),
+                base.dependencies(), base.http01());
+        CmpProvisioned provisioned = provisionCmp(fixture, rootKey, requesterKey);
+        HttpClient wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+        URI endpoint = URI.create("https://localhost:" + port + "/pkix/managed");
+        byte[] transaction = CmpTestClient.nonce(1);
+        byte[] initialNonce = CmpTestClient.nonce(2);
+        org.bouncycastle.asn1.cmp.PKIBody originalCrmf = CmpTestClient.enrollment(issuedKey, null);
+        byte[] original = CmpTestClient.signed(originalCrmf, transaction, initialNonce, null, requesterKey,
+                provisioned.requester(), provisioned.responders().getFirst(), false);
+        byte[] waiting;
+        String enrollmentId;
+        try (PkiHttpsServer server = startScep(fixture, provisioned.runtime())) {
+            HttpResponse<byte[]> result = cmpPost(wire, endpoint, original);
+            assertEquals(200, result.statusCode(), new String(result.body(), StandardCharsets.UTF_8));
+            waiting = result.body();
+            assertTrue(CmpTestClient.signatureResponse(waiting, transaction, initialNonce, provisioned.responders().getFirst()).pending());
+            assertArrayEquals(waiting, cmpPost(wire, endpoint, original).body());
+            zeroecho.pki.server.enrollment.CmpTransaction manifest = cmpTransaction(server, "managed", transaction);
+            enrollmentId = manifest.enrollmentId().orElseThrow();
+            zeroecho.pki.server.enrollment.EnrollmentTransaction enrollment = server.realm().enrollmentCoordinator().orElseThrow().find(enrollmentId).orElseThrow();
+            zeroecho.pki.api.CertificationRequestService requests = server.realm().session().requests().orElseThrow();
+            assertArrayEquals(org.bouncycastle.asn1.crmf.CertReqMessages.getInstance(originalCrmf.getContent()).toCertReqMsgArray()[0].getEncoded(),
+                    requests.encodedX509Request(requests.get(enrollment.intent().requestId()).orElseThrow()).der());
+            assertEquals(413, cmpPost(wire, endpoint, new byte[8193]).statusCode());
+            byte[] tampered = original.clone(); tampered[tampered.length - 1] ^= 1;
+            assertEquals(400, cmpPost(wire, endpoint, tampered).statusCode());
+            byte[] wrongRecipient = CmpTestClient.signed(CmpTestClient.discovery(), CmpTestClient.nonce(8), initialNonce, null,
+                    requesterKey, provisioned.requester(), provisioned.responders().getLast(), false);
+            assertEquals(400, cmpPost(wire, endpoint, wrongRecipient).statusCode());
+        }
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtime = provisioned.runtime();
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet second = runtime.credentialSets().get(1);
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration rotated = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(
+                runtime.budgets(), runtime.keyrings(), runtime.credentialSets(), List.of(
+                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(second.protocol(), second.authorityId(), second.credentialId()),
+                runtime.activeCredentials().getLast()),
+                Optional.empty());
+        CmpCompletion completed;
+        try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            assertArrayEquals(waiting, cmpPost(wire, endpoint, original).body());
+            approveEnrollment(server, enrollmentId, tls.forwardedCertificate());
+            completed = awaitCmp(wire, endpoint, transaction,
+                    CmpTestClient.signatureResponse(waiting, transaction, initialNonce, provisioned.responders().getFirst()),
+                    requesterKey, provisioned.requester(), provisioned.responders().getFirst());
+            completed.certificate().verify(provisioned.authority().getPublicKey());
+            assertArrayEquals(issuedKey.getPublic().getEncoded(), completed.certificate().getPublicKey().getEncoded());
+            assertEquals("cmp-a", cmpTransaction(server, "managed", transaction).frozen().source().credentialId().orElseThrow());
+            assertEquals(zeroecho.pki.server.enrollment.CmpTransaction.Confirmation.AWAITING,
+                    cmpTransaction(server, "managed", transaction).response().orElseThrow().confirmation());
+        }
+        try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            assertArrayEquals(completed.response(), cmpPost(wire, endpoint, completed.request()).body());
+            byte[] confirmationNonce = CmpTestClient.nonce(71);
+            byte[] confirmation = CmpTestClient.signed(CmpTestClient.confirmation(completed.certificate(), true), transaction,
+                    confirmationNonce, completed.reply().nonce(), requesterKey, provisioned.requester(), provisioned.responders().getFirst(), false);
+            byte[] confirmed = cmpPost(wire, endpoint, confirmation).body();
+            assertEquals(19, CmpTestClient.signatureResponse(confirmed, transaction, confirmationNonce, provisioned.responders().getFirst()).type());
+            assertArrayEquals(confirmed, cmpPost(wire, endpoint, confirmation).body());
+            assertEquals(zeroecho.pki.server.enrollment.CmpTransaction.Confirmation.ACCEPTED,
+                    cmpTransaction(server, "managed", transaction).response().orElseThrow().confirmation());
+            awaitCertificateValidity(completed.certificate());
+            KeyPair replacementKey = rsa((byte) 104);
+            byte[] replacementTransaction = CmpTestClient.nonce(3);
+            byte[] replacementNonce = CmpTestClient.nonce(4);
+            byte[] replacement = CmpTestClient.signed(CmpTestClient.enrollment(replacementKey, completed.certificate()), replacementTransaction,
+                    replacementNonce, null, issuedKey, completed.certificate(), provisioned.responders().getLast(), true);
+            HttpResponse<byte[]> replacementHttp = cmpPost(wire, endpoint, replacement);
+            assertEquals(200, replacementHttp.statusCode(), new String(replacementHttp.body(), StandardCharsets.UTF_8));
+            byte[] replacementWaiting = replacementHttp.body();
+            assertTrue(CmpTestClient.signatureResponse(replacementWaiting, replacementTransaction, replacementNonce, provisioned.responders().getLast()).pending());
+            approveEnrollment(server, cmpTransaction(server, "managed", replacementTransaction).enrollmentId().orElseThrow(), tls.forwardedCertificate());
+            CmpCompletion replaced = awaitCmp(wire, endpoint, replacementTransaction,
+                    CmpTestClient.signatureResponse(replacementWaiting, replacementTransaction, replacementNonce, provisioned.responders().getLast()),
+                    issuedKey, completed.certificate(), provisioned.responders().getLast());
+            replaced.certificate().verify(provisioned.authority().getPublicKey());
+            assertArrayEquals(replacementKey.getPublic().getEncoded(), replaced.certificate().getPublicKey().getEncoded());
+            assertFalse(Arrays.equals(completed.certificate().getPublicKey().getEncoded(), replaced.certificate().getPublicKey().getEncoded()));
+            assertEquals(zeroecho.pki.server.enrollment.EnrollmentTransaction.Operation.REPLACE, server.realm().enrollmentCoordinator().orElseThrow()
+                    .find(cmpTransaction(server, "managed", replacementTransaction).enrollmentId().orElseThrow()).orElseThrow().intent().operation());
+            assertEquals(zeroecho.pki.server.enrollment.CmpTransaction.Confirmation.ACCEPTED,
+                    cmpTransaction(server, "managed", replacementTransaction).response().orElseThrow().confirmation());
+            awaitCertificateValidity(replaced.certificate());
+            byte[] revocationTransaction = CmpTestClient.nonce(5);
+            byte[] revocationNonce = CmpTestClient.nonce(6);
+            byte[] revoke = CmpTestClient.signed(CmpTestClient.revoke(replaced.certificate()), revocationTransaction, revocationNonce, null,
+                    replacementKey, replaced.certificate(), provisioned.responders().getLast(), false);
+            byte[] revoked = cmpPost(wire, endpoint, revoke).body();
+            assertEquals(12, CmpTestClient.signatureResponse(revoked, revocationTransaction, revocationNonce, provisioned.responders().getLast()).type());
+            assertArrayEquals(revoked, cmpPost(wire, endpoint, revoke).body());
+            PkiId revokedId = new PkiId("x509:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(replaced.certificate().getEncoded())));
+            assertEquals(RevocationState.PERMANENTLY_REVOKED, server.realm().session().revocations().get(revokedId).orElseThrow().transition().state());
+            byte[] deniedTransaction = CmpTestClient.nonce(9);
+            byte[] denied = cmpPost(wire, endpoint, CmpTestClient.signed(CmpTestClient.discovery(), deniedTransaction, revocationNonce, null,
+                    replacementKey, replaced.certificate(), provisioned.responders().getLast(), false)).body();
+            assertEquals(23, CmpTestClient.signatureResponse(denied, deniedTransaction, revocationNonce, provisioned.responders().getLast()).type());
+            URI pbmEndpoint = URI.create("https://localhost:" + port + "/pkix/pbm");
+            byte[] pbmTransaction = CmpTestClient.nonce(10);
+            byte[] pbmNonce = CmpTestClient.nonce(11);
+            byte[] pbmDenied = cmpPost(wire, pbmEndpoint, CmpTestClient.pbm(CmpTestClient.revoke(completed.certificate()),
+                    pbmTransaction, pbmNonce, null, provisioned.secret(), provisioned.authority())).body();
+            assertEquals(23, CmpTestClient.pbmResponse(pbmDenied, pbmTransaction, pbmNonce, provisioned.secret()).type());
+            assertTrue(server.realm().enrollmentCoordinator().orElseThrow().findCmp("pbm",
+                    HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(pbmTransaction))).isEmpty());
+            cmpPbmAndAuthorityIsolation(server, wire, endpoint, pbmEndpoint, URI.create("https://localhost:" + port + "/pkix/other"),
+                    provisioned, requesterKey, tls.forwardedCertificate(), transaction);
+        }
+    }
+
+    private record CmpProvisioned(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtime,
+            X509Certificate authority, X509Certificate requester, List<X509Certificate> responders, byte[] secret,
+            X509Certificate otherAuthority, X509Certificate otherResponder, X509Certificate otherRequester) { }
+    private record CmpCompletion(X509Certificate certificate, byte[] request, byte[] response, CmpTestClient.Reply reply) { }
+
+    private static void cmpPbmAndAuthorityIsolation(PkiHttpsServer server, HttpClient wire, URI endpoint, URI pbmEndpoint,
+            URI otherEndpoint, CmpProvisioned provisioned, KeyPair requesterKey, X509Certificate approver, byte[] originalTransaction) throws Exception {
+        KeyPair pbmKey = rsa((byte) 107);
+        byte[] transaction = CmpTestClient.nonce(12);
+        byte[] nonce = CmpTestClient.nonce(13);
+        byte[] request = CmpTestClient.pbm(CmpTestClient.enrollment(pbmKey, null), transaction, nonce, null, provisioned.secret(), provisioned.authority());
+        byte[] waiting = cmpPost(wire, pbmEndpoint, request).body();
+        CmpTestClient.Reply reply = CmpTestClient.pbmResponse(waiting, transaction, nonce, provisioned.secret());
+        assertTrue(reply.pending());
+        assertArrayEquals(waiting, cmpPost(wire, pbmEndpoint, request).body());
+        approveEnrollment(server, cmpTransaction(server, "pbm", transaction).enrollmentId().orElseThrow(), approver);
+        X509Certificate issued = null;
+        for (int value = 80; value < 120; value++) {
+            byte[] pollNonce = CmpTestClient.nonce(value);
+            byte[] poll = CmpTestClient.pbm(CmpTestClient.poll(), transaction, pollNonce, reply.nonce(), provisioned.secret(), provisioned.authority());
+            HttpResponse<byte[]> polled = cmpPost(wire, pbmEndpoint, poll); assertEquals(200, polled.statusCode());
+            reply = CmpTestClient.pbmResponse(polled.body(), transaction, pollNonce, provisioned.secret());
+            if (reply.certificate().isPresent()) { issued = reply.certificate().orElseThrow(); break; }
+            assertTrue(reply.pending()); TimeUnit.MILLISECONDS.sleep(10);
+        }
+        org.junit.jupiter.api.Assertions.assertNotNull(issued);
+        issued.verify(provisioned.authority().getPublicKey());
+        assertArrayEquals(pbmKey.getPublic().getEncoded(), issued.getPublicKey().getEncoded());
+        byte[] confirmationNonce = CmpTestClient.nonce(121);
+        byte[] confirmation = CmpTestClient.pbm(CmpTestClient.confirmation(issued, true), transaction, confirmationNonce,
+                reply.nonce(), provisioned.secret(), provisioned.authority());
+        assertEquals(19, CmpTestClient.pbmResponse(cmpPost(wire, pbmEndpoint, confirmation).body(), transaction,
+                confirmationNonce, provisioned.secret()).type());
+
+        // The configured RA grant is independent of holder identity and scoped to its authority.
+        byte[] raTransaction = CmpTestClient.nonce(14);
+        byte[] revoke = CmpTestClient.signed(CmpTestClient.revoke(issued), raTransaction, nonce, null,
+                requesterKey, provisioned.requester(), provisioned.responders().getLast(), false);
+        assertEquals(12, CmpTestClient.signatureResponse(cmpPost(wire, endpoint, revoke).body(), raTransaction,
+                nonce, provisioned.responders().getLast()).type());
+        PkiId id = new PkiId("x509:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(issued.getEncoded())));
+        assertEquals(RevocationState.PERMANENTLY_REVOKED, server.realm().session().revocations().get(id).orElseThrow().transition().state());
+
+        byte[] discovery = CmpTestClient.signed(CmpTestClient.discovery(), originalTransaction, nonce, null,
+                requesterKey, provisioned.otherRequester(), provisioned.otherResponder(), false);
+        assertEquals(22, CmpTestClient.signatureResponse(cmpPost(wire, otherEndpoint, discovery).body(), originalTransaction,
+                nonce, provisioned.otherResponder()).type());
+        assertFalse(cmpTransaction(server, "managed", originalTransaction).id().equals(cmpTransaction(server, "other", originalTransaction).id()));
+        assertEquals(400, cmpPost(wire, otherEndpoint, CmpTestClient.signed(CmpTestClient.discovery(), CmpTestClient.nonce(15), nonce,
+                null, requesterKey, provisioned.requester(), provisioned.otherResponder(), false)).statusCode());
+        byte[] forbiddenTransaction = CmpTestClient.nonce(16);
+        byte[] forbidden = CmpTestClient.signed(CmpTestClient.revoke(provisioned.otherAuthority()), forbiddenTransaction,
+                nonce, null, requesterKey, provisioned.otherRequester(), provisioned.otherResponder(), false);
+        assertEquals(23, CmpTestClient.signatureResponse(cmpPost(wire, otherEndpoint, forbidden).body(), forbiddenTransaction,
+                nonce, provisioned.otherResponder()).type());
+    }
+
+    private static HttpResponse<byte[]> cmpPost(HttpClient client, URI endpoint, byte[] body) throws Exception {
+        return client.send(HttpRequest.newBuilder(endpoint).header("Content-Type", "application/pkixcmp")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private static zeroecho.pki.server.enrollment.CmpTransaction cmpTransaction(PkiHttpsServer server, String label, byte[] transaction) throws Exception {
+        return server.realm().enrollmentCoordinator().orElseThrow().findCmp(label,
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(transaction))).orElseThrow();
+    }
+
+    private static CmpCompletion awaitCmp(HttpClient client, URI endpoint, byte[] transaction, CmpTestClient.Reply previous,
+            KeyPair requester, X509Certificate requesterCertificate, X509Certificate responder) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        CmpTestClient.Reply current = previous;
+        for (int nonce = 20; nonce < 200; nonce++) {
+            byte[] requestNonce = CmpTestClient.nonce(nonce);
+            byte[] request = CmpTestClient.signed(CmpTestClient.poll(), transaction, requestNonce, current.nonce(),
+                    requester, requesterCertificate, responder, false);
+            HttpResponse<byte[]> response = cmpPost(client, endpoint, request);
+            assertEquals(200, response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+            current = CmpTestClient.signatureResponse(response.body(), transaction, requestNonce, responder);
+            Optional<X509Certificate> certificate = current.certificate();
+            if (certificate.isPresent()) return new CmpCompletion(certificate.orElseThrow(), request, response.body(), current);
+            assertTrue(current.pending(), "CMP did not retain an issuance continuation");
+            assertTrue(System.nanoTime() < deadline, "CMP issuance did not complete");
+            TimeUnit.MILLISECONDS.sleep(10);
+        }
+        throw new AssertionError("CMP polling exceeded its bounded attempts");
+    }
+
+    private CmpProvisioned provisionCmp(Fixture fixture, KeyPair rootKey, KeyPair requesterKey) throws Exception {
+        Path ringPath = temporaryDirectory.resolve("cmp-custody.zek");
+        KeyPair otherRootKey = rsa((byte) 110);
+        try (KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
+                KeyringStore signing = KeyringStore.open(temporaryDirectory.resolve("server/signing-keyring.zek"), password)) {
+            signing.putPrivate("other.prv", "RSA", otherRootKey.getPrivate());
+            signing.putPublic("other.pub", "RSA", otherRootKey.getPublic());
+        }
+        List<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet> sets = new java.util.ArrayList<>();
+        List<X509Certificate> responders = new java.util.ArrayList<>();
+        byte[] secret = CmpTestClient.nonce(0); secret = Arrays.copyOf(secret, 32); Arrays.fill(secret, 1, secret.length, (byte) 0x80);
+        X509Certificate authority;
+        X509Certificate requester;
+        X509Certificate otherRoot;
+        X509Certificate otherResponder;
+        X509Certificate otherRequester;
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random());
+                KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
+                KeyringStore ring = KeyringStore.create(ringPath, password)) {
+            AcmeState.Directory directory = context.acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            zeroecho.pki.api.ca.IssuerGeneration issuer = context.session().repository().issuer(directory.issuerId()).orElseThrow();
+            try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository().openCredential(issuer.credentialId());
+                    java.io.InputStream input = content.openStream()) {
+                authority = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+            }
+            Path rootPath = temporaryDirectory.resolve("cmp-root.der"); java.nio.file.Files.write(rootPath, authority.getEncoded());
+            requester = cmpCertificate("CMP requester", 9500, requesterKey, rootKey, authority);
+            ring.putSecret("pbm", "HMAC", new javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256"));
+            for (int index = 0; index < 2; index++) {
+                KeyPair pair = rsa((byte) (105 + index));
+                String id = index == 0 ? "cmp-a" : "cmp-b";
+                X509Certificate response = cmpCertificate(id, 9600 + index, pair, rootKey, authority);
+                responders.add(response);
+                Path certificate = temporaryDirectory.resolve(id + ".der"); java.nio.file.Files.write(certificate, response.getEncoded());
+                ring.putPrivate(id, "RSA", pair.getPrivate());
+                zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Pbm pbm =
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Pbm(1000, 2000, 16, 32,
+                        Set.of(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.PbmDigest.SHA256),
+                        Set.of(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.PbmMac.HMAC_SHA256),
+                        List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.PbmIdentity("0102", "pbm-requester",
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("cmp", "pbm"), List.of("pbm-owner"))));
+                sets.add(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet(id,
+                        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.CMP, directory.authorityId().value(),
+                        directory.issuerId().value(), directory.issuancePathId().value(), Optional.of(
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("cmp", id), List.of(certificate, rootPath))),
+                        List.of(rootPath), List.of(zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(requesterKey.getPublic().getEncoded()).canonicalSha256()),
+                        Optional.of(pbm)));
+            }
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("cmp-enrollment", "CMP approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(directory.authorityId().value()), Optional.empty(), List.of(), true));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.cmp.CmpEndpoint("managed", directory.authorityId().value(),
+                    "server-tls", "cmp-enrollment", zeroecho.pki.server.cmp.CmpProtectionPolicy.SIGNATURE_BASED));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.cmp.CmpEndpoint("pbm", directory.authorityId().value(),
+                    "server-tls", "cmp-enrollment", zeroecho.pki.server.cmp.CmpProtectionPolicy.SHARED_SECRET_MAC));
+            context.createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+            zeroecho.pki.api.SemanticSigningService signing = context.session().semanticSigning().orElseThrow();
+            zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepared = signing.prepareRootCreation(
+                    new zeroecho.pki.api.audit.AccessContext(new zeroecho.pki.api.audit.Principal("SYSTEM", "test"),
+                    new zeroecho.pki.api.audit.Purpose("ca.create"), Optional.empty(), Optional.empty()),
+                    new CaCreateCommand(template("root-ca").definition().formatId(), new SubjectRef("CN=Other CMP authority"),
+                    "root-ca", new KeyRef("acme-test:other.prv"), new SimpleAttributeSet()), zeroecho.core.io.CancellationSignal.NONE);
+            PkiId otherCredential = awaitSigning(signing, signing.accept(prepared).receipt().operationId()).completedCredentialId().orElseThrow();
+            try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository().openCredential(otherCredential);
+                    java.io.InputStream input = content.openStream()) {
+                otherRoot = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+            }
+            awaitCertificateValidity(otherRoot);
+            zeroecho.pki.api.ca.CaRecord other = context.session().repository().authority(
+                    context.session().repository().credential(otherCredential).orElseThrow().issuerRef().caId()).orElseThrow();
+            KeyPair otherRaKey = rsa((byte) 111);
+            otherResponder = cmpCertificate("Other CMP RA", 9700, otherRaKey, otherRootKey, otherRoot);
+            otherRequester = cmpCertificate("Other CMP requester", 9701, requesterKey, otherRootKey, otherRoot);
+            Path otherCaFile = temporaryDirectory.resolve("cmp-other-ca.der"); java.nio.file.Files.write(otherCaFile, otherRoot.getEncoded());
+            Path otherRaFile = temporaryDirectory.resolve("cmp-other-ra.der"); java.nio.file.Files.write(otherRaFile, otherResponder.getEncoded());
+            ring.putPrivate("other-ra", "RSA", otherRaKey.getPrivate());
+            sets.add(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet("cmp-other",
+                    zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.CMP, other.caId().value(),
+                    other.currentIssuanceIssuerId().value(), other.issuanceChainPathId().value(), Optional.of(
+                    new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                    new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("cmp", "other-ra"),
+                    List.of(otherRaFile, otherCaFile))), List.of(otherCaFile), List.of(), Optional.empty()));
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("cmp-other-enrollment", "Other CMP approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(other.caId().value()), Optional.empty(), List.of(), true));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.cmp.CmpEndpoint("other", other.caId().value(), "server-tls",
+                    "cmp-other-enrollment", zeroecho.pki.server.cmp.CmpProtectionPolicy.SIGNATURE_BASED));
+        }
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtime = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(
+                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Budgets(100, 50, 64_000_000, 1_048_576, 2, Duration.ofMinutes(10), Duration.ofSeconds(1)),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Keyring("cmp", ringPath)), sets,
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(sets.getFirst().protocol(),
+                        sets.getFirst().authorityId(), sets.getFirst().credentialId()),
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(sets.getLast().protocol(),
+                        sets.getLast().authorityId(), sets.getLast().credentialId())), Optional.empty());
+        return new CmpProvisioned(runtime, authority, requester, List.copyOf(responders), secret, otherRoot, otherResponder, otherRequester);
+    }
+
+    private static X509Certificate cmpCertificate(String name, int serial, KeyPair subject, KeyPair issuer, X509Certificate authority) {
+        return zeroecho.pkix.Pkix.certificateBuilder().subject(new javax.security.auth.x500.X500Principal("CN=" + name))
+                .issuer(authority.getSubjectX500Principal()).publicKey(subject.getPublic()).serialNumber(BigInteger.valueOf(serial))
+                .validity(authority.getNotBefore().toInstant(), authority.getNotBefore().toInstant().plus(Duration.ofDays(1)))
+                .basicConstraints(zeroecho.pkix.BasicConstraints.endEntity(), true).keyUsage(Set.of(zeroecho.pkix.KeyUsage.DIGITAL_SIGNATURE), true)
+                .build(zeroecho.pkix.Pkix.signer(issuer.getPrivate(), zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
+    }
+
+    @Test
+    void scepDurableApprovalUsesAdvertisedRaAndRetainedCredentialAfterRollover() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        KeyPair rootKey = rsa((byte) 61);
+        KeyPair requesterKey = rsa((byte) 62);
+        X509Certificate requester = requesterCertificate(requesterKey);
+        int port = reservePort();
+        Fixture base = fixture(tls, reservePort(), reservePort(), reservePort(), rootKey);
+        seed(base);
+        PkiServerConfiguration source = base.configuration();
+        PkiServerConfiguration.ScepListener listener = new PkiServerConfiguration.ScepListener("scep-test",
+                InetAddress.getLoopbackAddress(), port, new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 8192);
+        Fixture fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(),
+                source.listener(), source.authentication(), source.execution(), source.runtime(), source.publicListener(),
+                source.acmeListener(), source.estListener(), Optional.of(listener), source.cmpListener(), source.auditProjection()),
+                base.dependencies(), base.http01());
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtime = provisionScep(fixture, rootKey);
+        URI endpoint = URI.create("https://localhost:" + port + "/scep/managed");
+        HttpClient wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+        byte[] nonce = new byte[16]; nonce[0] = 1;
+        byte[] csr = ScepTestClient.csr(requesterKey, "scep-secret");
+        String id;
+        X509Certificate originalRa;
+        X509Certificate authority;
+        X509Certificate otherRa;
+        X509Certificate otherAuthority;
+        URI otherEndpoint = URI.create("https://localhost:" + port + "/scep/other");
+        try (PkiHttpsServer server = startScep(fixture, runtime)) {
+            HttpResponse<byte[]> caps = wire.send(HttpRequest.newBuilder(URI.create(endpoint + "?operation=GetCACaps")).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals("POSTPKIOperation\nSHA-256\nAES\n", new String(caps.body(), StandardCharsets.US_ASCII));
+            HttpResponse<byte[]> advertised = wire.send(HttpRequest.newBuilder(URI.create(endpoint + "?operation=GetCACert")).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals("application/x-x509-ca-ra-cert", advertised.headers().firstValue("Content-Type").orElseThrow());
+            List<X509Certificate> chain = CertificateFactory.getInstance("X.509").generateCertificates(new ByteArrayInputStream(advertised.body()))
+                    .stream().map(X509Certificate.class::cast).toList();
+            originalRa = chain.stream().filter(cert -> cert.getBasicConstraints() < 0).findFirst().orElseThrow();
+            authority = chain.stream().filter(cert -> cert.getBasicConstraints() >= 0).findFirst().orElseThrow();
+            originalRa.verify(rootKey.getPublic()); authority.verify(rootKey.getPublic());
+            byte[] request = ScepTestClient.request(csr, "durable-one", nonce, 19, requesterKey, requester, originalRa);
+            assertEquals("3", ScepTestClient.response(scepPost(wire, endpoint, request).body(), originalRa, requesterKey, nonce).status());
+            assertEquals("3", ScepTestClient.response(scepPost(wire, endpoint, request).body(), originalRa, requesterKey, nonce).status());
+            id = server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().getFirst().id();
+            assertScepRequestDisclosure(server.realm(), id, csr);
+            assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            assertEquals(413, scepPost(wire, endpoint, new byte[8193]).statusCode());
+            assertEquals(400, scepPost(wire, endpoint, ScepTestClient.request(csr, "wrong-ra", nonce, 19,
+                    requesterKey, requester, requester)).statusCode());
+            assertEquals(503, scepPost(wire, endpoint, ScepTestClient.request(ScepTestClient.csr(requesterKey, "changed"),
+                    "durable-one", nonce, 19, requesterKey, requester, originalRa)).statusCode());
+            assertEquals(413, wire.send(HttpRequest.newBuilder(URI.create(endpoint + "?operation=PKIOperation&message="
+                    + Base64.getEncoder().encodeToString(new byte[8193]))).GET().build(), HttpResponse.BodyHandlers.ofByteArray()).statusCode());
+            assertEquals(400, scepPost(wire, endpoint, ScepTestClient.request(csr, "bad", nonce, 19,
+                    requesterKey, requester, originalRa, "badSignature")).statusCode());
+            assertEquals("2", ScepTestClient.response(scepPost(wire, endpoint, ScepTestClient.request(
+                    ScepTestClient.csr(requesterKey, "wrong"), "wrong-challenge", nonce, 19, requesterKey, requester, originalRa)).body(),
+                    originalRa, requesterKey, nonce).status());
+            assertEquals("2", ScepTestClient.response(scepPost(wire, endpoint, ScepTestClient.request(
+                    ScepTestClient.poll(authority), "unknown", nonce, 20, requesterKey, requester, originalRa)).body(),
+                    originalRa, requesterKey, nonce).status());
+            String encoded = java.net.URLEncoder.encode(Base64.getEncoder().encodeToString(request), StandardCharsets.UTF_8);
+            HttpResponse<byte[]> get = wire.send(HttpRequest.newBuilder(URI.create(endpoint + "?operation=PKIOperation&message=" + encoded)).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals("3", ScepTestClient.response(get.body(), originalRa, requesterKey, nonce).status());
+            HttpResponse<byte[]> otherAdvertisement = wire.send(HttpRequest.newBuilder(URI.create(otherEndpoint + "?operation=GetCACert")).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            List<X509Certificate> otherChain = CertificateFactory.getInstance("X.509").generateCertificates(
+                    new ByteArrayInputStream(otherAdvertisement.body())).stream().map(X509Certificate.class::cast).toList();
+            otherRa = otherChain.stream().filter(cert -> cert.getBasicConstraints() < 0).findFirst().orElseThrow();
+            otherAuthority = otherChain.stream().filter(cert -> cert.getBasicConstraints() >= 0).findFirst().orElseThrow();
+            otherRa.verify(otherAuthority.getPublicKey()); otherAuthority.verify(otherAuthority.getPublicKey());
+            org.junit.jupiter.api.Assertions.assertThrows(java.security.GeneralSecurityException.class, () -> otherRa.verify(authority.getPublicKey()));
+            assertEquals(400, scepPost(wire, otherEndpoint, request).statusCode());
+            assertEquals("3", ScepTestClient.response(scepPost(wire, otherEndpoint, ScepTestClient.request(csr, "durable-one", nonce, 19,
+                    requesterKey, requester, otherRa)).body(), otherRa, requesterKey, nonce).status());
+            assertEquals(2, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            assertEquals(2, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().stream()
+                    .map(value -> value.intent().authorityId()).distinct().count());
+            KeyPair otherRequester = rsa((byte) 67);
+            assertEquals("2", ScepTestClient.response(scepPost(wire, otherEndpoint, ScepTestClient.request(
+                    ScepTestClient.poll(otherAuthority), "durable-one", nonce, 20, otherRequester,
+                    requesterCertificate(otherRequester), otherRa)).body(), otherRa, otherRequester, nonce).status());
+            assertEquals(400, scepPost(wire, otherEndpoint, ScepTestClient.request(ScepTestClient.poll(authority),
+                    "durable-one", nonce, 20, requesterKey, requester, otherRa)).statusCode());
+        }
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet second = runtime.credentialSets().get(1);
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration rotated = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(
+                runtime.budgets(), runtime.keyrings(), runtime.credentialSets(), List.of(
+                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(second.protocol(), second.authorityId(), second.credentialId()),
+                runtime.activeCredentials().getLast()),
+                Optional.empty());
+        byte[] pollNonce = new byte[16]; pollNonce[0] = 9;
+        byte[] poll = ScepTestClient.request(ScepTestClient.poll(authority), "durable-one", pollNonce, 20, requesterKey, requester, originalRa);
+        byte[] completed;
+        try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            HttpResponse<byte[]> advertised = wire.send(HttpRequest.newBuilder(URI.create(endpoint + "?operation=GetCACert")).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertFalse(CertificateFactory.getInstance("X.509").generateCertificates(new ByteArrayInputStream(advertised.body())).contains(originalRa));
+            HttpResponse<byte[]> pendingPoll = scepPost(wire, endpoint, poll);
+            assertEquals(200, pendingPoll.statusCode(), new String(pendingPoll.body(), StandardCharsets.UTF_8));
+            assertEquals("3", ScepTestClient.response(pendingPoll.body(), originalRa, requesterKey, pollNonce).status());
+            approveEnrollment(server, id, tls.forwardedCertificate());
+            zeroecho.pki.server.enrollment.EnrollmentProfile policy = server.realm().enrollmentProfiles().find("scep-enrollment").orElseThrow();
+            server.realm().enrollmentProfiles().setState(policy.id(), zeroecho.pki.server.enrollment.EnrollmentProfileState.SUSPENDED);
+            assertEquals(503, scepPost(wire, endpoint, poll).statusCode());
+            server.realm().enrollmentProfiles().setState(policy.id(), zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            ScepTestClient.Response response;
+            do {
+                HttpResponse<byte[]> wireResponse = scepPost(wire, endpoint, poll);
+                assertEquals(200, wireResponse.statusCode(), new String(wireResponse.body(), StandardCharsets.UTF_8));
+                completed = wireResponse.body();
+                response = ScepTestClient.response(completed, originalRa, requesterKey, pollNonce);
+            } while ("3".equals(response.status()) && System.nanoTime() < deadline);
+            assertEquals("0", response.status());
+            response.certificate().verify(rootKey.getPublic());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(requesterKey.getPublic().getEncoded(), response.certificate().getPublicKey().getEncoded());
+            assertEquals("scep-a", server.realm().enrollmentCoordinator().orElseThrow().find(id).orElseThrow().intent().source().credentialId().orElseThrow());
+        }
+        try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            assertEquals("0", ScepTestClient.response(scepPost(wire, endpoint, poll).body(), originalRa, requesterKey, pollNonce).status());
+            assertEquals(2, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            zeroecho.pki.server.scep.ScepEndpoint endpointRecord = server.realm().enrollmentEndpoints()
+                    .find(zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry.Protocol.SCEP, "managed")
+                    .map(zeroecho.pki.server.scep.ScepEndpoint.class::cast).orElseThrow();
+            server.realm().enrollmentEndpoints().register(new zeroecho.pki.server.scep.ScepEndpoint("managed", endpointRecord.authorityId(),
+                    endpointRecord.profileId(), endpointRecord.enrollmentProfileId(), "f".repeat(64)));
+            assertEquals("0", ScepTestClient.response(scepPost(wire, endpoint, ScepTestClient.request(csr, "durable-one", nonce, 19,
+                    requesterKey, requester, originalRa)).body(), originalRa, requesterKey, nonce).status());
+        }
+        try (PkiHttpsServer server = PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), Clock.offset(CLOCK, Duration.ofHours(2)),
+                HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader(), Optional.empty(), Optional.of(rotated))) {
+            byte[] expired = ScepTestClient.request(ScepTestClient.poll(otherAuthority), "durable-one", pollNonce, 20,
+                    requesterKey, requester, otherRa);
+            assertEquals("2", ScepTestClient.response(scepPost(wire, otherEndpoint, expired).body(), otherRa, requesterKey, pollNonce).status());
+            assertEquals(zeroecho.pki.server.enrollment.EnrollmentTransaction.State.EXPIRED, server.realm().enrollmentCoordinator().orElseThrow()
+                    .list(0, 256).values().stream().filter(value -> value.intent().source().label().equals("other")).findFirst().orElseThrow().state());
+        }
+    }
+
+    private static HttpResponse<byte[]> scepPost(HttpClient client, URI endpoint, byte[] body) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(endpoint + "?operation=PKIOperation"))
+                .header("Content-Type", "application/x-pki-message").POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private static void assertScepRequestDisclosure(ServerRealmContext realm, String id, byte[] original) {
+        zeroecho.pki.server.enrollment.EnrollmentTransaction transaction = realm.enrollmentCoordinator().orElseThrow().find(id).orElseThrow();
+        zeroecho.pki.api.CertificationRequestService requests = realm.session().requests().orElseThrow();
+        org.junit.jupiter.api.Assertions.assertArrayEquals(original, requests.encodedX509Request(
+                requests.get(transaction.intent().requestId()).orElseThrow()).der());
+        for (zeroecho.pki.application.PkiOperation operation : List.of(
+                new zeroecho.pki.application.PkiOperation.InspectRequest(transaction.intent().requestId()),
+                new zeroecho.pki.application.PkiOperation.ListRequests(10, Optional.empty()))) {
+            zeroecho.pki.application.PkiOperationOutcome outcome = realm.session().operations().execute(operation, zeroecho.core.io.CancellationSignal.NONE);
+            assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Completed.class, outcome);
+            assertFalse(outcome.toString().contains("scep-secret"));
+            assertFalse(outcome.toString().contains(Base64.getEncoder().encodeToString(original)));
+        }
+        Permission.Scope scope = new Permission.Scope(realm.configuration().realmId(), Optional.empty(), Optional.empty(), Optional.empty());
+        realm.grant(ServerTestSupport.grant("scep-request-read", "approver", Permission.Effect.ALLOW, Permission.Action.REQUEST_READ_ANY,
+                Permission.ResourceType.ENROLLMENT_REQUEST, scope, Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "bootstrap");
+        Permission.Resource resource = new Permission.Resource(Permission.ResourceType.ENROLLMENT_REQUEST, scope, Optional.empty(), Optional.empty());
+        for (ServerControlOperation operation : List.of(new ServerControlOperation.InspectEnrollmentRequest(id), new ServerControlOperation.ListEnrollmentRequests(0, 10))) {
+            ServerOperationGateway.Outcome outcome = realm.gateway().execute(new ServerOperationGateway.Request(realm.configuration().realmId(), "approver",
+                    AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), Optional.empty(), new AdministrativeOperation.Control(operation),
+                    resource, Permission.Relationship.ANY, Permission.Context.empty(), Optional.empty(), "scep-disclosure-test"), zeroecho.core.io.CancellationSignal.NONE);
+            ServerOperationGateway.Outcome.ControlExecuted executed = assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, outcome);
+            assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Completed.class,
+                    assertInstanceOf(ServerControlOperationOutcome.Ordinary.class, executed.outcome()).outcome());
+            assertFalse(outcome.toString().contains("scep-secret"));
+            assertFalse(outcome.toString().contains(Base64.getEncoder().encodeToString(original)));
+        }
+    }
+
+    private PkiHttpsServer startScep(Fixture fixture, zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtime) throws Exception {
+        return PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random(),
+                TestTlsProvider.class.getClassLoader(), Optional.empty(), Optional.of(runtime));
+    }
+
+    private zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration provisionScep(Fixture fixture, KeyPair rootKey) throws Exception {
+        Path ringPath = temporaryDirectory.resolve("scep-custody.zek");
+        List<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet> sets = new java.util.ArrayList<>();
+        KeyPair otherRootKey = rsa((byte) 65);
+        try (KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
+                KeyringStore signing = KeyringStore.open(temporaryDirectory.resolve("server/signing-keyring.zek"), password)) {
+            signing.putPrivate("other.prv", "RSA", otherRootKey.getPrivate());
+            signing.putPublic("other.pub", "RSA", otherRootKey.getPublic());
+        }
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random());
+                KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
+                KeyringStore ring = KeyringStore.create(ringPath, password)) {
+            AcmeState.Directory directory = context.acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            zeroecho.pki.api.ca.IssuerGeneration issuer = context.session().repository().issuer(directory.issuerId()).orElseThrow();
+            X509Certificate authority;
+            try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository().openCredential(issuer.credentialId());
+                    java.io.InputStream input = content.openStream()) {
+                authority = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+            }
+            Path rootPath = temporaryDirectory.resolve("scep-root.der"); java.nio.file.Files.write(rootPath, authority.getEncoded());
+            for (int index = 0; index < 2; index++) {
+                KeyPair key = rsa((byte) (63 + index));
+                String id = index == 0 ? "scep-a" : "scep-b";
+                X509Certificate ra = zeroecho.pkix.Pkix.certificateBuilder().subject(new javax.security.auth.x500.X500Principal("CN=" + id))
+                        .issuer(authority.getSubjectX500Principal()).publicKey(key.getPublic()).serialNumber(BigInteger.valueOf(9100 + index))
+                        .validity(authority.getNotBefore().toInstant(), authority.getNotBefore().toInstant().plus(Duration.ofDays(1)))
+                        .basicConstraints(zeroecho.pkix.BasicConstraints.endEntity(), true)
+                        .keyUsage(Set.of(zeroecho.pkix.KeyUsage.DIGITAL_SIGNATURE, zeroecho.pkix.KeyUsage.KEY_ENCIPHERMENT), true)
+                        .build(zeroecho.pkix.Pkix.signer(rootKey.getPrivate(), zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
+                Path certificate = temporaryDirectory.resolve(id + ".der"); java.nio.file.Files.write(certificate, ra.getEncoded());
+                ring.putPrivate(id, "RSA", key.getPrivate());
+                sets.add(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet(id,
+                        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.SCEP, directory.authorityId().value(),
+                        directory.issuerId().value(), directory.issuancePathId().value(), Optional.of(
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("scep", id),
+                                List.of(certificate, rootPath))), List.of(), List.of(), Optional.empty()));
+            }
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("scep-enrollment", "SCEP approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(directory.authorityId().value()),
+                    Optional.empty(), List.of(), true));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.scep.ScepEndpoint("managed", directory.authorityId().value(),
+                    "server-tls", "scep-enrollment", HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest("scep-secret".getBytes(StandardCharsets.UTF_8)))));
+            context.createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+            zeroecho.pki.api.SemanticSigningService signing = context.session().semanticSigning().orElseThrow();
+            zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepared = signing.prepareRootCreation(
+                    new zeroecho.pki.api.audit.AccessContext(new zeroecho.pki.api.audit.Principal("SYSTEM", "test"),
+                            new zeroecho.pki.api.audit.Purpose("ca.create"), Optional.empty(), Optional.empty()),
+                    new CaCreateCommand(template("root-ca").definition().formatId(), new SubjectRef("CN=Other SCEP authority"),
+                            "root-ca", new KeyRef("acme-test:other.prv"), new SimpleAttributeSet()), zeroecho.core.io.CancellationSignal.NONE);
+            PkiId otherCredential = awaitSigning(signing, signing.accept(prepared).receipt().operationId()).completedCredentialId().orElseThrow();
+            X509Certificate otherRoot;
+            try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository().openCredential(otherCredential);
+                    java.io.InputStream input = content.openStream()) {
+                otherRoot = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+            }
+            awaitCertificateValidity(otherRoot);
+            zeroecho.pki.api.ca.CaRecord otherAuthority = context.session().repository().authority(
+                    context.session().repository().credential(otherCredential).orElseThrow().issuerRef().caId()).orElseThrow();
+            KeyPair otherRaKey = rsa((byte) 66);
+            X509Certificate otherRa = zeroecho.pkix.Pkix.certificateBuilder().subject(new javax.security.auth.x500.X500Principal("CN=Other SCEP RA"))
+                    .issuer(otherRoot.getSubjectX500Principal()).publicKey(otherRaKey.getPublic()).serialNumber(BigInteger.valueOf(9200))
+                    .validity(otherRoot.getNotBefore().toInstant(), otherRoot.getNotBefore().toInstant().plus(Duration.ofDays(1)))
+                    .basicConstraints(zeroecho.pkix.BasicConstraints.endEntity(), true)
+                    .keyUsage(Set.of(zeroecho.pkix.KeyUsage.DIGITAL_SIGNATURE, zeroecho.pkix.KeyUsage.KEY_ENCIPHERMENT), true)
+                    .build(zeroecho.pkix.Pkix.signer(otherRootKey.getPrivate(), zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
+            Path otherCaFile = temporaryDirectory.resolve("scep-other-ca.der"); java.nio.file.Files.write(otherCaFile, otherRoot.getEncoded());
+            Path otherRaFile = temporaryDirectory.resolve("scep-other-ra.der"); java.nio.file.Files.write(otherRaFile, otherRa.getEncoded());
+            ring.putPrivate("other-ra", "RSA", otherRaKey.getPrivate());
+            sets.add(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet("scep-other",
+                    zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.SCEP, otherAuthority.caId().value(),
+                    otherAuthority.currentIssuanceIssuerId().value(), otherAuthority.issuanceChainPathId().value(), Optional.of(
+                    new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                            new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("scep", "other-ra"),
+                            List.of(otherRaFile, otherCaFile))), List.of(), List.of(), Optional.empty()));
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("scep-other-enrollment", "Other SCEP approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(otherAuthority.caId().value()),
+                    Optional.empty(), List.of(), true));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.scep.ScepEndpoint("other", otherAuthority.caId().value(),
+                    "server-tls", "scep-other-enrollment", HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest("scep-secret".getBytes(StandardCharsets.UTF_8)))));
+        }
+        return new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(EnrollmentTestSupport.runtimeConfiguration().budgets(),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Keyring("scep", ringPath)), sets,
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(sets.getFirst().protocol(),
+                        sets.getFirst().authorityId(), sets.getFirst().credentialId()),
+                        new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(sets.getLast().protocol(),
+                        sets.getLast().authorityId(), sets.getLast().credentialId())), Optional.empty());
+    }
+
+    @Test
+    void estGeneratedKeyApprovalRestartRolloverDeliveryAndExpiryUseRealHttps() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        KeyPair rootKey = rsa((byte) 121);
+        KeyPair recipientKey = HttpServerTestSupport.keyPair((byte) 3);
+        int port = reservePort();
+        Fixture base = fixture(tls, reservePort(), reservePort(), reservePort(), rootKey);
+        seed(base);
+        PkiServerConfiguration source = base.configuration();
+        PkiServerConfiguration.EstListener listener = new PkiServerConfiguration.EstListener("est-keygen",
+                InetAddress.getLoopbackAddress(), port, new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 8192);
+        Fixture fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(), source.listener(),
+                source.authentication(), source.execution(), source.runtime(), source.publicListener(), source.acmeListener(), Optional.of(listener),
+                source.scepListener(), source.cmpListener(), source.auditProjection()), base.dependencies(), base.http01());
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtime = provisionEstGenerator(fixture, rootKey);
+        X509Certificate generatorCertificate = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(
+                new ByteArrayInputStream(java.nio.file.Files.readAllBytes(temporaryDirectory.resolve("est-generator-a.der"))));
+        org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder request = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=localhost"), recipientKey.getPublic());
+        request.addAttribute(new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.2.840.113549.1.9.15"),
+                new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.DERSequence(
+                        new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.2.840.113549.1.1.1"))));
+        request.addAttribute(new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.2.840.113549.1.9.16.2.54"),
+                new org.bouncycastle.asn1.DEROctetString(MessageDigest.getInstance("SHA-256").digest(recipientKey.getPublic().getEncoded())));
+        request.addAttribute(org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest,
+                new org.bouncycastle.asn1.x509.Extensions(new org.bouncycastle.asn1.x509.Extension(
+                        org.bouncycastle.asn1.x509.Extension.subjectAlternativeName, false,
+                        new org.bouncycastle.asn1.x509.GeneralNames(new org.bouncycastle.asn1.x509.GeneralName(
+                                org.bouncycastle.asn1.x509.GeneralName.dNSName, "localhost")).getEncoded())));
+        byte[] template = request.build(new JcaContentSignerBuilder("SHA256withRSA").build(recipientKey.getPrivate())).getEncoded();
+        template[template.length - 1] ^= 1; // Original template signature is deliberately irrelevant.
+        byte[] body = Base64.getMimeEncoder().encode(template);
+        URI endpoint = URI.create("https://localhost:" + port + "/.well-known/est/managed/serverkeygen");
+        HttpClient wire = HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+        String enrollmentId;
+        byte[] ciphertext;
+        try (PkiHttpsServer server = startScep(fixture, runtime)) {
+            AcmeState.Directory directory = server.realm().acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            server.realm().enrollmentEndpoints().register(new zeroecho.pki.server.est.EstEndpoint("managed", directory.authorityId().value(),
+                    "server-tls", "est-keygen", new zeroecho.pki.server.est.KeygenPolicy(true, List.of("RSA"), 2048, false)));
+            HttpResponse<byte[]> pending = estPost(wire, endpoint, body);
+            assertEquals(202, pending.statusCode(), new String(pending.body(), StandardCharsets.UTF_8));
+            assertTrue(Long.parseLong(pending.headers().firstValue("Retry-After").orElseThrow()) > 0);
+            zeroecho.pki.server.enrollment.EnrollmentTransaction enrollment = server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().getFirst();
+            enrollmentId = enrollment.id();
+            assertEquals(zeroecho.pki.server.enrollment.EnrollmentTransaction.State.PENDING, enrollment.state());
+            assertTrue(enrollment.receipt().isEmpty());
+            ciphertext = java.nio.file.Files.readAllBytes(runtime.keygenArtifacts().orElseThrow().directory()
+                    .resolve(enrollment.intent().artifact().orElseThrow().artifactId() + ".cms"));
+            assertEquals(202, estPost(wire, endpoint, body).statusCode());
+        }
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet next = runtime.credentialSets().getLast();
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration rotated = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(
+                runtime.budgets(), runtime.keyrings(), runtime.credentialSets(), List.of(
+                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(next.protocol(), next.authorityId(), next.credentialId())), runtime.keygenArtifacts());
+        byte[] complete;
+        try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            approveEnrollment(server, enrollmentId, tls.forwardedCertificate());
+            HttpResponse<byte[]> delivered = awaitEst(wire, endpoint, body);
+            complete = delivered.body();
+            assertEquals("no-store", delivered.headers().firstValue("Cache-Control").orElseThrow());
+            verifyGeneratedKeyDelivery(delivered, ciphertext, recipientKey, generatorCertificate, rootKey);
+            assertArrayEquals(complete, estPost(wire, endpoint, body).body());
+            assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().size());
+        }
+        try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            assertArrayEquals(complete, estPost(wire, endpoint, body).body());
+        }
+        try (PkiHttpsServer server = PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), Clock.offset(CLOCK, Duration.ofMinutes(11)),
+                HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader(), Optional.empty(), Optional.of(rotated))) {
+            assertEquals(410, estPost(wire, endpoint, body).statusCode());
+            assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().size());
+            try (java.util.stream.Stream<Path> artifacts = java.nio.file.Files.list(runtime.keygenArtifacts().orElseThrow().directory())) {
+                assertFalse(artifacts.anyMatch(path -> path.getFileName().toString().endsWith(".cms")));
+            }
+        }
+    }
+
+    private zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration provisionEstGenerator(Fixture fixture, KeyPair rootKey) throws Exception {
+        Path ringPath = temporaryDirectory.resolve("est-generator.zek");
+        java.nio.file.Files.createDirectory(temporaryDirectory.resolve("est-artifacts"));
+        java.nio.file.Files.setPosixFilePermissions(temporaryDirectory.resolve("est-artifacts"), java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        List<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet> sets = new java.util.ArrayList<>();
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random());
+                KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone()); KeyringStore ring = KeyringStore.create(ringPath, password)) {
+            AcmeState.Directory directory = context.acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            zeroecho.pki.api.ca.IssuerGeneration issuer = context.session().repository().issuer(directory.issuerId()).orElseThrow();
+            X509Certificate authority;
+            try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository().openCredential(issuer.credentialId());
+                    java.io.InputStream input = content.openStream()) { authority = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input); }
+            Path root = temporaryDirectory.resolve("est-root.der"); java.nio.file.Files.write(root, authority.getEncoded());
+            for (int index = 0; index < 2; index++) {
+                KeyPair key = rsa((byte) (122 + index));
+                String id = index == 0 ? "est-generator-a" : "est-generator-b";
+                X509Certificate certificate = zeroecho.pkix.Pkix.certificateBuilder().subject(new javax.security.auth.x500.X500Principal("CN=" + id))
+                        .issuer(authority.getSubjectX500Principal()).serialNumber(BigInteger.valueOf(9300 + index)).publicKey(key.getPublic())
+                        .validity(authority.getNotBefore().toInstant(), authority.getNotBefore().toInstant().plus(Duration.ofDays(1)))
+                        .basicConstraints(zeroecho.pkix.BasicConstraints.endEntity(), true).keyUsage(Set.of(zeroecho.pkix.KeyUsage.DIGITAL_SIGNATURE), true)
+                        .build(zeroecho.pkix.Pkix.signer(rootKey.getPrivate(), zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
+                Path file = temporaryDirectory.resolve(id + ".der"); java.nio.file.Files.write(file, certificate.getEncoded()); ring.putPrivate(id, "RSA", key.getPrivate());
+                sets.add(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet(id,
+                        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.EST, directory.authorityId().value(), directory.issuerId().value(),
+                        directory.issuancePathId().value(), Optional.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("est", id), List.of(file, root))), List.of(), List.of(), Optional.empty()));
+            }
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("est-keygen", "EST generated key approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(directory.authorityId().value()), Optional.empty(), List.of(), true));
+            context.createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+        }
+        return new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(EnrollmentTestSupport.runtimeConfiguration().budgets(),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Keyring("est", ringPath)), sets,
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(sets.getFirst().protocol(),
+                        sets.getFirst().authorityId(), sets.getFirst().credentialId())), Optional.of(
+                new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeygenArtifacts(temporaryDirectory.resolve("est-artifacts"), 65_536, 131_072, 4, 1, Duration.ofMinutes(10))));
+    }
+
+    private static void verifyGeneratedKeyDelivery(HttpResponse<byte[]> response, byte[] ciphertext, KeyPair recipient,
+            X509Certificate generator, KeyPair authority) throws Exception {
+        String media = response.headers().firstValue("Content-Type").orElseThrow();
+        assertTrue(media.startsWith("multipart/mixed; boundary=\""));
+        String boundary = media.substring(media.indexOf('"') + 1, media.lastIndexOf('"'));
+        String[] parts = new String(response.body(), StandardCharsets.US_ASCII).split(java.util.regex.Pattern.quote("--" + boundary));
+        assertEquals(4, parts.length);
+        assertTrue(parts[1].contains("smime-type=server-generated-key"));
+        assertTrue(parts[2].contains("smime-type=certs-only"));
+        byte[] encrypted = Base64.getMimeDecoder().decode(parts[1].substring(parts[1].indexOf("\r\n\r\n") + 4));
+        assertArrayEquals(ciphertext, encrypted);
+        org.bouncycastle.cms.CMSEnvelopedData envelope = new org.bouncycastle.cms.CMSEnvelopedData(encrypted);
+        assertEquals(org.bouncycastle.asn1.cms.CMSObjectIdentifiers.signedData,
+                org.bouncycastle.asn1.cms.EnvelopedData.getInstance(envelope.toASN1Structure().getContent()).getEncryptedContentInfo().getContentType());
+        assertEquals(1, envelope.getRecipientInfos().size());
+        byte[] signedDer = envelope.getRecipientInfos().getRecipients().iterator().next().getContent(
+                new org.bouncycastle.cms.jcajce.JceKeyTransEnvelopedRecipient(recipient.getPrivate()).setProvider("BC"));
+        org.bouncycastle.cms.CMSSignedData signed = new org.bouncycastle.cms.CMSSignedData(new org.bouncycastle.asn1.cms.ContentInfo(
+                org.bouncycastle.asn1.cms.CMSObjectIdentifiers.signedData, org.bouncycastle.asn1.ASN1Primitive.fromByteArray(signedDer)));
+        assertEquals("2.16.840.1.101.2.1.2.78.5", signed.getSignedContentTypeOID());
+        assertEquals(1, signed.getSignerInfos().size());
+        assertTrue(signed.getSignerInfos().getSigners().iterator().next().verify(new org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder().setProvider("BC").build(generator)));
+        org.bouncycastle.asn1.ASN1Sequence keys = org.bouncycastle.asn1.ASN1Sequence.getInstance(signed.getSignedContent().getContent());
+        assertEquals(1, keys.size());
+        java.security.PrivateKey key = java.security.KeyFactory.getInstance("RSA").generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(keys.getObjectAt(0).toASN1Primitive().getEncoded("DER")));
+        byte[] chain = Base64.getMimeDecoder().decode(parts[2].substring(parts[2].indexOf("\r\n\r\n") + 4));
+        X509Certificate leaf = CertificateFactory.getInstance("X.509").generateCertificates(new ByteArrayInputStream(chain)).stream()
+                .map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() < 0).findFirst().orElseThrow();
+        leaf.verify(authority.getPublic());
+        assertEquals(List.of(List.of(2, "localhost")), List.copyOf(leaf.getSubjectAlternativeNames()));
+        java.security.Signature proof = java.security.Signature.getInstance("SHA256withRSA");
+        proof.initSign(key); proof.update(new byte[] {1, 2, 3}); byte[] signature = proof.sign();
+        proof.initVerify(leaf); proof.update(new byte[] {1, 2, 3}); assertTrue(proof.verify(signature));
+        assertFalse(java.util.Arrays.equals(recipient.getPublic().getEncoded(), leaf.getPublicKey().getEncoded()));
+    }
+
+    @Test
+    void estApprovalRetriesAndRenewalSurviveHttpsRestart() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        KeyPair rootKey = rsa((byte) 51);
+        KeyPair leafKey = rsa((byte) 52);
+        int estPort = reservePort();
+        Fixture base = fixture(tls, reservePort(), reservePort(), reservePort(), rootKey);
+        PkiServerConfiguration source = base.configuration();
+        PkiServerConfiguration.EstListener listener = new PkiServerConfiguration.EstListener("est-test",
+                InetAddress.getLoopbackAddress(), estPort, new ProviderConfig("test-tls", Map.of()),
+                source.execution(), 16_384, 4096);
+        Fixture fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(),
+                source.listener(), source.authentication(), source.execution(), source.runtime(), source.publicListener(),
+                source.acmeListener(), Optional.of(listener), source.scepListener(), source.cmpListener(), source.auditProjection()),
+                base.dependencies(), base.http01());
+        seed(fixture);
+        byte[] body = Base64.getMimeEncoder().encode(csr(leafKey));
+        URI enroll = URI.create("https://localhost:" + estPort + "/.well-known/est/managed/simpleenroll");
+        HttpClient wire = HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+        String pendingId;
+        X509Certificate leaf;
+        X509Certificate authorityCertificate;
+        try (PkiHttpsServer server = start(fixture)) {
+            AcmeState.Directory directory = server.realm().acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            byte[] profile = new String(template("server-tls").canonicalJson(), StandardCharsets.UTF_8)
+                    .replace("server-tls", "client-tls").replace("1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2")
+                    .getBytes(StandardCharsets.UTF_8);
+            server.realm().session().profiles().importProfile(profile);
+            server.realm().session().profiles().activateProfile("client-tls", 1L);
+            server.realm().enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile(
+                    "est-enrollment", "EST approval", zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE,
+                    "client-tls", Set.of(directory.authorityId().value()), Optional.empty(), List.of(), true));
+            server.realm().enrollmentEndpoints().register(new zeroecho.pki.server.est.EstEndpoint(
+                    "managed", directory.authorityId().value(), "client-tls", "est-enrollment",
+                    zeroecho.pki.server.est.KeygenPolicy.DISABLED));
+            server.realm().createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+            HttpClient anonymous = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+            org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> estPost(anonymous, enroll, body));
+            assertEquals(413, estPost(wire, enroll, new byte[4097]).statusCode());
+            HttpResponse<byte[]> pending = estPost(wire, enroll, body);
+            assertEquals(202, pending.statusCode(), new String(pending.body(), StandardCharsets.UTF_8));
+            assertTrue(Long.parseLong(pending.headers().firstValue("Retry-After").orElseThrow()) > 0);
+            assertEquals(0, pending.body().length);
+            pendingId = server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().getFirst().id();
+            assertEquals(202, estPost(wire, enroll, body).statusCode());
+            assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+        }
+        try (PkiHttpsServer server = start(fixture)) {
+            approveEnrollment(server, pendingId, tls.forwardedCertificate());
+            HttpResponse<byte[]> completed = awaitEst(wire, enroll, body);
+            java.util.Collection<? extends java.security.cert.Certificate> chain = CertificateFactory.getInstance("X.509")
+                    .generateCertificates(new java.io.ByteArrayInputStream(Base64.getMimeDecoder().decode(completed.body())));
+            leaf = chain.stream().map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() < 0).findFirst().orElseThrow();
+            authorityCertificate = chain.stream().map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() >= 0).findFirst().orElseThrow();
+            leaf.verify(rootKey.getPublic());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(leafKey.getPublic().getEncoded(), leaf.getPublicKey().getEncoded());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(completed.body(), estPost(wire, enroll, body).body());
+        }
+        // The next TLS server trusts the issuing CA for certificate-authenticated reenrollment.
+        HttpServerTestSupport.tls(authorityCertificate);
+        HttpClient renewing = HttpClient.newBuilder().sslContext(HttpServerTestSupport.context(leafKey, leaf,
+                tls.rootCertificate(), true, authorityCertificate)).build();
+        URI renew = URI.create("https://localhost:" + estPort + "/.well-known/est/managed/simplereenroll");
+        try (PkiHttpsServer server = start(fixture)) {
+            assertEquals(202, estPost(renewing, renew, body).statusCode());
+            zeroecho.pki.server.enrollment.EnrollmentTransaction pending = server.realm().enrollmentCoordinator().orElseThrow()
+                    .list(0, 256).values().stream().filter(value -> value.intent().operation()
+                            == zeroecho.pki.server.enrollment.EnrollmentTransaction.Operation.RENEW).findFirst().orElseThrow();
+            approveEnrollment(server, pending.id(), tls.forwardedCertificate());
+            HttpResponse<byte[]> completed = awaitEst(renewing, renew, body);
+            X509Certificate renewed = CertificateFactory.getInstance("X.509")
+                    .generateCertificates(new java.io.ByteArrayInputStream(Base64.getMimeDecoder().decode(completed.body())))
+                    .stream().map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() < 0).findFirst().orElseThrow();
+            renewed.verify(rootKey.getPublic());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(leaf.getPublicKey().getEncoded(), renewed.getPublicKey().getEncoded());
+            assertFalse(leaf.getSerialNumber().equals(renewed.getSerialNumber()));
+            assertEquals(2, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            byte[] rejectedBody = Base64.getEncoder().encode(csr(rsa((byte) 53)));
+            assertEquals(202, estPost(wire, enroll, rejectedBody).statusCode());
+            zeroecho.pki.server.enrollment.EnrollmentCoordinator coordinator = server.realm().enrollmentCoordinator().orElseThrow();
+            zeroecho.pki.server.enrollment.EnrollmentTransaction rejected = coordinator.list(0, 256).values().stream()
+                    .filter(value -> value.state() == zeroecho.pki.server.enrollment.EnrollmentTransaction.State.PENDING).findFirst().orElseThrow();
+            coordinator.decide(rejected.id(), rejected.commitment(), new AdministrativeDecisionActor("approver", Optional.of(
+                    CertificateIdentityEvidence.fromCertificate(server.realm().configuration().realmId(), tls.forwardedCertificate()))),
+                    ApprovalService.Choice.REJECT, "Rejected requested identity");
+            assertEquals(403, estPost(wire, enroll, rejectedBody).statusCode());
+        }
+    }
+
+    private static void approveEnrollment(PkiHttpsServer server, String id, X509Certificate administrator) throws Exception {
+        zeroecho.pki.server.enrollment.EnrollmentCoordinator coordinator = server.realm().enrollmentCoordinator().orElseThrow();
+        zeroecho.pki.server.enrollment.EnrollmentTransaction pending = coordinator.find(id).orElseThrow();
+        coordinator.decide(id, pending.commitment(), new AdministrativeDecisionActor("approver", Optional.of(
+                CertificateIdentityEvidence.fromCertificate(server.realm().configuration().realmId(), administrator))),
+                ApprovalService.Choice.APPROVE, "Verified exact retained CSR");
+    }
+
+    private static HttpResponse<byte[]> estPost(HttpClient client, URI uri, byte[] body) throws Exception {
+        return client.send(HttpRequest.newBuilder(uri).header("Content-Type", "application/pkcs10")
+                .header("Content-Transfer-Encoding", "base64").POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private static HttpResponse<byte[]> awaitEst(HttpClient client, URI uri, byte[] body) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        HttpResponse<byte[]> result;
+        do {
+            result = estPost(client, uri, body);
+            if (result.statusCode() != 202) break;
+            assertTrue(System.nanoTime() < deadline, "EST issuance did not complete");
+            TimeUnit.MILLISECONDS.sleep(5);
+        } while (true);
+        assertEquals(200, result.statusCode(), new String(result.body(), StandardCharsets.UTF_8));
+        return result;
+    }
+
+    @Test
+    void approvalSurvivesRestartAndAccountRolloverBeforeAuthenticatedPollDispatch() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        int port = reservePort();
+        int challengePort = reservePort();
+        KeyPair rootKey = rsa((byte) 41);
+        KeyPair leafKey = rsa((byte) 42);
+        KeyPair accountKey = ec((byte) 43);
+        KeyPair replacement = ec((byte) 44);
+        KeyPair finalKey = ec((byte) 46);
+        Fixture fixture = fixture(tls, port, reservePort(), challengePort, rootKey);
+        seed(fixture);
+        URI directoryUri = URI.create("https://localhost:" + port + "/acme/" + DIRECTORY_ALIAS + "/directory");
+        HttpClient wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+        URI orderUri;
+        String accountKid;
+        String transactionId;
+        String originalRequesterKey;
+        try (PkiHttpsServer server = start(fixture);
+                AcmeTestClient client = new AcmeTestClient(wire, directoryUri, accountKey)) {
+            requireHumanApproval(server);
+            AcmeTestClient.Response directory = client.directory();
+            client.nonce(URI.create(AcmeTestClient.text(directory, "newNonce")));
+            assertEquals(201, client.createAccount(URI.create(AcmeTestClient.text(directory, "newAccount")),
+                    "{\"termsOfServiceAgreed\":true}").status());
+            accountKid = client.accountKid();
+            AcmeTestClient.Response ready = readyOrder(client, directory, challengePort);
+            orderUri = URI.create(ready.header("Location").orElseThrow());
+            URI finalizeUri = URI.create(AcmeTestClient.text(ready, "finalize"));
+            String csr = Base64.getUrlEncoder().withoutPadding().encodeToString(csr(leafKey));
+            AcmeTestClient.Response pending = client.kid(finalizeUri, "{\"csr\":\"" + csr + "\"}");
+            assertEquals(200, pending.status(), pending.bodyText());
+            assertEquals("processing", AcmeTestClient.text(pending, "status"));
+            String orderId = orderUri.getPath().substring(orderUri.getPath().lastIndexOf('/') + 1);
+            AcmeState.Order stored = server.realm().acmeControl().get(AcmeState.Order.class, orderId).orElseThrow();
+            assertTrue(stored.signingOperationId().isEmpty());
+            zeroecho.pki.server.enrollment.EnrollmentTransaction transaction =
+                    server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().getFirst();
+            assertEquals(zeroecho.pki.server.enrollment.EnrollmentTransaction.State.PENDING, transaction.state());
+            transactionId = transaction.id();
+            originalRequesterKey = transaction.intent().requester().canonicalKeySha256().orElseThrow();
+            assertEquals("processing", AcmeTestClient.text(client.postAsGet(orderUri), "status"));
+            String changedCsr = Base64.getUrlEncoder().withoutPadding().encodeToString(csr(rsa((byte) 45)));
+            assertEquals(403, client.kid(finalizeUri, "{\"csr\":\"" + changedCsr + "\"}").status());
+            assertEquals(200, client.rollover(URI.create(AcmeTestClient.text(directory, "keyChange")), replacement).status());
+            assertEquals(200, client.rollover(URI.create(AcmeTestClient.text(directory, "keyChange")), finalKey).status());
+        }
+        try (PkiHttpsServer server = start(fixture);
+                AcmeTestClient client = new AcmeTestClient(wire, directoryUri, finalKey)) {
+            AcmeTestClient.Response directory = client.directory();
+            client.nonce(URI.create(AcmeTestClient.text(directory, "newNonce")));
+            assertEquals(200, client.createAccount(URI.create(AcmeTestClient.text(directory, "newAccount")),
+                    "{\"onlyReturnExisting\":true}").status());
+            assertEquals(accountKid, client.accountKid());
+            zeroecho.pki.server.enrollment.EnrollmentCoordinator coordinator = server.realm().enrollmentCoordinator().orElseThrow();
+            zeroecho.pki.server.enrollment.EnrollmentTransaction pending = coordinator.find(transactionId).orElseThrow();
+            assertEquals(originalRequesterKey, pending.intent().requester().canonicalKeySha256().orElseThrow());
+            for (KeyPair owned : List.of(accountKey, replacement, finalKey)) {
+                zeroecho.pkix.PublicKeyIdentity identity = zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(owned.getPublic().getEncoded());
+                CertificateIdentityEvidence evidence = new CertificateIdentityEvidence(server.realm().configuration().realmId(),
+                        "a".repeat(64), identity.canonicalSha256(), identity.equivalentSubjectPublicKeyInfoSha256(), "b".repeat(64));
+                org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> coordinator.decide(pending.id(),
+                        pending.commitment(), new AdministrativeDecisionActor("approver", Optional.of(evidence)),
+                        ApprovalService.Choice.APPROVE, "Attempted same-account approval"));
+            }
+            assertEquals(3, server.realm().acmeControl().get(AcmeState.Account.class,
+                    pending.intent().requester().actorId()).orElseThrow().keyHistory().size());
+            coordinator.decide(pending.id(), pending.commitment(), new AdministrativeDecisionActor("approver",
+                    Optional.of(CertificateIdentityEvidence.fromCertificate(server.realm().configuration().realmId(),
+                            tls.clientCertificate()))), ApprovalService.Choice.APPROVE, "Reviewed exact identity");
+            AcmeTestClient.Response completed = awaitValidOrder(client, orderUri, client.postAsGet(orderUri));
+            AcmeTestClient.Response certificate = client.postAsGet(URI.create(AcmeTestClient.text(completed, "certificate")));
+            assertEquals(200, certificate.status());
+            X509Certificate leaf = (X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(new java.io.ByteArrayInputStream(certificate.body()));
+            leaf.verify(rootKey.getPublic());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(leafKey.getPublic().getEncoded(), leaf.getPublicKey().getEncoded());
+            assertEquals(zeroecho.pki.server.enrollment.EnrollmentTransaction.State.ISSUED,
+                    coordinator.find(transactionId).orElseThrow().state());
+            assertEquals(1, coordinator.list(0, 256).values().size());
+        }
+    }
+
+    private static void requireHumanApproval(PkiHttpsServer server) {
+        zeroecho.pki.server.enrollment.EnrollmentProfile current = server.realm().enrollmentProfiles().find("acme-enrollment").orElseThrow();
+        server.realm().enrollmentProfiles().update(new zeroecho.pki.server.enrollment.EnrollmentProfile(
+                current.id(), current.displayName(), current.state(), current.certificateProfileId(), current.allowedAuthorityIds(),
+                current.subjectDnPattern(), current.requiredSanDomains(), true));
+        server.realm().createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+    }
+
+    private static AcmeTestClient.Response readyOrder(AcmeTestClient client, AcmeTestClient.Response directory,
+            int challengePort) throws Exception {
+        AcmeTestClient.Response order = client.kid(URI.create(AcmeTestClient.text(directory, "newOrder")),
+                "{\"identifiers\":[{\"type\":\"dns\",\"value\":\"localhost\"}]}");
+        assertEquals(201, order.status());
+        URI authorizationUri = URI.create(AcmeTestClient.textList(order, "authorizations").getFirst());
+        URI challengeUri = AcmeTestClient.challenge(client.postAsGet(authorizationUri)).url();
+        String token = AcmeTestClient.text(client.postAsGet(challengeUri), "token");
+        try (Http01Responder responder = new Http01Responder(challengePort, token, client.keyAuthorization(token))) {
+            responder.start();
+            assertEquals("valid", AcmeTestClient.text(client.kid(challengeUri, "{}"), "status"));
+            responder.await();
+        }
+        return order;
+    }
 
     @Test
     void completesRealHttpsAccountIssuanceRolloverRestartAndRevocation() throws Exception {
@@ -414,7 +1381,7 @@ class AcmeEndToEndTest {
             AcmeState.Directory current, AcmeState.DirectoryStatus status) {
         AcmeState.Directory replacement = new AcmeState.Directory(current.directoryId(), current.alias(),
                 current.revision(), current.realmId(), current.authorityId(), current.profile(),
-                current.issuerId(), current.issuancePathId(), current.issuancePathCommitment(),
+                current.enrollmentProfileId(), current.issuerId(), current.issuancePathId(), current.issuancePathCommitment(),
                 current.identifierTypes(), current.dnsNamespaces(), current.maximumValidity(),
                 current.publicKeyAlgorithms(), current.x509BindingPolicies(), current.challengeTypes(),
                 current.challengeProviderIds(), current.eabProviderId(), current.eabRequired(),
@@ -462,7 +1429,10 @@ class AcmeEndToEndTest {
         Path launcher = Path.of(System.getProperty("user.dir"), "build", "install", "zeroecho-pki-server", "bin",
                 scriptName).toAbsolutePath();
         Path output = root.resolve("server-output.log");
-        ProcessBuilder builder = new ProcessBuilder(launcher.toString(), "--config", configuration.toString());
+        Path enrollment = root.resolve("enrollment.json");
+        java.nio.file.Files.writeString(enrollment, EnrollmentTestSupport.runtimeJson(), StandardCharsets.UTF_8);
+        ProcessBuilder builder = new ProcessBuilder(launcher.toString(), "--config", configuration.toString(),
+                "--enrollment-config", enrollment.toString());
         builder.environment().put("ZEROECHO_TEST_TLS_PASSWORD", new String(HttpServerTestSupport.PASSWORD));
         builder.environment().put("ZEROECHO_TEST_KEYRING_PASSWORD", new String(KEYRING_PASSWORD));
         builder.redirectErrorStream(true).redirectOutput(output.toFile());
@@ -579,13 +1549,16 @@ class AcmeEndToEndTest {
         PkiSessionConfiguration session = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 base.realm().pkiSessionConfiguration().store(), base.realm().pkiSessionConfiguration().audit(),
                 Optional.of(signing), List.of(), List.of());
+        Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvals = new java.util.HashMap<>(base.realm().approvalPolicies());
+        approvals.put(OperationSecurityDescriptors.ApprovalCategory.ISSUANCE_SINGLE,
+                new ApprovalService.Policy("enrollment", 1, Set.of("approver"), Set.of(), true, Duration.ofHours(1), true));
         ServerRealmConfiguration realm = new ServerRealmConfiguration(base.realm().realmId(),
                 base.realm().displayName(), base.realm().confirmationProofPolicy(), session,
                 base.realm().authorityExposure(),
                 base.realm().authorizationCommitment(), base.realm().approvalCommitment(),
-                base.realm().extendedApprovalCommitment(),
+                ServerRealmConfiguration.extendedApprovalCommitment(approvals),
                 base.realm().disclosureCommitment(), base.realm().disclosureDefaults(),
-                base.realm().controlLogPath(), base.realm().controlStoreId(), base.realm().approvalPolicies());
+                base.realm().controlLogPath(), base.realm().controlStoreId(), approvals);
         PkiServerConfiguration.Execution lane = new PkiServerConfiguration.Execution(2, 4, 2, 4, 4,
                 Duration.ofSeconds(10), Duration.ofSeconds(20), Duration.ofSeconds(2), Duration.ofSeconds(2));
         ProviderConfig http01 = new ProviderConfig(Http01ChallengeProvider.ID, Map.of("allowPrivate", "true",
@@ -690,20 +1663,23 @@ class AcmeEndToEndTest {
             registerNonceResponder(context, responder, "ocsp-e2e-required", "required",
                     OcspResponderService.NoncePolicy.REQUIRED);
             ActiveCertificateProfile active = context.session().profiles().requireActiveProfile("server-tls");
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile(
+                    "acme-enrollment", "ACME test policy", zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE,
+                    "server-tls", Set.of(authority.value()), Optional.empty(), List.of(), false));
             AcmeService service = new AcmeService(context, CLOCK, HttpServerTestSupport.random(),
                     Map.of(Http01ChallengeProvider.ID, new Http01ChallengeProvider()),
                     Map.of(Http01ChallengeProvider.ID, fixture.http01()),
                     Map.of(TestAcmeEabProvider.ID, new TestAcmeEabProvider()),
                     Map.of(TestAcmeEabProvider.ID, new ProviderConfig(TestAcmeEabProvider.ID, Map.of())));
             AcmeState.Directory directory = service.registerDirectory(new AcmeService.DirectoryRegistration(
-                    DIRECTORY_ALIAS, authority, "server-tls", Set.of(IDENTIFIER), Duration.ofDays(30),
+                    DIRECTORY_ALIAS, authority, "server-tls", "acme-enrollment", Set.of(IDENTIFIER), Duration.ofDays(30),
                     active.definition().leafPolicy().allowedSubjectKeyAlgorithmIds(), Set.of("STANDARD_ONLY"),
                     Set.of(AcmeState.ChallengeType.HTTP_01), Set.of(Http01ChallengeProvider.ID), Optional.empty(),
                     false));
             service.activateDirectory(directory.directoryId());
             if (includeEab) {
                 AcmeState.Directory eab = service.registerDirectory(new AcmeService.DirectoryRegistration(
-                        EAB_DIRECTORY_ALIAS, authority, "server-tls", Set.of(IDENTIFIER), Duration.ofDays(30),
+                        EAB_DIRECTORY_ALIAS, authority, "server-tls", "acme-enrollment", Set.of(IDENTIFIER), Duration.ofDays(30),
                         active.definition().leafPolicy().allowedSubjectKeyAlgorithmIds(), Set.of("STANDARD_ONLY"),
                         Set.of(AcmeState.ChallengeType.HTTP_01), Set.of(Http01ChallengeProvider.ID),
                         Optional.of(TestAcmeEabProvider.ID), true));
@@ -896,7 +1872,8 @@ class AcmeEndToEndTest {
 
     private PkiHttpsServer start(Fixture fixture) throws Exception {
         return PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), CLOCK,
-                HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader());
+                HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader(), Optional.empty(),
+                Optional.of(EnrollmentTestSupport.runtimeConfiguration()));
     }
 
     private Fixture packagedFixture(Path root, HttpServerTestSupport.PackagedTls tls, int adminPort, int acmePort,

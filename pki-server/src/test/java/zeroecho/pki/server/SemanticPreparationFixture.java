@@ -66,12 +66,18 @@ import zeroecho.pki.spi.ProviderConfig;
 /** Actual unused opaque custody for transport unit tests; no signing admission occurs. */
 public final class SemanticPreparationFixture implements AutoCloseable {
     private static final char[] PASSWORD = "test-only-preparation-password".toCharArray();
-    private final PkiSession session;
+    private PkiSession session;
     private final PreparedSemanticSigningRequest prepared;
+    private final PkiSessionConfiguration configuration;
+    private final Clock clock;
+    private boolean accepted;
 
-    private SemanticPreparationFixture(PkiSession session, PreparedSemanticSigningRequest prepared) {
+    private SemanticPreparationFixture(PkiSession session, PreparedSemanticSigningRequest prepared,
+            PkiSessionConfiguration configuration, Clock clock) {
         this.session = session;
         this.prepared = prepared;
+        this.configuration = configuration;
+        this.clock = clock;
     }
 
     public static SemanticPreparationFixture open(Path root) throws Exception {
@@ -103,9 +109,10 @@ public final class SemanticPreparationFixture implements AutoCloseable {
                         "keyRefPrefix", "fixture:", "requireComponentSuffix", "true")),
                 BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), Duration.ofSeconds(30),
                 Optional.empty(), topology, OptionalLong.empty());
-        PkiSession session = PkiSession.open(new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", root.resolve("pki").toString())),
-                new ProviderConfig("memory", Map.of("size", "256")), Optional.of(signing), List.of(), List.of()),
+                new ProviderConfig("memory", Map.of("size", "256")), Optional.of(signing), List.of(), List.of());
+        PkiSession session = PkiSession.open(configuration,
                 PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> new KeyringPassword(PASSWORD.clone())),
                 clock);
         try {
@@ -120,7 +127,7 @@ public final class SemanticPreparationFixture implements AutoCloseable {
                     new CaCreateCommand(profile.definition().formatId(), new SubjectRef("CN=Transport Test"),
                             "root-ca", new KeyRef("fixture:root.prv"), new SimpleAttributeSet()),
                     CancellationSignal.NONE);
-            return new SemanticPreparationFixture(session, prepared);
+            return new SemanticPreparationFixture(session, prepared, configuration, clock);
         } catch (Exception failure) {
             session.close();
             throw failure;
@@ -131,9 +138,22 @@ public final class SemanticPreparationFixture implements AutoCloseable {
 
     PkiSession session() { return session; }
 
+    zeroecho.pki.api.signing.SigningAcceptanceReceipt acceptRoot() {
+        zeroecho.pki.api.signing.SigningAcceptanceResult result = session.semanticSigning().orElseThrow().accept(prepared);
+        accepted = true;
+        return result.receipt();
+    }
+
+    void reopenSession() throws Exception {
+        if (!accepted) throw new IllegalStateException("Fixture still owns unused preparation");
+        session.close();
+        session = PkiSession.open(configuration,
+                PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> new KeyringPassword(PASSWORD.clone())), clock);
+    }
+
     @Override public void close() throws Exception {
         try {
-            session.semanticSigning().orElseThrow().discard(prepared);
+            if (!accepted) session.semanticSigning().orElseThrow().discard(prepared);
         } finally {
             session.close();
         }

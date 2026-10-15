@@ -78,14 +78,16 @@ and [deployment instructions](deploy/README.md).
   sign through a stateless executor. See [stateful signing](documentation/developer/stateful-signing.md).
 - The server and frontend are implemented. Protocol availability depends on
   configured listeners, authority and policy; see [protocols](documentation/admin/protocols.md).
-- Credential search, CRL/delta scheduling, operational metrics and generated
-  administration forms are implemented with documented bounds. A frontend
-  dashboard page is navigation; it is not a graphical aggregate metrics dashboard.
+- Optional H2-backed credential/SAN search, CRL/delta scheduling, operational
+  metrics and generated administration forms are implemented with documented
+  bounds. The dashboard presents server and selected-CA metric snapshots with
+  manual refresh and explicit unavailable/failed states.
 - Local backup uses a consistent file-backed snapshot, integrity manifest,
   bounded verification and staged cold activation with no-regression checks.
   Private keys and external authority/audit/configuration state require separate
-  protection. Integrity does not establish archive authenticity. HTTP streaming,
-  full frontend backup workflows and remote restore remain unavailable/deferred.
+  protection. Integrity does not establish archive authenticity. Opt-in HTTP
+  streaming and the frontend backup workflow support approved cold restore;
+  explicit deployment budgets are required. Legacy remote restore stays disabled.
   See [backup and restore](documentation/admin/backup-restore.md).
 
 ## Documentation and development

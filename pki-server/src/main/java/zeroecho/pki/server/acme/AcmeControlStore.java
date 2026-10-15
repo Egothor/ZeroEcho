@@ -66,7 +66,10 @@ public final class AcmeControlStore {
      */
     public <T> T create(T unsealed) {
         T sealed = seal(unsealed);
-        control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(record(sealed), Optional.empty())));
+        synchronized (control) {
+            validateEnrollmentBinding(sealed, true);
+            control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(record(sealed), Optional.empty())));
+        }
         return sealed;
     }
 
@@ -119,7 +122,43 @@ public final class AcmeControlStore {
             changes.add(new ServerControlStore.ProtocolMutation(record(next), Optional.of(commitment(prior))));
         }
         created.forEach(value -> changes.add(new ServerControlStore.ProtocolMutation(record(value), Optional.empty())));
-        control.mutateProtocol(changes); return new Transition(sealed, created);
+        synchronized (control) {
+            for (Object value : created) validateEnrollmentBinding(value, true);
+            for (Object value : sealed) {
+                if (value instanceof AcmeState.Directory directory && directory.status() == AcmeState.DirectoryStatus.ACTIVE) {
+                    validateEnrollmentBinding(directory, true);
+                }
+            }
+            control.mutateProtocol(changes);
+        }
+        return new Transition(sealed, created);
+    }
+
+    private void validateEnrollmentBinding(Object record, boolean active) {
+        if (record instanceof AcmeState.Directory directory) {
+            zeroecho.pki.server.enrollment.EnrollmentProfileService.requireBinding(control, directory.enrollmentProfileId(),
+                    directory.profile().profileId(), directory.authorityId().value(), active);
+        }
+    }
+
+    /**
+     * Rejects a policy replacement that would strand an active directory.
+     * Callers retain the control monitor through the subsequent policy mutation.
+     * Suspended policies remain compatible and can be administratively reactivated.
+     * @param replacement candidate enrollment policy
+     */
+    public void requireCompatibleEnrollmentProfile(zeroecho.pki.server.enrollment.EnrollmentProfile replacement) {
+        synchronized (control) {
+            visit(AcmeState.Directory.class, directory -> {
+                if (directory.status() == AcmeState.DirectoryStatus.ACTIVE
+                        && directory.enrollmentProfileId().equals(replacement.id())
+                        && (!directory.profile().profileId().equals(replacement.certificateProfileId())
+                        || !replacement.allowedAuthorityIds().isEmpty()
+                        && !replacement.allowedAuthorityIds().contains(directory.authorityId().value()))) {
+                    throw new IllegalStateException("Deactivate incompatible ACME directories before updating the enrollment profile");
+                }
+            });
+        }
     }
 
     /**
@@ -170,6 +209,32 @@ public final class AcmeControlStore {
     }
 
     /**
+     * Validates an account from a stable startup snapshot without a second lookup.
+     * @param record exact account namespace record
+     * @return strictly decoded account
+     */
+    public AcmeState.Account decodeAccount(ServerControlStore.ProtocolRecord record) {
+        Object decoded = codec.decode(record.payload());
+        if (!ServerControlStore.ACME_ACCOUNT.equals(record.namespace()) || !(decoded instanceof AcmeState.Account account)
+                || !record.recordId().equals(account.accountId()) || !record.commitment().equals(account.commitment())) {
+            throw new IllegalStateException("ACME account snapshot differs");
+        }
+        return account;
+    }
+
+    /**
+     * Measures exclusion-history retention, including its bounded account identity
+     * and framing, and verifies that the complete account fits the control-record cap.
+     * @param account validated account awaiting persistence
+     * @return bytes charged to the shared enrollment retention budget
+     */
+    public long accountHistoryCharge(AcmeState.Account account) {
+        record(seal(account)); // The existing ProtocolRecord boundary enforces its payload cap.
+        return Math.addExact(16L + account.accountId().getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                AcmeStateCodec.accountKeyHistory(account.keyHistory()).length);
+    }
+
+    /**
      * Returns one bounded typed page without aggregating the namespace.
      *
      * @param <T> ACME record type
@@ -200,7 +265,9 @@ public final class AcmeControlStore {
      */
     public void validateAndRecover(Clock clock) {
         Instant now = Objects.requireNonNull(clock, "clock").instant();
-        visit(AcmeState.Directory.class, ignored -> { });
+        visit(AcmeState.Directory.class, directory -> {
+            if (directory.status() == AcmeState.DirectoryStatus.ACTIVE) validateEnrollmentBinding(directory, false);
+        });
         visit(AcmeState.Account.class, account -> {
             AcmeState.Directory directory = get(AcmeState.Directory.class, account.directoryId()).orElseThrow();
             if (account.directoryRevision() != directory.revision()

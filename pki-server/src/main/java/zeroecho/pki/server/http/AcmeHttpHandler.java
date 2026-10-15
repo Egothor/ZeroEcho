@@ -224,12 +224,12 @@ final class AcmeHttpHandler implements HttpHandler {
         if (parts.length != 5) return problem(404, "malformed");
         return switch (resource) {
             case "account" -> account(account, parts[4], verified.payload(), directory);
-            case "order" -> order(account.accountId(), parts[4], verified.payload(), directory);
+            case "order" -> order(account, parts[4], verified.payload(), directory, cancellation);
             case "authz" -> authorization(account.accountId(), parts[4], verified.payload(), directory);
             case "challenge" -> challenge(account, parts[4], verified.payload(), directory, cancellation,
                     requestDeadline);
             case "finalize" -> finalizeOrder(account, parts[4], verified.payload(), directory, cancellation);
-            case "certificate" -> certificate(account.accountId(), parts[4], verified.payload(), directory,
+            case "certificate" -> certificate(account, parts[4], verified.payload(), directory,
                     cancellation, requestDeadline);
             default -> problem(404, "malformed");
         };
@@ -335,9 +335,10 @@ final class AcmeHttpHandler implements HttpHandler {
         return json(200, accountJson(account, directory), directory.directoryId());
     }
 
-    private Response order(String accountId, String id, byte[] payload, AcmeState.Directory directory) {
+    private Response order(AcmeJwsVerifier.AccountKey account, String id, byte[] payload, AcmeState.Directory directory,
+            ServerRuntime.CancellationToken cancellation) {
         requirePostAsGet(payload);
-        return json(200, orderJson(service.order(accountId, id), directory), directory.directoryId());
+        return json(200, orderJson(service.order(account.accountId(), account.recordCommitment(), id, cancellation), directory), directory.directoryId());
     }
 
     private Response authorization(String accountId, String id, byte[] payload, AcmeState.Directory directory) {
@@ -384,13 +385,13 @@ final class AcmeHttpHandler implements HttpHandler {
             java.util.Arrays.fill(csr, (byte) 0);
             rates.releaseFinalization();
         }
-        return json(200, orderJson(service.order(account.accountId(), id), directory), directory.directoryId());
+        return json(200, orderJson(service.order(account.accountId(), account.recordCommitment(), id, cancellation), directory), directory.directoryId());
     }
 
-    private Response certificate(String accountId, String id, byte[] payload, AcmeState.Directory directory,
+    private Response certificate(AcmeJwsVerifier.AccountKey account, String id, byte[] payload, AcmeState.Directory directory,
             ServerRuntime.CancellationToken cancellation, Instant requestDeadline) {
         requirePostAsGet(payload);
-        AcmeState.Order order = service.order(accountId, id);
+        AcmeState.Order order = service.order(account.accountId(), account.recordCommitment(), id, cancellation);
         if (order.status() != AcmeState.OrderStatus.VALID || order.credentialId().isEmpty()) {
             return problem(403, "orderNotReady");
         }

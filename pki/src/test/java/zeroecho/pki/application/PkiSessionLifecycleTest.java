@@ -160,6 +160,38 @@ final class PkiSessionLifecycleTest {
     }
 
     @Test
+    void exposesAuthoritativeStatusAndFencesRetainedEvaluationsAfterClose(@TempDir Path temporary) throws Exception {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
+        Instant now = Instant.EPOCH.plusSeconds(30);
+        PkiSession session = DefaultPkiSession.open(configuration(temporary), Clock.fixed(now, ZoneOffset.UTC), bootstrap);
+        zeroecho.pki.api.credential.EffectiveCredentialStatusResolver resolver;
+        zeroecho.pki.api.credential.EffectiveCredentialStatusResolver.Evaluation evaluation;
+        Credential credential;
+        try (session) {
+            DurableContentReference content = PkiTestRuntime.fixtureReference(bootstrap.store.stagedContent(), Encoding.DER, new byte[] { 1, 2, 3 });
+            PkiId id = new PkiId("status-credential");
+            credential = new Credential(id, new FormatId("fmt-x509"), new IssuerRef(new PkiId("status-issuer")), new SubjectRef("CN=status"),
+                    new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(60)), "01", new PkiId("status-key"),
+                    new EndEntityProfileBinding(new CertificateProfileRef("status-profile", 1, new byte[32])), CredentialStatus.ISSUED,
+                    content, new SimpleAttributeSet());
+            bootstrap.store.putCredential(credential);
+            resolver = session.credentialStatuses(); evaluation = resolver.beginEvaluation();
+            assertTrue(resolver == session.credentialStatuses()); assertEquals(now, evaluation.evaluationTime());
+            assertEquals(zeroecho.pki.api.credential.EffectiveCredentialStatus.USABLE, evaluation.resolve(session.repository().credential(id).orElseThrow()));
+            bootstrap.store.transitionRevocation(new zeroecho.pki.api.revocation.RevocationCommand.Hold(id, new SimpleAttributeSet()), Instant.EPOCH.plusSeconds(10));
+            assertEquals(zeroecho.pki.api.credential.EffectiveCredentialStatus.HELD, evaluation.resolve(session.repository().credential(id).orElseThrow()));
+            bootstrap.store.transitionRevocation(new zeroecho.pki.api.revocation.RevocationCommand.RevokePermanently(id,
+                    zeroecho.pki.api.revocation.RevocationReason.KEY_COMPROMISE, new SimpleAttributeSet()), Instant.EPOCH.plusSeconds(20));
+            assertEquals(zeroecho.pki.api.credential.EffectiveCredentialStatus.PERMANENTLY_REVOKED, evaluation.resolve(session.repository().credential(id).orElseThrow()));
+        }
+        assertThrows(IllegalStateException.class, session::credentialStatuses);
+        assertThrows(IllegalStateException.class, resolver::beginEvaluation);
+        assertThrows(IllegalStateException.class, evaluation::evaluationTime);
+        assertThrows(IllegalStateException.class, () -> evaluation.resolve(credential));
+        assertThrows(IllegalStateException.class, () -> evaluation.requireUsable(credential, zeroecho.pki.api.credential.CredentialUse.BUNDLE_DELIVERY));
+    }
+
+    @Test
     void exposesEnabledSigningEvidenceThroughSessionAndPreservesExclusiveResume(@TempDir Path temporary) throws Exception {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
         bootstrap.signingEvidence = true;

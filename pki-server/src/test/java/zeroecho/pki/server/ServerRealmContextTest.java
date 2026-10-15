@@ -86,6 +86,59 @@ class ServerRealmContextTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void incompatibleEnrollmentPolicyUpdateCannotPreventRealmRestart() throws Exception {
+        ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
+                AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
+        zeroecho.pki.server.enrollment.EnrollmentProfile original = new zeroecho.pki.server.enrollment.EnrollmentProfile(
+                "policy", "Policy", zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE,
+                "certificate", Set.of("authority"), Optional.empty(), List.of(), false);
+        zeroecho.pki.server.est.EstEndpoint endpoint = new zeroecho.pki.server.est.EstEndpoint(
+                "endpoint", "authority", "certificate", "policy", zeroecho.pki.server.est.KeygenPolicy.DISABLED);
+        try (ServerRealmContext context = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            context.enrollmentProfiles().register(original);
+            context.enrollmentEndpoints().register(endpoint);
+            assertThrows(IllegalStateException.class, () -> context.enrollmentProfiles().update(
+                    new zeroecho.pki.server.enrollment.EnrollmentProfile("policy", "Policy",
+                            zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "other-certificate",
+                            Set.of("authority"), Optional.empty(), List.of(), false)));
+            context.enrollmentProfiles().setState("policy", zeroecho.pki.server.enrollment.EnrollmentProfileState.SUSPENDED);
+        }
+        try (ServerRealmContext reopened = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            assertEquals(original.withState(zeroecho.pki.server.enrollment.EnrollmentProfileState.SUSPENDED),
+                    reopened.enrollmentProfiles().find("policy").orElseThrow());
+            reopened.enrollmentProfiles().setState("policy", zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE);
+            assertEquals(endpoint, reopened.enrollmentEndpoints().requireCurrent(endpoint).endpoint());
+        }
+    }
+
+    @Test
+    void enrollmentRegistryIsInstalledAndRejectsCorruptPolicyBeforeRealmReadiness() throws Exception {
+        ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
+                AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
+        try (ServerRealmContext context = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            assertTrue(context.gateway().operationAvailable(ServerControlOperation.ListEnrollmentProfiles.NAME));
+        }
+        try (ServerControlStore control = new ServerControlStore(
+                zeroecho.pki.impl.fs.DurableTransactionalMetadataStore.open(config.controlLogPath(),
+                        java.util.OptionalLong.of(1_048_576)))) {
+            control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(
+                    new ServerControlStore.ProtocolRecord(ServerControlStore.ENROLLMENT_PROFILE,
+                            "invalid-profile", "0".repeat(64), new byte[] { 1 }), Optional.empty())));
+        }
+        assertThrows(IllegalStateException.class, () -> ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom()));
+        // A failed realm startup releases the control owner; a subsequent exact open is possible.
+        try (ServerControlStore control = new ServerControlStore(
+                zeroecho.pki.impl.fs.DurableTransactionalMetadataStore.open(config.controlLogPath(),
+                        java.util.OptionalLong.of(1_048_576)))) {
+            assertTrue(control.protocolRecord(ServerControlStore.ENROLLMENT_PROFILE, "invalid-profile").isPresent());
+        }
+    }
+
+    @Test
     void dashboardCountsRealPendingApprovalsAndRecordsSafeScheduleFailures() throws Exception {
         ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
                 AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
