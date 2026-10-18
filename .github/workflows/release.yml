@@ -1,0 +1,131 @@
+# Copyright (C) 2025, Leo Galambos
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. All advertising materials mentioning features or use of this software must
+#    display the following acknowledgement:
+#    This product includes software developed by the Egothor project.
+#
+# 4. Neither the name of the copyright holder nor the names of its contributors
+#    may be used to endorse or promote products derived from this software without
+#    specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+name: Release
+
+on:
+  push:
+    tags: ['release@*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python3 tools/prepare_central_bundle.py --tag "$RELEASE_TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate release configuration
+        env:
+          CENTRAL_BEARER_TOKEN: ${{ secrets.CENTRAL_BEARER_TOKEN }}
+          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          MAVEN_SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+        run: |
+          test -n "$CENTRAL_BEARER_TOKEN"
+          test -n "$MAVEN_SIGNING_KEY"
+          test -n "$MAVEN_SIGNING_PASSWORD"
+      - name: Validate licenses and release tooling
+        run: |
+          python3 -m unittest discover -s tools -p 'test_validate_source_licenses.py'
+          python3 -m unittest discover -s tools -p 'test_prepare_central_bundle.py'
+          python3 tools/validate_source_licenses.py
+      - name: Build, test and validate Javadoc
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: ./gradlew clean check javadoc :app:distTar :app:distZip --no-daemon -PreleaseVersion="$RELEASE_VERSION"
+      - name: Stage signed Maven publications
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          MAVEN_SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+        run: |
+          ./gradlew publishMavenJavaPublicationToCentralBundleRepository --no-daemon -PreleaseVersion="$RELEASE_VERSION"
+          python3 tools/prepare_central_bundle.py --repository build/central-repository --output build/central-bundle.zip --version "$RELEASE_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: central-bundle-${{ steps.version.outputs.version }}
+          path: build/central-bundle.zip
+          if-no-files-found: error
+      - name: Publish bundle to Maven Central
+        env:
+          CENTRAL_BEARER_TOKEN: ${{ secrets.CENTRAL_BEARER_TOKEN }}
+        run: |
+          deployment_id=$(curl --silent --show-error --fail-with-body \
+            --request POST --header "Authorization: Bearer $CENTRAL_BEARER_TOKEN" \
+            --form bundle=@build/central-bundle.zip \
+            'https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC')
+          if [[ ! "$deployment_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo 'Central did not return a deployment UUID' >&2
+            exit 1
+          fi
+          echo "Central deployment: $deployment_id" >> "$GITHUB_STEP_SUMMARY"
+          for attempt in $(seq 1 120); do
+            status=$(curl --silent --show-error --fail-with-body --request POST \
+              --header "Authorization: Bearer $CENTRAL_BEARER_TOKEN" \
+              "https://central.sonatype.com/api/v1/publisher/status?id=$deployment_id")
+            state=$(jq -er '.deploymentState' <<< "$status")
+            echo "Central state: $state"
+            case "$state" in
+              PUBLISHED) echo 'Maven Central publication completed.' >> "$GITHUB_STEP_SUMMARY"; exit 0 ;;
+              FAILED) echo "$status" >&2; exit 1 ;;
+              PENDING|VALIDATING|VALIDATED|PUBLISHING) sleep 15 ;;
+              *) echo "Unexpected Central state: $state" >&2; exit 1 ;;
+            esac
+          done
+          echo 'Central publication timed out; inspect the deployment before retrying.' >&2
+          exit 1
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" app/build/distributions/*.tar app/build/distributions/*.zip --verify-tag --generate-notes

@@ -39,7 +39,7 @@ plugins {
 dependencies {
     testImplementation(project(":lib"))
     testImplementation(project(":pki"))
-    testImplementation 'org.egothor:conflux:[1.0,2.0)'
+    testImplementation 'org.egothor:conflux:1.1.5'
     testImplementation("org.bouncycastle:bcpkix-jdk18on:1.86")
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -48,12 +48,6 @@ dependencies {
 }
 
 repositories {
-	// for conflux lib
-	maven {
-        name = "GiteaMaven"
-        url = uri("https://gitea.egothor.org/api/packages/Egothor/maven")
-    }
-
     // Use Maven Central for resolving dependencies.
     mavenCentral()
 }

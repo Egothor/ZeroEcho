@@ -40,6 +40,7 @@ plugins {
     // Apply the java Plugin to add support for Java.
     id 'java'
     id 'maven-publish'
+    id 'signing'
     id 'pmd'
     // Give non-modular third-party jars a stable module name for the module path.
     id 'org.gradlex.extra-java-module-info'
@@ -56,16 +57,12 @@ import java.time.LocalDate
 
 def currentYear = LocalDate.now().getYear()
 
-// git-version plugin removed for a source-only checkout without a .git directory.
-project.version = '0.0.0-LOCAL'
+// Release tags supply the same immutable version to every published module.
+project.version = providers.gradleProperty('releaseVersion').getOrElse('0.0.0-LOCAL')
+project.group = 'org.egothor'
 
 repositories {
-    
-    maven {
-        name = "GiteaMaven"
-        url = uri("https://gitea.egothor.org/api/packages/Egothor/maven")
-    }
-    
+
     // Use Maven Central for resolving dependencies.
     mavenCentral()
 }
@@ -76,7 +73,7 @@ dependencies {
         implementation 'org.apache.commons:commons-text:1.15.0'
         implementation 'commons-cli:commons-cli:1.11.0'
         implementation 'org.bouncycastle:bcpkix-jdk18on:1.86'
-        implementation 'org.egothor:conflux:[1.0,2.0)'
+        implementation 'org.egothor:conflux:1.1.5'
         implementation 'org.apache.commons:commons-imaging:1.0.0-alpha6'
     }
 
@@ -99,6 +96,8 @@ tasks.withType(Pmd) {
 
 // Apply a specific Java toolchain to ease working on different environments.
 java {
+    withSourcesJar()
+    withJavadocJar()
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
     }
@@ -191,28 +190,10 @@ javadoc {
     
     options.bottom = '<div style="text-align: right; padding: 5px;">Copyright &copy; ' + currentYear +
                      ' Egothor - Version ' + version +
-                     ' - <a href="https://gitea.egothor.org/Egothor/ZeroEcho/raw/branch/main/LICENSE-source.txt">Source license</a>' +
+                     ' - <a href="https://github.com/Egothor/ZeroEcho/blob/main/LICENSE-source.txt">Source license</a>' +
                      '</div>'
                      	
     source = sourceSets.main.allJava
-}
-
-task uploadJavadoc(type: Exec) {
-    dependsOn javadoc
-
-    doFirst {
-        def javadocDir = tasks.javadoc.destinationDir
-        def relativeJavadocDir = project.projectDir.toPath().relativize(javadocDir.toPath()).toString()
-        def moduleName = project.name  // Dynamically get the module name
-
-        println "Uploading Javadoc for module: ${moduleName}"
-        println "Uploading from relative path: $relativeJavadocDir"
-
-        // Upload to a folder named after the module
-        commandLine "rsync", "-avz", "--delete",
-          "-e", "ssh -i ${javadocKeyPath} -o IdentitiesOnly=yes",
-          relativeJavadocDir + '/', "${javadocUser}@${javadocHost}:${javadocPath}/${project.name}"
-    }
 }
 
 tasks.named('test') {
@@ -220,32 +201,63 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-if (project.hasProperty('giteaToken') && project.giteaToken) {
+// The OpenAPI generator is an internal build tool, not a public Maven artifact.
+if (project.name != 'api-spec') {
+    // Publication is always available locally; only the release job receives signing secrets.
     publishing {
         publications {
             mavenJava(MavenPublication) {
                 from components.java
                 artifactId = "${rootProject.name}-${project.name}"
+                pom {
+                    name = "ZeroEcho ${project.name}"
+                    description = "ZeroEcho ${project.name} module for cryptography and PKI."
+                    url = 'https://github.com/Egothor/ZeroEcho'
+                    licenses {
+                        license {
+                            name = 'BSD 3-Clause License (binary artifacts)'
+                            url = 'https://github.com/Egothor/ZeroEcho/blob/main/LICENSE-binary.txt'
+                            distribution = 'repo'
+                        }
+                        license {
+                            name = 'BSD 4-Clause License (source artifacts)'
+                            url = 'https://github.com/Egothor/ZeroEcho/blob/main/LICENSE-source.txt'
+                            distribution = 'repo'
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = 'galambos'
+                            name = 'Leo Galambos'
+                            organization = 'Egothor'
+                            organizationUrl = 'https://www.egothor.org'
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:https://github.com/Egothor/ZeroEcho.git'
+                        developerConnection = 'scm:git:ssh://git@github.com/Egothor/ZeroEcho.git'
+                        url = 'https://github.com/Egothor/ZeroEcho'
+                    }
+                }
             }
         }
         repositories {
             maven {
-                name = "GiteaMaven"
-                url = uri("https://gitea.egothor.org/api/packages/Egothor/maven")
-
-                credentials(HttpHeaderCredentials) {
-                    name = "Authorization"
-                    value = "token ${giteaToken}"
-                }
-
-                authentication {
-                    header(HttpHeaderAuthentication)
-                }
+                name = 'CentralBundle'
+                url = rootProject.layout.buildDirectory.dir('central-repository')
             }
         }
     }
-} else {
-    println "No giteaToken defined - skipping publishing configuration"
+
+    signing {
+        def key = providers.environmentVariable('MAVEN_SIGNING_KEY')
+        if (key.isPresent()) {
+            useInMemoryPgpKeys(key.get(), providers.environmentVariable('MAVEN_SIGNING_PASSWORD').getOrElse(''))
+        }
+        required { providers.gradleProperty('releaseVersion').isPresent() }
+        sign publishing.publications.mavenJava
+    }
+
 }
 
 gradle.taskGraph.whenReady { taskGraph ->
