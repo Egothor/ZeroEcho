@@ -281,14 +281,17 @@ final class SigningMvccIndexTest {
         SigningGenerationRegistry generations = publishedGenerations(1L);
         try (SigningMvccIndex index = index(generations, 10, 1, 2L, 10L)) {
             index.apply(1L, List.of(upsert(key("example", "a"), pointer(1L, 1L))));
-            try (SigningMvccIndex.Snapshot snapshot = index.snapshot()) {
-                assertThrows(IllegalStateException.class, index::snapshot);
-                index.apply(2L, List.of());
-                index.apply(3L, List.of());
-                IllegalStateException exhausted = assertThrows(IllegalStateException.class,
-                        () -> index.apply(4L, List.of()));
-                assertEquals("signing index snapshot revision span is exhausted", exhausted.getMessage());
-                assertEquals(3L, index.currentRevision());
+            {
+                SigningMvccIndex.Snapshot snapshot = index.snapshot();
+                try (snapshot) {
+                    assertThrows(IllegalStateException.class, index::snapshot);
+                    index.apply(2L, List.of());
+                    index.apply(3L, List.of());
+                    IllegalStateException exhausted = assertThrows(IllegalStateException.class,
+                            () -> index.apply(4L, List.of()));
+                    assertEquals("signing index snapshot revision span is exhausted", exhausted.getMessage());
+                    assertEquals(3L, index.currentRevision());
+                }
             }
             index.apply(4L, List.of());
         }
@@ -305,12 +308,15 @@ final class SigningMvccIndexTest {
             assertThrows(IllegalStateException.class,
                     () -> index.apply(2L, List.of(upsert(key("example", "c"), pointer(1L, 3L)))));
             assertEquals(1L, index.currentRevision());
-            try (SigningMvccIndex.Snapshot snapshot = index.snapshot()) {
-                index.apply(2L, List.of(upsert(first, pointer(1L, 4L))));
-                index.apply(3L, List.of(upsert(first, pointer(1L, 5L)),
-                        upsert(second, pointer(1L, 6L))));
-                assertEquals(3L, index.currentRevision());
-                assertEquals(5L, index.lookup(first).orElseThrow().pointer().sequence());
+            {
+                SigningMvccIndex.Snapshot snapshot = index.snapshot();
+                try (snapshot) {
+                    index.apply(2L, List.of(upsert(first, pointer(1L, 4L))));
+                    index.apply(3L, List.of(upsert(first, pointer(1L, 5L)),
+                            upsert(second, pointer(1L, 6L))));
+                    assertEquals(3L, index.currentRevision());
+                    assertEquals(5L, index.lookup(first).orElseThrow().pointer().sequence());
+                }
             }
         }
     }

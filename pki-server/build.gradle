@@ -73,6 +73,7 @@ tasks.named('test') {
             .withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty 'configurationExamples.repository', rootProject.projectDir.absolutePath
     systemProperty 'serverSpi.distributionLib', layout.buildDirectory.dir('install/zeroecho-pki-server/lib').get().asFile.absolutePath
+    systemProperty 'server.distributionDirectory', tasks.named('installDist').get().destinationDir.absolutePath
     systemProperty 'serverSpi.legacyBaseline', providers.gradleProperty('serverSpiLegacyBaseline').getOrElse('')
     jvmArgs("-javaagent:${configurations.mockitoAgent.singleFile}")
 }

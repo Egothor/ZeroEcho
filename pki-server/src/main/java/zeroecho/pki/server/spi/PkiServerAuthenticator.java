@@ -66,10 +66,13 @@ public interface PkiServerAuthenticator extends AutoCloseable {
      *
      * <p>The default implementation owns no closeable resources. Stateful
      * implementations may override this; repeated close calls should be
-     * harmless.
+     * harmless. Checked resource failures must retain their original cause when
+     * translated to I/O failures, and interrupted closure must restore interruption.</p>
+     *
+     * @throws java.io.IOException if a provider resource cannot be released
      */
     @Override
-    default void close() throws Exception {
+    default void close() throws java.io.IOException {
         // No resource by default.
     }
 }

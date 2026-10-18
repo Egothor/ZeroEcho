@@ -60,8 +60,11 @@ final class RealmReconciliationWakeSignalTest {
         signal.signal();
         assertEquals(1, calls.get());
 
-        try (AutoCloseable ignored = signal.register(calls::incrementAndGet)) {
-            signal.signal();
+        {
+            AutoCloseable ignored = signal.register(calls::incrementAndGet);
+            try (ignored) {
+                signal.signal();
+            }
         }
         assertEquals(2, calls.get());
     }

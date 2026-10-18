@@ -60,7 +60,12 @@ final class AuthorityMetadataLayoutTest {
         "credential-handoffs/legacy.credential.pending", "credentials/by-id/legacy.credential.pending"
     })
     void populatedLegacyAuthorityFailsBeforeMutation(String relative, @TempDir Path root) throws Exception {
-        try (FilesystemPkiStore ignored = open(root)) { }
+        {
+            FilesystemPkiStore ignored = open(root);
+            if (ignored != null) {
+                ignored.close();
+            }
+        }
         Path legacy = root.resolve(relative);
         Files.createDirectories(legacy.getParent());
         Files.write(legacy, new byte[] {1, 2, 3});
@@ -70,11 +75,21 @@ final class AuthorityMetadataLayoutTest {
     }
 
     @Test void previousVersionIsRejectedWithoutRepairAndEmptyDirectoriesAreAccepted(@TempDir Path root) throws Exception {
-        try (FilesystemPkiStore ignored = open(root)) { }
+        {
+            FilesystemPkiStore ignored = open(root);
+            if (ignored != null) {
+                ignored.close();
+            }
+        }
         assertEquals("v18", Files.readString(root.resolve("VERSION"), StandardCharsets.US_ASCII));
         for (String path : List.of("cas/by-id/empty/history", "issuer-generations/by-id", "issuer-chain-paths/by-id",
                 "credentials/by-id", "credential-handoffs")) { Files.createDirectories(root.resolve(path)); }
-        try (FilesystemPkiStore ignored = open(root)) { }
+        {
+            FilesystemPkiStore ignored = open(root);
+            if (ignored != null) {
+                ignored.close();
+            }
+        }
         for (String previous : List.of("v13", "v17")) {
             Files.writeString(root.resolve("VERSION"), previous, StandardCharsets.US_ASCII);
             Map<String, String> before = image(root);

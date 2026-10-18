@@ -127,8 +127,14 @@ class EnrollmentRuntimeTest {
             log = store.log();
             EnrollmentRuntime runtime = open(fixture, store.store(), dependencies);
             assertTrue(acquired.get().isDestroyed());
-            assertThrows(Exception.class, () -> { try (KeyringPassword password = password();
-                    KeyringStore ignored = KeyringStore.open(fixture.keyring(), password)) { } });
+            assertThrows(Exception.class, () -> {
+                try (KeyringPassword password = password()) {
+                    KeyringStore opened = KeyringStore.open(fixture.keyring(), password);
+                    if (opened != null) {
+                        opened.close();
+                    }
+                }
+            });
             EnrollmentRuntime.CredentialLease lease = runtime.acquire("scep-a");
             assertThrows(IllegalStateException.class, () -> runtime.acquire("scep-a"));
             Signature signature = Signature.getInstance("SHA256withRSA");
@@ -138,8 +144,14 @@ class EnrollmentRuntimeTest {
             assertTrue(signature.verify(signed));
             assertThrows(IllegalStateException.class, runtime::close);
             assertThrows(IllegalStateException.class, () -> runtime.acquire("scep-a"));
-            assertThrows(Exception.class, () -> { try (KeyringPassword password = password();
-                    KeyringStore ignored = KeyringStore.open(fixture.keyring(), password)) { } });
+            assertThrows(Exception.class, () -> {
+                try (KeyringPassword password = password()) {
+                    KeyringStore opened = KeyringStore.open(fixture.keyring(), password);
+                    if (opened != null) {
+                        opened.close();
+                    }
+                }
+            });
             assertEquals(raCertificate, lease.responseChain().getFirst());
             lease.close(); lease.close();
             assertThrows(IllegalStateException.class, lease::privateKey);
@@ -201,7 +213,12 @@ class EnrollmentRuntimeTest {
     void rejectsChangedSameIdAndCorruptCommitmentAndReleasesFailedOwners() throws Exception {
         Fixture fixture = fixture();
         try (ServerTestSupport.OpenedStore store = ServerTestSupport.open(directory)) {
-            try (EnrollmentRuntime runtime = open(fixture, store.store(), dependencies())) { }
+            {
+                EnrollmentRuntime runtime = open(fixture, store.store(), dependencies());
+                if (runtime != null) {
+                    runtime.close();
+                }
+            }
             byte[] original = Files.readAllBytes(fixture.ra());
             Files.write(fixture.ra(), rootCertificate.getEncoded());
             assertThrows(IllegalStateException.class, () -> open(fixture, store.store(), dependencies()));
@@ -217,7 +234,12 @@ class EnrollmentRuntimeTest {
             store.store().mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(new ServerControlStore.ProtocolRecord(
                     previous.namespace(), previous.recordId(), "0".repeat(64), new byte[] { 2 }), Optional.of(previous.commitment()))));
             assertThrows(IllegalStateException.class, () -> open(fixture, store.store(), dependencies()));
-            try (KeyringPassword password = password(); KeyringStore ignored = KeyringStore.open(fixture.keyring(), password)) { }
+            try (KeyringPassword password = password()) {
+                KeyringStore ignored = KeyringStore.open(fixture.keyring(), password);
+                if (ignored != null) {
+                    ignored.close();
+                }
+            }
         }
     }
 
@@ -225,7 +247,12 @@ class EnrollmentRuntimeTest {
     void rolloverKeepsOldSelectionAndMissingPinnedSetsFailClosed() throws Exception {
         Fixture fixture = fixture();
         try (ServerTestSupport.OpenedStore store = ServerTestSupport.open(directory)) {
-            try (EnrollmentRuntime runtime = open(fixture, store.store(), dependencies())) { }
+            {
+                EnrollmentRuntime runtime = open(fixture, store.store(), dependencies());
+                if (runtime != null) {
+                    runtime.close();
+                }
+            }
             EnrollmentRuntimeConfiguration.CredentialSet first = fixture.configuration().credentialSets().getFirst();
             EnrollmentRuntimeConfiguration.CredentialSet second = new EnrollmentRuntimeConfiguration.CredentialSet("scep-b",
                     first.protocol(), first.authorityId(), first.issuerId(), first.chainPathId(), first.signer(),
@@ -384,7 +411,12 @@ class EnrollmentRuntimeTest {
             } finally { release.countDown(); }
             borrowing.get(5, java.util.concurrent.TimeUnit.SECONDS);
             runtime.close();
-            try (KeyringPassword password = password(); KeyringStore ignored = KeyringStore.open(fixture.keyring(), password)) { }
+            try (KeyringPassword password = password()) {
+                KeyringStore ignored = KeyringStore.open(fixture.keyring(), password);
+                if (ignored != null) {
+                    ignored.close();
+                }
+            }
         }
     }
 
@@ -410,7 +442,12 @@ class EnrollmentRuntimeTest {
                     zeroecho.pki.server.cmp.CmpProtectionPolicy.SHARED_SECRET_MAC));
             assertThrows(IllegalStateException.class, () -> open(fixture.withConfiguration(wrong), store.store(), dependencies()));
             assertTrue(store.store().protocolRecord(ServerControlStore.ENROLLMENT_CREDENTIAL, "cmp-a").isEmpty());
-            try (KeyringPassword password = password(); KeyringStore ignored = KeyringStore.open(fixture.keyring(), password)) { }
+            try (KeyringPassword password = password()) {
+                KeyringStore ignored = KeyringStore.open(fixture.keyring(), password);
+                if (ignored != null) {
+                    ignored.close();
+                }
+            }
         }
         EnrollmentRuntimeConfiguration.Pbm policy = new EnrollmentRuntimeConfiguration.Pbm(1000, 10000, 16, 32,
                 Set.of(EnrollmentRuntimeConfiguration.PbmDigest.SHA256), Set.of(EnrollmentRuntimeConfiguration.PbmMac.HMAC_SHA256),

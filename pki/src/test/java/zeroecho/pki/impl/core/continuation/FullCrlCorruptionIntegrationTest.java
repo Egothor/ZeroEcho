@@ -166,7 +166,12 @@ class FullCrlCorruptionIntegrationTest {
 
     private static void assertReopenFails(Path source) {
         assertThrows(IllegalStateException.class, () -> {
-            try (FilesystemPkiStore ignored = open(source)) { }
+            {
+                FilesystemPkiStore ignored = open(source);
+                if (ignored != null) {
+                    ignored.close();
+                }
+            }
         });
     }
 }

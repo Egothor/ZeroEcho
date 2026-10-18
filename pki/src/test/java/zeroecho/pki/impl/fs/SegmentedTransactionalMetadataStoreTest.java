@@ -417,9 +417,13 @@ final class SegmentedTransactionalMetadataStoreTest {
                         rawMutation(1, -1L, key, 0)), -2L)));
         for (MalformedDirect malformed : cases) {
             Path root = Files.createDirectory(temporary.resolve(malformed.name()));
-            try (SegmentedTransactionalMetadataStore ignored =
-                    SegmentedTransactionalMetadataStore.create(root, STORE_ID)) {
-                // Establish a valid empty ledger before injecting an integrity-valid group.
+            {
+                SegmentedTransactionalMetadataStore ignored =
+                    SegmentedTransactionalMetadataStore.create(root, STORE_ID);
+                if (ignored != null) {
+                    // Establish a valid empty ledger before injecting an integrity-valid group.
+                    ignored.close();
+                }
             }
             SigningManifestCodec.Manifest manifest = SigningManifestCodec.decode(
                     Files.readAllBytes(root.resolve(SigningLedgerRecovery.MANIFEST_FILE)));
@@ -723,9 +727,13 @@ final class SegmentedTransactionalMetadataStoreTest {
     void unknownAndSymlinkEntriesFailClosedWithoutMutation(@TempDir Path temporary)
             throws Exception {
         Path unknownRoot = Files.createDirectory(temporary.resolve("unknown"));
-        try (SegmentedTransactionalMetadataStore ignored =
-                SegmentedTransactionalMetadataStore.create(unknownRoot, STORE_ID)) {
-            // establish a valid root
+        {
+            SegmentedTransactionalMetadataStore ignored =
+                SegmentedTransactionalMetadataStore.create(unknownRoot, STORE_ID);
+            if (ignored != null) {
+                // establish a valid root
+                ignored.close();
+            }
         }
         Path unknown = unknownRoot.resolve("unexpected.bin");
         Files.write(unknown, new byte[] { 3, 4 });

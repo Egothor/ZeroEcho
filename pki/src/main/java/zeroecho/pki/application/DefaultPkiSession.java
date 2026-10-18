@@ -655,7 +655,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() throws java.io.IOException {
         closeLock.lock();
         try {
             if (lifecycle.get() == Lifecycle.CLOSED) {
@@ -691,6 +691,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         try {
             resource.close();
         } catch (Throwable failure) {
+            restoreInterruption(failure);
             if (primary == null) {
                 return failure;
             }
@@ -707,18 +708,53 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         closeResource(store, closeResource(audit, primary));
     }
 
-    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
-    private static void rethrow(Throwable failure) throws Exception {
+    /**
+     * Restores interruption carried by a close failure or its suppressed failures.
+     * @param failure close failure whose identity is retained
+     */
+    private static void restoreInterruption(Throwable failure) {
+        Set<Throwable> visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        java.util.Deque<Throwable> pending = new java.util.ArrayDeque<>();
+        pending.add(failure);
+        while (!pending.isEmpty()) {
+            Throwable current = pending.removeFirst();
+            if (visited.add(current)) {
+                if (current instanceof InterruptedException) {
+                    Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Standalone Java session restores cancellation; no J2EE container.
+                }
+                java.util.Collections.addAll(pending, current.getSuppressed());
+                if (current.getCause() != null) {
+                    pending.add(current.getCause());
+                }
+            }
+        }
+    }
+
+    /**
+     * Preserves unchecked and I/O failures and translates other checked failures.
+     * @param failure aggregated close failure, or null on success
+     * @throws java.io.IOException if checked resource closure failed
+     */
+    private static void rethrow(Throwable failure) throws java.io.IOException {
         if (failure == null) {
             return;
         }
-        if (failure instanceof Exception exception) {
+        restoreInterruption(failure);
+        if (failure instanceof java.io.IOException exception) {
+            throw exception;
+        }
+        if (failure instanceof RuntimeException exception) {
             throw exception;
         }
         if (failure instanceof Error error) {
             throw error;
         }
-        throw new IllegalStateException("PKI session close failed", failure);
+        if (failure instanceof InterruptedException) {
+            java.io.InterruptedIOException translated = new java.io.InterruptedIOException("PKI session close interrupted");
+            translated.initCause(failure);
+            throw translated;
+        }
+        throw new java.io.IOException("PKI session close failed", failure);
     }
 
     /** Resource bootstrap seam used for deterministic lifecycle verification. */

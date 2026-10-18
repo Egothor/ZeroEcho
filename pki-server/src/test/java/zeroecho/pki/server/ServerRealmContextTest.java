@@ -344,9 +344,12 @@ class ServerRealmContextTest {
         System.out.println("rejectsChangedRealmCommitmentOnReopen");
         ServerRealmConfiguration original = configuration(new AuthorityExposurePolicy(
                 AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
-        try (ServerRealmContext ignored = ServerRealmContext.open(original, PkiSessionRuntimeDependencies.none(),
-                ServerTestSupport.CLOCK, deterministicRandom())) {
-            System.out.println("...initial-open=true");
+        {
+            ServerRealmContext ignored = ServerRealmContext.open(original, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, deterministicRandom());
+            try (ignored) {
+                System.out.println("...initial-open=true");
+            }
         }
         String changed = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
         ServerRealmConfiguration incompatible = new ServerRealmConfiguration(original.realmId(),
@@ -371,9 +374,12 @@ class ServerRealmContextTest {
             context.createPrincipal(ServerTestSupport.principal("auditor"), "bootstrap");
         }
         // Clean reopen verifies the durable anchor against the intact log and succeeds.
-        try (ServerRealmContext reopened = ServerRealmContext.open(config,
-                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
-            assertEquals(ServerTestSupport.REALM, config.realmId());
+        {
+            ServerRealmContext reopened = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom());
+            try (reopened) {
+                assertEquals(ServerTestSupport.REALM, config.realmId());
+            }
         }
         // Simulate a full audit-log rewrite by removing the log; the separately stored anchor no longer matches.
         deleteRecursively(auditDir);

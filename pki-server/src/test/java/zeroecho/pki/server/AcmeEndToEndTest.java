@@ -796,8 +796,11 @@ class AcmeEndToEndTest {
             assertArrayEquals(complete, estPost(wire, endpoint, body).body());
             assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().size());
         }
-        try (PkiHttpsServer server = startScep(fixture, rotated)) {
-            assertArrayEquals(complete, estPost(wire, endpoint, body).body());
+        {
+            PkiHttpsServer server = startScep(fixture, rotated);
+            try (server) {
+                assertArrayEquals(complete, estPost(wire, endpoint, body).body());
+            }
         }
         try (PkiHttpsServer server = PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), Clock.offset(CLOCK, Duration.ofMinutes(11)),
                 HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader(), Optional.empty(), Optional.of(rotated))) {
@@ -1426,8 +1429,9 @@ class AcmeEndToEndTest {
                 StandardCharsets.UTF_8);
         String scriptName = System.getProperty("os.name", "").toLowerCase().contains("win")
                 ? "zeroecho-pki-server.bat" : "zeroecho-pki-server";
-        Path launcher = Path.of(System.getProperty("user.dir"), "build", "install", "zeroecho-pki-server", "bin",
-                scriptName).toAbsolutePath();
+        Path distribution = Path.of(System.getProperty("server.distributionDirectory",
+                Path.of(System.getProperty("user.dir"), "build", "install", "zeroecho-pki-server").toString()));
+        Path launcher = distribution.resolve("bin").resolve(scriptName).toAbsolutePath();
         Path output = root.resolve("server-output.log");
         Path enrollment = root.resolve("enrollment.json");
         java.nio.file.Files.writeString(enrollment, EnrollmentTestSupport.runtimeJson(), StandardCharsets.UTF_8);
@@ -2435,9 +2439,20 @@ class AcmeEndToEndTest {
             }
         }
 
-        @Override public void close() throws Exception {
+        @Override public void close() throws java.io.IOException {
             listener.close();
-            if (thread != null) thread.join(5_000);
+            if (thread != null) {
+                try {
+                    thread.join(5_000);
+                    assertFalse(thread.isAlive(), "HTTP-01 responder did not stop");
+                } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    java.io.InterruptedIOException interrupted = new java.io.InterruptedIOException(
+                            "HTTP-01 responder close interrupted");
+                    interrupted.initCause(failure);
+                    throw interrupted;
+                }
+            }
         }
     }
 }

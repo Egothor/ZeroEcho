@@ -363,29 +363,32 @@ final class DefaultPublicationServiceTest {
         System.out.println("concurrentSameOperationDoesNotDuplicateAndUnrelatedProgresses");
         RecordingPublisher publisher = new RecordingPublisher(TARGET);
         publisher.blockedPublication.set(new PkiId("publication-blocked"));
-        try (FilesystemPkiStore store = store("concurrency");
-                DefaultPublicationService service = service(store, publisher);
-                ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Credential blocked = committedCredential(store, "blocked", new byte[] { 1, 2 });
-            Credential unrelated = committedCredential(store, "unrelated", new byte[] { 3, 4 });
-            service.register(credentialRequest("publication-blocked", blocked));
-            service.register(credentialRequest("publication-unrelated", unrelated));
+        try (FilesystemPkiStore store = store("concurrency")) {
+            DefaultPublicationService service = service(store, publisher);
+            try (service) {
+                try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+                    Credential blocked = committedCredential(store, "blocked", new byte[] { 1, 2 });
+                    Credential unrelated = committedCredential(store, "unrelated", new byte[] { 3, 4 });
+                    service.register(credentialRequest("publication-blocked", blocked));
+                    service.register(credentialRequest("publication-unrelated", unrelated));
 
-            Future<PublicationResult> first = executor.submit(
-                    () -> service.process(new PkiId("publication-blocked")));
-            assertTrue(publisher.entered.await(5, TimeUnit.SECONDS));
-            assertThrows(IllegalArgumentException.class,
-                    () -> service.process(new PkiId("publication-blocked")));
-            Future<PublicationResult> second = executor.submit(
-                    () -> service.process(new PkiId("publication-unrelated")));
-            assertEquals(PublicationStatus.SUCCEEDED, second.get(5, TimeUnit.SECONDS).status());
-            service.close();
-            assertThrows(IllegalStateException.class,
-                    () -> service.find(new PkiId("publication-unrelated")));
-            publisher.release.countDown();
-            assertEquals(PublicationStatus.SUCCEEDED, first.get(5, TimeUnit.SECONDS).status());
-            assertEquals(2, publisher.dispatchCalls.get());
-            System.out.println("...dispatch calls=" + publisher.dispatchCalls.get());
+                    Future<PublicationResult> first = executor.submit(
+                            () -> service.process(new PkiId("publication-blocked")));
+                    assertTrue(publisher.entered.await(5, TimeUnit.SECONDS));
+                    assertThrows(IllegalArgumentException.class,
+                            () -> service.process(new PkiId("publication-blocked")));
+                    Future<PublicationResult> second = executor.submit(
+                            () -> service.process(new PkiId("publication-unrelated")));
+                    assertEquals(PublicationStatus.SUCCEEDED, second.get(5, TimeUnit.SECONDS).status());
+                    service.close();
+                    assertThrows(IllegalStateException.class,
+                            () -> service.find(new PkiId("publication-unrelated")));
+                    publisher.release.countDown();
+                    assertEquals(PublicationStatus.SUCCEEDED, first.get(5, TimeUnit.SECONDS).status());
+                    assertEquals(2, publisher.dispatchCalls.get());
+                    System.out.println("...dispatch calls=" + publisher.dispatchCalls.get());
+                }
+            }
         }
         System.out.println("concurrentSameOperationDoesNotDuplicateAndUnrelatedProgresses...ok");
     }

@@ -136,9 +136,12 @@ final class DurableMetadataLogScannerTest {
                     assertTrue(!recovered.transactionTokensExhausted());
                     assertTrue(recovered.transactions().isEmpty());
                 }
-                try (DurableMetadataLog ignored = DurableMetadataLog.open(
-                        truncated, supportedProfile(), DurableMetadataLog.FaultInjector.NONE)) {
-                    assertTrue(Files.size(truncated) > frame.frameOffset());
+                {
+                    DurableMetadataLog ignored = DurableMetadataLog.open(
+                        truncated, supportedProfile(), DurableMetadataLog.FaultInjector.NONE);
+                    try (ignored) {
+                        assertTrue(Files.size(truncated) > frame.frameOffset());
+                    }
                 }
                 DurableMetadataLogScanner.RecoveryResult repaired = scan(truncated);
                 assertEquals(DurableMetadataLogScanner.Tail.CLEAN_END, repaired.tail());
@@ -226,9 +229,13 @@ final class DurableMetadataLogScannerTest {
             secondOpen = log.issue();
         }
         assertEquals(2L, scan(path).openTransactionCount());
-        try (DurableMetadataLog ignored = DurableMetadataLog.open(
-                path, supportedProfile(), DurableMetadataLog.FaultInjector.NONE)) {
-            // Opening publishes the recovery restart before exposing the writer.
+        {
+            DurableMetadataLog ignored = DurableMetadataLog.open(
+                path, supportedProfile(), DurableMetadataLog.FaultInjector.NONE);
+            if (ignored != null) {
+                // Opening publishes the recovery restart before exposing the writer.
+                ignored.close();
+            }
         }
         DurableMetadataLogScanner.RecoveryResult recovered = scan(path);
         assertEquals(0L, recovered.openTransactionCount());

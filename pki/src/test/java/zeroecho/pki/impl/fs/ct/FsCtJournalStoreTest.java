@@ -72,42 +72,48 @@ class FsCtJournalStoreTest {
     @Test
     @Timeout(10)
     void queuedAppendRechecksClosedStateAfterAcquiringLock() throws Exception {
-        try (FsCtJournalStore store = new FsCtJournalStore(dir.resolve("queued"))) {
-            ReentrantReadWriteLock lock = storeLock(store);
-            FutureTask<Void> append = new FutureTask<>(() -> {
-                store.append(firstEntry(fingerprint(1)));
-                return null;
-            });
-            lock.writeLock().lock();
-            try {
-                Thread thread = Thread.ofPlatform().start(append);
-                awaitQueued(lock, thread, append);
-                store.close();
-            } finally {
-                lock.writeLock().unlock();
+        {
+            FsCtJournalStore store = new FsCtJournalStore(dir.resolve("queued"));
+            try (store) {
+                ReentrantReadWriteLock lock = storeLock(store);
+                FutureTask<Void> append = new FutureTask<>(() -> {
+                    store.append(firstEntry(fingerprint(1)));
+                    return null;
+                });
+                lock.writeLock().lock();
+                try {
+                    Thread thread = Thread.ofPlatform().start(append);
+                    awaitQueued(lock, thread, append);
+                    store.close();
+                } finally {
+                    lock.writeLock().unlock();
+                }
+                ExecutionException failure = assertThrows(ExecutionException.class,
+                        () -> append.get(5, TimeUnit.SECONDS));
+                assertInstanceOf(IllegalStateException.class, failure.getCause());
             }
-            ExecutionException failure = assertThrows(ExecutionException.class,
-                    () -> append.get(5, TimeUnit.SECONDS));
-            assertInstanceOf(IllegalStateException.class, failure.getCause());
         }
     }
 
     @Test
     @Timeout(10)
     void closeWaitsForActiveReadOperation() throws Exception {
-        try (FsCtJournalStore store = new FsCtJournalStore(dir.resolve("closing"))) {
-            ReentrantReadWriteLock lock = storeLock(store);
-            FutureTask<Void> close = new FutureTask<>(() -> { store.close(); return null; });
-            lock.readLock().lock();
-            try {
-                Thread thread = Thread.ofPlatform().start(close);
-                awaitQueued(lock, thread, close);
-                assertFalse(close.isDone(), "close must not close the channel during an active reader");
-            } finally {
-                lock.readLock().unlock();
+        {
+            FsCtJournalStore store = new FsCtJournalStore(dir.resolve("closing"));
+            try (store) {
+                ReentrantReadWriteLock lock = storeLock(store);
+                FutureTask<Void> close = new FutureTask<>(() -> { store.close(); return null; });
+                lock.readLock().lock();
+                try {
+                    Thread thread = Thread.ofPlatform().start(close);
+                    awaitQueued(lock, thread, close);
+                    assertFalse(close.isDone(), "close must not close the channel during an active reader");
+                } finally {
+                    lock.readLock().unlock();
+                }
+                close.get(5, TimeUnit.SECONDS);
+                assertThrows(IllegalStateException.class, store::latestSequenceNumber);
             }
-            close.get(5, TimeUnit.SECONDS);
-            assertThrows(IllegalStateException.class, store::latestSequenceNumber);
         }
     }
 
@@ -214,7 +220,7 @@ class FsCtJournalStoreTest {
         // Corrupt one byte inside entry 1's entryHash region (offset 266 into record 0).
         Path entriesFile = journalDir.resolve("entries.bin");
         byte[] raw = Files.readAllBytes(entriesFile);
-        raw[266] ^= 0xFF;
+        raw[266] = (byte) (raw[266] ^ 0xFF);
         Files.write(entriesFile, raw);
 
         try (CtJournalStore store = FsCtJournalStoreFactory.open(journalDir)) {

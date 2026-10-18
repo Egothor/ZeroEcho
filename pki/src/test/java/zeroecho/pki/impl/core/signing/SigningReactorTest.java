@@ -746,18 +746,21 @@ final class SigningReactorTest {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 8, clock)) {
             BoundedProvider provider = new BoundedProvider(store);
             provider.failDuringClose = true;
-            try (SigningReactor reactor = boundedReactor(store, provider, Duration.ofMillis(5))) {
-                operation = acceptBounded(boundedService(store, provider, reactor));
-                reactor.start();
-                await(provider.dispatchEntered);
-                reactor.close();
-                SignWorkflowStore.Workflow failed = store.getSignWorkflow(operation).orElseThrow();
-                assertEquals(SignWorkflowStore.InitialAttemptPhase.FAILED, failed.initialAttemptPhase());
-                assertEquals(SignWorkflowStore.State.DISPATCHED, failed.state());
-                assertEquals(1, failed.failureCount());
-                assertTrue(failed.leaseUntil().isEmpty());
-                assertEquals(1, provider.dispatches.get());
-                assertEquals(0, provider.observations.get());
+            {
+                SigningReactor reactor = boundedReactor(store, provider, Duration.ofMillis(5));
+                try (reactor) {
+                    operation = acceptBounded(boundedService(store, provider, reactor));
+                    reactor.start();
+                    await(provider.dispatchEntered);
+                    reactor.close();
+                    SignWorkflowStore.Workflow failed = store.getSignWorkflow(operation).orElseThrow();
+                    assertEquals(SignWorkflowStore.InitialAttemptPhase.FAILED, failed.initialAttemptPhase());
+                    assertEquals(SignWorkflowStore.State.DISPATCHED, failed.state());
+                    assertEquals(1, failed.failureCount());
+                    assertTrue(failed.leaseUntil().isEmpty());
+                    assertEquals(1, provider.dispatches.get());
+                    assertEquals(0, provider.observations.get());
+                }
             }
         }
         clock.now = NOW.plusSeconds(3);
@@ -872,49 +875,52 @@ final class SigningReactorTest {
             Path iterRoot = Files.createTempDirectory(root, outcome + "-");
             try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(iterRoot, 8, clock)) {
                 BoundedProvider provider = new BoundedProvider(store);
-                try (SigningReactor reactor = boundedReactor(store, provider, Duration.ofMillis(5))) {
-                    DefaultSigningService service = boundedService(store, provider, reactor);
-                    PkiId operation = acceptBounded(service);
-                    CountDownLatch checked = new CountDownLatch(1);
-                    AtomicBoolean cancelled = new AtomicBoolean();
-                    AtomicBoolean interruptPreserved = new AtomicBoolean();
-                    CompletableFuture<Throwable> result = new CompletableFuture<>();
-                    Thread waiter = new Thread(() -> {
-                        try {
-                            service.awaitBoundedObservation(operation, () -> {
-                                checked.countDown();
-                                return cancelled.get();
-                            });
-                            result.complete(new AssertionError("Wait unexpectedly completed"));
-                        } catch (Throwable failure) {
-                            interruptPreserved.set(Thread.currentThread().isInterrupted());
-                            result.complete(failure);
+                {
+                    SigningReactor reactor = boundedReactor(store, provider, Duration.ofMillis(5));
+                    try (reactor) {
+                        DefaultSigningService service = boundedService(store, provider, reactor);
+                        PkiId operation = acceptBounded(service);
+                        CountDownLatch checked = new CountDownLatch(1);
+                        AtomicBoolean cancelled = new AtomicBoolean();
+                        AtomicBoolean interruptPreserved = new AtomicBoolean();
+                        CompletableFuture<Throwable> result = new CompletableFuture<>();
+                        Thread waiter = new Thread(() -> {
+                            try {
+                                service.awaitBoundedObservation(operation, () -> {
+                                    checked.countDown();
+                                    return cancelled.get();
+                                });
+                                result.complete(new AssertionError("Wait unexpectedly completed"));
+                            } catch (Throwable failure) {
+                                interruptPreserved.set(Thread.currentThread().isInterrupted());
+                                result.complete(failure);
+                            }
+                        }, "bounded-wait-cancellation");
+                        waiter.start();
+                        await(checked);
+                        switch (outcome) {
+                            case "signal" -> cancelled.set(true);
+                            case "interrupt" -> waiter.interrupt();
+                            case "shutdown" -> reactor.close();
+                            default -> throw new AssertionError(outcome);
                         }
-                    }, "bounded-wait-cancellation");
-                    waiter.start();
-                    await(checked);
-                    switch (outcome) {
-                        case "signal" -> cancelled.set(true);
-                        case "interrupt" -> waiter.interrupt();
-                        case "shutdown" -> reactor.close();
-                        default -> throw new AssertionError(outcome);
+                        Throwable failure = result.get(5, TimeUnit.SECONDS);
+                        assertTrue(failure instanceof PkiException,
+                                () -> "Wait scenario=" + outcome + "; actual=" + failure.getClass().getName()
+                                        + "; cause=" + (failure.getCause() == null ? "none"
+                                                : failure.getCause().getClass().getName())
+                                        + "; origin=" + (failure.getStackTrace().length == 0 ? "none"
+                                                : failure.getStackTrace()[0]));
+                        if ("shutdown".equals(outcome)) {
+                            assertEquals(SigningExecutionException.Classification.SHUTTING_DOWN,
+                                    ((SigningExecutionException) failure).classification());
+                        }
+                        assertEquals("interrupt".equals(outcome), interruptPreserved.get());
+                        waiter.join(5_000L);
+                        assertFalse(waiter.isAlive());
+                        assertEquals(SignWorkflowStore.State.INTENT, store.getSignWorkflow(operation).orElseThrow().state());
+                        assertEquals(0, provider.dispatches.get());
                     }
-                    Throwable failure = result.get(5, TimeUnit.SECONDS);
-                    assertTrue(failure instanceof PkiException,
-                            () -> "Wait scenario=" + outcome + "; actual=" + failure.getClass().getName()
-                                    + "; cause=" + (failure.getCause() == null ? "none"
-                                            : failure.getCause().getClass().getName())
-                                    + "; origin=" + (failure.getStackTrace().length == 0 ? "none"
-                                            : failure.getStackTrace()[0]));
-                    if ("shutdown".equals(outcome)) {
-                        assertEquals(SigningExecutionException.Classification.SHUTTING_DOWN,
-                                ((SigningExecutionException) failure).classification());
-                    }
-                    assertEquals("interrupt".equals(outcome), interruptPreserved.get());
-                    waiter.join(5_000L);
-                    assertFalse(waiter.isAlive());
-                    assertEquals(SignWorkflowStore.State.INTENT, store.getSignWorkflow(operation).orElseThrow().state());
-                    assertEquals(0, provider.dispatches.get());
                 }
             }
         }

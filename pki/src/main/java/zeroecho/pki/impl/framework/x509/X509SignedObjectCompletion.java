@@ -48,7 +48,7 @@ import zeroecho.pki.spi.crypto.SigningProvider;
  * material or signed-object payload.
  * </p>
  */
-public final class X509SignedObjectCompletion {
+public final class X509SignedObjectCompletion implements zeroecho.pki.spi.framework.SignedObjectCompletion {
     private final StatusObject statusObject;
     private final X509ExecutionPlan<SigningProvider> signingPlan;
     private final Object authorityToken;
@@ -65,6 +65,7 @@ public final class X509SignedObjectCompletion {
      *
      * @return completed status object
      */
+    @Override
     public StatusObject statusObject() {
         return statusObject;
     }

@@ -41,8 +41,6 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
-import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
-import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 
 /**
  * SPI contract for framework-specific credential issuance backends.
@@ -112,7 +110,7 @@ public interface CredentialIssuerBackend {
      * <p>
      * This operation produces a credential for a non-CA subject, typically from a
      * cryptographically verified and profile-authorized request carried by the
-     * opaque {@link ValidatedCertificateRequest}. The returned
+     * opaque {@link ValidatedLeafRequest}. The returned
      * {@link CredentialBundle} may contain the issued leaf credential together with
      * any additional runtime bundle material defined by the concrete framework,
      * such as chain elements or accompanying metadata.
@@ -142,7 +140,7 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    CredentialBundle issueEndEntity(ValidatedCertificateRequest request, DurableContentReference issuerCertificate,
+    CredentialBundle issueEndEntity(ValidatedLeafRequest request, DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef, BigInteger serial);
 
     /**
@@ -154,7 +152,7 @@ public interface CredentialIssuerBackend {
      * @param cancellation originating cooperative cancellation signal
      * @return issued credential bundle
      */
-    default CredentialBundle issueEndEntity(ValidatedCertificateRequest request,
+    default CredentialBundle issueEndEntity(ValidatedLeafRequest request,
             DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");
@@ -172,7 +170,7 @@ public interface CredentialIssuerBackend {
      * </p>
      *
      * <p>
-     * The supplied {@link ValidatedCaCertificateRequest} can be constructed only
+     * The supplied {@link ValidatedCaRequest} can be constructed only
      * after the core CA proof and active-profile gates have bound the exact public
      * key, subject, profile version, policy, validity, and serial.
      * </p>
@@ -189,7 +187,7 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
+    Credential issueIntermediateCertificate(ValidatedCaRequest request,
             DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef);
 
@@ -201,7 +199,7 @@ public interface CredentialIssuerBackend {
      * @param cancellation originating cooperative cancellation signal
      * @return issued CA credential
      */
-    default Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
+    default Credential issueIntermediateCertificate(ValidatedCaRequest request,
             DurableContentReference issuerCertificate, KeyRef issuerKeyRef, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");
         return issueIntermediateCertificate(request, issuerCertificate, issuerKeyRef);

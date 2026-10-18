@@ -224,13 +224,20 @@ final class FilesystemSignWorkflowStoreTest {
     void successfulRecoveryCleansEveryAbandonedStagedCandidate(@TempDir Path root)
             throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        try (FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-            // establish a valid persisted store
+        {
+            FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock);
+            if (ignored != null) {
+                // establish a valid persisted store
+                ignored.close();
+            }
         }
         List<Path> candidates = createAbandonedStagedCandidates(root);
-        try (FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-            for (Path candidate : candidates) {
-                assertFalse(Files.exists(candidate));
+        {
+            FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock);
+            try (ignored) {
+                for (Path candidate : candidates) {
+                    assertFalse(Files.exists(candidate));
+                }
             }
         }
     }
@@ -241,9 +248,13 @@ final class FilesystemSignWorkflowStoreTest {
         for (boolean manifestFailure : List.of(true, false)) {
             Path root = temporary.resolve(manifestFailure ? "manifest" : "wal");
             MutableClock clock = new MutableClock(NOW);
-            try (FilesystemPkiStore ignored =
-                    FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-                // establish a valid persisted store
+            {
+                FilesystemPkiStore ignored =
+                    FilesystemPkiStoreTestAccess.open(root, 4, clock);
+                if (ignored != null) {
+                    // establish a valid persisted store
+                    ignored.close();
+                }
             }
             Path metadata = root.resolve("metadata");
             byte[] sentinel = "sensitive-parser-sentinel".getBytes(
@@ -274,8 +285,12 @@ final class FilesystemSignWorkflowStoreTest {
     void malformedOrphanCheckpointIsCauseFreeAndRedacted(@TempDir Path root)
             throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        try (FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-            // establish a valid persisted store
+        {
+            FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock);
+            if (ignored != null) {
+                // establish a valid persisted store
+                ignored.close();
+            }
         }
         byte[] sentinel = "sensitive-orphan-checkpoint".getBytes(
                 java.nio.charset.StandardCharsets.US_ASCII);
@@ -299,8 +314,12 @@ final class FilesystemSignWorkflowStoreTest {
     void orphanCheckpointOperationalReadFailureRemainsCauseful(@TempDir Path root)
             throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        try (FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-            // establish a valid persisted store
+        {
+            FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock);
+            if (ignored != null) {
+                // establish a valid persisted store
+                ignored.close();
+            }
         }
         Path orphan = root.resolve("metadata").resolve(
                 "checkpoint-00000000000000000001-00000000000000000001.zec");
@@ -380,8 +399,12 @@ final class FilesystemSignWorkflowStoreTest {
     void passiveWalOperationalOpenFailureRemainsCausefulAndReleasesOwnership(
             @TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        try (FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-            // establish a valid persisted store
+        {
+            FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 4, clock);
+            if (ignored != null) {
+                // establish a valid persisted store
+                ignored.close();
+            }
         }
         List<FileImage> before = fileImages(root);
         long threadsBefore = recoveryThreadCount();
@@ -416,9 +439,13 @@ final class FilesystemSignWorkflowStoreTest {
         for (boolean symlink : List.of(true, false)) {
             Path root = temporary.resolve(symlink ? "symlink" : "non-directory");
             MutableClock clock = new MutableClock(NOW);
-            try (FilesystemPkiStore ignored =
-                    FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-                // establish a valid persisted store
+            {
+                FilesystemPkiStore ignored =
+                    FilesystemPkiStoreTestAccess.open(root, 4, clock);
+                if (ignored != null) {
+                    // establish a valid persisted store
+                    ignored.close();
+                }
             }
             Path metadata = root.resolve("metadata");
             Path retained = temporary.resolve(
@@ -899,9 +926,12 @@ final class FilesystemSignWorkflowStoreTest {
     void cleanV16MarkerIsPublishedAndUnsupportedRootIsRejectedWithoutFurtherMutation(
             @TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        try (FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 2, clock)) {
-            assertArrayEquals("v18".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-                    Files.readAllBytes(root.resolve("VERSION")));
+        {
+            FilesystemPkiStore ignored = FilesystemPkiStoreTestAccess.open(root, 2, clock);
+            try (ignored) {
+                assertArrayEquals("v18".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                        Files.readAllBytes(root.resolve("VERSION")));
+            }
         }
         Files.writeString(root.resolve("VERSION"), "v15");
         List<FileImage> before = fileImages(root);
@@ -1516,9 +1546,13 @@ final class FilesystemSignWorkflowStoreTest {
         createAbandonedStagedCandidates(root);
         List<FileImage> before = fileImages(root);
         IllegalStateException failure = assertThrows(IllegalStateException.class, () -> {
-            try (FilesystemPkiStore ignored =
-                    FilesystemPkiStoreTestAccess.open(root, 4, clock)) {
-                // Recovery must reject before exposing an open store.
+            {
+                FilesystemPkiStore ignored =
+                    FilesystemPkiStoreTestAccess.open(root, 4, clock);
+                if (ignored != null) {
+                    // Recovery must reject before exposing an open store.
+                    ignored.close();
+                }
             }
         });
         assertEquals("Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED",

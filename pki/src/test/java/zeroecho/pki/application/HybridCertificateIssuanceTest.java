@@ -168,9 +168,12 @@ final class HybridCertificateIssuanceTest {
                     zeroecho.pki.api.status.StatusObjectType.CRL, X509));
             fixture.verifyCrl(ca, fixture.rotatedKey);
         }
-        try (PkiSession session = fixture.open()) {
-            for (int index = 0; index < credentials.size(); index++) {
-                fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey);
+        {
+            PkiSession session = fixture.open();
+            try (session) {
+                for (int index = 0; index < credentials.size(); index++) {
+                    fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey);
+                }
             }
         }
     }

@@ -35,6 +35,7 @@
 package zeroecho.pki.cli;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.PrintStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -79,8 +80,7 @@ public final class PkiProfileBootstrap {
                   // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
                   // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
                   // Input rejection is classified after resource close, preserving close-failure precedence.
-                  // Standalone execution checks or restores interruption; it neither creates threads nor runs in a J2EE container.
-                  @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops", "PMD.DoNotUseThreads", "PMD.PreserveStackTrace", "PMD.ExceptionAsFlowControl" })
+                  @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops", "PMD.PreserveStackTrace", "PMD.ExceptionAsFlowControl" })
                   static int execute(String[] arguments, PrintStream diagnostics) {
         if (arguments.length != 6 || !"--config".equals(arguments[0])
                 || !"--profiles-dir".equals(arguments[2]) || !"--store-dir".equals(arguments[4])) {
@@ -134,19 +134,35 @@ public final class PkiProfileBootstrap {
                 registered++;
             }
             diagnostics.printf("Profile bootstrap completed: registered=%d skipped=%d%n", registered, skipped);
-        } catch (IOException | IllegalArgumentException failure) {
+        } catch (IOException failure) {
+            return classifyInputFailure(failure, diagnostics);
+        } catch (IllegalArgumentException failure) {
             diagnostics.println("Profile bootstrap input is invalid; earlier profiles may already be registered");
             return PkiExitCodes.VALIDATION_OR_POLICY;
-        } catch (InterruptedException failure) {
-            Thread.currentThread().interrupt();
-            diagnostics.println("Profile bootstrap interrupted; inspect persisted profiles before restarting");
-            return PkiExitCodes.CANCELLED;
         } catch (Exception failure) {
             // Provider exceptions and profile contents are deliberately excluded from diagnostics.
             diagnostics.println("Profile bootstrap failed; inspect persisted profiles before restarting");
             return PkiExitCodes.RESOURCE_FAILURE;
         }
         return PkiExitCodes.SUCCESS;
+    }
+
+    /**
+     * Classifies input and translated session-close I/O failures without exposing their details.
+     * A timeout alone is not cancellation; the session restores interruption before
+     * propagating an interrupted close.
+     * @param failure original I/O failure
+     * @param diagnostics safe diagnostic output
+     * @return cancellation for an interrupted close, otherwise input validation failure
+     */
+    /* default */ static int classifyInputFailure(IOException failure, PrintStream diagnostics) {
+        if (failure instanceof InterruptedIOException
+                && Thread.currentThread().isInterrupted()) { // NOPMD DoNotUseThreads - Standalone CLI preserves session cancellation; no J2EE container.
+            diagnostics.println("Profile bootstrap interrupted; inspect persisted profiles before restarting");
+            return PkiExitCodes.CANCELLED;
+        }
+        diagnostics.println("Profile bootstrap input is invalid; earlier profiles may already be registered");
+        return PkiExitCodes.VALIDATION_OR_POLICY;
     }
 
     private static PkiOperationResult execute(PkiSession session, PkiOperation operation) {

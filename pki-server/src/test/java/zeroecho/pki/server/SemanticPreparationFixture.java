@@ -151,7 +151,7 @@ public final class SemanticPreparationFixture implements AutoCloseable {
                 PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> new KeyringPassword(PASSWORD.clone())), clock);
     }
 
-    @Override public void close() throws Exception {
+    @Override public void close() throws java.io.IOException {
         try {
             if (!accepted) session.semanticSigning().orElseThrow().discard(prepared);
         } finally {

@@ -41,7 +41,7 @@ module zeroecho.pki.server {
     requires tools.jackson.core;
     requires java.logging;
     requires java.naming;
-    requires java.net.http;
+    requires transitive java.net.http;
     requires jdk.httpserver;
     requires jdk.jfr;
     requires java.management;

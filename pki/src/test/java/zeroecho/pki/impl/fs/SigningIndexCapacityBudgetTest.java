@@ -47,9 +47,12 @@ final class SigningIndexCapacityBudgetTest {
         try (SigningIndexCapacityBudget.Reservation first = budget.reserve(128L)) {
             first.transfer();
         }
-        try (SigningIndexCapacityBudget.Reservation rollback = budget.reserve(128L)) {
-            assertEquals(256L, budget.snapshot().reservedBytes());
-            assertEquals(256L, budget.snapshot().highWaterReservedBytes());
+        {
+            SigningIndexCapacityBudget.Reservation rollback = budget.reserve(128L);
+            try (rollback) {
+                assertEquals(256L, budget.snapshot().reservedBytes());
+                assertEquals(256L, budget.snapshot().highWaterReservedBytes());
+            }
         }
         assertEquals(128L, budget.snapshot().reservedBytes());
         assertThrows(IllegalStateException.class, () -> budget.reserve(129L));
@@ -210,12 +213,14 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(transientBefore, transientBudget.snapshot());
 
         try (SigningIndexCapacityBudget.CutoverPermit permit =
-                steady.prepareCutover(600L, 650L);
-                SigningIndexCapacityBudget.Reclassification ignored =
-                        SigningIndexCapacityBudget.reclassify(
-                                permit, transientBudget, 400L)) {
-            assertEquals(650L, steady.snapshot().reservedBytes());
-            assertEquals(0L, transientBudget.snapshot().reservedBytes());
+            steady.prepareCutover(600L, 650L)) {
+            SigningIndexCapacityBudget.Reclassification ignored =
+                SigningIndexCapacityBudget.reclassify(
+                permit, transientBudget, 400L);
+            try (ignored) {
+                assertEquals(650L, steady.snapshot().reservedBytes());
+                assertEquals(0L, transientBudget.snapshot().reservedBytes());
+            }
         }
         assertEquals(steadyBefore, steady.snapshot());
         assertEquals(transientBefore, transientBudget.snapshot());
@@ -226,13 +231,19 @@ final class SigningIndexCapacityBudgetTest {
     @Test
     void cutoverPermitLeavesReservationAdmissionToTheEngineCaptureGate() {
         SigningIndexCapacityBudget steady = committedBudget(1_024L, 600L);
-        try (SigningIndexCapacityBudget.CutoverPermit ignored =
-                steady.prepareCutover(600L, 700L)) {
-            try (SigningIndexCapacityBudget.Reservation reservation = steady.reserve(1L)) {
-                assertEquals(601L, steady.snapshot().reservedBytes());
+        {
+            SigningIndexCapacityBudget.CutoverPermit ignored =
+                steady.prepareCutover(600L, 700L);
+            try (ignored) {
+                {
+                    SigningIndexCapacityBudget.Reservation reservation = steady.reserve(1L);
+                    try (reservation) {
+                        assertEquals(601L, steady.snapshot().reservedBytes());
+                    }
+                }
+                steady.releaseCommitted(100L);
+                assertEquals(500L, steady.snapshot().reservedBytes());
             }
-            steady.releaseCommitted(100L);
-            assertEquals(500L, steady.snapshot().reservedBytes());
         }
         try (SigningIndexCapacityBudget.Reservation reservation = steady.reserve(100L)) {
             reservation.transfer();

@@ -110,7 +110,12 @@ final class PqcCertificateIssuanceTest {
             credential = fixture.current(fixture.create(session));
             fixture.verifyRoot(credential, fixture.rootKey);
         }
-        try (PkiSession session = fixture.open()) { fixture.verifyRoot(credential, fixture.rootKey); }
+        {
+            PkiSession session = fixture.open();
+            try (session) {
+     fixture.verifyRoot(credential, fixture.rootKey);
+            }
+        }
     }
 
     private static final FormatId X509 = new FormatId("x509");

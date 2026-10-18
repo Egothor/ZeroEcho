@@ -94,13 +94,20 @@ class BackupArtifactRepositoryTest {
     }
 
     @Test void failedHandoffRetainsPreparationAdmissionUntilSourceOwnerCloses() throws Exception {
-        try (BackupArtifactRepository repository = open(NOW);
-                BackupArtifactRepository.PreparationJob job = repository.prepare()) {
-            assertThrows(IOException.class, () -> job.handoff("owner", "0".repeat(64)));
-            assertThrows(IOException.class, repository::prepare);
-            assertThrows(IOException.class, repository::close);
-            job.close();
-            try (BackupArtifactRepository.PreparationJob next = repository.prepare()) { }
+        try (BackupArtifactRepository repository = open(NOW)) {
+            BackupArtifactRepository.PreparationJob job = repository.prepare();
+            try (job) {
+                assertThrows(IOException.class, () -> job.handoff("owner", "0".repeat(64)));
+                assertThrows(IOException.class, repository::prepare);
+                assertThrows(IOException.class, repository::close);
+                job.close();
+                {
+                    BackupArtifactRepository.PreparationJob next = repository.prepare();
+                    if (next != null) {
+                        next.close();
+                    }
+                }
+            }
         }
     }
 
@@ -195,10 +202,13 @@ class BackupArtifactRepositoryTest {
             BackupArtifactRepository.Lease first = repository.source("owner", handle,
                     BackupArtifactRepository.State.READY, false);
             first.close();
-            try (BackupArtifactRepository.Lease second = repository.source("owner", handle,
-                    BackupArtifactRepository.State.READY, false)) {
-                assertThrows(IOException.class, () -> first.transition(BackupArtifactRepository.State.CONSUMED, ""));
-                assertEquals(BackupArtifactRepository.State.READY, repository.inspect("owner", handle).state());
+            {
+                BackupArtifactRepository.Lease second = repository.source("owner", handle,
+                    BackupArtifactRepository.State.READY, false);
+                try (second) {
+                    assertThrows(IOException.class, () -> first.transition(BackupArtifactRepository.State.CONSUMED, ""));
+                    assertEquals(BackupArtifactRepository.State.READY, repository.inspect("owner", handle).state());
+                }
             }
         }
     }

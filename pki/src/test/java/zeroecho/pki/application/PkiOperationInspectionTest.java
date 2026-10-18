@@ -399,13 +399,16 @@ final class PkiOperationInspectionTest {
     @Test
     void knownKeyMetadataCursorCancellationRetainsCancellationClassification(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
-        try (PkiSession session = DefaultPkiSession.open(configuration(temporary), IntermediateCreationFixture.CLOCK, bootstrap)) {
-            new IntermediateCreationFixture().initialize(bootstrap.store, 2);
-            java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
-            assertThrows(java.util.concurrent.CancellationException.class,
-                    () -> bootstrap.store.visitAuthorityKeyReferences(key -> { throw new AssertionError("Cancelled cursor must not yield keys"); },
-                            () -> checks.incrementAndGet() >= 2));
-            assertTrue(checks.get() >= 2);
+        {
+            PkiSession session = DefaultPkiSession.open(configuration(temporary), IntermediateCreationFixture.CLOCK, bootstrap);
+            try (session) {
+                new IntermediateCreationFixture().initialize(bootstrap.store, 2);
+                java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+                assertThrows(java.util.concurrent.CancellationException.class,
+                        () -> bootstrap.store.visitAuthorityKeyReferences(key -> { throw new AssertionError("Cancelled cursor must not yield keys"); },
+                                () -> checks.incrementAndGet() >= 2));
+                assertTrue(checks.get() >= 2);
+            }
         }
     }
 

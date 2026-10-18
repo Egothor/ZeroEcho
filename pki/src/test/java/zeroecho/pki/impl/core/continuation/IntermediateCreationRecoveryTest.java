@@ -237,7 +237,9 @@ final class IntermediateCreationRecoveryTest {
         return new DefaultSemanticSigningService(store, signing, PkiTestRuntime.endEntityPreparation(store, IntermediateCreationFixture.CLOCK));
     }
 
-    private static final class SimulatedCrash extends Error { }
+    private static final class SimulatedCrash extends Error {
+        private static final long serialVersionUID = 1L;
+    }
     private static final class MutableClock extends Clock {
         private Instant now = IntermediateCreationFixture.NOW;
         @Override public ZoneId getZone() { return ZoneOffset.UTC; }

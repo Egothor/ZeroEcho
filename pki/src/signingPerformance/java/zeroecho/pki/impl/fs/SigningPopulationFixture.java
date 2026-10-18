@@ -136,10 +136,8 @@ public final class SigningPopulationFixture {
         SigningLedgerRecovery.Configuration configuration = new SigningLedgerRecovery.Configuration(
                 8192, SigningManifestCodec.MAX_FILE_BYTES, SigningCheckpointCodec.MAX_ENTRIES,
                 SigningActiveWal.Configuration.defaults(options.signingMaximumGroupSize()));
-        try (SigningLedgerRecovery.Handle ignored =
-                SigningLedgerRecovery.recover(metadataRoot, configuration, recovery)) {
-            // Closing the validated production recovery handle leaves the image ready for normal reopen.
-        }
+        // Closing the validated production recovery handle leaves the image ready for normal reopen.
+        SigningLedgerRecovery.recover(metadataRoot, configuration, recovery).close();
         Observation observation = recovery.observation();
         long expectedCurrent = Math.addExact(Math.addExact(genericRecords,
                 Math.multiplyExact(activeRecords, 3L)), 1L);

@@ -211,11 +211,15 @@ final class SigningLedgerCoordinatorCapacityTest {
 
         assertThrows(SigningIndexCapacityBudget.CapacityExceededException.class,
                 () -> {
-                    try (SigningLedgerStoreEngine ignored = SigningLedgerStoreEngine.open(
+                    {
+                        SigningLedgerStoreEngine ignored = SigningLedgerStoreEngine.open(
                             root, STORE_ID, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
                             configuration, protectedFloor + 1L,
-                            FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES)) {
-                        // Opening must fail before a live engine is returned.
+                            FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
+                        if (ignored != null) {
+                            // Opening must fail before a live engine is returned.
+                            ignored.close();
+                        }
                     }
                 });
         assertArrayEquals(manifestBefore, Files.readAllBytes(manifest));
@@ -575,9 +579,12 @@ final class SigningLedgerCoordinatorCapacityTest {
             AtomicBoolean interruptedStatus = new AtomicBoolean();
             AtomicReference<Throwable> interruptedFailure = new AtomicReference<>();
             Thread interruptedCapture = new Thread(() -> {
-                try (SigningMvccIndex.Snapshot ignored = engine.snapshot()) {
-                    interruptedFailure.set(new AssertionError(
-                            "Interrupted capture unexpectedly acquired a snapshot"));
+                try {
+                    SigningMvccIndex.Snapshot ignored = engine.snapshot();
+                    try (ignored) {
+                        interruptedFailure.set(new AssertionError(
+                                "Interrupted capture unexpectedly acquired a snapshot"));
+                    }
                 } catch (Throwable failure) {
                     interruptedFailure.set(failure);
                     interruptedStatus.set(Thread.currentThread().isInterrupted());

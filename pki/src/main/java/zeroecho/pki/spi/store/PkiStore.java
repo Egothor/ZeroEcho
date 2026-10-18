@@ -1294,10 +1294,13 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * <p>After this method returns, implementations must reject new operations.
      * Repeated close calls must follow the implementation's documented idempotence
      * contract. A caller that coordinates multiple resources must preserve the
-     * primary close failure and attach later failures as suppressed exceptions.</p>
+     * primary close failure and attach later failures as suppressed exceptions.
+     * Implementations must translate other checked resource failures to I/O failures
+     * with the original cause, and restore interruption before translating an
+     * interrupted resource close.</p>
      *
-     * @throws Exception if a lifecycle-owned resource cannot be closed
+     * @throws java.io.IOException if a lifecycle-owned resource cannot be closed
      */
     @Override
-    void close() throws Exception;
+    void close() throws java.io.IOException;
 }

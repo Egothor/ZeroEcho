@@ -236,9 +236,13 @@ final class AuditProjectionWorker implements AutoCloseable {
     }
 
     @Override
-    public void close() throws InterruptedException {
+    public void close() throws IOException {
         stopScheduling();
-        awaitStopped();
+        try {
+            awaitStopped();
+        } catch (InterruptedException failure) {
+            throw RetryableCloseGate.interruptedClose(failure);
+        }
     }
 
     /* default */ void stopScheduling() {

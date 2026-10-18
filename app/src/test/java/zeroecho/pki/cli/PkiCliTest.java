@@ -691,7 +691,7 @@ class PkiCliTest {
                 }
 
                 @Override
-                public void close() throws Exception {
+                public void close() throws IOException {
                     closes.incrementAndGet();
                     if (failClose) {
                         throw new IOException("sensitive-close-detail");

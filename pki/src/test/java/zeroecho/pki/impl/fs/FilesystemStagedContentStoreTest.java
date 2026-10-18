@@ -285,12 +285,19 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("sharedSigningPublicationReservationsAreReferenceCounted");
         FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);
         DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.OPERATION, "shared");
-        try (FilesystemStagedContentStore.TransactionalReservation first =
+        {
+            FilesystemStagedContentStore.TransactionalReservation first =
                 store.reserveTransactionalPublication(reference);
-                FilesystemStagedContentStore.TransactionalReservation second =
-                        store.reserveTransactionalPublication(reference)) {
-            first.close();
-            assertThrows(IOException.class, () -> store.retireUnownedContent(reference));
+            try (first) {
+                {
+                    FilesystemStagedContentStore.TransactionalReservation second =
+                        store.reserveTransactionalPublication(reference);
+                    try (second) {
+                        first.close();
+                        assertThrows(IOException.class, () -> store.retireUnownedContent(reference));
+                    }
+                }
+            }
         }
         store.retireUnownedContent(reference);
         assertThrows(IOException.class, () -> store.openContent(reference));

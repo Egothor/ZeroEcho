@@ -206,20 +206,24 @@ final class SigningLedgerMaintenanceTest {
         Fixture fixture = fixture("online-steady-capacity");
         SigningIndexCapacityBudget.Snapshot before = fixture.budget().snapshot();
         long remaining = before.maximumBytes() - before.reservedBytes();
-        try (SigningIndexCapacityBudget.Reservation saturated = fixture.budget().reserve(remaining);
-                SigningLedgerMaintenance maintenance = fixture.maintenance()) {
-            SigningLedgerMaintenance.CompactionDeferredException deferred = assertThrows(
-                    SigningLedgerMaintenance.CompactionDeferredException.class,
-                    () -> maintenance.compactOnline(2L, 3L, () -> { }, () -> { },
-                            new Object(), (frame, pointer) -> List.of()));
-            assertEquals(SigningLedgerMaintenance.DeferralReason.STEADY_CAPACITY,
-                    deferred.reason());
-            assertFalse(maintenance.recoveryRequired());
-            assertEquals(1L, maintenance.manifest().activeWal().identity());
-            assertTrue(maintenance.manifest().sealedSegments().isEmpty());
-            assertFalse(fixture.artifacts().contains(2L));
-            assertFalse(fixture.artifacts().contains(3L));
-            assertEquals(1, fixture.generations().statistics().registered());
+        {
+            SigningIndexCapacityBudget.Reservation saturated = fixture.budget().reserve(remaining);
+            try (saturated) {
+                try (SigningLedgerMaintenance maintenance = fixture.maintenance()) {
+                    SigningLedgerMaintenance.CompactionDeferredException deferred = assertThrows(
+                            SigningLedgerMaintenance.CompactionDeferredException.class,
+                            () -> maintenance.compactOnline(2L, 3L, () -> { }, () -> { },
+                                    new Object(), (frame, pointer) -> List.of()));
+                    assertEquals(SigningLedgerMaintenance.DeferralReason.STEADY_CAPACITY,
+                            deferred.reason());
+                    assertFalse(maintenance.recoveryRequired());
+                    assertEquals(1L, maintenance.manifest().activeWal().identity());
+                    assertTrue(maintenance.manifest().sealedSegments().isEmpty());
+                    assertFalse(fixture.artifacts().contains(2L));
+                    assertFalse(fixture.artifacts().contains(3L));
+                    assertEquals(1, fixture.generations().statistics().registered());
+                }
+            }
         }
     }
 
@@ -399,12 +403,17 @@ final class SigningLedgerMaintenanceTest {
         });
         SigningLedgerMaintenance.MaintenanceException failure;
         try {
-            try (SigningGenerationRegistry.CurrentReferences current =
+            {
+                SigningGenerationRegistry.CurrentReferences current =
                     fixture.generations().acquireCurrent(
-                            SigningGenerationRegistry.Owner.RECOVERY_TEMPORARY, List.of(1L));
+                    SigningGenerationRegistry.Owner.RECOVERY_TEMPORARY, List.of(1L));
+                try (current) {
                     SigningGenerationRegistry.SnapshotPins pins =
-                            fixture.generations().pinSnapshot(List.of(1L))) {
-                maintenance.compact(2L, 3L);
+                        fixture.generations().pinSnapshot(List.of(1L));
+                    try (pins) {
+                        maintenance.compact(2L, 3L);
+                    }
+                }
             }
             failure = assertThrows(SigningLedgerMaintenance.MaintenanceException.class,
                     () -> maintenance.reclaim(8));
@@ -644,19 +653,25 @@ final class SigningLedgerMaintenanceTest {
                 throw new IOException("injected");
             }
         })) {
-            try (SigningGenerationRegistry.CurrentReferences current =
+            {
+                SigningGenerationRegistry.CurrentReferences current =
                     fixture.generations().acquireCurrent(
-                            SigningGenerationRegistry.Owner.RECOVERY_TEMPORARY, List.of(1L))) {
-                try (SigningGenerationRegistry.SnapshotPins pins =
-                        fixture.generations().pinSnapshot(List.of(1L))) {
-                    maintenance.compact(2L, 3L);
+                    SigningGenerationRegistry.Owner.RECOVERY_TEMPORARY, List.of(1L));
+                try (current) {
+                    {
+                        SigningGenerationRegistry.SnapshotPins pins =
+                            fixture.generations().pinSnapshot(List.of(1L));
+                        try (pins) {
+                            maintenance.compact(2L, 3L);
+                            assertEquals(0, maintenance.reclaim(8));
+                            assertOldGenerationPresent(fixture.root());
+                            assertManifestArtifactsExist(fixture.root(), maintenance.manifest());
+                        }
+                    }
                     assertEquals(0, maintenance.reclaim(8));
                     assertOldGenerationPresent(fixture.root());
                     assertManifestArtifactsExist(fixture.root(), maintenance.manifest());
                 }
-                assertEquals(0, maintenance.reclaim(8));
-                assertOldGenerationPresent(fixture.root());
-                assertManifestArtifactsExist(fixture.root(), maintenance.manifest());
             }
             SigningLedgerMaintenance.MaintenanceException failure = assertThrows(
                     SigningLedgerMaintenance.MaintenanceException.class, () -> maintenance.reclaim(8));

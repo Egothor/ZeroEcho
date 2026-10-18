@@ -58,8 +58,12 @@ interface PkiHttpExchange extends AutoCloseable {
      */
     Response send(Request request) throws IOException;
 
+    /**
+     * Releases owned exchange resources; the default owns none.
+     * @throws IOException if resource release fails
+     */
     @Override
-    default void close() throws Exception {
+    default void close() throws IOException {
         // No resource by default.
     }
 

@@ -321,22 +321,30 @@ final class SigningMvccRelocationCandidateTest {
                             index.prepareRelocationCapacity(boundary));
             boundary.close();
             boundary = null;
-            try (SigningMvccRelocationCandidate.PreparedRootSwap swap =
+            {
+                SigningMvccRelocationCandidate.PreparedRootSwap swap =
                     index.prepareRelocationSwap(candidate, 1L, 0L, commitment);
+                try (swap) {
                     SigningMvccIndex.PreparedApply prepared = index.prepare(2L, 1L,
-                            List.of(SigningMvccIndex.Mutation.upsert(key,
-                                    pointer(ACTIVE_GENERATION, 1L))))) {
-                assertEquals(SOURCE_GENERATION,
-                        index.lookup(key).orElseThrow().pointer().generationId(), diagnosticId);
-                assertEquals(3L, generations.statistics().mvccReferences(), diagnosticId);
-                assertEquals(0L, generations.statistics().dueReferences(), diagnosticId);
-                assertEquals(0L, generations.statistics().ownerReferences(), diagnosticId);
+                        List.of(SigningMvccIndex.Mutation.upsert(key,
+                        pointer(ACTIVE_GENERATION, 1L))));
+                    try (prepared) {
+                        assertEquals(SOURCE_GENERATION,
+                                index.lookup(key).orElseThrow().pointer().generationId(), diagnosticId);
+                        assertEquals(3L, generations.statistics().mvccReferences(), diagnosticId);
+                        assertEquals(0L, generations.statistics().dueReferences(), diagnosticId);
+                        assertEquals(0L, generations.statistics().ownerReferences(), diagnosticId);
+                    }
+                }
             }
             assertEquals(1L, generations.statistics().mvccReferences(), diagnosticId);
-            try (SigningMvccIndex.PreparedApply allowed = index.prepare(2L, 1L,
+            {
+                SigningMvccIndex.PreparedApply allowed = index.prepare(2L, 1L,
                     List.of(SigningMvccIndex.Mutation.upsert(key,
-                            pointer(ACTIVE_GENERATION, 1L))))) {
-                assertEquals(1L, index.currentRevision(), diagnosticId);
+                    pointer(ACTIVE_GENERATION, 1L))));
+                try (allowed) {
+                    assertEquals(1L, index.currentRevision(), diagnosticId);
+                }
             }
         } finally {
             if (boundary != null) {
@@ -358,11 +366,14 @@ final class SigningMvccRelocationCandidateTest {
             MetadataKey key = key("snapshot", "allocation-epoch");
             index.apply(1L, 0L, List.of(SigningMvccIndex.Mutation.upsert(
                     key, pointer(SOURCE_GENERATION, 0L))));
-            try (SigningMvccIndex.Snapshot oldest = index.snapshot()) {
-                index.apply(2L, 1L, List.of(SigningMvccIndex.Mutation.upsert(
-                        key, pointer(ACTIVE_GENERATION, 1L))));
-                try (SigningMvccIndex.Snapshot nonzeroEpoch = index.snapshot()) {
-                    assertEquals(2L, nonzeroEpoch.revision());
+            {
+                SigningMvccIndex.Snapshot oldest = index.snapshot();
+                try (oldest) {
+                    index.apply(2L, 1L, List.of(SigningMvccIndex.Mutation.upsert(
+                            key, pointer(ACTIVE_GENERATION, 1L))));
+                    try (SigningMvccIndex.Snapshot nonzeroEpoch = index.snapshot()) {
+                        assertEquals(2L, nonzeroEpoch.revision());
+                    }
                 }
             }
 
@@ -421,10 +432,13 @@ final class SigningMvccRelocationCandidateTest {
                             index.prepareRelocationCapacity(boundary));
             boundary.close();
             boundary = null;
-            try (SigningMvccRelocationCandidate.PreparedRootSwap ignored =
+            {
+                SigningMvccRelocationCandidate.PreparedRootSwap ignored =
                     index.prepareRelocationSwap(
-                            rolledBack, 1L, 0L, commitment)) {
-                assertEquals(2L, generations.statistics().mvccReferences());
+                    rolledBack, 1L, 0L, commitment);
+                try (ignored) {
+                    assertEquals(2L, generations.statistics().mvccReferences());
+                }
             }
             assertEquals(1L, generations.statistics().mvccReferences());
             assertThrows(IllegalStateException.class, () -> rolledBack.lookup(key));

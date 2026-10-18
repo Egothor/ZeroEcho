@@ -55,9 +55,10 @@ final class RetryableCloseGate {
      *
      * @param workerThread whether the caller is a marked server worker
      * @param quiesce idempotent nonblocking signal used only by a worker caller
-     * @param teardown blocking teardown that returns its exact failure, if any
+     * @param teardown blocking teardown that returns its original failure, if any
+     * @throws java.io.IOException if checked shutdown fails
      */
-    /* default */ void close(boolean workerThread, Runnable quiesce, CloseAttempt teardown) {
+    /* default */ void close(boolean workerThread, Runnable quiesce, CloseAttempt teardown) throws java.io.IOException {
         Runnable signal = Objects.requireNonNull(quiesce, "quiesce");
         CloseAttempt action = Objects.requireNonNull(teardown, "teardown");
         if (workerThread) {
@@ -92,7 +93,7 @@ final class RetryableCloseGate {
             return;
         }
 
-        Throwable failure = action.close();
+        Throwable failure = normalize(action.close());
         publish(selected, failure);
         rethrowExact(failure);
     }
@@ -122,11 +123,65 @@ final class RetryableCloseGate {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static <Failure extends Throwable> void rethrowExact(Throwable failure) throws Failure {
-        if (failure != null) {
-            throw (Failure) failure;
+    /**
+     * Translates one interrupted join while retaining the original failure as cause.
+     * @param failure interrupted resource shutdown
+     * @return I/O failure with interruption restored on the calling thread
+     */
+    /* default */ static java.io.InterruptedIOException interruptedClose(InterruptedException failure) {
+        restoreInterruption(failure);
+        java.io.InterruptedIOException translated = new java.io.InterruptedIOException("Server close interrupted");
+        translated.initCause(failure);
+        return translated;
+    }
+
+    /** Normalizes a shared attempt once so owner and joiners observe the same failure. */
+    private static Throwable normalize(Throwable failure) {
+        if (failure == null || failure instanceof java.io.IOException
+                || failure instanceof RuntimeException || failure instanceof Error) {
+            return failure;
         }
+        if (failure instanceof InterruptedException interrupted) {
+            return interruptedClose(interrupted);
+        }
+        return new java.io.IOException("Server close failed", failure);
+    }
+
+    /** Restores cancellation throughout the original cause and suppression graph. */
+    private static void restoreInterruption(Throwable failure) {
+        java.util.Set<Throwable> visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        java.util.Deque<Throwable> pending = new java.util.ArrayDeque<>();
+        pending.add(failure);
+        while (!pending.isEmpty()) {
+            Throwable current = pending.removeFirst();
+            if (visited.add(current)) {
+                if (current instanceof InterruptedException) {
+                    Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Standalone server restores caller cancellation; no J2EE container.
+                }
+                java.util.Collections.addAll(pending, current.getSuppressed());
+                if (current.getCause() != null) {
+                    pending.add(current.getCause());
+                }
+            }
+        }
+    }
+
+    /** Rethrows a published failure without creating caller-specific wrappers. */
+    private static void rethrowExact(Throwable failure) throws java.io.IOException {
+        if (failure == null) {
+            return;
+        }
+        restoreInterruption(failure);
+        if (failure instanceof java.io.IOException exception) {
+            throw exception;
+        }
+        if (failure instanceof RuntimeException exception) {
+            throw exception;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        throw new IllegalStateException("Unnormalized server close failure", failure);
     }
 
     @SuppressWarnings("PMD.DoNotUseThreads") // The gate serializes ownership by exact calling thread.
@@ -134,10 +189,14 @@ final class RetryableCloseGate {
         return Thread.currentThread();
     }
 
-    /** Nonthrowing close attempt whose result retains exact failure identity. */
+    /**
+     * Nonthrowing close attempt returning an original failure. Checked failures
+     * are translated once before publication; all callers share the published
+     * failure, whose cause retains the original checked failure and suppression.
+     */
     @FunctionalInterface
     public interface CloseAttempt {
-        /** @return the exact failure to publish, or {@code null} on success */
+        /** @return original failure to normalize and publish, or {@code null} on success */
         Throwable close();
     }
 

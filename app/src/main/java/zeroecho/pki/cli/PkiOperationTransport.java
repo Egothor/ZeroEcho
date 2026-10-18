@@ -72,10 +72,10 @@ interface PkiOperationTransport extends AutoCloseable {
      * Releases any transport-owned resources. The default releases nothing so a
      * transport that borrows an externally-owned session need not close it.
      *
-     * @throws Exception if resource release fails
+     * @throws java.io.IOException if resource release fails
      */
     @Override
-    default void close() throws Exception {
+    default void close() throws java.io.IOException {
         // No transport-owned resource by default.
     }
 }

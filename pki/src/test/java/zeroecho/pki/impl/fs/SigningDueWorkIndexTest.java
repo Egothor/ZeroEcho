@@ -156,34 +156,44 @@ final class SigningDueWorkIndexTest {
 
     @Test
     void admissionExhaustionCloseAndReuseAreExact() {
-        try (SigningDueWorkIndex index = index(1);
-                SigningDueWorkIndex.Admission first = index.reserveAdmission()) {
-            assertThrows(IllegalStateException.class, index::reserveAdmission);
-            first.close();
-            first.close();
-            try (SigningDueWorkIndex.Admission reused = index.reserveAdmission()) {
+        try (SigningDueWorkIndex index = index(1)) {
+            SigningDueWorkIndex.Admission first = index.reserveAdmission();
+            try (first) {
                 assertThrows(IllegalStateException.class, index::reserveAdmission);
+                first.close();
+                first.close();
+                {
+                    SigningDueWorkIndex.Admission reused = index.reserveAdmission();
+                    try (reused) {
+                        assertThrows(IllegalStateException.class, index::reserveAdmission);
+                    }
+                }
             }
         }
     }
 
     @Test
     void publishedAdmissionTransfersCapacityUntilRetirement() {
-        try (SigningDueWorkIndex index = index(1);
-                SigningDueWorkIndex.Admission admission = index.reserveAdmission()) {
-            SigningDueWorkIndex.CanonicalOperationId operation = index.admit("operation");
-            admission.bind(operation);
-            try (SigningDueWorkIndex.PreparedChange prepared = index.prepareUpdate(
-                    admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(1L))) {
-                prepared.publish();
-            }
-            admission.close();
-            assertTrue(index.contains(operation));
-            assertThrows(IllegalStateException.class, index::reserveAdmission);
-
-            index.retire(operation);
-            try (SigningDueWorkIndex.Admission replacement = index.reserveAdmission()) {
+        try (SigningDueWorkIndex index = index(1)) {
+            SigningDueWorkIndex.Admission admission = index.reserveAdmission();
+            try (admission) {
+                SigningDueWorkIndex.CanonicalOperationId operation = index.admit("operation");
+                admission.bind(operation);
+                try (SigningDueWorkIndex.PreparedChange prepared = index.prepareUpdate(
+                        admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(1L))) {
+                    prepared.publish();
+                }
+                admission.close();
+                assertTrue(index.contains(operation));
                 assertThrows(IllegalStateException.class, index::reserveAdmission);
+
+                index.retire(operation);
+                {
+                    SigningDueWorkIndex.Admission replacement = index.reserveAdmission();
+                    try (replacement) {
+                        assertThrows(IllegalStateException.class, index::reserveAdmission);
+                    }
+                }
             }
         }
     }
@@ -194,16 +204,22 @@ final class SigningDueWorkIndexTest {
             SigningDueWorkIndex.CanonicalOperationId operation = index.admit("operation");
             SigningDueWorkIndex.Admission admission = index.reserveAdmission();
             admission.bind(operation);
-            try (SigningDueWorkIndex.PreparedChange ignored = index.prepareUpdate(
-                    admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(1L))) {
-                assertThrows(IllegalStateException.class, index::reserveAdmission);
+            {
+                SigningDueWorkIndex.PreparedChange ignored = index.prepareUpdate(
+                    admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(1L));
+                try (ignored) {
+                    assertThrows(IllegalStateException.class, index::reserveAdmission);
+                }
             }
             assertFalse(index.contains(operation));
             assertThrows(IllegalStateException.class, () -> index.prepareUpdate(
                     admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(2L)));
             admission.close();
-            try (SigningDueWorkIndex.Admission replacement = index.reserveAdmission()) {
-                assertThrows(IllegalStateException.class, index::reserveAdmission);
+            {
+                SigningDueWorkIndex.Admission replacement = index.reserveAdmission();
+                try (replacement) {
+                    assertThrows(IllegalStateException.class, index::reserveAdmission);
+                }
             }
         }
     }
@@ -242,9 +258,12 @@ final class SigningDueWorkIndexTest {
                     admission, foreign.admit("operation"), BASE,
                     SignWorkflowStore.State.INTENT, pointer(1L)));
 
-            try (SigningDueWorkIndex.PreparedChange prepared = owner.prepareUpdate(
-                    admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(1L))) {
-                prepared.close();
+            {
+                SigningDueWorkIndex.PreparedChange prepared = owner.prepareUpdate(
+                    admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(1L));
+                try (prepared) {
+                    prepared.close();
+                }
             }
             assertThrows(IllegalStateException.class, () -> owner.prepareUpdate(
                     admission, operation, BASE, SignWorkflowStore.State.INTENT, pointer(2L)));
@@ -281,15 +300,18 @@ final class SigningDueWorkIndexTest {
             assertEquals(maximum, winners.size());
             assertThrows(IllegalStateException.class, index::reserveAdmission);
             winners.forEach(SigningDueWorkIndex.Admission::close);
-            try (SigningDueWorkIndex.Admission reused = index.reserveAdmission()) {
-                List<SigningDueWorkIndex.Admission> remaining = new ArrayList<>();
-                try {
-                    for (int count = 1; count < maximum; count++) {
-                        remaining.add(index.reserveAdmission());
+            {
+                SigningDueWorkIndex.Admission reused = index.reserveAdmission();
+                try (reused) {
+                    List<SigningDueWorkIndex.Admission> remaining = new ArrayList<>();
+                    try {
+                        for (int count = 1; count < maximum; count++) {
+                            remaining.add(index.reserveAdmission());
+                        }
+                        assertThrows(IllegalStateException.class, index::reserveAdmission);
+                    } finally {
+                        remaining.forEach(SigningDueWorkIndex.Admission::close);
                     }
-                    assertThrows(IllegalStateException.class, index::reserveAdmission);
-                } finally {
-                    remaining.forEach(SigningDueWorkIndex.Admission::close);
                 }
             }
         }

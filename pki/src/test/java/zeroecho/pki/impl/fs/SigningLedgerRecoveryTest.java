@@ -114,17 +114,20 @@ final class SigningLedgerRecoveryTest {
         SigningManifestCodec.Manifest manifest = activeOnly(root, 7L, 0L, 0L);
         CollectingSink sink = new CollectingSink();
 
-        try (SigningLedgerRecovery.PreparedOpen prepared = SigningLedgerRecovery.prepare(
-                root, configuration(), sink)) {
-            Path active = root.resolve(manifest.activeWal().name());
-            Files.write(active, new byte[] { 9 }, StandardOpenOption.APPEND);
-            byte[] changed = Files.readAllBytes(active);
+        {
+            SigningLedgerRecovery.PreparedOpen prepared = SigningLedgerRecovery.prepare(
+                root, configuration(), sink);
+            try (prepared) {
+                Path active = root.resolve(manifest.activeWal().name());
+                Files.write(active, new byte[] { 9 }, StandardOpenOption.APPEND);
+                byte[] changed = Files.readAllBytes(active);
 
-            IOException failure = assertThrows(IOException.class, prepared::activate);
-            assertEquals("signing active WAL changed after validation", failure.getMessage());
-            assertFalse(sink.published.get());
-            assertArrayEquals(changed, Files.readAllBytes(active));
-            prepared.close();
+                IOException failure = assertThrows(IOException.class, prepared::activate);
+                assertEquals("signing active WAL changed after validation", failure.getMessage());
+                assertFalse(sink.published.get());
+                assertArrayEquals(changed, Files.readAllBytes(active));
+                prepared.close();
+            }
         }
     }
 
@@ -415,10 +418,13 @@ final class SigningLedgerRecoveryTest {
         activeOnly(root, 7L, 0L, 0L);
         CollectingSink sink = new CollectingSink();
 
-        try (SigningLedgerRecovery.Handle ignored = SigningLedgerRecovery.recover(root,
-                configuration(), sink)) {
-            assertTrue(sink.boundaries.isEmpty());
-            assertTrue(sink.published.get());
+        {
+            SigningLedgerRecovery.Handle ignored = SigningLedgerRecovery.recover(root,
+                configuration(), sink);
+            try (ignored) {
+                assertTrue(sink.boundaries.isEmpty());
+                assertTrue(sink.published.get());
+            }
         }
     }
 
@@ -505,9 +511,12 @@ final class SigningLedgerRecoveryTest {
                 activeDescriptor(102L, 2L, 2L)));
 
         CollectingSink sink = new CollectingSink();
-        try (SigningLedgerRecovery.Handle ignored = SigningLedgerRecovery.recover(root,
-                configuration(), sink)) {
-            assertEquals(List.of(firstKey, secondKey), sink.keys);
+        {
+            SigningLedgerRecovery.Handle ignored = SigningLedgerRecovery.recover(root,
+                configuration(), sink);
+            try (ignored) {
+                assertEquals(List.of(firstKey, secondKey), sink.keys);
+            }
         }
     }
 

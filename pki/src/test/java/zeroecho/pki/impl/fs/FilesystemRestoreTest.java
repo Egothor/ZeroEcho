@@ -352,8 +352,11 @@ class FilesystemRestoreTest {
 
     @Test void existingLegacyRootLockExcludesNewCoordinatorOpen() throws Exception {
         try (FilesystemPkiStore store = open()) { assertTrue(store.latestRestoreStatus().isEmpty()); }
-        try (FilesystemPkiStore.StoreOwnership legacy = FilesystemPkiStore.StoreOwnership.acquire(directory.resolve("store/.lock/store.lock"))) {
-            assertThrows(IllegalStateException.class, this::open);
+        {
+            FilesystemPkiStore.StoreOwnership legacy = FilesystemPkiStore.StoreOwnership.acquire(directory.resolve("store/.lock/store.lock"));
+            try (legacy) {
+                assertThrows(IllegalStateException.class, this::open);
+            }
         }
         try (FilesystemPkiStore store = open()) { assertTrue(store.latestRestoreStatus().isEmpty()); }
     }
@@ -556,5 +559,7 @@ class FilesystemRestoreTest {
                 < events.indexOf(FsRestoreCoordinator.Phase.BEFORE_RECORD_WRITE));
     }
 
-    private static final class Crash extends Error { }
+    private static final class Crash extends Error {
+        private static final long serialVersionUID = 1L;
+    }
 }

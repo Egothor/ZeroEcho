@@ -61,7 +61,7 @@ import zeroecho.pki.api.request.SubjectRdn;
  * </p>
  */
 @SuppressWarnings({ "PMD.DataClass", "PMD.ExcessiveParameterList" })
-public final class ValidatedCertificateRequest {
+public final class ValidatedCertificateRequest implements zeroecho.pki.spi.framework.ValidatedLeafRequest {
     private final PkiId issuerCaId;
     private final CertificateProfileRef profileReference;
     private final SubjectRef subjectRef;
@@ -196,6 +196,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return exact logical authority identifier
      */
+    @Override
     public PkiId issuerCaId() {
         return issuerCaId;
     }
@@ -205,6 +206,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return exact immutable profile reference
      */
+    @Override
     public CertificateProfileRef profileReference() {
         return profileReference;
     }
@@ -214,6 +216,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return nonblank profile identifier
      */
+    @Override
     public String profileId() {
         return profileReference.profileId();
     }
@@ -223,6 +226,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return exact subject reference
      */
+    @Override
     public SubjectRef subjectRef() {
         return subjectRef;
     }
@@ -232,6 +236,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return ordered immutable subject RDNs
      */
+    @Override
     public List<SubjectRdn> subjectRdns() {
         return subjectRdns;
     }
@@ -241,6 +246,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return ordered immutable SAN entries
      */
+    @Override
     public List<SubjectAlternativeName> subjectAlternativeNames() {
         return subjectAlternativeNames;
     }
@@ -250,6 +256,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return whether SAN is critical
      */
+    @Override
     public boolean subjectAlternativeNameCritical() {
         return sanCritical;
     }
@@ -259,6 +266,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return defensive copy of the SPKI
      */
+    @Override
     public EncodedObject exactPublicKey() {
         return new EncodedObject(exactPublicKey.encoding(), exactPublicKey.bytes());
     }
@@ -268,6 +276,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return exact validity interval
      */
+    @Override
     public Validity validity() {
         return validity;
     }
@@ -277,6 +286,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return immutable key-usage set
      */
+    @Override
     public Set<LeafKeyUsage> keyUsages() {
         return keyUsages;
     }
@@ -286,6 +296,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return immutable extended-key-usage set
      */
+    @Override
     public Set<ExtendedKeyUsageId> extendedKeyUsages() {
         return extendedKeyUsages;
     }
@@ -295,6 +306,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return whether KeyUsage is critical
      */
+    @Override
     public boolean keyUsageCritical() {
         return keyUsageCritical;
     }
@@ -304,6 +316,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return whether ExtendedKeyUsage is critical
      */
+    @Override
     public boolean extendedKeyUsageCritical() {
         return extendedKeyUsageCritical;
     }
@@ -313,6 +326,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return whether BasicConstraints is critical
      */
+    @Override
     public boolean basicConstraintsCritical() {
         return basicConstraintsCritical;
     }
@@ -322,6 +336,7 @@ public final class ValidatedCertificateRequest {
      *
      * @return exact immutable binding policy
      */
+    @Override
     public X509AlgorithmBindingPolicy algorithmBindingPolicy() {
         return algorithmBindingPolicy;
     }

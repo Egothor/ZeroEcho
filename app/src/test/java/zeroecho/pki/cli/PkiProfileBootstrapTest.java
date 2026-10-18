@@ -206,6 +206,25 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    @Test
+    void translatedInterruptedCloseRemainsCancellationWhileTimeoutRemainsInputFailure() {
+        System.out.println("translatedInterruptedCloseRemainsCancellationWhileTimeoutRemainsInputFailure");
+        ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+        PrintStream output = new PrintStream(diagnostics, true, StandardCharsets.UTF_8);
+        try {
+            Thread.currentThread().interrupt();
+            assertEquals(PkiExitCodes.CANCELLED, PkiProfileBootstrap.classifyInputFailure(
+                    new java.io.InterruptedIOException("interrupted close"), output));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, PkiProfileBootstrap.classifyInputFailure(
+                new java.net.SocketTimeoutException("timeout"), output));
+        assertFalse(Thread.currentThread().isInterrupted());
+        System.out.println("...ok");
+    }
+
     private Result invoke(Path configuration, Path profiles) {
         ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
         int code = PkiProfileBootstrap.execute(new String[] {"--config", configuration.toString(),

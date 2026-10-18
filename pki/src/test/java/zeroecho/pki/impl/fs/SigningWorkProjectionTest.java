@@ -69,16 +69,19 @@ final class SigningWorkProjectionTest {
                 due, retention, owners, capacity, stagedContent());
         String operationId = operationId(1);
         try {
-            try (SigningDueWorkIndex.Admission recordAdmission = due.reserveAdmission()) {
-                SigningTransactionPayloadCodec.Payload record = acceptancePayload(
-                        operationId, SignWorkflowStore.State.INTENT);
-                try (SigningWorkProjection.Prepared prepared = projection.prepare(
-                        record, pointer(2L), recordAdmission)) {
-                    prepared.publish();
+            {
+                SigningDueWorkIndex.Admission recordAdmission = due.reserveAdmission();
+                try (recordAdmission) {
+                    SigningTransactionPayloadCodec.Payload record = acceptancePayload(
+                            operationId, SignWorkflowStore.State.INTENT);
+                    try (SigningWorkProjection.Prepared prepared = projection.prepare(
+                            record, pointer(2L), recordAdmission)) {
+                        prepared.publish();
+                    }
+                    recordAdmission.close();
+                    assertEquals(1, due.statistics().workCount());
+                    assertThrows(IllegalStateException.class, due::reserveAdmission);
                 }
-                recordAdmission.close();
-                assertEquals(1, due.statistics().workCount());
-                assertThrows(IllegalStateException.class, due::reserveAdmission);
             }
         } finally {
             projection.close();
@@ -111,8 +114,11 @@ final class SigningWorkProjectionTest {
             prepared.close();
             prepared.close();
             admission.close();
-            try (SigningDueWorkIndex.Admission reused = due.reserveAdmission()) {
-                assertThrows(IllegalStateException.class, due::reserveAdmission);
+            {
+                SigningDueWorkIndex.Admission reused = due.reserveAdmission();
+                try (reused) {
+                    assertThrows(IllegalStateException.class, due::reserveAdmission);
+                }
             }
         } finally {
             projection.close();

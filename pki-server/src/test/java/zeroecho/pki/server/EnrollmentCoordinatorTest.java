@@ -429,8 +429,11 @@ class EnrollmentCoordinatorTest {
                 assertTrue(java.nio.file.Files.exists(config.keygenArtifacts().orElseThrow().directory().resolve(expired.id() + ".cms")));
             } finally { for (EnrollmentCoordinator.KeygenDelivery lease : leases) lease.close(); }
             KeygenInput second = keygenInput(fixture, "b");
-            try (EnrollmentCoordinator.KeygenGeneration generation = fixture.coordinator.beginKeygen(second.admission(), second.recipient())) {
-                assertTrue(fixture.coordinator.findKeygen(first.admission()).orElseThrow().bytesReleased());
+            {
+                EnrollmentCoordinator.KeygenGeneration generation = fixture.coordinator.beginKeygen(second.admission(), second.recipient());
+                try (generation) {
+                    assertTrue(fixture.coordinator.findKeygen(first.admission()).orElseThrow().bytesReleased());
+                }
             }
         }
     }
@@ -1644,15 +1647,18 @@ class EnrollmentCoordinatorTest {
                         new CmpTransaction.Response("b".repeat(64), hash(bytes), bytes.length, "1".repeat(32), "2".repeat(32),
                                 Optional.of(fixture.clock.instant().plusSeconds(60)), CmpTransaction.Confirmation.AWAITING, false));
                 fixture.coordinator.close();
-                try (EnrollmentCoordinator reopened = fixture.openCoordinator()) {
-                    assertEquals(CmpTransaction.Confirmation.AWAITING, reopened.findCmp("cmp", "a".repeat(64)).orElseThrow().response().orElseThrow().confirmation());
-                    CmpTransaction terminal = reopened.storeCmpResponse(awaiting, bytes,
-                            new CmpTransaction.Response("c".repeat(64), hash(bytes), bytes.length, "3".repeat(32), "4".repeat(32),
-                                    Optional.empty(), verdict, true));
-                    reopened.close();
-                    try (EnrollmentCoordinator twice = fixture.openCoordinator()) {
-                        assertEquals(verdict, twice.findCmp("cmp", "a".repeat(64)).orElseThrow().response().orElseThrow().confirmation());
-                        org.junit.jupiter.api.Assertions.assertArrayEquals(bytes, twice.cmpResponse(terminal));
+                {
+                    EnrollmentCoordinator reopened = fixture.openCoordinator();
+                    try (reopened) {
+                        assertEquals(CmpTransaction.Confirmation.AWAITING, reopened.findCmp("cmp", "a".repeat(64)).orElseThrow().response().orElseThrow().confirmation());
+                        CmpTransaction terminal = reopened.storeCmpResponse(awaiting, bytes,
+                                new CmpTransaction.Response("c".repeat(64), hash(bytes), bytes.length, "3".repeat(32), "4".repeat(32),
+                                        Optional.empty(), verdict, true));
+                        reopened.close();
+                        try (EnrollmentCoordinator twice = fixture.openCoordinator()) {
+                            assertEquals(verdict, twice.findCmp("cmp", "a".repeat(64)).orElseThrow().response().orElseThrow().confirmation());
+                            org.junit.jupiter.api.Assertions.assertArrayEquals(bytes, twice.cmpResponse(terminal));
+                        }
                     }
                 }
                 ServerControlStore missing = mock(ServerControlStore.class, org.mockito.AdditionalAnswers.delegatesTo(opened.store()));

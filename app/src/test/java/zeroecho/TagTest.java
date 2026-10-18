@@ -305,7 +305,7 @@ public class TagTest {
         if (all.length == 0) {
             throw new IllegalStateException("cannot flip byte in empty file");
         }
-        all[all.length - 1] ^= 0xFF;
+        all[all.length - 1] = (byte) (all[all.length - 1] ^ 0xFF);
         Files.write(file, all);
     }
 

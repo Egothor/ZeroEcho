@@ -101,22 +101,25 @@ class StatusSchedulePublicationTest {
         }
         cancellation.set(false);
         fault.set(false);
-        try (PkiSession session = fixture.open("publication-recovery")) {
-            DefaultStatusScheduleCoordinator coordinator = coordinator(fixture, cut, fault, cancellation, attempts);
-            StatusScheduleState pending = coordinator.listWork(Optional.empty(), 10, CancellationSignal.NONE).getFirst();
-            if (cut.equals("prepared")) {
-                assertThrows(IllegalStateException.class, () -> coordinator.reconcile(pending, CancellationSignal.NONE));
-                assertEquals(PublicationStatus.OUTCOME_UNKNOWN, fixture.store.getPublicationRecord(publicationId).orElseThrow().status());
-            } else {
-                coordinator.reconcile(pending, CancellationSignal.NONE);
-                assertEquals(PublicationStatus.SUCCEEDED, fixture.store.getPublicationRecord(publicationId).orElseThrow().status());
+        {
+            PkiSession session = fixture.open("publication-recovery");
+            try (session) {
+                DefaultStatusScheduleCoordinator coordinator = coordinator(fixture, cut, fault, cancellation, attempts);
+                StatusScheduleState pending = coordinator.listWork(Optional.empty(), 10, CancellationSignal.NONE).getFirst();
+                if (cut.equals("prepared")) {
+                    assertThrows(IllegalStateException.class, () -> coordinator.reconcile(pending, CancellationSignal.NONE));
+                    assertEquals(PublicationStatus.OUTCOME_UNKNOWN, fixture.store.getPublicationRecord(publicationId).orElseThrow().status());
+                } else {
+                    coordinator.reconcile(pending, CancellationSignal.NONE);
+                    assertEquals(PublicationStatus.SUCCEEDED, fixture.store.getPublicationRecord(publicationId).orElseThrow().status());
+                }
+                assertEquals(StatusScheduleState.Phase.SCHEDULE_ADVANCED,
+                        fixture.store.getStatusScheduleState(ca, StatusObjectType.CRL).orElseThrow().execution().orElseThrow().phase());
+                assertEquals(1, attempts.get());
+                assertEquals(2, fixture.dispatches.get());
+                assertEquals(1, fixture.store.listStatusObjects(ca).size());
+                assertEquals(1, fixture.store.listPublicationsPage(Optional.empty(), 10, value -> true, CancellationSignal.NONE).size());
             }
-            assertEquals(StatusScheduleState.Phase.SCHEDULE_ADVANCED,
-                    fixture.store.getStatusScheduleState(ca, StatusObjectType.CRL).orElseThrow().execution().orElseThrow().phase());
-            assertEquals(1, attempts.get());
-            assertEquals(2, fixture.dispatches.get());
-            assertEquals(1, fixture.store.listStatusObjects(ca).size());
-            assertEquals(1, fixture.store.listPublicationsPage(Optional.empty(), 10, value -> true, CancellationSignal.NONE).size());
         }
     }
 

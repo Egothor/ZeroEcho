@@ -94,15 +94,23 @@ final class RetryableCloseGateTest {
         CountDownLatch release = new CountDownLatch(1);
         AtomicInteger attempts = new AtomicInteger();
         ClassifiedFailure exact = new ClassifiedFailure("DRAIN_TIMEOUT");
+        exact.addSuppressed(new InterruptedException("suppressed shutdown interruption"));
+        AtomicBoolean ownerInterrupted = new AtomicBoolean();
+        AtomicBoolean joinerInterrupted = new AtomicBoolean();
         try (ExecutorService callers = Executors.newFixedThreadPool(2)) {
             Future<?> owner = callers.submit(() -> {
-                gate.close(false, () -> { }, result(() -> {
-                    attempts.incrementAndGet();
-                    entered.countDown();
-                    release.await();
-                    throw exact;
-                }));
-                return null;
+                try {
+                    gate.close(false, () -> { }, result(() -> {
+                        attempts.incrementAndGet();
+                        entered.countDown();
+                        release.await();
+                        throw exact;
+                    }));
+                    return null;
+                } finally {
+                    ownerInterrupted.set(Thread.currentThread().isInterrupted());
+                    Thread.interrupted();
+                }
             });
             assertTrue(entered.await(2, TimeUnit.SECONDS));
             CountDownLatch joining = new CountDownLatch(1);
@@ -110,14 +118,23 @@ final class RetryableCloseGateTest {
             Future<?> joiner = callers.submit(() -> {
                 joiningThread.set(Thread.currentThread());
                 joining.countDown();
-                gate.close(false, () -> { }, result(attempts::incrementAndGet));
-                return null;
+                try {
+                    gate.close(false, () -> { }, result(attempts::incrementAndGet));
+                    return null;
+                } finally {
+                    joinerInterrupted.set(Thread.currentThread().isInterrupted());
+                    Thread.interrupted();
+                }
             });
             assertTrue(joining.await(2, TimeUnit.SECONDS));
             awaitWaiting(joiningThread.get());
             release.countDown();
-            assertSame(exact, cause(owner));
-            assertSame(exact, cause(joiner));
+            Throwable published = cause(owner);
+            org.junit.jupiter.api.Assertions.assertInstanceOf(java.io.IOException.class, published);
+            assertSame(exact, published.getCause());
+            assertSame(published, cause(joiner));
+            assertTrue(ownerInterrupted.get());
+            assertTrue(joinerInterrupted.get());
         }
         gate.close(false, () -> { }, result(attempts::incrementAndGet));
         gate.close(false, () -> { }, result(attempts::incrementAndGet));
@@ -189,6 +206,26 @@ final class RetryableCloseGateTest {
         owner.join(2_000L);
         assertFalse(owner.isAlive());
         assertEquals(1, attempts.get());
+    }
+
+    @Test
+    void ioUncheckedAndErrorKeepIdentityAndPrimaryInterruptionIsTranslated() throws Exception {
+        System.out.println("ioUncheckedAndErrorKeepIdentityAndPrimaryInterruptionIsTranslated");
+        for (Throwable exact : java.util.List.of(new java.io.IOException("I/O"),
+                new IllegalStateException("runtime"), new AssertionError("error"))) {
+            RetryableCloseGate gate = new RetryableCloseGate();
+            assertSame(exact, assertThrows(Throwable.class, () -> gate.close(false, () -> { }, () -> exact)));
+        }
+        InterruptedException original = new InterruptedException("join interrupted");
+        try {
+            java.io.InterruptedIOException translated = assertThrows(java.io.InterruptedIOException.class,
+                    () -> new RetryableCloseGate().close(false, () -> { }, () -> original));
+            assertSame(original, translated.getCause());
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+        System.out.println("...ok");
     }
 
     private static Throwable cause(Future<?> future) throws Exception {

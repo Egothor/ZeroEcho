@@ -253,15 +253,54 @@ final class FilesystemPkiStoreOwnershipTest {
         }
 
         @Override
-        public void close() throws Exception {
-            if (process.isAlive()) {
-                process.destroyForcibly();
-                process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        public void close() throws IOException {
+            Throwable primary = null;
+            boolean interrupted = false;
+            try {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    assertTrue(process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                }
+            } catch (InterruptedException failure) {
+                interrupted = true;
+                primary = failure;
+            } catch (RuntimeException | Error failure) {
+                primary = failure;
             }
-            input.close();
-            output.close();
-            reader.shutdownNow();
-            assertTrue(reader.awaitTermination(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            for (java.io.Closeable resource : java.util.List.of(input, output)) {
+                try {
+                    resource.close();
+                } catch (IOException | RuntimeException | Error failure) {
+                    primary = appendCloseFailure(primary, failure);
+                }
+            }
+            try {
+                reader.shutdownNow();
+                assertTrue(reader.awaitTermination(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            } catch (InterruptedException failure) {
+                interrupted = true;
+                primary = appendCloseFailure(primary, failure);
+            } catch (RuntimeException | Error failure) {
+                primary = appendCloseFailure(primary, failure);
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            if (primary instanceof IOException failure) { throw failure; }
+            if (primary instanceof RuntimeException failure) { throw failure; }
+            if (primary instanceof Error failure) { throw failure; }
+            if (primary != null) {
+                java.io.InterruptedIOException failure = new java.io.InterruptedIOException("Child owner close interrupted");
+                failure.initCause(primary);
+                throw failure;
+            }
+        }
+
+        /** Retains the primary cleanup failure and the original later failure objects. */
+        private static Throwable appendCloseFailure(Throwable primary, Throwable later) {
+            if (primary == null) { return later; }
+            if (primary != later) { primary.addSuppressed(later); }
+            return primary;
         }
     }
 }
@@ -285,25 +324,29 @@ final class FilesystemPkiStoreLockProcess {
             System.exit(2);
         }
         LogManager.getLogManager().reset();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(Path.of(args[0]), FsPkiStoreOptions.defaults());
-                BufferedReader control = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
-            System.out.println("LOCK_ACQUIRED");
-            System.out.flush();
-            String command;
-            while ((command = control.readLine()) != null) {
-                if ("PING".equals(command)) {
-                    store.listCas();
-                    System.out.println("STORE_USABLE");
+        try {
+            FilesystemPkiStore store = new FilesystemPkiStore(Path.of(args[0]), FsPkiStoreOptions.defaults());
+            try (store) {
+                try (BufferedReader control = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
+                    System.out.println("LOCK_ACQUIRED");
                     System.out.flush();
-                } else if ("CLOSE".equals(command)) {
-                    store.close();
-                    System.out.println("STORE_CLOSED");
-                    System.out.flush();
-                    return;
-                } else {
-                    System.out.println("PROTOCOL_FAILED");
-                    System.out.flush();
-                    System.exit(3);
+                    String command;
+                    while ((command = control.readLine()) != null) {
+                        if ("PING".equals(command)) {
+                            store.listCas();
+                            System.out.println("STORE_USABLE");
+                            System.out.flush();
+                        } else if ("CLOSE".equals(command)) {
+                            store.close();
+                            System.out.println("STORE_CLOSED");
+                            System.out.flush();
+                            return;
+                        } else {
+                            System.out.println("PROTOCOL_FAILED");
+                            System.out.flush();
+                            System.exit(3);
+                        }
+                    }
                 }
             }
         } catch (Exception failure) {

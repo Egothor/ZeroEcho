@@ -414,13 +414,18 @@ public final class PkiHttpsServer implements AutoCloseable {
     /**
      * Quiesces admission, terminates the listener and bounded executors, then
      * closes realm and authentication resources. Repeated calls are harmless.
+     * Concurrent callers share one attempt's failure. Other checked failures are
+     * translated to I/O failures with their original cause and suppression graph;
+     * interruption is restored for every caller. A failed worker join keeps
+     * dependent realm resources open for a later external retry.
+     * @throws java.io.IOException if checked shutdown or resource closure fails
      */
     @Override
-    public void close() throws Exception {
+    public void close() throws java.io.IOException {
         closeFromServerWorker(PkiHttpsTransport.currentThreadIsServerWorker());
     }
 
-    void closeFromServerWorker(boolean workerThread) throws Exception {
+    void closeFromServerWorker(boolean workerThread) throws java.io.IOException {
         closeGate.close(workerThread, this::quiesceForClose, this::closeAttempt);
     }
 

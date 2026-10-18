@@ -335,10 +335,14 @@ public interface PkiSession extends AutoCloseable {
 
     /**
      * Closes services and backend resources in reverse construction order.
-     * Repeated calls are harmless; primary and suppressed failures are preserved.
+     * Repeated calls are harmless after successful teardown. I/O and unchecked
+     * failures retain their identity; other checked failures are translated to an
+     * {@link java.io.IOException} whose cause retains the original failure and
+     * its suppressed failures. An interrupted close restores the calling thread's
+     * interrupt status, including interruption reported by suppressed failures.
      *
-     * @throws Exception if resource closure fails
+     * @throws java.io.IOException if resource closure fails
      */
     @Override
-    void close() throws Exception;
+    void close() throws java.io.IOException;
 }

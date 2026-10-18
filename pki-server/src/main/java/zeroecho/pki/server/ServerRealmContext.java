@@ -70,7 +70,7 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
 // Realm services share one lifecycle and authorization boundary; splitting them would duplicate state.
 @SuppressWarnings({ "PMD.CommentDefaultAccessModifier", "PMD.CloseResource", "PMD.UseProperClassLoader",
         "PMD.AvoidCatchingGenericException", "PMD.LinguisticNaming", "PMD.ControlStatementBraces",
-        "PMD.PreserveStackTrace", "PMD.SignatureDeclareThrowsException", "PMD.CommentRequired",
+        "PMD.PreserveStackTrace", "PMD.CommentRequired",
         "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects" })
 public final class ServerRealmContext implements AutoCloseable { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
@@ -725,12 +725,19 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 payload.substring(separator + 1));
     }
 
+    /**
+     * Quiesces the realm and releases resources through one retryable shared attempt.
+     * Checked failures retain their original cause and suppression when translated
+     * to I/O failures; I/O and unchecked identities are unchanged. Interruption is
+     * restored for each caller, and incomplete shutdown may be retried.
+     * @throws IOException if checked resource closure fails
+     */
     @Override
-    public void close() throws Exception {
+    public void close() throws IOException {
         closeFromServerWorker(false);
     }
 
-    void closeFromServerWorker(boolean workerThread) throws Exception {
+    void closeFromServerWorker(boolean workerThread) throws IOException {
         closeGate.close(workerThread, this::quiesce, this::closeAttempt);
     }
 

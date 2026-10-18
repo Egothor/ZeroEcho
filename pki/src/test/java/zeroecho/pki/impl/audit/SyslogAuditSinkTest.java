@@ -75,56 +75,62 @@ public final class SyslogAuditSinkTest {
         CountDownLatch closing = new CountDownLatch(1);
         CountDownLatch closed = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
-        try (ServerSocket server = new ServerSocket(0, 1, loopback);
-                SyslogAuditSink sink = new SyslogAuditSink(loopback, server.getLocalPort(),
-                        SyslogAuditSink.Protocol.TCP, "lifecycle-test");
-                Socket accepted = server.accept()) {
-            Field connectionField = SyslogAuditSink.class.getDeclaredField("tcpConnection");
-            connectionField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            AtomicReference<Object> connection = (AtomicReference<Object>) connectionField.get(sink);
-            Object original = connection.get();
-            Field socketField = original.getClass().getDeclaredField("socket");
-            socketField.setAccessible(true);
-            Constructor<?> constructor = original.getClass().getDeclaredConstructor(Socket.class, OutputStream.class);
-            constructor.setAccessible(true);
-            connection.set(constructor.newInstance(socketField.get(original), new OutputStream() {
-                @Override
-                public void write(int ignored) throws IOException {
-                    writing.countDown();
-                    try {
-                        if (!release.await(5, TimeUnit.SECONDS)) throw new IOException("Fixture timeout");
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException(interrupted);
+        try (ServerSocket server = new ServerSocket(0, 1, loopback)) {
+            SyslogAuditSink sink = new SyslogAuditSink(loopback, server.getLocalPort(),
+                SyslogAuditSink.Protocol.TCP, "lifecycle-test");
+            try (sink) {
+                {
+                    Socket accepted = server.accept();
+                    try (accepted) {
+                        Field connectionField = SyslogAuditSink.class.getDeclaredField("tcpConnection");
+                        connectionField.setAccessible(true);
+                        @SuppressWarnings("unchecked")
+                        AtomicReference<Object> connection = (AtomicReference<Object>) connectionField.get(sink);
+                        Object original = connection.get();
+                        Field socketField = original.getClass().getDeclaredField("socket");
+                        socketField.setAccessible(true);
+                        Constructor<?> constructor = original.getClass().getDeclaredConstructor(Socket.class, OutputStream.class);
+                        constructor.setAccessible(true);
+                        connection.set(constructor.newInstance(socketField.get(original), new OutputStream() {
+                            @Override
+                            public void write(int ignored) throws IOException {
+                                writing.countDown();
+                                try {
+                                    if (!release.await(5, TimeUnit.SECONDS)) throw new IOException("Fixture timeout");
+                                } catch (InterruptedException interrupted) {
+                                    Thread.currentThread().interrupt();
+                                    throw new IOException(interrupted);
+                                }
+                                throw new IOException("Simulated aborted write");
+                            }
+                        }));
+                        Thread sender = Thread.ofPlatform().start(() -> {
+                            try { sink.record(testEvent()); } catch (Throwable error) { failure.set(error); }
+                        });
+                        Thread closer = null;
+                        try {
+                            assertTrue(writing.await(5, TimeUnit.SECONDS));
+                            closer = Thread.ofPlatform().start(() -> {
+                                closing.countDown();
+                                try { sink.close(); } catch (Throwable error) { failure.set(error); }
+                                finally { closed.countDown(); }
+                            });
+                            assertTrue(closing.await(5, TimeUnit.SECONDS));
+                            assertTrue(closed.await(5, TimeUnit.SECONDS), "close must abort a blocked write");
+                            assertTrue(((Socket) socketField.get(original)).isClosed());
+                        } finally {
+                            release.countDown();
+                            sender.join(5000);
+                            if (closer != null) closer.join(5000);
+                        }
+                        assertFalse(sender.isAlive());
+                        assertEquals(null, failure.get());
+                        server.setSoTimeout(100);
+                        assertThrows(SocketTimeoutException.class, server::accept, "closed sink must not reconnect");
+                        assertThrows(IllegalStateException.class, () -> sink.record(testEvent()));
                     }
-                    throw new IOException("Simulated aborted write");
                 }
-            }));
-            Thread sender = Thread.ofPlatform().start(() -> {
-                try { sink.record(testEvent()); } catch (Throwable error) { failure.set(error); }
-            });
-            Thread closer = null;
-            try {
-                assertTrue(writing.await(5, TimeUnit.SECONDS));
-                closer = Thread.ofPlatform().start(() -> {
-                    closing.countDown();
-                    try { sink.close(); } catch (Throwable error) { failure.set(error); }
-                    finally { closed.countDown(); }
-                });
-                assertTrue(closing.await(5, TimeUnit.SECONDS));
-                assertTrue(closed.await(5, TimeUnit.SECONDS), "close must abort a blocked write");
-                assertTrue(((Socket) socketField.get(original)).isClosed());
-            } finally {
-                release.countDown();
-                sender.join(5000);
-                if (closer != null) closer.join(5000);
             }
-            assertFalse(sender.isAlive());
-            assertEquals(null, failure.get());
-            server.setSoTimeout(100);
-            assertThrows(SocketTimeoutException.class, server::accept, "closed sink must not reconnect");
-            assertThrows(IllegalStateException.class, () -> sink.record(testEvent()));
         }
     }
 

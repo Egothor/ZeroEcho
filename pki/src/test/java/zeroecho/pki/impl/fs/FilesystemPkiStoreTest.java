@@ -762,13 +762,21 @@ public final class FilesystemPkiStoreTest {
     @Test
     void exactVersionMarkerReopensNormally() throws Exception {
         Path root = tmp.resolve("store-exact-version");
-        try (FilesystemPkiStore ignored = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
-            // Initial creation writes the canonical marker.
+        {
+            FilesystemPkiStore ignored = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
+            if (ignored != null) {
+                // Initial creation writes the canonical marker.
+                ignored.close();
+            }
         }
         assertArrayEquals(FilesystemPkiStore.CURRENT_STORE_VERSION.getBytes(StandardCharsets.US_ASCII),
                 Files.readAllBytes(root.resolve(FsPaths.VERSION_FILE)));
-        try (FilesystemPkiStore ignored = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
-            // Exact bytes remain accepted on reopen.
+        {
+            FilesystemPkiStore ignored = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
+            if (ignored != null) {
+                // Exact bytes remain accepted on reopen.
+                ignored.close();
+            }
         }
     }
 

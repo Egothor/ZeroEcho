@@ -60,14 +60,19 @@ final class CredentialMetadataAuthorityTest {
         try (FilesystemPkiStore store = open(root)) {
             credential = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "metadata-owner", "profile");
             CredentialMetadataAuthority authority = new CredentialMetadataAuthority(store.metadataStore(), store.stagedContent());
-            try (FilesystemStagedContentStore.TransactionalReservation reservation = ((FilesystemStagedContentStore) store.stagedContent())
+            {
+                FilesystemStagedContentStore.TransactionalReservation reservation = ((FilesystemStagedContentStore) store.stagedContent())
                     .reserveTransactionalPublication(credential.content());
-                    MetadataSnapshot snapshot = store.metadataStore().snapshot();
-                    MetadataTransaction transaction = store.metadataStore().beginTransaction()) {
-                authority.stageCreate(snapshot, transaction, credential);
-                assertTrue(authority.find(credential.credentialId()).isEmpty());
-                assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(credential.content()));
-                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+                try (reservation) {
+                    try (MetadataSnapshot snapshot = store.metadataStore().snapshot()) {
+                        try (MetadataTransaction transaction = store.metadataStore().beginTransaction()) {
+                            authority.stageCreate(snapshot, transaction, credential);
+                            assertTrue(authority.find(credential.credentialId()).isEmpty());
+                            assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(credential.content()));
+                            assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+                        }
+                    }
+                }
             }
             assertEquals(Set.of(DurableContentOwner.credentialRecord(credential.credentialId())),
                     store.stagedContent().contentOwners(credential.content()));

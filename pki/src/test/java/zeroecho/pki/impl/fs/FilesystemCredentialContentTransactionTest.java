@@ -141,14 +141,19 @@ final class FilesystemCredentialContentTransactionTest {
         Credential credential;
         try (FilesystemPkiStore store = open(root)) {
             credential = credential(store, "SERIAL-PREPARED");
-            try (FilesystemStagedContentStore.TransactionalReservation reservation = ((FilesystemStagedContentStore) store.stagedContent())
+            {
+                FilesystemStagedContentStore.TransactionalReservation reservation = ((FilesystemStagedContentStore) store.stagedContent())
                     .reserveTransactionalPublication(credential.content());
-                    MetadataSnapshot snapshot = store.metadataStore().snapshot();
-                    MetadataTransaction transaction = store.metadataStore().beginTransaction()) {
-                new CredentialMetadataAuthority(store.metadataStore(), store.stagedContent()).stageCreate(snapshot, transaction, credential);
-                assertTrue(store.getCredential(credential.credentialId()).isEmpty());
-                assertTrue(store.stagedContent().contentOwners(credential.content()).isEmpty());
-                assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(credential.content()));
+                try (reservation) {
+                    try (MetadataSnapshot snapshot = store.metadataStore().snapshot()) {
+                        try (MetadataTransaction transaction = store.metadataStore().beginTransaction()) {
+                            new CredentialMetadataAuthority(store.metadataStore(), store.stagedContent()).stageCreate(snapshot, transaction, credential);
+                            assertTrue(store.getCredential(credential.credentialId()).isEmpty());
+                            assertTrue(store.stagedContent().contentOwners(credential.content()).isEmpty());
+                            assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(credential.content()));
+                        }
+                    }
+                }
             }
         }
 

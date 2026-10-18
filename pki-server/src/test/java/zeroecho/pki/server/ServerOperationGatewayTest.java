@@ -106,33 +106,36 @@ class ServerOperationGatewayTest {
                     "1".repeat(64), "2".repeat(64), Set.of("3".repeat(64)), "4".repeat(64));
             AtomicReference<AdministrativeDecisionActor> observed = new AtomicReference<>();
             AtomicReference<Permission.Resource> authorized = new AtomicReference<>();
-            try (org.mockito.MockedConstruction<ServerControlOperationExecutor> construction = org.mockito.Mockito.mockConstruction(
+            {
+                org.mockito.MockedConstruction<ServerControlOperationExecutor> construction = org.mockito.Mockito.mockConstruction(
                     ServerControlOperationExecutor.class, (executor, context) -> {
-                        when(executor.protocolAvailable(any())).thenReturn(true);
-                        org.mockito.Mockito.doAnswer(invocation -> {
-                        observed.set(invocation.getArgument(1));
-                        authorized.set(invocation.getArgument(2));
-                        return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Completed(
-                                new PkiOperationResult(ServerControlOperation.InspectApproval.NAME, Map.of())));
+                    when(executor.protocolAvailable(any())).thenReturn(true);
+                    org.mockito.Mockito.doAnswer(invocation -> {
+                    observed.set(invocation.getArgument(1));
+                    authorized.set(invocation.getArgument(2));
+                    return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Completed(
+                    new PkiOperationResult(ServerControlOperation.InspectApproval.NAME, Map.of())));
                     }).when(executor).executeAuthorized(any(), any(AdministrativeDecisionActor.class), any(), any(), any(), any(),
-                            org.mockito.ArgumentMatchers.nullable(BackupTransferChannel.class));
-                    })) {
-                ServerOperationGateway gateway = gateway(opened, new AtomicInteger(), Map.of());
-                ServerOperationGateway.Request request = new ServerOperationGateway.Request(ServerTestSupport.REALM, "reader",
-                        AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), Optional.of(evidence),
-                        new AdministrativeOperation.Control(new ServerControlOperation.InspectApproval("identity-approval")),
-                        new Permission.Resource(Permission.ResourceType.APPROVAL, new Permission.Scope(ServerTestSupport.REALM,
-                                Optional.of(ServerTestSupport.AUTHORITY), Optional.empty(), Optional.empty()), Optional.empty(), Optional.empty()),
-                        Permission.Relationship.ANY, Permission.Context.empty(), Optional.empty(), "identity-correlation");
-                ServerOperationGateway.Outcome outcome = gateway.execute(request, CancellationSignal.NONE);
-                assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, outcome, outcome.toString());
-                assertEquals(Optional.of(evidence), observed.get().credentialEvidence());
-                assertEquals("reader", observed.get().principalId());
-                assertEquals(scope, authorized.get().scope());
-                ServerOperationGateway.Request embedded = new ServerOperationGateway.Request(request.realmId(), request.principalId(),
-                        request.operation(), request.resource(), request.relationship(), request.context(), request.approvalId(), request.correlationId());
-                assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, gateway.execute(embedded, CancellationSignal.NONE));
-                assertTrue(observed.get().credentialEvidence().isEmpty());
+                    org.mockito.ArgumentMatchers.nullable(BackupTransferChannel.class));
+                    });
+                try (construction) {
+                    ServerOperationGateway gateway = gateway(opened, new AtomicInteger(), Map.of());
+                    ServerOperationGateway.Request request = new ServerOperationGateway.Request(ServerTestSupport.REALM, "reader",
+                            AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), Optional.of(evidence),
+                            new AdministrativeOperation.Control(new ServerControlOperation.InspectApproval("identity-approval")),
+                            new Permission.Resource(Permission.ResourceType.APPROVAL, new Permission.Scope(ServerTestSupport.REALM,
+                                    Optional.of(ServerTestSupport.AUTHORITY), Optional.empty(), Optional.empty()), Optional.empty(), Optional.empty()),
+                            Permission.Relationship.ANY, Permission.Context.empty(), Optional.empty(), "identity-correlation");
+                    ServerOperationGateway.Outcome outcome = gateway.execute(request, CancellationSignal.NONE);
+                    assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, outcome, outcome.toString());
+                    assertEquals(Optional.of(evidence), observed.get().credentialEvidence());
+                    assertEquals("reader", observed.get().principalId());
+                    assertEquals(scope, authorized.get().scope());
+                    ServerOperationGateway.Request embedded = new ServerOperationGateway.Request(request.realmId(), request.principalId(),
+                            request.operation(), request.resource(), request.relationship(), request.context(), request.approvalId(), request.correlationId());
+                    assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class, gateway.execute(embedded, CancellationSignal.NONE));
+                    assertTrue(observed.get().credentialEvidence().isEmpty());
+                }
             }
         }
     }

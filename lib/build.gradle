@@ -95,6 +95,7 @@ javadoc {
     options.addStringOption("-add-stylesheet", overviewCss.absolutePath)
     
     options.links("https://www.egothor.org/conflux/javadoc/")
+    options.addStringOption('-link-modularity-mismatch', 'info')
     // options.overview = file("src/main/javadoc/overview.html")
 }
 

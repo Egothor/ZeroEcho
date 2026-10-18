@@ -142,9 +142,13 @@ final class StatusScheduleWorker implements AutoCloseable {
     boolean isRunning() { return workerThread.isAlive() && !cancelled.get(); }
 
     @Override
-    public void close() throws InterruptedException {
+    public void close() throws java.io.IOException {
         stopScheduling();
-        awaitStopped();
+        try {
+            awaitStopped();
+        } catch (InterruptedException failure) {
+            throw RetryableCloseGate.interruptedClose(failure);
+        }
     }
 
     /* default */ void stopScheduling() {

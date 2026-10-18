@@ -140,11 +140,14 @@ final class TwinCertificateIssuanceTest {
             fixture.verifyCrl(rootId, fixture.rotatedKey);
             assertTrue(session.ocsp().isEmpty());
         }
-        try (PkiSession session = fixture.open()) {
-            fixture.verifyRoot(rootCredential, fixture.rotatedKey);
-            fixture.certificate(childCredential).verify(fixture.rotatedKey.getPublic(), "BC");
-            fixture.certificate(leafCredential).verify(fixture.childKey.getPublic(), "BC");
-            fixture.verifyCrl(rootId, fixture.rotatedKey);
+        {
+            PkiSession session = fixture.open();
+            try (session) {
+                fixture.verifyRoot(rootCredential, fixture.rotatedKey);
+                fixture.certificate(childCredential).verify(fixture.rotatedKey.getPublic(), "BC");
+                fixture.certificate(leafCredential).verify(fixture.childKey.getPublic(), "BC");
+                fixture.verifyCrl(rootId, fixture.rotatedKey);
+            }
         }
     }
 

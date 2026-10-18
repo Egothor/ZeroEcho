@@ -817,7 +817,6 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
     record AcmeDirectoryProfilePrecondition(CertificateProfileRef expectedProfile,
             String expectedPolicyCommitment) {
         /** Validates the authoritative exact profile and confirmation-policy identities. */
-        /** Validates the operation's immutable input. */
         public AcmeDirectoryProfilePrecondition {
             Objects.requireNonNull(expectedProfile, "expectedProfile");
             if (expectedPolicyCommitment == null

@@ -114,9 +114,12 @@ final class ZeroEchoLibSigningProviderConfigurationCommitmentTest {
     }
 
     private static void createEmptyKeyring(Path path) throws Exception {
-        try (KeyringPassword password = TestKeyringUnlocks.provider().acquire();
-                KeyringStore ignored = KeyringStore.create(path, password)) {
-            // Empty keyrings still have distinct master keys and store UUIDs.
+        try (KeyringPassword password = TestKeyringUnlocks.provider().acquire()) {
+            KeyringStore ignored = KeyringStore.create(path, password);
+            if (ignored != null) {
+                // Empty keyrings still have distinct master keys and store UUIDs.
+                ignored.close();
+            }
         }
     }
 }

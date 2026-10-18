@@ -60,7 +60,7 @@ import zeroecho.pki.api.request.SubjectRdn;
  * </p>
  */
 @SuppressWarnings("PMD.DataClass")
-public final class ValidatedCaCertificateRequest {
+public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.framework.ValidatedCaRequest {
     /** Closed CA certificate operations authorized by this gate. */
     public enum Operation {
         /** Creates a self-signed root credential. */
@@ -184,6 +184,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact format identifier
      */
+    @Override
     public FormatId formatId() {
         return formatId;
     }
@@ -193,6 +194,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact issuer authority
      */
+    @Override
     public PkiId issuerCaId() {
         return issuerCaId;
     }
@@ -202,6 +204,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact subject authority
      */
+    @Override
     public PkiId subjectCaId() {
         return subjectCaId;
     }
@@ -211,6 +214,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return immutable profile reference
      */
+    @Override
     public CertificateProfileRef profileReference() {
         return profileReference;
     }
@@ -220,6 +224,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact profile certificate kind
      */
+    @Override
     public CertificateProfileKind certificateType() {
         return certificateType;
     }
@@ -229,6 +234,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact inventory subject
      */
+    @Override
     public SubjectRef subjectRef() {
         return subjectRef;
     }
@@ -238,6 +244,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return immutable subject RDNs
      */
+    @Override
     public List<SubjectRdn> subjectRdns() {
         return subjectRdns;
     }
@@ -247,6 +254,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact SPKI copy
      */
+    @Override
     public EncodedObject exactPublicKey() {
         return new EncodedObject(exactPublicKey.encoding(), exactPublicKey.bytes());
     }
@@ -256,6 +264,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return credential validity interval
      */
+    @Override
     public Validity validity() {
         return validity;
     }
@@ -265,6 +274,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return positive canonical serial
      */
+    @Override
     public BigInteger serial() {
         return serial;
     }
@@ -274,6 +284,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return immutable CA policy
      */
+    @Override
     public CaCertificatePolicy policy() {
         return policy;
     }
@@ -283,6 +294,7 @@ public final class ValidatedCaCertificateRequest {
      *
      * @return exact immutable binding policy
      */
+    @Override
     public X509AlgorithmBindingPolicy algorithmBindingPolicy() {
         return algorithmBindingPolicy;
     }

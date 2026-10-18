@@ -116,9 +116,12 @@ final class AuditProjectionWorkerTest {
         }
         assertEquals(2, calls.get());
         assertEquals(1, maximumActive.get());
-        try (AutoCloseable ignored = signal.register(() -> { })) {
-            signal.signal();
-            assertEquals(2, calls.get());
+        {
+            AutoCloseable ignored = signal.register(() -> { });
+            try (ignored) {
+                signal.signal();
+                assertEquals(2, calls.get());
+            }
         }
     }
 
@@ -126,14 +129,19 @@ final class AuditProjectionWorkerTest {
     void failedRegistrationLeavesExistingListenerOwnedByItsRegistrant() throws Exception {
         RealmReconciliationWakeSignal signal = new RealmReconciliationWakeSignal();
         AtomicInteger existingWake = new AtomicInteger();
-        try (AutoCloseable ignored = signal.register(existingWake::incrementAndGet);
+        {
+            AutoCloseable ignored = signal.register(existingWake::incrementAndGet);
+            try (ignored) {
                 AuditProjectionWorker worker = new AuditProjectionWorker((type, principal, details) -> { },
-                        emptyProjection(), signal, configuration(Duration.ofSeconds(30)),
-                        Duration.ofSeconds(1), fixedClock())) {
-            assertThrows(IllegalStateException.class, worker::start);
-            worker.close();
-            signal.signal();
-            assertEquals(1, existingWake.get());
+                    emptyProjection(), signal, configuration(Duration.ofSeconds(30)),
+                    Duration.ofSeconds(1), fixedClock());
+                try (worker) {
+                    assertThrows(IllegalStateException.class, worker::start);
+                    worker.close();
+                    signal.signal();
+                    assertEquals(1, existingWake.get());
+                }
+            }
         }
     }
 
@@ -290,6 +298,15 @@ final class AuditProjectionWorkerTest {
         try {
             worker.start();
             assertTrue(entered.await(5, TimeUnit.SECONDS));
+            try {
+                Thread.currentThread().interrupt();
+                java.io.InterruptedIOException interrupted = assertThrows(java.io.InterruptedIOException.class,
+                        worker::close);
+                assertTrue(interrupted.getCause() instanceof InterruptedException);
+                assertTrue(Thread.currentThread().isInterrupted());
+            } finally {
+                Thread.interrupted();
+            }
             IllegalStateException timeout = assertThrows(IllegalStateException.class, worker::close);
             assertTrue(timeout.getMessage().contains("AUDIT_PROJECTION_SHUTDOWN_TIMEOUT"));
             assertEquals(1, calls.get());
