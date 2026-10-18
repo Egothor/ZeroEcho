@@ -50,6 +50,8 @@ import java.nio.file.StandardOpenOption;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 final class SigningFilePublisherTest {
 
@@ -68,10 +70,13 @@ final class SigningFilePublisherTest {
         SigningFilePublisher.publishManifest(manifest, channel -> writePartial(channel, new byte[] { 1 }));
         SigningFilePublisher.publishManifest(manifest, channel -> writePartial(channel, new byte[] { 2 }));
         assertArrayEquals(new byte[] { 2 }, Files.readAllBytes(manifest));
+        try (var entries = Files.list(temporaryDirectory)) {
+            assertEquals(2L, entries.count());
+        }
     }
 
     @Test
-    void everyPreMoveFaultDeletesTempAndPreservesTarget() throws Exception {
+    void everyPreMoveFaultRetainsTempAndPreservesTarget() throws Exception {
         for (SigningFilePublisher.PublicationStage stage : new SigningFilePublisher.PublicationStage[] {
                 SigningFilePublisher.PublicationStage.WRITE,
                 SigningFilePublisher.PublicationStage.FILE_FORCE }) {
@@ -85,7 +90,8 @@ final class SigningFilePublisherTest {
             assertEquals(stage, failure.stage());
             assertFalse(failure.durabilityUncertain());
             assertArrayEquals(new byte[] { 9 }, Files.readAllBytes(target));
-            assertFalse(Files.exists(operations.temporary));
+            assertTrue(Files.exists(operations.temporary));
+            assertFalse(operations.channel.isOpen());
         }
     }
 
@@ -98,6 +104,8 @@ final class SigningFilePublisherTest {
                 () -> SigningFilePublisher.publish(unsupported, false, channel -> { }, move));
         assertFalse(moveFailure.durabilityUncertain());
         assertFalse(Files.exists(unsupported));
+        assertTrue(Files.exists(move.temporary));
+        assertFalse(move.channel.isOpen());
 
         Path target = temporaryDirectory.resolve("uncertain");
         FaultOperations force = new FaultOperations(SigningFilePublisher.PublicationStage.DIRECTORY_FORCE, false);
@@ -156,12 +164,13 @@ final class SigningFilePublisherTest {
         assertTrue(Files.exists(operations.temporary, java.nio.file.LinkOption.NOFOLLOW_LINKS));
     }
 
-    @Test
-    @RequiresFileIdentity
-    void cleanupNeverDeletesReplacementRegularFile() throws Exception {
+    @ParameterizedTest(name = "replacement survives with missing identity: {0}")
+    @ValueSource(booleans = { false, true })
+    void cleanupNeverDeletesReplacementRegularFile(boolean missingIdentity) throws Exception {
         Path target = temporaryDirectory.resolve("regular-replacement-target");
         FaultOperations operations = new FaultOperations(SigningFilePublisher.PublicationStage.FILE_FORCE, false);
         operations.replaceTemporaryWithRegularFile = true;
+        operations.missingIdentity = missingIdentity;
         SigningFilePublisher.PublicationException failure = assertThrows(
                 SigningFilePublisher.PublicationException.class,
                 () -> SigningFilePublisher.publish(target, false,
@@ -169,6 +178,99 @@ final class SigningFilePublisherTest {
         assertFalse(failure.durabilityUncertain());
         assertArrayEquals(new byte[] { 6 }, Files.readAllBytes(operations.temporary));
         assertFalse(Files.exists(target));
+    }
+
+    @Test
+    void failedProductionWriteRetainsTemporaryAndClosesChannel() throws Exception {
+        Path target = temporaryDirectory.resolve("failed-write");
+        Files.write(target, new byte[] { 9 });
+        FileChannel[] opened = new FileChannel[1];
+        Path[] temporary = new Path[1];
+        SigningFilePublisher.PublicationException failure = assertThrows(
+                SigningFilePublisher.PublicationException.class,
+                () -> SigningFilePublisher.publishManifest(target, channel -> {
+                    opened[0] = channel;
+                    temporary[0] = onlyTemporary();
+                    writePartial(channel, new byte[] { 1 });
+                    throw new IOException("injected write failure");
+                }));
+        assertEquals(SigningFilePublisher.PublicationStage.WRITE, failure.stage());
+        assertFalse(failure.durabilityUncertain());
+        assertFalse(opened[0].isOpen());
+        assertArrayEquals(new byte[] { 1 }, Files.readAllBytes(temporary[0]));
+        assertArrayEquals(new byte[] { 9 }, Files.readAllBytes(target));
+    }
+
+    @Test
+    void productionFailurePreservesReplacementMovedOverOpenTemporary() throws Exception {
+        Path target = temporaryDirectory.resolve("replacement-target");
+        Path replacement = temporaryDirectory.resolve("replacement");
+        Files.write(replacement, new byte[] { 6 });
+        Path[] temporary = new Path[1];
+        FileChannel[] opened = new FileChannel[1];
+        SigningFilePublisher.PublicationException failure = assertThrows(
+                SigningFilePublisher.PublicationException.class,
+                () -> SigningFilePublisher.publishManifest(target, channel -> {
+                    opened[0] = channel;
+                    temporary[0] = onlyTemporary();
+                    writePartial(channel, new byte[] { 1 });
+                    // Precreation fixes the ordering without depending on inode reuse.
+                    Files.move(replacement, temporary[0], StandardCopyOption.REPLACE_EXISTING);
+                    throw new IOException("injected after replacement");
+                }));
+        assertEquals(SigningFilePublisher.PublicationStage.WRITE, failure.stage());
+        assertFalse(failure.durabilityUncertain());
+        assertFalse(opened[0].isOpen());
+        assertArrayEquals(new byte[] { 6 }, Files.readAllBytes(temporary[0]));
+        assertFalse(Files.exists(target));
+    }
+
+    @Test
+    void productionFailureToleratesTemporaryRemovedBeforeChannelClose() throws Exception {
+        Path target = temporaryDirectory.resolve("removed-target");
+        FileChannel[] opened = new FileChannel[1];
+        SigningFilePublisher.PublicationException failure = assertThrows(
+                SigningFilePublisher.PublicationException.class,
+                () -> SigningFilePublisher.publishManifest(target, channel -> {
+                    opened[0] = channel;
+                    Files.delete(onlyTemporary());
+                    throw new IOException("injected after removal");
+                }));
+        assertEquals(SigningFilePublisher.PublicationStage.WRITE, failure.stage());
+        assertFalse(failure.durabilityUncertain());
+        assertFalse(opened[0].isOpen());
+        try (var entries = Files.list(temporaryDirectory)) {
+            assertEquals(0L, entries.count());
+        }
+    }
+
+    @Test
+    @RequiresSymlinkCreation
+    void productionFailurePreservesReplacementSymlinkAndReferent() throws Exception {
+        Path target = temporaryDirectory.resolve("symlink-target");
+        Path referent = temporaryDirectory.resolve("referent");
+        Files.write(referent, new byte[] { 8 });
+        Path[] temporary = new Path[1];
+        SigningFilePublisher.PublicationException failure = assertThrows(
+                SigningFilePublisher.PublicationException.class,
+                () -> SigningFilePublisher.publishManifest(target, channel -> {
+                    temporary[0] = onlyTemporary();
+                    Files.delete(temporary[0]);
+                    Files.createSymbolicLink(temporary[0], referent);
+                    throw new IOException("injected after symlink replacement");
+                }));
+        assertEquals(SigningFilePublisher.PublicationStage.WRITE, failure.stage());
+        assertFalse(failure.durabilityUncertain());
+        assertTrue(Files.isSymbolicLink(temporary[0]));
+        assertArrayEquals(new byte[] { 8 }, Files.readAllBytes(referent));
+        assertFalse(Files.exists(target));
+    }
+
+    private Path onlyTemporary() throws IOException {
+        try (var entries = Files.list(temporaryDirectory)) {
+            return entries.filter(path -> path.getFileName().toString().endsWith(".tmp"))
+                    .findFirst().orElseThrow();
+        }
     }
 
     private static void writePartial(FileChannel channel, byte[] bytes) throws IOException {
@@ -184,7 +286,10 @@ final class SigningFilePublisherTest {
         private boolean commitThenThrow;
         private Path replaceTemporaryWithSymlink;
         private boolean replaceTemporaryWithRegularFile;
-        private Object originalKey;
+        private FileChannel channel;
+        private boolean missingIdentity;
+        private final SigningFilePublisher.PublicationOperations system =
+                new SigningFilePublisher.SystemPublicationOperations();
 
         private FaultOperations(SigningFilePublisher.PublicationStage fault, boolean unsupported) {
             this.fault = fault;
@@ -193,17 +298,17 @@ final class SigningFilePublisherTest {
 
         @Override
         public SigningFilePublisher.TemporaryFile createTemporary(Path parent, String prefix) throws IOException {
-            temporary = Files.createTempFile(parent, prefix, ".tmp");
-            originalKey = Files.readAttributes(temporary, java.nio.file.attribute.BasicFileAttributes.class,
-                    java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey();
-            return new SigningFilePublisher.TemporaryFile(temporary,
-                    FileChannel.open(temporary, StandardOpenOption.WRITE), originalKey);
+            SigningFilePublisher.TemporaryFile created = system.createTemporary(parent, prefix);
+            temporary = created.path();
+            channel = created.channel();
+            return missingIdentity
+                    ? new SigningFilePublisher.TemporaryFile(temporary, channel, null) : created;
         }
 
         @Override
         public void write(FileChannel channel, SigningFilePublisher.ContentWriter writer) throws IOException {
             fail(SigningFilePublisher.PublicationStage.WRITE);
-            writer.write(channel);
+            system.write(channel, writer);
         }
 
         @Override
@@ -214,6 +319,7 @@ final class SigningFilePublisherTest {
                 Files.write(temporary, new byte[] { 6 }, StandardOpenOption.CREATE_NEW);
             }
             fail(SigningFilePublisher.PublicationStage.FILE_FORCE);
+            system.forceFile(channel);
         }
 
         @Override
@@ -221,19 +327,14 @@ final class SigningFilePublisherTest {
             if (replaceTemporaryWithSymlink != null) {
                 Files.delete(value.path());
                 Files.createSymbolicLink(value.path(), replaceTemporaryWithSymlink);
-                throw new java.nio.file.FileAlreadyExistsException("changed");
             }
+            system.validateTemporary(value);
         }
 
         @Override
         public void atomicMove(Path source, Path target, boolean replace) throws IOException {
             fail(SigningFilePublisher.PublicationStage.ATOMIC_MOVE);
-            if (replace) {
-                Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-            } else {
-                Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-            }
+            system.atomicMove(source, target, replace);
             if (commitThenThrow) {
                 throw new IOException("ambiguous after move");
             }
@@ -242,22 +343,7 @@ final class SigningFilePublisherTest {
         @Override
         public void forceDirectory(Path directory) throws IOException {
             fail(SigningFilePublisher.PublicationStage.DIRECTORY_FORCE);
-        }
-
-        @Override
-        public void deleteTemporary(SigningFilePublisher.TemporaryFile value) throws IOException {
-            if (!Files.exists(value.path(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                return;
-            }
-            java.nio.file.attribute.BasicFileAttributes current = Files.readAttributes(value.path(),
-                    java.nio.file.attribute.BasicFileAttributes.class,
-                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
-            // fileKey() is null where the filesystem has no stable file identity
-            // (e.g. Windows); fall back to the regular-file check there.
-            if (current.isRegularFile()
-                    && (value.fileKey() == null || value.fileKey().equals(current.fileKey()))) {
-                Files.delete(value.path());
-            }
+            system.forceDirectory(directory);
         }
 
         private void fail(SigningFilePublisher.PublicationStage current) throws IOException {

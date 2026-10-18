@@ -248,16 +248,11 @@ final class SigningFilePublicationRecoveryTest {
                 fixture.newActive().name(),
                 SigningLedgerRecovery.Category.ORPHAN_ARTIFACT_DEFERRED);
         Set<SigningLedgerRecovery.CleanupEntry> expected;
-        if (boundary.expectedTopology() == Topology.OLD
-                && boundary == Boundary.ATOMIC_MOVE_BEFORE_VISIBILITY) {
+        if (boundary.expectedTopology() == Topology.OLD) {
             expected = Set.of(checkpoint, newActive, new SigningLedgerRecovery.CleanupEntry(
                     operations.temporaryPath().getFileName().toString(),
                     SigningLedgerRecovery.Category.SAFE_STALE_TEMPORARY));
-        } else if (boundary.expectedTopology() == Topology.OLD) {
-            expected = Set.of(checkpoint, newActive);
-            if (boundary == Boundary.FILE_FORCE_COMPLETES_THEN_THROWS) {
-                assertFalse(Files.exists(operations.temporaryPath(), LinkOption.NOFOLLOW_LINKS));
-            }
+            assertTrue(Files.exists(operations.temporaryPath(), LinkOption.NOFOLLOW_LINKS));
         } else {
             expected = Set.of(new SigningLedgerRecovery.CleanupEntry(
                     fixture.oldManifest().activeWal().name(),
@@ -401,24 +396,6 @@ final class SigningFilePublicationRecoveryTest {
                 throw new IOException("injected after manifest visibility");
             }
             SigningFormatSupport.forceDirectory(directory);
-        }
-
-        @Override
-        public void deleteTemporary(SigningFilePublisher.TemporaryFile temporary)
-                throws IOException {
-            if (!Files.exists(temporary.path(), LinkOption.NOFOLLOW_LINKS)) {
-                return;
-            }
-            BasicFileAttributes attributes = Files.readAttributes(temporary.path(),
-                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            // fileKey() is null on filesystems without a stable file identity
-            // (e.g. Windows); fall back to the regular-file check there, mirroring
-            // the production identity guard in SigningFilePublisher.
-            if (attributes.isRegularFile()
-                    && (temporary.fileKey() == null
-                            || temporary.fileKey().equals(attributes.fileKey()))) {
-                Files.delete(temporary.path());
-            }
         }
 
         private void failBefore(SigningFilePublisher.PublicationStage stage) throws IOException {

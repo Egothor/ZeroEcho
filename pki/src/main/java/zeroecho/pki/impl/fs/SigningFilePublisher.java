@@ -50,7 +50,15 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.Objects;
 
-/** Strict same-directory atomic publication for signing format files. */
+/**
+ * Strict same-directory atomic publication for signing format files.
+ *
+ * <p>Failed publications retain temporary directory entries: Java has no atomic
+ * identity-check-and-delete operation, so deleting a checked pathname could remove
+ * another writer's replacement. Channels are always closed; successful publication
+ * consumes the temporary entry by atomic move. Retained entries require separately
+ * coordinated maintenance, not an unguarded pathname sweep.</p>
+ */
 final class SigningFilePublisher {
 
     private static final PublicationOperations SYSTEM_OPERATIONS = new SystemPublicationOperations();
@@ -89,12 +97,10 @@ final class SigningFilePublisher {
             throw new PublicationException(PublicationStage.ATOMIC_MOVE, false);
         }
 
-        TemporaryFile temporary = null;
         boolean moved = false;
-        boolean uncertain = false;
         PublicationStage stage = PublicationStage.WRITE;
         try {
-            temporary = operations.createTemporary(parent, "." + fileName + "-");
+            TemporaryFile temporary = operations.createTemporary(parent, "." + fileName + "-");
             try (FileChannel channel = temporary.channel()) {
                 operations.write(channel, writer);
                 stage = PublicationStage.FILE_FORCE;
@@ -108,7 +114,6 @@ final class SigningFilePublisher {
             } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException precommit) {
                 throw new PublicationException(stage, false);
             } catch (IOException ambiguous) {
-                uncertain = true;
                 throw new PublicationException(stage, true);
             }
             stage = PublicationStage.DIRECTORY_FORCE;
@@ -117,15 +122,6 @@ final class SigningFilePublisher {
             throw failure;
         } catch (IOException failure) {
             throw new PublicationException(stage, moved);
-        } finally {
-            if (!moved && !uncertain && temporary != null) {
-                try {
-                    operations.deleteTemporary(temporary);
-                } catch (IOException cleanupFailure) {
-                    // The primary stable stage remains authoritative. A later startup
-                    // sweep may remove an abandoned uniquely named temp file.
-                }
-            }
         }
     }
 
@@ -156,8 +152,6 @@ final class SigningFilePublisher {
         void atomicMove(Path source, Path target, boolean replace) throws IOException;
 
         void forceDirectory(Path directory) throws IOException;
-
-        void deleteTemporary(TemporaryFile temporary) throws IOException;
     }
 
     /**
@@ -211,7 +205,7 @@ final class SigningFilePublisher {
     }
 
     /** JDK filesystem implementation of the publication seam. */
-    private static final class SystemPublicationOperations implements PublicationOperations {
+    /* default */ static final class SystemPublicationOperations implements PublicationOperations {
         @Override
         @SuppressWarnings("PMD.EmptyCatchBlock")
         public TemporaryFile createTemporary(Path parent, String prefix) throws IOException {
@@ -226,15 +220,22 @@ final class SigningFilePublisher {
                         StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
                 try {
                     FileChannel channel = FileChannel.open(temporary, options, attributes);
-                    BasicFileAttributes created = Files.readAttributes(temporary,
-                            BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                    if (!created.isRegularFile()) {
-                        channel.close();
-                        Files.deleteIfExists(temporary);
-                        throw new IOException("signing temporary-file identity is unavailable");
+                    try {
+                        BasicFileAttributes created = Files.readAttributes(temporary,
+                                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                        if (!created.isRegularFile()) {
+                            throw new IOException("signing temporary-file identity is unavailable");
+                        }
+                        // fileKey may be null on platforms without a stable identity (Windows).
+                        return new TemporaryFile(temporary, channel, created.fileKey());
+                    } catch (IOException | RuntimeException failure) {
+                        try {
+                            channel.close();
+                        } catch (IOException closeFailure) {
+                            failure.addSuppressed(closeFailure);
+                        }
+                        throw failure;
                     }
-                    // fileKey may be null on platforms without a stable identity (Windows).
-                    return new TemporaryFile(temporary, channel, created.fileKey());
                 } catch (FileAlreadyExistsException collision) {
                     // Try another unpredictable name without opening the existing path.
                 }
@@ -288,20 +289,6 @@ final class SigningFilePublisher {
         @Override
         public void forceDirectory(Path directory) throws IOException {
             SigningFormatSupport.forceDirectory(directory);
-        }
-
-        @Override
-        @SuppressWarnings("PMD.EmptyCatchBlock")
-        public void deleteTemporary(TemporaryFile temporary) throws IOException {
-            try {
-                BasicFileAttributes current = Files.readAttributes(temporary.path(),
-                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                if (sameTemporaryIdentity(temporary, current)) {
-                    Files.delete(temporary.path());
-                }
-            } catch (java.nio.file.NoSuchFileException absent) {
-                // Nothing remains from the originally opened temporary file.
-            }
         }
     }
 }
