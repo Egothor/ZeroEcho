@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -47,6 +47,7 @@ import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import tools.jackson.core.JsonParser;
+import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperation;
@@ -77,7 +78,7 @@ class OperationDescriptorCatalogTest {
         assertEquals(typed, new OperationSecurityDescriptors().descriptors().keySet());
         assertEquals(typed, OperationParameterSchemas.all().stream().map(OperationParameterSchema.OperationSpec::operationId).collect(java.util.stream.Collectors.toSet()));
         List<?> projection;
-        try (JsonParser parser = new JsonFactory().createParser(GenerateOperationSchema.serialize(catalog.parameterSchemas()))) {
+        try (JsonParser parser = new JsonFactory().createParser(ObjectReadContext.empty(), GenerateOperationSchema.serialize(catalog.parameterSchemas()))) {
             parser.nextToken();
             projection = (List<?>) json(parser);
         }

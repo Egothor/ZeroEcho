@@ -94,7 +94,7 @@ class BackupTransferHttpTest {
 
     private static Map<String, PkiOperationValue> value(HttpResponse<String> response) throws Exception {
         assertEquals(200, response.statusCode(), response.body());
-        try (tools.jackson.core.JsonParser parser = tools.jackson.core.json.JsonFactory.builder().build().createParser(response.body())) {
+        try (tools.jackson.core.JsonParser parser = tools.jackson.core.json.JsonFactory.builder().build().createParser(tools.jackson.core.ObjectReadContext.empty(), response.body())) {
             while (parser.nextToken() != null) {
                 if (parser.currentToken() == tools.jackson.core.JsonToken.PROPERTY_NAME && "value".equals(parser.currentName())) {
                     assertEquals(tools.jackson.core.JsonToken.START_OBJECT, parser.nextToken());

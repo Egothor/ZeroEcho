@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -390,10 +390,8 @@ final class FsOperations {
         }
 
         // Truncate by opening with TRUNCATE_EXISTING + WRITE and closing immediately.
-        try (OutputStream ignored = Files.newOutputStream(tmp, StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE)) {
-            // no-op
-        }
+        Files.newOutputStream(tmp, StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE).close();
     }
 
     private static void moveIntoPlace(final Path tmp, final Path target) throws IOException {

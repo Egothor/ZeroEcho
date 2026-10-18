@@ -42,15 +42,30 @@ plugins {
     id 'maven-publish'
     id 'signing'
     id 'pmd'
-    // Give non-modular third-party jars a stable module name for the module path.
+    // Supply a stable descriptor for the non-modular Conflux dependency.
     id 'org.gradlex.extra-java-module-info'
 }
 
-// conflux ships no module descriptor and no Automatic-Module-Name; name it explicitly
-// so the modular main source sets can `requires conflux`.
+// Conflux exposes only its conflux package and depends only on java.base. Keep
+// the automatic module's package exports and reflective openness in a real module.
 extraJavaModuleInfo {
     failOnMissingModuleInfo = false
-    automaticModule('org.egothor:conflux', 'conflux')
+    module('org.egothor:conflux', 'conflux') {
+        exportAllPackages()
+    }
+    // H2's fixed embedded-JDBC profile uses these JDK modules. Preserve its
+    // package exports, reflective openness and META-INF/services JDBC provider.
+    module('com.h2database:h2', 'com.h2database') {
+        exportAllPackages()
+        requires('java.compiler')
+        requires('java.desktop')
+        requires('java.instrument')
+        requires('java.management')
+        requires('java.naming')
+        requires('java.scripting')
+        requires('java.sql')
+        requires('jdk.net')
+    }
 }
 
 import java.time.LocalDate
@@ -60,6 +75,15 @@ def currentYear = LocalDate.now().getYear()
 // Release tags supply the same immutable version to every published module.
 project.version = providers.gradleProperty('releaseVersion').getOrElse('0.0.0-LOCAL')
 project.group = 'org.egothor'
+
+
+// Isolated verification can use fresh outputs without touching existing reports.
+providers.gradleProperty('verificationOutputRoot').orNull?.with { outputRoot ->
+    if (outputRoot.isBlank() || !new File(outputRoot).isAbsolute()) {
+        throw new GradleException('verificationOutputRoot must be a nonblank absolute path')
+    }
+    layout.buildDirectory.set(new File(outputRoot, project.name))
+}
 
 repositories {
 
@@ -109,16 +133,13 @@ java {
 // existing ServiceLoader-via-META-INF/services behaviour working without changes, and
 // preserves the supported classpath distribution alongside the modular one.
 tasks.withType(JavaCompile).configureEach {
+    options.warnings = true
+    options.compilerArgs.addAll(['-Xlint:all', '-Xmaxwarns', '100000'])
+    if (providers.gradleProperty('warningsAsErrors').getOrElse('true') != 'false') {
+        options.compilerArgs.add('-Werror')
+    }
     if (name != 'compileJava') {
         modularity.inferModulePath = false
-    } else {
-        // A qualified `exports ... to <sibling>` directive names a downstream
-        // module (e.g. zeroecho.pki.server, zeroecho.app) that depends on this
-        // module and is therefore never on this module's own compile module path.
-        // javac's `module` lint cannot resolve those targets and emits an
-        // unavoidable "module not found" warning for a legitimate, intentional
-        // export. Disable only that lint category; every other category stays on.
-        options.compilerArgs.add('-Xlint:-module')
     }
 }
 // Every existing archive carries its applicable canonical redistribution terms.
@@ -254,7 +275,7 @@ if (project.name != 'api-spec') {
         if (key.isPresent()) {
             useInMemoryPgpKeys(key.get(), providers.environmentVariable('MAVEN_SIGNING_PASSWORD').getOrElse(''))
         }
-        required { providers.gradleProperty('releaseVersion').isPresent() }
+        required = { providers.gradleProperty('releaseVersion').isPresent() }
         sign publishing.publications.mavenJava
     }
 

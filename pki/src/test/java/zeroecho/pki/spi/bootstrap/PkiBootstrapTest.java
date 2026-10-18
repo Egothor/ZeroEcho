@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -71,7 +71,6 @@ import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;

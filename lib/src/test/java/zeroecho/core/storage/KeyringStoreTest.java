@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -98,8 +98,8 @@ class KeyringStoreTest {
     void wrongPasswordAndCorruptionFailUniformly() throws Exception {
         start("wrongPasswordAndCorruptionFailUniformly");
         Path path = temporaryDirectory.resolve("wrong.zek");
-        try (KeyringPassword password = password(); KeyringStore ignored = KeyringStore.create(path, password)) {
-            // empty current-format store
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.create(path, password)) {
+            assertTrue(store.aliases().isEmpty(), "Wrong-password fixture must start with an empty store");
         }
         try (KeyringPassword wrong = new KeyringPassword(new char[] { 'w', 'r', 'o', 'n', 'g' })) {
             KeyringException exception = assertThrows(KeyringException.class, () -> KeyringStore.open(path, wrong));

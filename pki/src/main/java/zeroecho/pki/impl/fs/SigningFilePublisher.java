@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -76,8 +76,7 @@ final class SigningFilePublisher {
     }
 
     // Publication errors are deliberately translated to stable, path-free states.
-    @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.EmptyCatchBlock",
-            "PMD.CyclomaticComplexity" })
+    @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
     /* default */ static void publish(Path target, boolean replace, ContentWriter writer,
             PublicationOperations operations) throws IOException {
         Objects.requireNonNull(target, "target");
@@ -204,6 +203,30 @@ final class SigningFilePublisher {
         }
     }
 
+    /** Closes a newly opened channel unless ownership transfers to a temporary file. */
+    /* default */ static final class TemporaryChannel implements AutoCloseable {
+        private final FileChannel channel;
+        private boolean transferred;
+
+        /* default */ TemporaryChannel(FileChannel channel) {
+            this.channel = Objects.requireNonNull(channel, "channel");
+        }
+
+        /** Transfers channel closure responsibility to the returned temporary file. */
+        /* default */ TemporaryFile transfer(Path path, Object fileKey) {
+            TemporaryFile result = new TemporaryFile(path, channel, fileKey);
+            transferred = true;
+            return result;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (!transferred) {
+                channel.close();
+            }
+        }
+    }
+
     /** JDK filesystem implementation of the publication seam. */
     /* default */ static final class SystemPublicationOperations implements PublicationOperations {
         @Override
@@ -219,28 +242,26 @@ final class SigningFilePublisher {
                 Set<OpenOption> options = Set.of(StandardOpenOption.CREATE_NEW,
                         StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
                 try {
-                    FileChannel channel = FileChannel.open(temporary, options, attributes);
-                    try {
-                        BasicFileAttributes created = Files.readAttributes(temporary,
-                                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                        if (!created.isRegularFile()) {
-                            throw new IOException("signing temporary-file identity is unavailable");
-                        }
-                        // fileKey may be null on platforms without a stable identity (Windows).
-                        return new TemporaryFile(temporary, channel, created.fileKey());
-                    } catch (IOException | RuntimeException failure) {
-                        try {
-                            channel.close();
-                        } catch (IOException closeFailure) {
-                            failure.addSuppressed(closeFailure);
-                        }
-                        throw failure;
-                    }
+                    return openTemporary(temporary, options, attributes);
                 } catch (FileAlreadyExistsException collision) {
                     // Try another unpredictable name without opening the existing path.
                 }
             }
             throw new IOException("signing temporary-file creation is unavailable");
+        }
+
+        /** Opens an owned channel until the temporary identity has been captured. */
+        private static TemporaryFile openTemporary(Path path, Set<OpenOption> options,
+                FileAttribute<?>... attributes) throws IOException {
+            try (TemporaryChannel opened = new TemporaryChannel(FileChannel.open(path, options, attributes))) {
+                BasicFileAttributes created = Files.readAttributes(path,
+                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!created.isRegularFile()) {
+                    throw new IOException("signing temporary-file identity is unavailable");
+                }
+                // fileKey may be null on platforms without a stable identity (Windows).
+                return opened.transfer(path, created.fileKey());
+            }
         }
 
         @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -34,6 +34,7 @@
 package zeroecho.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -84,7 +85,23 @@ class CatalogConsumerCompatibilityTest {
                         store.generateStatefulKey("new-key", "LMS", authority);
                         return store.statefulSigner("new-key", authority);
                     }
+                    public static void publicApi(zeroecho.core.annotation.Describable description,
+                            zeroecho.core.marshal.PairSeq pairs,
+                            zeroecho.core.alg.common.eddsa.CommonEdDSASignatureContext context,
+                            zeroecho.core.policy.CryptoPolicy<?, ?> policy,
+                            zeroecho.core.audit.AuditListener audit, zeroecho.core.audit.AuditMode mode,
+                            zeroecho.core.alg.hmac.HmacSpec spec, java.util.logging.Logger logger,
+                            conflux.CtxInterface registry, conflux.Key<?> key) { }
                     public static void main(String[] args) {
+                        if (zeroecho.core.marshal.PairSeq.of("key", "value").size() != 1) throw new AssertionError();
+                        if (zeroecho.core.alg.hmac.HmacSpec.sha256().macName().isEmpty()) throw new AssertionError();
+                        Module confluxModule = conflux.CtxInterface.class.getModule();
+                        if (confluxModule.getDescriptor().isAutomatic() || !confluxModule.getDescriptor().isOpen()) {
+                            throw new AssertionError("Conflux must remain reflectively open as a named module");
+                        }
+                        if (CryptoAlgorithm.class.getModule().isExported("zeroecho.pkix.bc")) {
+                            throw new AssertionError("Provider implementation must stay internal");
+                        }
                         TemplateParameter p = new TemplateParameter("bits", "Bits", Integer.class, "Size");
                         if (!(p instanceof TemplateParameter(String n, String l, Class<?> t, String d))) {
                             throw new AssertionError();
@@ -116,6 +133,13 @@ class CatalogConsumerCompatibilityTest {
         assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, diagnostics, diagnostics,
                 "--module-path", dependencies, "-d", modular.toString(), module.toString(), source.toString()),
                 diagnostics.toString());
+        Path internal = source.resolveSibling("Internal.java");
+        Files.writeString(internal, "package consumer; final class Internal { zeroecho.pkix.bc.BcPkixProvider provider; }");
+        diagnostics.reset();
+        assertNotEquals(0, ToolProvider.getSystemJavaCompiler().run(null, diagnostics, diagnostics,
+                "-XDrawDiagnostics", "--module-path", dependencies, "-d", modular.toString(), module.toString(), internal.toString()),
+                "Provider implementation must not be accessible to a named consumer");
+        assertTrue(diagnostics.toString().contains("compiler.err.package.not.visible"), diagnostics.toString());
         Path log = directory.resolve("consumer.log");
         Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "--module-path", modular + File.pathSeparator + dependencies, "-m", "consumer/consumer.Consumer")

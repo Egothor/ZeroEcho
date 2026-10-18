@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -187,7 +187,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public String contentStoreId() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return storeId;
         }
     }
@@ -339,7 +340,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public ContentSink beginContent(Encoding encoding, DurableContentReference.Lifecycle lifecycle) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             Objects.requireNonNull(encoding, "encoding");
             Objects.requireNonNull(lifecycle, "lifecycle");
             if (!openSinks.tryAcquire()) {
@@ -360,7 +362,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public RepeatableContent openContent(DurableContentReference reference) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             DurableContentReference exact = requireOwned(reference);
             DurableContentReference persisted = readMetadata(exact.contentId());
             if (!persisted.equals(exact)) {
@@ -381,7 +384,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
     @Override
     public DurableContentReference restoreReference(String persistedStoreId, String contentId, Encoding encoding,
             long length, String sha256, DurableContentReference.Lifecycle lifecycle) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             if (!storeId.equals(requireStoreIdentifier(persistedStoreId))) {
                 throw new IllegalArgumentException("Staged content belongs to another store");
             }
@@ -397,7 +401,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public boolean retainContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             DurableContentReference exact = requireOwned(reference);
             Objects.requireNonNull(owner, "owner");
             TransactionalOwnershipIo.requireSidecarOwner(owner);
@@ -419,7 +424,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public boolean releaseContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             DurableContentReference exact = requireOwned(reference);
             Objects.requireNonNull(owner, "owner");
             TransactionalOwnershipIo.requireSidecarOwner(owner);
@@ -445,7 +451,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public Set<DurableContentOwner> contentOwners(DurableContentReference reference) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             DurableContentReference exact = requireOwned(reference);
             ReentrantLock lock = ownerLock(exact.contentId());
             lock.lock();
@@ -462,7 +469,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public void retireUnownedContent(DurableContentReference reference) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             DurableContentReference exact = requireOwned(reference);
             ReentrantLock lock = ownerLock(exact.contentId());
             lock.lock();
@@ -478,7 +486,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             try (TemporaryUniqueIndex transactionalOwners = beginUniqueIndex()) {
                 StoreIo.recoverContent(this, retained, retainedOwners, transactionalOwners);
             }
@@ -493,7 +502,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     @Override
     public TemporaryUniqueIndex beginUniqueIndex() throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             Path directory = root.resolve(UUID.randomUUID() + ".unique-index");
             Files.createDirectory(directory);
             restrictDirectory(directory);
@@ -752,7 +762,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
         @Override
         public DurableContentReference complete() throws IOException {
-            try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) { // NOPMD UnusedLocalVariable - Admission lease is consumed by try-with-resources close; lifetime gates store mutation.
+            StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+            try (admission) {
                 lock.lock();
                 try {
                     requireOpen();
@@ -1002,8 +1013,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
 
         private static void closeFailedChannel(FileChannel failedChannel) throws IOException {
-            try (FileChannel ignored = failedChannel) {
-                // Transfer to try-with-resources solely for failed construction cleanup.
+            if (failedChannel != null) {
+                failedChannel.close();
             }
         }
 
@@ -1074,7 +1085,6 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         requireCanonicalUuid(contentId, true);
     }
 
-    /** Store-branded immutable reference; arbitrary interface implementations are rejected. */
     /** Mechanical home for filesystem metadata branches kept outside the store coordinator. */
     private static final class StoreIo {
         private static void recoverContent(FilesystemStagedContentStore store, TemporaryUniqueIndex retained,
@@ -1419,6 +1429,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /** Store-branded immutable reference; arbitrary interface implementations are rejected. */
     private record StoreReference(String storeId, String contentId, Encoding encoding, long length, String sha256,
             DurableContentReference.Lifecycle lifecycle) implements DurableContentReference {
         private StoreReference {

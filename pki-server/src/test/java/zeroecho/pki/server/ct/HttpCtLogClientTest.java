@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -78,7 +78,7 @@ class HttpCtLogClientTest {
         @SuppressWarnings("unchecked")
         HttpResponse<byte[]> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(503);
-        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenAnswer(call -> {
+        when(http.send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>notNull())).thenAnswer(call -> {
             Thread.currentThread().interrupt();
             return response;
         });
@@ -87,7 +87,7 @@ class HttpCtLogClientTest {
                     () -> client.submit(DUMMY_PRE_CERT, List.of(), Instant.now().plusSeconds(30)));
             assertTrue(Thread.currentThread().isInterrupted());
             assertTrue(failure.getCause() instanceof InterruptedException);
-            verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+            verify(http, times(1)).send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>notNull());
         } finally {
             Thread.interrupted();
         }

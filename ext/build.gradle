@@ -40,7 +40,7 @@ group='org.egothor'
 
 dependencies {
 	api 'org.bouncycastle:bcpkix-jdk18on'
-	implementation 'org.apache.commons:commons-imaging'
+	api 'org.apache.commons:commons-imaging'
 	implementation project(':lib')
 	testImplementation 'org.egothor:conflux'
 }

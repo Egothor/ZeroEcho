@@ -32,7 +32,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { resetTransport, setTransport } from '@/api/transport';
 import { createDemoTransport } from '@/demo/demoBackend';
@@ -49,25 +49,23 @@ import type { DemoRole } from '@/demo/roles';
  * Installs the in-browser demo transport when demo mode is enabled, and exposes
  * the active persona. Changing persona re-filters what the mock server exposes
  * and invalidates cached queries so the console reflects the new identity.
+ * Transport setup precedes descendant query effects and cleanup restores live
+ * transport, including React StrictMode replay; rendering does not change it.
+ *
+ * @param children descendant console content
+ * @returns the demo persona context around the supplied content
  */
 export function DemoModeProvider({ children }: { readonly children: ReactNode }) {
-  const enabled = useMemo(detectDemoEnabled, []);
+  const enabled = useMemo(() => detectDemoEnabled(), []);
   const [role, setRoleState] = useState<DemoRole>(() => (enabled ? loadDemoRole() : 'ADMINISTRATOR'));
   const roleRef = useRef(role);
-  roleRef.current = role;
   const queryClient = useQueryClient();
 
-  // Install the transport synchronously on first render, BEFORE any descendant
-  // query effect runs (child effects fire before parent effects), so the very
-  // first request already routes to the mock backend rather than the network.
-  const installed = useRef(false);
-  if (enabled && !installed.current) {
-    setTransport(createDemoTransport(() => roleRef.current));
-    installed.current = true;
-  }
-
-  useEffect(() => {
+  // Layout setup precedes descendant query effects and reinstalls the transport
+  // after StrictMode cleanup; discarded renders never change global transport.
+  useLayoutEffect(() => {
     if (!enabled) return undefined;
+    setTransport(createDemoTransport(() => roleRef.current));
     return () => resetTransport();
   }, [enabled]);
 
@@ -76,8 +74,7 @@ export function DemoModeProvider({ children }: { readonly children: ReactNode })
       enabled,
       role,
       setRole: (next) => {
-        // Update the ref synchronously so the refetch triggered below already
-        // sees the new persona (the re-render that syncs roleRef happens later).
+        // Refetches must see the new persona before React commits the state update.
         roleRef.current = next;
         persistDemoRole(next);
         setRoleState(next);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -46,8 +46,8 @@ import java.util.List;
 import zeroecho.core.ParameterSetDescriptor;
 import zeroecho.core.SecurityLevel;
 
-import org.bouncycastle.pqc.crypto.lms.LMOtsParameters;
-import org.bouncycastle.pqc.crypto.lms.LMSigParameters;
+import org.bouncycastle.crypto.params.LMOtsParameters;
+import org.bouncycastle.crypto.params.LMSigParameters;
 import org.bouncycastle.pqc.jcajce.spec.LMSKeyGenParameterSpec;
 
 import zeroecho.core.AlgorithmFamily;

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -57,20 +57,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.ca.IssuerGeneration;
-import zeroecho.pki.api.ca.IssuerChainPath;
-import zeroecho.pki.api.credential.Credential;
-import zeroecho.pki.api.credential.CaProfileBinding;
-import zeroecho.pki.api.profile.CertificateProfileRef;
-import zeroecho.pki.api.signing.ManagedKeyProofRequest;
 import zeroecho.pki.api.signing.SemanticSigningState;
-import zeroecho.pki.impl.core.ManagedKeyProofPreparation;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.core.signing.DefaultSemanticSigningService;
 import zeroecho.pki.impl.core.signing.DefaultSigningService;
-import zeroecho.pkix.BasicConstraints;
-import zeroecho.pkix.KeyUsage;
-import zeroecho.pkix.Pkix;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;

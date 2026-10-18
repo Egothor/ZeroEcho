@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -277,7 +277,7 @@ class FullCrlTbsPreparationTest {
             TBSCertList parsed = TBSCertList.getInstance(fixture.output.toByteArray());
             Extension aki = parsed.getExtensions().getExtension(Extension.authorityKeyIdentifier);
             assertFalse(aki.isCritical());
-            assertArrayEquals(identifier == null ? defaultId : identifier, AuthorityKeyIdentifier.getInstance(aki.getParsedValue()).getKeyIdentifier());
+            assertArrayEquals(identifier == null ? defaultId : identifier, AuthorityKeyIdentifier.getInstance(aki.getParsedValue()).getKeyIdentifierOctets());
             assertEquals(2, parsed.getExtensions().getExtensionOIDs().length);
         }
     }

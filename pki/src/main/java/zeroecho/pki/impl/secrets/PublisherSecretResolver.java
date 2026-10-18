@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* ******************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -43,19 +43,23 @@ import zeroecho.pki.spi.ProviderConfig;
 /**
  * Resolves secret references in publisher provider configurations.
  *
- * <p>Property values with a recognised scheme prefix are replaced with the
- * resolved secret value before the publisher is allocated:</p>
+ * <p>
+ * Property values with a recognised scheme prefix are replaced with the
+ * resolved secret value before the publisher is allocated:
+ * </p>
  * <ul>
- *   <li>{@code keyring:<id>} — secret looked up by identifier in the
- *       decrypted {@link PublisherSecretsStore}</li>
- *   <li>{@code env:<VAR>} — value read from the named environment variable</li>
- *   <li>{@code dev-plaintext:<value>} — literal value used as-is; emits a
- *       {@link Level#SEVERE} warning. <strong>Must not be used in
- *       production.</strong></li>
+ * <li>{@code keyring:<id>} — secret looked up by identifier in the decrypted
+ * {@link PublisherSecretsStore}</li>
+ * <li>{@code env:<VAR>} — value read from the named environment variable</li>
+ * <li>{@code dev-plaintext:<value>} — literal value used as-is; emits a
+ * {@link Level#SEVERE} warning. <strong>Must not be used in
+ * production.</strong></li>
  * </ul>
  *
- * <p>Resolved secret values must never be logged. Only prefixes and
- * identifier keys may appear in log output.</p>
+ * <p>
+ * Resolved secret values must never be logged. Only prefixes and identifier
+ * keys may appear in log output.
+ * </p>
  */
 public final class PublisherSecretResolver {
     private static final Logger LOG = Logger.getLogger(PublisherSecretResolver.class.getName());
@@ -69,7 +73,8 @@ public final class PublisherSecretResolver {
     /**
      * Creates a resolver backed by the given decrypted secrets.
      *
-     * @param store immutable map of secret identifier to secret value (may be empty)
+     * @param store immutable map of secret identifier to secret value (may be
+     *              empty)
      */
     public PublisherSecretResolver(Map<String, String> store) {
         this.store = Map.copyOf(store);
@@ -80,9 +85,11 @@ public final class PublisherSecretResolver {
      * values resolved to their plaintext equivalents.
      *
      * @param config non-null provider configuration; the input is not modified
-     * @return a new configuration containing resolved secrets; do not log its properties
-     * @throws IllegalArgumentException if a {@code keyring:} reference is not
-     *         found in the store or an {@code env:} variable is unset or empty
+     * @return a new configuration containing resolved secrets; do not log its
+     *         properties
+     * @throws IllegalArgumentException if a {@code keyring:} reference is not found
+     *                                  in the store or an {@code env:} variable is
+     *                                  unset or empty
      */
     public ProviderConfig resolve(ProviderConfig config) {
         Map<String, String> resolved = new LinkedHashMap<>(config.properties());
@@ -92,23 +99,21 @@ public final class PublisherSecretResolver {
                 String secretId = value.substring(PREFIX_KEYRING.length());
                 String secret = store.get(secretId);
                 if (secret == null) {
-                    throw new IllegalArgumentException(
-                            "Publisher secret not found in store: " + secretId);
+                    throw new IllegalArgumentException("Publisher secret not found in store: " + secretId);
                 }
                 resolved.put(entry.getKey(), secret);
             } else if (value.startsWith(PREFIX_ENV)) {
                 String envName = value.substring(PREFIX_ENV.length());
                 String envVal = System.getenv(envName);
                 if (envVal == null || envVal.isEmpty()) {
-                    throw new IllegalArgumentException(
-                            "Publisher secret environment variable is not set: " + envName);
+                    throw new IllegalArgumentException("Publisher secret environment variable is not set: " + envName);
                 }
                 resolved.put(entry.getKey(), envVal);
             } else if (value.startsWith(PREFIX_DEV)) {
                 if (LOG.isLoggable(Level.SEVERE)) {
                     LOG.log(Level.SEVERE,
-                        "SECURITY WARNING: plaintext publisher credential in configuration "
-                        + "for property [{0}]. This is UNSAFE and MUST NOT be used in production.",
+                            "SECURITY WARNING: plaintext publisher credential in configuration "
+                                    + "for property [{0}]. This is UNSAFE and MUST NOT be used in production.",
                             entry.getKey());
                 }
                 resolved.put(entry.getKey(), value.substring(PREFIX_DEV.length()));

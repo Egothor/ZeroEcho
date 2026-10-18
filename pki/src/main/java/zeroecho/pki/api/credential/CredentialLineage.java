@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* ******************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -45,13 +45,14 @@ import zeroecho.pki.api.attr.AttributeValue;
  * the predecessor it replaces.
  *
  * <p>
- * When a credential is produced by {@code replace} or {@code reissue}, the newly
- * issued credential carries a forward pointer to the predecessor it supersedes.
- * The pointer lives in credential metadata attributes, not in the signed
- * certificate bytes, so it never changes the content-addressed credential
- * identity or the signing path. Combined with permanent revocation of the
- * predecessor under {@link zeroecho.pki.api.revocation.RevocationReason#SUPERSEDED}
- * (or preservation of its existing permanent reason), this records the durable
+ * When a credential is produced by {@code replace} or {@code reissue}, the
+ * newly issued credential carries a forward pointer to the predecessor it
+ * supersedes. The pointer lives in credential metadata attributes, not in the
+ * signed certificate bytes, so it never changes the content-addressed
+ * credential identity or the signing path. Combined with permanent revocation
+ * of the predecessor under
+ * {@link zeroecho.pki.api.revocation.RevocationReason#SUPERSEDED} (or
+ * preservation of its existing permanent reason), this records the durable
  * lifecycle relationship. Renewal does not create supersession lineage or
  * revoke its predecessor. The module derives lineage from the validated durable
  * lifecycle command; caller-supplied execution evidence cannot supply it.
@@ -59,13 +60,18 @@ import zeroecho.pki.api.attr.AttributeValue;
  */
 public final class CredentialLineage {
 
-    /** Metadata attribute carrying the predecessor credential identity superseded by this credential. */
-    public static final AttributeId SUPERSEDES_CREDENTIAL_ID =
-            new AttributeId("urn:zeroecho:pki:supersedes-credential-id:v1");
+    /**
+     * Metadata attribute carrying the predecessor credential identity superseded by
+     * this credential.
+     */
+    public static final AttributeId SUPERSEDES_CREDENTIAL_ID = new AttributeId(
+            "urn:zeroecho:pki:supersedes-credential-id:v1");
 
-    /** Metadata attribute carrying the trusted REPLACE_END_ENTITY or REISSUE_END_ENTITY discriminator. */
-    public static final AttributeId SUPERSESSION_REASON =
-            new AttributeId("urn:zeroecho:pki:supersession-reason:v1");
+    /**
+     * Metadata attribute carrying the trusted REPLACE_END_ENTITY or
+     * REISSUE_END_ENTITY discriminator.
+     */
+    public static final AttributeId SUPERSESSION_REASON = new AttributeId("urn:zeroecho:pki:supersession-reason:v1");
 
     private CredentialLineage() {
     }
@@ -74,13 +80,11 @@ public final class CredentialLineage {
      * Reads the predecessor credential identity a credential supersedes, if any.
      *
      * @param attributes credential metadata attributes; must not be {@code null}
-     * @return predecessor credential id, or empty when the credential supersedes nothing
+     * @return predecessor credential id, or empty when the credential supersedes
+     *         nothing
      */
     public static Optional<PkiId> supersededCredentialId(AttributeSet attributes) {
-        return attributes.get(SUPERSEDES_CREDENTIAL_ID)
-                .filter(AttributeValue.StringValue.class::isInstance)
-                .map(AttributeValue.StringValue.class::cast)
-                .map(AttributeValue.StringValue::value)
-                .map(PkiId::new);
+        return attributes.get(SUPERSEDES_CREDENTIAL_ID).filter(AttributeValue.StringValue.class::isInstance)
+                .map(AttributeValue.StringValue.class::cast).map(AttributeValue.StringValue::value).map(PkiId::new);
     }
 }

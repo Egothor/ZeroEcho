@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2025, Leo Galambos
  * All rights reserved.
  *
@@ -41,17 +41,19 @@ module zeroecho.lib {
     requires org.bouncycastle.pkix;
     requires transitive org.bouncycastle.provider;
     requires org.bouncycastle.util;
-    // Conflux marshalling (automatic module, derived from the jar file name).
-    requires conflux;
-    requires java.logging;
+    // Existing public signatures expose Conflux types and JUL Logger.
+    requires transitive conflux;
+    requires transitive java.logging;
 
     // Cryptographic core API.
     exports zeroecho.core;
     exports zeroecho.core.alg;
     exports zeroecho.core.alg.aes;
     exports zeroecho.core.alg.common.agreement;
+    exports zeroecho.core.alg.common.eddsa;
     exports zeroecho.core.alg.common.sig;
     exports zeroecho.core.alg.digest;
+    exports zeroecho.core.alg.hmac;
     exports zeroecho.core.alg.ecdsa;
     exports zeroecho.core.alg.ed25519;
     exports zeroecho.core.alg.ed448;
@@ -65,9 +67,13 @@ module zeroecho.lib {
     exports zeroecho.core.alg.xdh;
     exports zeroecho.core.alg.xmss;
     exports zeroecho.core.alg.xwing;
+    exports zeroecho.core.annotation;
+    exports zeroecho.core.audit;
     exports zeroecho.core.context;
     exports zeroecho.core.err;
     exports zeroecho.core.io;
+    exports zeroecho.core.marshal;
+    exports zeroecho.core.policy;
     exports zeroecho.core.spec;
     exports zeroecho.core.spi;
     exports zeroecho.core.storage;

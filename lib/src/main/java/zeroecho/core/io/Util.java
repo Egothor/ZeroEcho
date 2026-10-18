@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -227,7 +227,7 @@ public final class Util { // NOPMD
             val = val >>> 7; // NOPMD
         }
         buff[--idx] = (byte) val;
-        buff[buff.length - 1] |= 0x80;
+        buff[buff.length - 1] = (byte) (buff[buff.length - 1] | 0x80);
         out.write(buff, idx, buff.length - idx);
     }
 
@@ -247,7 +247,7 @@ public final class Util { // NOPMD
             val = val >>> 7; // NOPMD
         }
         buff[--idx] = (byte) val;
-        buff[buff.length - 1] |= 0x80;
+        buff[buff.length - 1] = (byte) (buff[buff.length - 1] | 0x80);
         out.write(buff, idx, buff.length - idx);
     }
 
@@ -416,7 +416,7 @@ public final class Util { // NOPMD
             len >>>= 7;
         }
         prefixBuf[--idx] = (byte) len;
-        prefixBuf[prefixBuf.length - 1] |= 0x80;
+        prefixBuf[prefixBuf.length - 1] = (byte) (prefixBuf[prefixBuf.length - 1] | 0x80);
         int prefixLen = prefixBuf.length - idx;
 
         // Allocate result array

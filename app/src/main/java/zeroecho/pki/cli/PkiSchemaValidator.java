@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -34,6 +34,7 @@
 package zeroecho.pki.cli;
 
 import tools.jackson.core.JsonParser;
+import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.json.JsonFactory;
 
@@ -111,7 +112,7 @@ final class PkiSchemaValidator {
 
     private static Map<String, List<RequiredField>> parse(InputStream in) throws IOException {
         Map<String, List<RequiredField>> result = new HashMap<>();
-        try (JsonParser parser = new JsonFactory().createParser(in)) {
+        try (JsonParser parser = new JsonFactory().createParser(ObjectReadContext.empty(), in)) {
             if (parser.nextToken() != JsonToken.START_ARRAY) { throw new IOException("Invalid operation schema root"); }
             while (parser.nextToken() != JsonToken.END_ARRAY) {
                 readOperation(parser, result);

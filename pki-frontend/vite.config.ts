@@ -56,13 +56,15 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: true,
     target: 'es2022',
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          mui: ['@mui/material', '@mui/icons-material'],
-          datagrid: ['@mui/x-data-grid'],
-          query: ['@tanstack/react-query'],
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules[\\/](?:react|react-dom|react-router|react-router-dom)[\\/]/ },
+            { name: 'mui', test: /node_modules[\\/]@mui[\\/](?:material|icons-material)[\\/]/ },
+            { name: 'datagrid', test: /node_modules[\\/]@mui[\\/]x-data-grid[\\/]/ },
+            { name: 'query', test: /node_modules[\\/]@tanstack[\\/]react-query[\\/]/ },
+          ],
         },
       },
     },

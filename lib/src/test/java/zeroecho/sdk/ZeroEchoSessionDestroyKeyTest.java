@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -186,8 +186,8 @@ class ZeroEchoSessionDestroyKeyTest {
 
     private static final class BlockingKey implements Key, Destroyable {
         private static final long serialVersionUID = 1L;
-        private final CountDownLatch destroyEntered = new CountDownLatch(1);
-        private final CountDownLatch allowDestroy = new CountDownLatch(1);
+        private final transient CountDownLatch destroyEntered = new CountDownLatch(1);
+        private final transient CountDownLatch allowDestroy = new CountDownLatch(1);
         private final AtomicInteger destroyCalls = new AtomicInteger();
         private boolean destroyed;
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -107,29 +107,32 @@ class KeyringStatefulContentTest {
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch closing = new CountDownLatch(1);
         try (KeyringPassword password = KeyringStatefulSigningTest.password();
-                KeyringStore store = KeyringStore.create(root.resolve("keys/store"), password);
-                LocalStatefulSigningAuthority authority = LocalStatefulSigningAuthority.create(root.resolve("authority"));
-                java.util.concurrent.ExecutorService workers = Executors.newFixedThreadPool(2)) {
-            store.generateStatefulKey("key", "LMS", authority);
-            StatefulSigner signer = store.statefulSigner("key", authority);
-            RepeatableContent content = content(new ByteArrayInputStream(new byte[0]) {
-                @Override public synchronized int read(byte[] bytes, int offset, int length) {
-                    reading.countDown();
-                    try { assertTrue(release.await(30, TimeUnit.SECONDS)); }
-                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
-                    return -1;
-                }
-            }, OptionalLong.empty());
-            java.util.concurrent.Future<byte[]> signing = workers.submit(() -> signer.sign(content, CancellationSignal.NONE, 0));
-            try {
-                assertTrue(reading.await(30, TimeUnit.SECONDS));
-                java.util.concurrent.Future<?> close = workers.submit(() -> { closing.countDown(); authority.close(); return null; });
-                assertTrue(closing.await(30, TimeUnit.SECONDS));
-                release.countDown();
-                assertEquals(0, KeyringStatefulSigningTest.leaf("LMS", signing.get(30, TimeUnit.SECONDS)));
-                close.get(30, TimeUnit.SECONDS);
-                assertThrows(IOException.class, signer::signatureLength);
-            } finally { release.countDown(); }
+                KeyringStore store = KeyringStore.create(root.resolve("keys/store"), password)) {
+            LocalStatefulSigningAuthority authority = LocalStatefulSigningAuthority.create(root.resolve("authority"));
+            try (java.util.concurrent.ExecutorService workers = Executors.newFixedThreadPool(2)) {
+                store.generateStatefulKey("key", "LMS", authority);
+                StatefulSigner signer = store.statefulSigner("key", authority);
+                RepeatableContent content = content(new ByteArrayInputStream(new byte[0]) {
+                    @Override public synchronized int read(byte[] bytes, int offset, int length) {
+                        reading.countDown();
+                        try { assertTrue(release.await(30, TimeUnit.SECONDS)); }
+                        catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
+                        return -1;
+                    }
+                }, OptionalLong.empty());
+                java.util.concurrent.Future<byte[]> signing = workers.submit(() -> signer.sign(content, CancellationSignal.NONE, 0));
+                try {
+                    assertTrue(reading.await(30, TimeUnit.SECONDS));
+                    java.util.concurrent.Future<?> close = workers.submit(() -> { closing.countDown(); authority.close(); return null; });
+                    assertTrue(closing.await(30, TimeUnit.SECONDS));
+                    release.countDown();
+                    assertEquals(0, KeyringStatefulSigningTest.leaf("LMS", signing.get(30, TimeUnit.SECONDS)));
+                    close.get(30, TimeUnit.SECONDS);
+                    assertThrows(IOException.class, signer::signatureLength);
+                } finally { release.countDown(); }
+            } finally {
+                authority.close();
+            }
         }
     }
 

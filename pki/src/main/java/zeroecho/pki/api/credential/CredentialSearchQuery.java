@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* ******************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -36,26 +36,27 @@ package zeroecho.pki.api.credential;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 
 /**
- * Immutable filters for indexed credential inventory search.
- * Subject and serial filters are case-insensitive literal substrings. The legacy
- * fingerprint filter is a case-insensitive credential-ID prefix, not a digest.
- * Status is persisted inventory status, not effective revocation status.
+ * Immutable filters for indexed credential inventory search. Subject and serial
+ * filters are case-insensitive literal substrings. The legacy fingerprint
+ * filter is a case-insensitive credential-ID prefix, not a digest. Status is
+ * persisted inventory status, not effective revocation status.
  *
- * @param authorityId exact issuing authority
- * @param subjectFilter optional subject substring
- * @param serialFilter optional serial substring
+ * @param authorityId       exact issuing authority
+ * @param subjectFilter     optional subject substring
+ * @param serialFilter      optional serial substring
  * @param fingerprintFilter optional credential-ID prefix
- * @param statusFilter optional exact inventory status
- * @param profileIdFilter optional exact logical profile ID
- * @param sanFilter optional exact canonical typed issued-certificate SAN
+ * @param statusFilter      optional exact inventory status
+ * @param profileIdFilter   optional exact logical profile ID
+ * @param sanFilter         optional exact canonical typed issued-certificate
+ *                          SAN
  */
-public record CredentialSearchQuery(PkiId authorityId, Optional<String> subjectFilter,
-        Optional<String> serialFilter, Optional<String> fingerprintFilter,
-        Optional<String> statusFilter, Optional<String> profileIdFilter,
+public record CredentialSearchQuery(PkiId authorityId, Optional<String> subjectFilter, Optional<String> serialFilter,
+        Optional<String> fingerprintFilter, Optional<String> statusFilter, Optional<String> profileIdFilter,
         Optional<SubjectAlternativeName> sanFilter) {
     /** Creates a query without interpreting SQL or wildcard characters. */
     public CredentialSearchQuery {
@@ -70,6 +71,7 @@ public record CredentialSearchQuery(PkiId authorityId, Optional<String> subjectF
 
     /**
      * Rechecks non-SAN filters against authoritative inventory metadata.
+     * 
      * @param credential current authoritative credential
      * @return whether all metadata filters match
      */
@@ -93,11 +95,13 @@ public record CredentialSearchQuery(PkiId authorityId, Optional<String> subjectF
 
     /**
      * Parses an exact typed SAN filter using the existing canonical SAN grammar.
-     * The prefix is one of DNS_NAME, IP_ADDRESS, URI or RFC822_NAME, followed by
-     * a colon and the value. IP literals never trigger name resolution.
+     * The prefix is one of DNS_NAME, IP_ADDRESS, URI or RFC822_NAME, followed by a
+     * colon and the value. IP literals never trigger name resolution.
+     * 
      * @param encoded bounded typed filter
      * @return canonical immutable SAN
-     * @throws IllegalArgumentException if the type or value is unsupported or malformed
+     * @throws IllegalArgumentException if the type or value is unsupported or
+     *                                  malformed
      */
     public static SubjectAlternativeName parseSanFilter(String encoded) {
         if (encoded == null || encoded.length() > 2060) {
@@ -116,8 +120,13 @@ public record CredentialSearchQuery(PkiId authorityId, Optional<String> subjectF
                 case "RFC822_NAME" -> new SubjectAlternativeName.Rfc822Name(value);
                 default -> throw new IllegalArgumentException("Unsupported SAN filter type");
             };
-        } catch (IllegalArgumentException malformed) { // NOPMD ExceptionAsFlowControl - Invalid input is rejected here and normalized at the protocol boundary; exceptions do not represent successful control flow.
-            throw new IllegalArgumentException("Invalid SAN filter"); // NOPMD PreserveStackTrace, AvoidThrowingNewInstanceOfSameException - The public rejection must not retain caller-controlled SAN text in provider causes.
+        } catch (IllegalArgumentException malformed) { // NOPMD ExceptionAsFlowControl - Invalid input is rejected here
+                                                       // and normalized at the protocol boundary; exceptions do not
+                                                       // represent successful control flow.
+            throw new IllegalArgumentException("Invalid SAN filter"); // NOPMD PreserveStackTrace,
+                                                                      // AvoidThrowingNewInstanceOfSameException - The
+                                                                      // public rejection must not retain
+                                                                      // caller-controlled SAN text in provider causes.
         }
     }
 

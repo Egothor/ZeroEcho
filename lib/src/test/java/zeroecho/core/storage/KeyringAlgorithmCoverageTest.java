@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -362,7 +362,7 @@ class KeyringAlgorithmCoverageTest {
                 .filter(info -> info.defaultSpec() != null).findFirst()
                 .orElseThrow(() -> new AssertionError("No default key-pair generation mapping for " + algorithmId));
         AsymmetricKeyPairGenerator generator = algorithm.asymmetricKeyPairGenerator(generation.specType());
-        return generator.generateKeyPair((AlgorithmKeySpec) generation.defaultSpec());
+        return generator.generateKeyPair(generation.defaultSpec());
     }
 
     private static long count(List<KeyringImportRegistry.PersistentMapping> mappings, KeyringStore.Kind kind) {

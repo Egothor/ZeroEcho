@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* ******************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -36,26 +36,30 @@ package zeroecho.pki.impl.secrets;
 /**
  * Encryption protection profile for the publisher secrets store.
  *
- * <p>The profile determines which recipients are added to the multi-recipient
+ * <p>
+ * The profile determines which recipients are added to the multi-recipient
  * AES-256-GCM envelope. {@link #CLASSIC} uses only a PBKDF2-derived key from a
  * password. {@link #PQC} uses only a BIKE-256 KEM recipient. {@link #HYBRID}
- * adds both, so either unlock material can independently decrypt the store.</p>
+ * adds both, so either unlock material can independently decrypt the store.
+ * </p>
  *
- * <p>HYBRID is the recommended profile for production deployments: it provides
+ * <p>
+ * HYBRID is the recommended profile for production deployments: it provides
  * BIKE-256 unlocking while retaining password-based recovery. Either recipient
- * can unlock the content, so the password also determines its protection.</p>
+ * can unlock the content, so the password also determines its protection.
+ * </p>
  */
 public enum PublisherSecretsProtection {
 
     /**
      * PBKDF2-HMAC-SHA256 (600&thinsp;000 iterations) key derivation with
-     * AES-256-GCM content encryption.  Requires a password to decrypt.
+     * AES-256-GCM content encryption. Requires a password to decrypt.
      */
     CLASSIC,
 
     /**
-     * BIKE-256 KEM with AES-256-GCM content encryption.
-     * Requires the BIKE private key to decrypt.
+     * BIKE-256 KEM with AES-256-GCM content encryption. Requires the BIKE private
+     * key to decrypt.
      */
     PQC,
 

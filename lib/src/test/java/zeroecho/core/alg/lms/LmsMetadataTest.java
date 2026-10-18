@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -54,6 +54,10 @@ class LmsMetadataTest {
         assertEquals(1296, LmsSignatureContext.sigLenFromPublicKey(original));
         SubjectPublicKeyInfo info = SubjectPublicKeyInfo.getInstance(original.getEncoded());
         byte[] raw = info.getPublicKeyData().getBytes();
+        ByteBuffer parameters = ByteBuffer.wrap(raw);
+        assertEquals(1, parameters.getInt());
+        assertEquals(5, parameters.getInt());
+        assertEquals(4, parameters.getInt());
         for (byte[] invalid : new byte[][] { Arrays.copyOf(raw, 11), Arrays.copyOf(raw, raw.length - 1),
                 Arrays.copyOf(raw, raw.length + 1), raw.clone() }) {
             if (invalid.length == raw.length) {

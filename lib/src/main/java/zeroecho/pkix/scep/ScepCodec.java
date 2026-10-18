@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -278,10 +278,12 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
             throws java.security.cert.CertificateException, org.bouncycastle.cms.CMSException,
             org.bouncycastle.operator.OperatorCreationException, ScepCodecException {
         Store<X509CertificateHolder> certificates = data.getCertificates();
-        if (certificates.getMatches(null).size() > MAXIMUM_CERTIFICATE_COUNT) {
+        Collection<X509CertificateHolder> allCertificates = certificates.getMatches(null);
+        if (allCertificates.size() > MAXIMUM_CERTIFICATE_COUNT) {
             throw invalid();
         }
-        Collection<X509CertificateHolder> matches = certificates.getMatches(signer.getSID());
+        Collection<X509CertificateHolder> matches = allCertificates.stream()
+                .filter(signer.getSID()::match).toList();
         if (matches.size() != SINGLE_SIGNER_COUNT) {
             throw invalid();
         }
@@ -342,7 +344,8 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
         }
         org.bouncycastle.cms.RecipientInformation recipient = recipients.iterator().next();
         if (!(recipient instanceof org.bouncycastle.cms.KeyTransRecipientInformation)
-                || !recipient.getRID().match(new X509CertificateHolder(raCertificate.getEncoded()))
+                || !(recipient.getRID() instanceof org.bouncycastle.cms.KeyTransRecipientId recipientId)
+                || !recipientId.match(new X509CertificateHolder(raCertificate.getEncoded()))
                 || !PKCSObjectIdentifiers.rsaEncryption.getId().equals(recipient.getKeyEncryptionAlgOID())
                 || !nullParameters(recipient.getKeyEncryptionAlgParams())) {
             throw invalid();

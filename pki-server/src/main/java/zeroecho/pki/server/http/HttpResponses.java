@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.util.Objects;
 
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
@@ -175,7 +176,7 @@ final class HttpResponses {
             PkiOperationValue result, Failure failure) {
         try {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
-            try (JsonGenerator generator = JSON.createGenerator(output)) {
+            try (JsonGenerator generator = JSON.createGenerator(ObjectWriteContext.empty(), output)) {
                 generator.writeStartObject();
                 generator.writeNumberProperty("version", 1);
                 generator.writeStringProperty("requestId", requestId);

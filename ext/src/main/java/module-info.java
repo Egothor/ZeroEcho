@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -37,7 +37,7 @@
  */
 module zeroecho.ext {
     requires transitive zeroecho.lib;
-    requires org.apache.commons.imaging;
+    requires transitive org.apache.commons.imaging;
     requires java.desktop;
     requires java.logging;
 

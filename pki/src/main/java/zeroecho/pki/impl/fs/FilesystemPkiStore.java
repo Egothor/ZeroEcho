@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -248,7 +248,7 @@ import zeroecho.pki.spi.store.RevocationTransitionFeed;
         "PMD.AvoidLiteralsInIfCondition", "PMD.AvoidCatchingGenericException",
         "PMD.AvoidInstantiatingObjectsInLoops", "PMD.CloseResource", "PMD.CommentRequired",
         "PMD.LongVariable", "PMD.UnusedPrivateField", "PMD.UnusedFormalParameter",
-        "PMD.UnusedLocalVariable", "PMD.UnusedPrivateMethod" })
+        "PMD.UnusedPrivateMethod" })
 public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
@@ -886,7 +886,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public StagedContentStore stagedContent() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return stagedContent;
         }
     }
@@ -1147,7 +1148,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @throws IllegalStateException    if export fails
      */
     public void exportSnapshot(final Path targetRoot, final Instant at) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(targetRoot, "targetRoot");
             Objects.requireNonNull(at, "at");
@@ -1234,7 +1236,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      */
     @Override
     public void putCa(final CaRecord record) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(record, "record");
             validateCaCredentialReferences(record);
@@ -1260,7 +1263,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      */
     @Override
     public boolean replaceCa(CaRecord expected, CaRecord replacement) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(expected, "expected");
             Objects.requireNonNull(replacement, "replacement");
@@ -1275,7 +1279,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<CaRecord> getCa(final PkiId caId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(caId, "caId");
             try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
@@ -1288,7 +1293,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<CaRecord> listCas() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
                 List<CaRecord> values = new ArrayList<>();
@@ -1303,7 +1309,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(afterCaId, "afterCaId");
             if (limit <= 0 || limit > 1_000) {
@@ -1343,7 +1350,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public List<CaRecord> selectAuthoritiesPage(Optional<String> after, int limit,
             java.util.function.Predicate<CaRecord> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return selectionMetadataPage(AuthorityMetadataCodec.CA_CURRENT, after, limit,
                     (snapshot, record) -> validateCaCredentialReferences(snapshot,
                             AuthorityMetadataStore.reconstruct(snapshot,
@@ -1355,7 +1363,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public void visitAuthorityKeyReferences(java.util.function.Consumer<zeroecho.pki.api.KeyRef> visitor,
             CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(visitor, "visitor");
             checkSelectionCancellation(cancellation);
@@ -1379,7 +1388,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<String> listProfileIdsPage(Optional<String> after, int limit, java.util.function.Predicate<String> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             validateSelectionPage(after, limit);
             checkSelectionCancellation(cancellation);
@@ -1410,7 +1420,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<RequestSelection> listRequestsPage(Optional<String> after, int limit, java.util.function.Predicate<RequestSelection> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             validateSelectionPage(after, limit);
             checkSelectionCancellation(cancellation);
@@ -1435,7 +1446,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<Credential> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             Objects.requireNonNull(authorityId, "authorityId");
             return selectionMetadataPage(AuthorityMetadataCodec.CREDENTIAL_RECORD, after, limit,
                     (snapshot, record) -> {
@@ -1461,8 +1473,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         if (!credentialSearchAvailable()) throw new IllegalStateException("Credential search is unavailable");
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
                 options.credentialSearch().orElseThrow().queryTimeoutMillis());
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter(deadline, cancellation)) {
-            return credentialSearch.search(query, after, limit, this::getCredential, include, cancellation, deadline);
+        try {
+            StoreMutationBarrier.Lease admission = mutationBarrier.enter(deadline, cancellation);
+            try (admission) {
+                return credentialSearch.search(query, after, limit, this::getCredential, include, cancellation, deadline);
+            }
         } catch (InterruptedIOException failure) {
             throw new java.util.concurrent.CancellationException("Credential search cancelled");
         } catch (IOException failure) { throw new IllegalStateException("Credential search failed", failure); }
@@ -1470,7 +1485,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<IssuerGeneration> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             Objects.requireNonNull(authorityId, "authorityId");
             return selectionMetadataPage(AuthorityMetadataCodec.ISSUER_GENERATION, after, limit,
                     (snapshot, record) -> validateIssuerGeneration(
@@ -1481,7 +1497,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<StatusObject> listStatusObjectsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<StatusObject> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             Objects.requireNonNull(authorityId, "authorityId");
             return selectionMetadataPage(STATUS_RECORD_NAMESPACE, after, limit,
                     (snapshot, record) -> decodeStoredStatus(snapshot, record).status(),
@@ -1491,7 +1508,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<PublicationRecord> listPublicationsPage(Optional<String> after, int limit, java.util.function.Predicate<PublicationRecord> include, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return selectionMetadataPage(PUBLICATION_RECORD_NAMESPACE, after, limit,
                     (snapshot, record) -> decodePublicationRecord(record, snapshot), include, value -> value.publicationId().value(), cancellation);
         }
@@ -1551,7 +1569,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putIssuerGeneration(IssuerGeneration generation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(generation, "generation");
             Credential credential = getCredential(generation.credentialId())
@@ -1574,7 +1593,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(issuerId, "issuerId");
             long[] counts = ISSUER_GENERATION_READ_COUNTS.get();
@@ -1589,7 +1609,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public BigInteger reserveCrlNumber(PkiId issuerGenerationId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(issuerGenerationId, "issuerGenerationId");
             try {
@@ -1624,7 +1645,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<IssuerGeneration> listIssuerGenerations(PkiId authorityId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(authorityId, "authorityId");
             long[] counts = ISSUER_GENERATION_READ_COUNTS.get();
@@ -1651,7 +1673,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putIssuerChainPath(IssuerChainPath path) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(path, "path");
             validateIssuerChainPath(path);
@@ -1662,7 +1685,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<IssuerChainPath> getIssuerChainPath(PkiId pathId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(pathId, "pathId");
             try {
@@ -1675,7 +1699,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(issuerId, "issuerId");
             try {
@@ -1690,7 +1715,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putCredential(final Credential credential) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(credential, "credential");
             putCredentialReserved(credential, null);
@@ -1699,7 +1725,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putCredentialFromSigning(Credential credential, PkiId operationId, String commandCommitment) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(credential, "credential");
             Objects.requireNonNull(operationId, "operationId");
@@ -2142,7 +2169,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<Credential> getCredential(final PkiId credentialId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(credentialId, "credentialId");
             try {
@@ -2155,7 +2183,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<Credential> getCredentialByIssuerAndSerial(PkiId issuerId, BigInteger serial) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(issuerId, "issuerId");
             requirePositiveSerial(serial);
@@ -2539,7 +2568,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<Credential> getCredentialByIssuanceIntent(IssuanceIntent intent) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(intent, "intent");
             Credential[] match = {null};
@@ -2570,7 +2600,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public CredentialConfirmationLifecycle initializeCredentialConfirmation(
             final CredentialConfirmationInitialization initialization) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             CredentialConfirmationInitialization exact = Objects.requireNonNull(initialization, "initialization");
             PkiId credentialId = exact.credentialId();
@@ -2617,7 +2648,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<CredentialConfirmationLifecycle> getCredentialConfirmation(final PkiId credentialId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             PkiId exact = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
             return readStoredConfirmation(exact).map(StoredConfirmation::lifecycle);
@@ -2627,7 +2659,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<CredentialConfirmationChallenge> getCredentialConfirmationChallenge(
             final PkiId credentialId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             PkiId exact = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
             Optional<StoredConfirmationChallenge> stored = readStoredConfirmationChallenge(exact);
@@ -2643,7 +2676,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public CredentialConfirmationChallenge issueCredentialConfirmationChallenge(
             final CredentialConfirmationChallengeIssuance issuance) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             CredentialConfirmationChallengeIssuance exact = Objects.requireNonNull(issuance, "issuance");
             PkiId credentialId = exact.credentialId();
@@ -2692,7 +2726,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public CredentialConfirmationLifecycle completeCredentialConfirmation(
             final CredentialConfirmationProofCas proofCas) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             CredentialConfirmationProofCas exact = Objects.requireNonNull(proofCas, "proofCas");
             PkiId credentialId = exact.credentialId();
@@ -2782,7 +2817,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             final Instant cutoffInclusive,
             final Optional<CredentialConfirmationReviewCursor> afterExclusive,
             final int limit) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             CredentialConfirmationReviewScope scope = confirmationReviewScope(authorityId, profileId);
             requireConfirmationReviewCutoff(cutoffInclusive);
@@ -3544,7 +3580,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putRequest(final ParsedCertificationRequest request) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(request, "request");
             PkiId id = request.requestId();
@@ -3556,7 +3593,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public RevocationRecord revokeOverduePendingCredentialConfirmation(
             final RevocationCommand.RevokePermanently command) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             RevocationCommand.RevokePermanently exact = Objects.requireNonNull(command, "command");
             if (exact.reason() != RevocationReason.UNSPECIFIED) {
@@ -3692,7 +3730,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<ParsedCertificationRequest> getRequest(final PkiId requestId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(requestId, "requestId");
             return readOptional(this.paths.requestPath(requestId), FsCodec.PARSED_REQUEST);
@@ -3704,7 +3743,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @SuppressWarnings("PMD.PreserveStackTrace")
     public List<ParsedCertificationRequest> searchRequests(
             final zeroecho.pki.api.request.RequestQuery query, final int maxResults) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(query, "query");
             if (maxResults <= 0) {
@@ -3770,7 +3810,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Store failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public RevocationRecord transitionRevocation(final RevocationCommand command, final Instant transitionTime) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(command, "command");
             Objects.requireNonNull(transitionTime, "transitionTime");
@@ -3815,7 +3856,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<RevocationRecord> getRevocation(final PkiId credentialId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(credentialId, "credentialId");
             try {
@@ -3828,7 +3870,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public RevocationHistory openRevocationHistory(final PkiId credentialId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(credentialId, "credentialId");
             try {
@@ -3842,7 +3885,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public RevocationTransitionFeed openRevocationTransitionFeed(
             final Optional<RevocationTransitionFeed.Position> afterExclusive) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(afterExclusive, "afterExclusive");
             try {
@@ -3856,7 +3900,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public void requireRevocationPrefix(RevocationTransitionFeed.HighWatermark prefix, long boundary,
             CancellationSignal cancellation) throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             revocations.requirePrefix(prefix, boundary, cancellation);
         }
@@ -3865,7 +3910,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openIssuanceEvidenceFeed(final long afterSequenceExclusive) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try {
                 return new EvidenceFeedAdapter(issuanceEvidenceLog.openReader(afterSequenceExclusive));
@@ -3878,7 +3924,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openStatusEvidenceFeed(final long afterSequenceExclusive) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try {
                 return new EvidenceFeedAdapter(statusEvidenceLog.openReader(afterSequenceExclusive));
@@ -3891,7 +3938,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openPublicationEvidenceFeed(final long afterSequenceExclusive) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try {
                 return new EvidenceFeedAdapter(publicationEvidenceLog.openReader(afterSequenceExclusive));
@@ -3904,7 +3952,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public boolean supportsSigningEvidenceFeed() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return signingEvidenceLog != null;
         }
@@ -3913,7 +3962,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace") // Feed failures expose only a fixed safe diagnostic.
     public AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             if (signingEvidenceLog == null) {
                 throw new UnsupportedOperationException("Signing evidence feed is not enabled");
@@ -3951,7 +4001,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Snapshot failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public RevocationSnapshot openRevocationSnapshot() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try {
                 return revocations.snapshot();
@@ -3963,7 +4014,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public RevocationView openRevocationView() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try {
                 return revocations.view();
@@ -3980,7 +4032,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putStatusObjectFromSigning(StatusObject object, PkiId operationId, String commandCommitment) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             SignLockEntry lock = acquireSignLock(operationId);
             try {
@@ -4007,7 +4060,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private void putStatusObject(StatusObject object, Optional<PkiId> signingOperation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(object, "object");
             byte[] encoded = validateStatusObject(object);
@@ -4034,7 +4088,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<StatusObject> getStatusObject(final PkiId statusObjectId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(statusObjectId, "statusObjectId");
             try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
@@ -4042,7 +4097,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 if (record.isEmpty()) {
                     Optional<MetadataSnapshot.Record> owner = snapshot.get(statusOwnerKey(statusObjectId));
                     if (owner.isPresent()) {
-                        try (MetadataSnapshot.Record ignored = owner.orElseThrow()) {
+                        MetadataSnapshot.Record ignored = owner.orElseThrow();
+                        try (ignored) {
                             throw new IllegalStateException("Status owner exists without its record");
                         }
                     }
@@ -4057,7 +4113,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<StatusObject> listStatusObjects(final PkiId issuerCaId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(issuerCaId, "issuerCaId");
 
@@ -4074,7 +4131,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public PublicationRecord createPublicationRecord(final PublicationRecord record) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(record, "record");
             validatePublicationRecord(record);
@@ -4114,7 +4172,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<PublicationRecord> getPublicationRecord(final PkiId publicationId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(publicationId, "publicationId");
             MetadataKey key = publicationRecordKey(publicationId);
@@ -4135,7 +4194,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public boolean replacePublicationRecord(final PublicationRecord expected,
             final PublicationRecord replacement) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(expected, "expected");
             Objects.requireNonNull(replacement, "replacement");
@@ -4212,7 +4272,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public PublicationCursor openPublicationRecords() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             MetadataSnapshot snapshot = null;
             try {
@@ -4240,7 +4301,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // redacted.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public ImportedCertificateProfileVersion importProfileVersion(final ImportedCertificateProfileVersion version) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(version, "version");
             String profileId = version.reference().profileId();
@@ -4290,7 +4352,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<ImportedCertificateProfileVersion> getProfileVersion(final String profileId,
             final long profileVersion) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requireProfileIdentity(profileId, profileVersion);
             Path path = paths.profileVersion(profileId, profileVersion);
@@ -4303,7 +4366,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Filesystem failures are normalized to the stable store failure code.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public List<ImportedCertificateProfileVersion> listProfileVersions(final String profileId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requireProfileIdentity(profileId, 1L);
             Path directory = paths.profileVersionsDir(profileId);
@@ -4329,7 +4393,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // redacted.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public CertificateProfileRef activateProfile(final String profileId, final long profileVersion) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requireProfileIdentity(profileId, profileVersion);
             ProfileLockEntry lock = acquireProfileLock(profileId);
@@ -4359,7 +4424,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<CertificateProfileRef> getActiveProfileRef(final String profileId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requireProfileIdentity(profileId, 1L);
             return readValidatedActiveProfile(profileId).map(validated -> validated.version().reference());
@@ -4368,7 +4434,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public ActiveCertificateProfile requireActiveProfile(final String profileId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requireProfileIdentity(profileId, 1L);
             ValidatedImportedProfile validated = readValidatedActiveProfile(profileId)
@@ -4380,7 +4447,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putPolicyTrace(final PolicyTrace trace) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(trace, "trace");
             PkiId id = trace.decisionId();
@@ -4391,7 +4459,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<PolicyTrace> getPolicyTrace(final PkiId decisionId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(decisionId, "decisionId");
             return readOptional(this.paths.policyTracePath(decisionId), FsCodec.POLICY_TRACE);
@@ -4404,7 +4473,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putWorkflowState(final WorkflowStateRecord record) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(record, "record");
 
@@ -4419,7 +4489,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<WorkflowStateRecord> getWorkflowState(final PkiId opId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(opId, "opId");
             return readOptional(this.paths.workflowCurrent(opId), FsCodec.WORKFLOW_STATE);
@@ -4428,7 +4499,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void deleteWorkflowState(final PkiId opId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(opId, "opId");
             Path current = this.paths.workflowCurrent(opId);
@@ -4443,7 +4515,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<WorkflowStateRecord> listWorkflowStates() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             // List by operation directory (workflows/by-op/<opId>/current.bin)
             return listCurrentRecords(this.paths.workflowRoot(), FsCodec.WORKFLOW_STATE);
@@ -4452,7 +4525,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<StatusSchedule> getStatusSchedule(PkiId caId, StatusObjectType statusType) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().get(caId, statusType).map(StatusScheduleState::configuration); }
             catch (IOException failure) { throw new IllegalStateException("Schedule read failed", failure); }
@@ -4462,7 +4536,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public List<StatusSchedule> listActiveStatusSchedulesPage(Optional<String> after, int limit,
             CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().page(after, limit, false, cancellation).stream()
                     .map(StatusScheduleState::configuration).toList(); }
@@ -4472,7 +4547,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public StatusSchedule putStatusSchedule(StatusSchedule schedule) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().put(schedule, Optional.empty(), signingNow()); }
             catch (IOException failure) { throw new IllegalStateException("Schedule update failed", failure); }
@@ -4481,7 +4557,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public boolean replaceStatusSchedule(StatusSchedule expected, StatusSchedule replacement) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             if (!expected.caId().equals(replacement.caId()) || expected.statusType() != replacement.statusType()) {
                 throw new IllegalArgumentException("Schedule identity cannot change");
@@ -4533,7 +4610,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override public boolean supportsStatusScheduling() { return true; }
 
     @Override public Optional<StatusScheduleState> getStatusScheduleState(PkiId caId, StatusObjectType type) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().get(caId, type); }
             catch (IOException failure) { throw new IllegalStateException("Schedule read failed", failure); }
@@ -4542,7 +4620,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override public List<StatusScheduleState> listStatusScheduleWork(Optional<String> after, int limit,
             CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().page(after, limit, true, cancellation); }
             catch (IOException failure) { throw new IllegalStateException("Schedule listing failed", failure); }
@@ -4550,7 +4629,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override public Optional<StatusScheduleState.Execution> claimStatusSchedule(StatusScheduleState expected) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().claim(expected, signingNow()); }
             catch (IOException failure) { throw new IllegalStateException("Schedule claim failed", failure); }
@@ -4558,7 +4638,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override public boolean advanceStatusSchedule(StatusScheduleState.Execution expected) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().advance(expected, getStatusObject(expected.statusObjectId().orElseThrow())
                     .orElseThrow().nextUpdate().orElseThrow()); }
@@ -4567,7 +4648,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override public boolean failStatusSchedule(StatusScheduleState.Execution expected, String detailCode) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             try { return schedules().fail(expected, detailCode); }
             catch (IOException failure) { throw new IllegalStateException("Schedule failure recording failed", failure); }
@@ -4576,7 +4658,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Instant signingNow() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return advanceSigningTime();
         }
@@ -4596,7 +4679,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public String signingNamespace() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return signingNamespace;
         }
@@ -4604,7 +4688,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Duration signingPermittedSkew() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return options.signingIdPermittedSkew();
         }
@@ -4612,7 +4697,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Duration signingHorizon() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return options.signingOperationHorizon();
         }
@@ -4636,7 +4722,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private SignWorkflowStore.AcceptanceResult acceptSign(SignWorkflowStore.AcceptanceCommand command,
             Optional<StatusScheduleState.Execution> scheduledClaim) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             SignWorkflowStore.AcceptanceCommand exact = Objects.requireNonNull(command, "command");
             PkiId operationId = exact.operationId();
@@ -4696,39 +4783,44 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 reclaimDefinitelyUnboundCandidates(exact);
                 return SignWorkflowStore.AcceptanceResult.CAPACITY_REJECTED;
             }
-            try (admission;
-                    FilesystemStagedContentStore.TransactionalReservation reservation =
-                            stagedContent.reserveTransactionalPublication(candidate);
+            try (admission) {
+                FilesystemStagedContentStore.TransactionalReservation reservation =
+                stagedContent.reserveTransactionalPublication(candidate);
+                try (reservation) {
                     FilesystemStagedContentStore.TransactionalReservation proofReservation = reserveProofCandidate(exact);
-                    RepeatableContent ignoredContent = stagedContent.openContent(candidate)) {
-                stagedContent.restoreReference(candidate.storeId(), candidate.contentId(),
-                        candidate.encoding(), candidate.length(), candidate.sha256(),
-                        candidate.lifecycle());
-                if (exact.outer().filter(outer -> outer.kind() == DomainContinuationStore.Kind.KEY_PROOF).isPresent()) {
-                    zeroecho.pki.impl.core.continuation.DomainCommandEncoding.Decoded proof =
-                            ManagedKeyProofBindings.requireEnvelope(SignWorkflowStore.AcceptanceEnvelope.from(exact));
-                    ManagedKeyProofBindings.readChallenge(stagedContent, exact.operationId(), exact.deadline(), Optional.empty(), proof, candidate);
-                }
-                if (exact.proofStep().isPresent()) {
-                    zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent,
-                            SignWorkflowStore.AcceptanceEnvelope.from(exact));
-                }
-                Optional<SignAcceptanceCrlScope> claims = SignAcceptanceCrlScope.derive(this, exact, ignoredContent);
-                MetadataCommitResult committed = createSignAcceptance(exact, admission, claims, scheduledClaim);
-                if (committed.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
-                    return SignWorkflowStore.AcceptanceResult.ACCEPTED;
-                }
-                if (committed.failureCategory()
-                        .filter(MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED::equals)
-                        .isPresent()) {
-                    return resolveAcceptanceCapacityFailure(exact);
-                }
-                if (committed.failureCategory()
-                        .filter(category -> category != MetadataCommitResult.FailureCategory.CONFLICT)
-                        .isPresent()) {
-                    MetadataCommitResult.FailureCategory category = committed.failureCategory().orElseThrow();
-                    throw translateSigningMetadataFailure(new MetadataStoreException(category,
-                            "Signing acceptance was not committed"));
+                    try (proofReservation) {
+                        try (RepeatableContent ignoredContent = stagedContent.openContent(candidate)) {
+                            stagedContent.restoreReference(candidate.storeId(), candidate.contentId(),
+                                    candidate.encoding(), candidate.length(), candidate.sha256(),
+                                    candidate.lifecycle());
+                            if (exact.outer().filter(outer -> outer.kind() == DomainContinuationStore.Kind.KEY_PROOF).isPresent()) {
+                                zeroecho.pki.impl.core.continuation.DomainCommandEncoding.Decoded proof =
+                                        ManagedKeyProofBindings.requireEnvelope(SignWorkflowStore.AcceptanceEnvelope.from(exact));
+                                ManagedKeyProofBindings.readChallenge(stagedContent, exact.operationId(), exact.deadline(), Optional.empty(), proof, candidate);
+                            }
+                            if (exact.proofStep().isPresent()) {
+                                zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent,
+                                        SignWorkflowStore.AcceptanceEnvelope.from(exact));
+                            }
+                            Optional<SignAcceptanceCrlScope> claims = SignAcceptanceCrlScope.derive(this, exact, ignoredContent);
+                            MetadataCommitResult committed = createSignAcceptance(exact, admission, claims, scheduledClaim);
+                            if (committed.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
+                                return SignWorkflowStore.AcceptanceResult.ACCEPTED;
+                            }
+                            if (committed.failureCategory()
+                                    .filter(MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED::equals)
+                                    .isPresent()) {
+                                return resolveAcceptanceCapacityFailure(exact);
+                            }
+                            if (committed.failureCategory()
+                                    .filter(category -> category != MetadataCommitResult.FailureCategory.CONFLICT)
+                                    .isPresent()) {
+                                MetadataCommitResult.FailureCategory category = committed.failureCategory().orElseThrow();
+                                throw translateSigningMetadataFailure(new MetadataStoreException(category,
+                                        "Signing acceptance was not committed"));
+                            }
+                        }
+                    }
                 }
             } catch (CrlScopeReservationStore.ConflictException conflict) {
                 reclaimDefinitelyUnboundCandidates(exact);
@@ -4765,7 +4857,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public SignWorkflowStore.AcceptanceResolution resolveAcceptance(PkiId operationId,
             SignWorkflowStore.AcceptanceCommitment commitment) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             PkiId exactId = Objects.requireNonNull(operationId, "operationId");
             SignWorkflowStore.AcceptanceCommitment exactCommitment = Objects.requireNonNull(
@@ -4952,7 +5045,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<DomainContinuationStore.Record> getDomainContinuation(PkiId operationId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(operationId, "operationId");
             try (MetadataSnapshot snapshot = metadataStore.snapshot();
@@ -4968,7 +5062,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<DomainContinuationStore.Record> getDomainContinuation(
             DomainContinuationStore.Kind kind, String correlationId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(correlationId, "correlationId");
@@ -5001,7 +5096,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public Optional<DomainContinuationStore.Record> transitionDomainContinuation(PkiId operationId,
             long expectedRevision, DomainContinuationStore.State target,
             Optional<EncodedObject> result, Optional<String> detailCode) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(target, "target");
@@ -5068,7 +5164,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Workflow> getSignWorkflow(PkiId submissionId) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(submissionId, "submissionId");
             Optional<SignExpiry> expiry = Optional.empty();
@@ -5093,7 +5190,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<SignWorkflowStore.Workflow> listSignWorkflows() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return listStoredSigns().stream().map(StoredSign::record).toList();
         }
@@ -5103,7 +5201,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public List<SignWorkflowStore.Workflow> selectDueSignWorkflows(Instant cutoffInclusive,
             int maximumRecords) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
             if (maximumRecords < 1 || maximumRecords > 4096) {
@@ -5127,7 +5226,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public SignWorkflowStore.Page pageSignWorkflows(Optional<String> exclusiveCursor, int maximumRecords,
             CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return pageSignWorkflows(exclusiveCursor, Optional.empty(), maximumRecords, cancellation);
         }
     }
@@ -5135,7 +5235,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public SignWorkflowStore.Page pageSignWorkflows(Optional<String> exclusiveCursor,
             Optional<String> inclusiveHighWatermark, int maximumRecords, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
             Objects.requireNonNull(inclusiveHighWatermark, "inclusiveHighWatermark");
@@ -5233,7 +5334,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public SignWorkflowStore.DuePage pageDueSignWorkflows(Instant cutoffInclusive,
             Optional<String> exclusiveCursor, Optional<String> inclusiveHighWatermark,
             int maximumRecords, CancellationSignal cancellation) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
             Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
@@ -5283,7 +5385,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> deferSignReconciliation(PkiId submissionId, long expectedRevision,
             long fence, SignWorkflowStore.ReconciliationFailureClass failureClass) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(failureClass, "failureClass");
             Optional<SignExpiry> expiry;
@@ -5581,7 +5684,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> claimSignStep(PkiId submissionId, long expectedRevision,
             Duration lease) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requirePositive(lease, "lease");
             Optional<SignExpiry> expiry;
@@ -5634,7 +5738,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> checkpointPendingSignDispatch(PkiId submissionId,
             long expectedRevision, long fence) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return checkpointInitialSignAttempt(submissionId, expectedRevision, fence,
                     SignWorkflowStore.InitialAttemptPhase.DISPATCH_OWED,
                     SignWorkflowStore.InitialAttemptPhase.OBSERVATION_OWED);
@@ -5644,7 +5749,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> completeSignObservation(PkiId submissionId,
             long expectedRevision, long fence) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             return checkpointInitialSignAttempt(submissionId, expectedRevision, fence,
                     SignWorkflowStore.InitialAttemptPhase.OBSERVATION_CONSUMED,
                     SignWorkflowStore.InitialAttemptPhase.COMPLETED);
@@ -5695,7 +5801,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> renewSignStep(PkiId submissionId, long expectedRevision, long fence,
             Duration lease) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             requirePositive(lease, "lease");
             Optional<SignExpiry> expiry;
@@ -5738,7 +5845,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> requestSignCancellation(PkiId submissionId,
             long expectedRevision, long fence) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Optional<SignExpiry> expiry;
             Optional<SignWorkflowStore.Workflow> result;
@@ -5791,7 +5899,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public Optional<SignWorkflowStore.Workflow> transitionSign(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.State target, Optional<String> detailCode, Optional<EncodedObject> result,
             Optional<Instant> providerUpdatedAt) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(detailCode, "detailCode");
@@ -5861,7 +5970,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Workflow> checkpointCaProof(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.CaSubjectProofOutcome outcome, Optional<EncodedObject> signature) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Objects.requireNonNull(outcome, "outcome");
             Objects.requireNonNull(signature, "signature");
@@ -5903,7 +6013,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Workflow> completeCaProofVerification(PkiId submissionId, long expectedRevision, long fence) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Optional<SignExpiry> expiry;
             Optional<SignWorkflowStore.Workflow> result;
@@ -5951,7 +6062,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Workflow> retireSign(PkiId submissionId, long expectedRevision, long fence) {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Optional<SignExpiry> expiry;
             Optional<SignWorkflowStore.Workflow> result;
@@ -6020,7 +6132,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public int purgeExpiredSignRecords() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             Instant cutoff = signingNow();
             List<PkiId> ids = listStoredSigns().stream()
@@ -6176,7 +6289,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try {
             Path work;
             Instant captured;
-            try (StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
+            StoreMutationBarrier.Lease freeze = mutationBarrier.freeze();
+            try (freeze) {
                 requireStoreUsable();
                 work = backupWorkDirectory();
                 frozen = Files.createTempDirectory(work, ".snapshot-");
@@ -6296,13 +6410,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         if (artifact.payload().byteLength() > backupLimits.legacyBytes()) {
             return backupInvalid("BACKUP_LEGACY_LIMIT");
         }
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter();
-                zeroecho.pki.api.backup.BackupSink sink = zeroecho.pki.api.backup.BackupSink.create(
+        try {
+            StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+            try (admission) {
+                try (zeroecho.pki.api.backup.BackupSink sink = zeroecho.pki.api.backup.BackupSink.create(
                         backupWorkDirectory(), artifact.backupId(), backupLimits)) {
-            requireStoreUsable();
-            sink.outputStream().write(artifact.payload().bytes());
-            try (zeroecho.pki.api.backup.BackupSource source = sink.complete()) {
-                return verifyBackupSource(source);
+                    requireStoreUsable();
+                    sink.outputStream().write(artifact.payload().bytes());
+                    try (zeroecho.pki.api.backup.BackupSource source = sink.complete()) {
+                        return verifyBackupSource(source);
+                    }
+                }
             }
         } catch (IOException failure) {
             return backupInvalid(backupIssue(failure));
@@ -6314,8 +6432,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public zeroecho.pki.api.backup.BackupVerificationReport verifyBackupSource(
             zeroecho.pki.api.backup.BackupSource source) {
         Objects.requireNonNull(source, "source");
-        try (zeroecho.pki.api.backup.BackupPreparation prepared = prepareBackup(source)) {
-            return new zeroecho.pki.api.backup.BackupVerificationReport(true, List.of());
+        try {
+            zeroecho.pki.api.backup.BackupPreparation prepared = prepareBackup(source);
+            try (prepared) {
+                return new zeroecho.pki.api.backup.BackupVerificationReport(true, List.of());
+            }
         } catch (IOException | RuntimeException failure) {
             return backupInvalid(backupIssue(failure));
         }
@@ -6326,7 +6447,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public zeroecho.pki.api.backup.BackupPreparation prepareBackup(
             zeroecho.pki.api.backup.BackupSource source) throws IOException {
         Objects.requireNonNull(source, "source");
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return FsBackupEngine.prepare(backupWorkDirectory(), source, backupLimits, options, clock);
         }
@@ -6349,31 +6471,35 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             throw new IllegalArgumentException("Restore identifier must be a canonical UUID");
         }
         zeroecho.pki.api.backup.BackupPreparation candidate;
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             if (restoreCoordinator == null) throw new UnsupportedOperationException("RESTORE_BORROWED_STORE");
             try { candidate = FsBackupEngine.prepare(restoreCoordinator.work(), source, backupLimits, options, clock); }
             catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
         }
-        try (zeroecho.pki.api.backup.BackupPreparation prepared = candidate;
-                StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
-            requireStoreUsable();
-            Path work = restoreCoordinator.work();
-            Path baseline;
-            try { baseline = Files.createTempDirectory(work, ".baseline-"); }
-            catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
-            try {
-                try { freezeBackup(baseline, false); }
+        try (zeroecho.pki.api.backup.BackupPreparation prepared = candidate) {
+            StoreMutationBarrier.Lease freeze = mutationBarrier.freeze();
+            try (freeze) {
+                requireStoreUsable();
+                Path work = restoreCoordinator.work();
+                Path baseline;
+                try { baseline = Files.createTempDirectory(work, ".baseline-"); }
                 catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
-                return restoreCoordinator.stage(prepared, baseline, restoreId);
-            } finally { FsBackupFiles.deleteTree(baseline); }
+                try {
+                    try { freezeBackup(baseline, false); }
+                    catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
+                    return restoreCoordinator.stage(prepared, baseline, restoreId);
+                } finally { FsBackupFiles.deleteTree(baseline); }
+            }
         }
     }
 
     /** {@inheritDoc} */
     @Override
     public Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return restoreCoordinator == null ? Optional.empty() : restoreCoordinator.status();
         }
@@ -6383,7 +6509,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public void discardUnpublishedRestore(PkiId restoreId, Optional<PkiId> previousRestoreId,
             String manifestSha256) throws IOException {
-        try (StoreMutationBarrier.Lease freeze = mutationBarrier.freeze()) {
+        StoreMutationBarrier.Lease freeze = mutationBarrier.freeze();
+        try (freeze) {
             requireStoreUsable();
             if (restoreCoordinator == null) throw new UnsupportedOperationException("RESTORE_BORROWED_STORE");
             restoreCoordinator.discardUnpublished(restoreId, previousRestoreId, manifestSha256);
@@ -6393,7 +6520,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     /** {@inheritDoc} */
     @Override
     public Optional<zeroecho.pki.api.backup.RestoreIdentity> latestRestoreIdentity() throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             return restoreCoordinator == null ? Optional.empty() : restoreCoordinator.identity();
         }
@@ -6489,7 +6617,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void close() throws IOException {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.stop()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.stop();
+        try (admission) {
             if (!closing.compareAndSet(false, true)) return;
             IOException failure = null;
             if (credentialSearch != null) {
@@ -6549,7 +6678,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @return cumulative bounded writer counters, monotone across WAL rotation
      */
     public LocalSigningWriterMetrics localSigningWriterMetrics() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             SigningActiveWal.Snapshot snapshot = metadataStore.cumulativeWriterSnapshot();
             return new LocalSigningWriterMetrics(snapshot.groupsCommitted(), snapshot.requestsCommitted(),
@@ -6588,7 +6718,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @return current, lifetime-high-water, and configured maximum byte counts
      */
     public LocalSigningIndexCapacityMetrics localSigningIndexCapacityMetrics() {
-        try (StoreMutationBarrier.Lease admission = mutationBarrier.enter()) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
             requireStoreUsable();
             SigningLedgerStoreEngine.CapacitySnapshot snapshot = metadataStore.capacitySnapshot();
             return new LocalSigningIndexCapacityMetrics(
@@ -7538,7 +7669,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
         Optional<MetadataSnapshot.Record> owner = snapshot.get(statusOwnerKey(statusId));
         if (owner.isPresent()) {
-            try (MetadataSnapshot.Record ignored = owner.orElseThrow()) {
+            MetadataSnapshot.Record ignored = owner.orElseThrow();
+            try (ignored) {
                 throw new IOException("Status owner exists without its record");
             }
         }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -114,8 +114,8 @@ class VerifyBouncyCastleConfinementTest {
         Path sourceFile = directory.resolve("Example.java");
         Files.writeString(sourceFile, source);
         Project project = ProjectBuilder.builder().withProjectDir(directory.toFile()).withName(module).build();
-        VerifyBouncyCastleConfinement task = project.getTasks().create(
-                "verifyBouncyCastleConfinement", VerifyBouncyCastleConfinement.class);
+        VerifyBouncyCastleConfinement task = project.getTasks().register(
+                "verifyBouncyCastleConfinement", VerifyBouncyCastleConfinement.class).get();
         task.getModuleName().set(module);
         task.getMainSources().from(sourceFile.toFile());
         task.getMarker().set(directory.resolve("confinement.ok").toFile());

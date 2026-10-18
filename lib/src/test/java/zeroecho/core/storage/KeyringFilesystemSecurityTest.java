@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -793,15 +793,20 @@ class KeyringFilesystemSecurityTest {
         }
 
         @Override
-        public void close() throws Exception {
-            if (process.isAlive()) {
-                process.destroyForcibly();
-                process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        public void close() throws IOException {
+            try {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                }
+                input.close();
+                output.close();
+                reader.shutdownNow();
+                assertTrue(reader.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while closing child owner", exception);
             }
-            input.close();
-            output.close();
-            reader.shutdownNow();
-            assertTrue(reader.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS));
         }
     }
 
@@ -850,30 +855,33 @@ final class KeyringStoreLockProcess {
             for (int index = 0; index < passwordBytes.length; index++) {
                 passwordChars[index] = (char) Byte.toUnsignedInt(passwordBytes[index]);
             }
-            try (KeyringPassword password = new KeyringPassword(passwordChars);
-                    KeyringStore store = KeyringStore.open(Path.of(args[0]), password);
-                    BufferedReader control = new BufferedReader(
+            try (KeyringPassword password = new KeyringPassword(passwordChars)) {
+                KeyringStore store = KeyringStore.open(Path.of(args[0]), password);
+                try (BufferedReader control = new BufferedReader(
                             new InputStreamReader(System.in, StandardCharsets.US_ASCII))) {
-                Arrays.fill(passwordChars, '\0');
-                Arrays.fill(passwordBytes, (byte) 0);
-                System.out.println("KEYRING_OPEN");
-                System.out.flush();
-                String command;
-                while ((command = control.readLine()) != null) {
-                    if ("PING".equals(command)) {
-                        store.aliases();
-                        System.out.println("KEYRING_USABLE");
-                        System.out.flush();
-                    } else if ("CLOSE".equals(command)) {
-                        store.close();
-                        System.out.println("KEYRING_CLOSED");
-                        System.out.flush();
-                        return;
-                    } else {
-                        System.out.println("PROTOCOL_FAILED");
-                        System.out.flush();
-                        System.exit(3);
+                    Arrays.fill(passwordChars, '\0');
+                    Arrays.fill(passwordBytes, (byte) 0);
+                    System.out.println("KEYRING_OPEN");
+                    System.out.flush();
+                    String command;
+                    while ((command = control.readLine()) != null) {
+                        if ("PING".equals(command)) {
+                            store.aliases();
+                            System.out.println("KEYRING_USABLE");
+                            System.out.flush();
+                        } else if ("CLOSE".equals(command)) {
+                            store.close();
+                            System.out.println("KEYRING_CLOSED");
+                            System.out.flush();
+                            return;
+                        } else {
+                            System.out.println("PROTOCOL_FAILED");
+                            System.out.flush();
+                            System.exit(3);
+                        }
                     }
+                } finally {
+                    store.close();
                 }
             }
         } catch (Exception exception) {

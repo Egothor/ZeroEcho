@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -42,6 +42,7 @@ import java.util.Map;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.ObjectReadContext;
@@ -98,7 +99,7 @@ public final class StrictJson {
     public static byte[] encode(PkiOperationValue value) {
         try {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
-            try (JsonGenerator generator = FACTORY.createGenerator(output)) {
+            try (JsonGenerator generator = FACTORY.createGenerator(ObjectWriteContext.empty(), output)) {
                 write(generator, value);
             }
             return output.toByteArray();

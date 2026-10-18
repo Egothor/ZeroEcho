@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -45,7 +45,6 @@ import java.util.Set;
 import javax.security.auth.x500.X500Principal;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.FormatId;
-import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.PkiId;
@@ -64,11 +63,8 @@ import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
-import zeroecho.pki.api.signing.ManagedKeyProofRequest;
 import zeroecho.pki.impl.core.IntermediateSigningPreparation;
-import zeroecho.pki.impl.core.ManagedKeyProofPreparation;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
-import zeroecho.pki.impl.core.continuation.DomainSigningRequest;
 import zeroecho.pki.impl.core.continuation.ManagedKeyProofCommand;
 import zeroecho.pki.impl.core.signing.DefaultSemanticSigningService;
 import zeroecho.pki.impl.core.signing.DefaultSigningService;

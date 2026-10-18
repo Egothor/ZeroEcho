@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -407,9 +407,9 @@ class KeyringCryptographicFormatTest {
     private Path createEmpty(String name, int seed) throws Exception {
         Path path = temporaryDirectory.resolve(name);
         try (KeyringPassword password = password();
-                KeyringStore ignored = KeyringStore.create(path, password, KeyringProtection.standard(),
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
                         deterministicRandom(seed))) {
-            // Current empty image and reservation sidecar are durable.
+            assertTrue(store.aliases().isEmpty(), "Fixture must start with an empty durable image");
         }
         return path;
     }

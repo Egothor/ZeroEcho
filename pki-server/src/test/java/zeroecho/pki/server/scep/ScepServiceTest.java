@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -48,8 +48,6 @@ import zeroecho.pki.server.EnrollmentTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import zeroecho.pki.server.ServerRealmContext;
 
 /** Unit coverage for the SCEP endpoint registry. */
 class ScepServiceTest {

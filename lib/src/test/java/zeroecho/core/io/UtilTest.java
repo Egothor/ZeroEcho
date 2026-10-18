@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -143,6 +143,26 @@ public class UtilTest {
         bais = new ByteArrayInputStream(baos.toByteArray());
         long resultL = Util.readPack7L(bais);
         assertEquals(originalL, resultL, "Packed 7-bit long should be preserved");
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void packedWritersPreserveWireBytesAtSignBitBoundaries() throws IOException {
+        System.out.println("packedWritersPreserveWireBytesAtSignBitBoundaries");
+        long[] values = { 0, 127, 128, 16383, 16384 };
+        byte[][] encodings = { { (byte) 0x80 }, { (byte) 0xff }, { 1, (byte) 0x80 },
+                { 127, (byte) 0xff }, { 1, 0, (byte) 0x80 } };
+        for (int i = 0; i < values.length; i++) {
+            ByteArrayOutputStream integer = new ByteArrayOutputStream();
+            Util.writePack7I(integer, (int) values[i]);
+            assertArrayEquals(encodings[i], integer.toByteArray());
+            assertArrayEquals(encodings[i], encodePackedLong(values[i]));
+            byte[] payload = new byte[(int) values[i]];
+            byte[] framed = Util.readWithPackedLengthPrefix(new ByteArrayInputStream(payload), payload.length);
+            byte[] expected = new byte[encodings[i].length + payload.length];
+            System.arraycopy(encodings[i], 0, expected, 0, encodings[i].length);
+            assertArrayEquals(expected, framed);
+        }
         System.out.println("...ok");
     }
 

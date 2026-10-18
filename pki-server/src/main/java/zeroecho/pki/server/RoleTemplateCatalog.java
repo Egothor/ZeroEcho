@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -43,6 +43,7 @@ import java.util.Objects;
 import java.util.Set;
 
 import tools.jackson.core.JsonParser;
+import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.TokenStreamFactory;
 import tools.jackson.core.json.JsonFactory;
@@ -151,7 +152,7 @@ public final class RoleTemplateCatalog {
         if (encoded.length == 0 || encoded.length > MAXIMUM_RESOURCE_BYTES) {
             throw new IllegalArgumentException("Role-template resource size is invalid");
         }
-        try (JsonParser parser = JSON.createParser(encoded)) {
+        try (JsonParser parser = JSON.createParser(ObjectReadContext.empty(), encoded)) {
             require(parser.nextToken(), JsonToken.START_OBJECT);
             Integer schema = null;
             List<Template> result = null;

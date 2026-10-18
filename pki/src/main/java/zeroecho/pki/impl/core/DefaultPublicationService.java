@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -331,6 +331,17 @@ public final class DefaultPublicationService implements PublicationService {
         };
     }
 
+    /**
+     * Releases an eagerly verified stream, preserving nullable resource ownership.
+     * @param verified stream opened for verification, or null when no stream was returned
+     * @throws IOException if closing the opened stream fails
+     */
+    private static void close(java.io.InputStream verified) throws IOException {
+        if (verified != null) {
+            verified.close();
+        }
+    }
+
     private void validateContent(DurableContentReference reference) {
         try {
             DurableContentReference exact = store.stagedContent().restoreReference(reference.storeId(),
@@ -339,10 +350,10 @@ public final class DefaultPublicationService implements PublicationService {
             if (!sameContent(reference, exact)) {
                 throw new IOException("Publication content commitment mismatch");
             }
-            try (RepeatableContent content = store.stagedContent().openContent(exact);
-                    java.io.InputStream ignored = content.openStream()) {
+            try (RepeatableContent content = store.stagedContent().openContent(exact)) {
                 // Opening the store-issued stream performs the complete immutable
                 // integrity check before any publisher callback can run.
+                close(content.openStream());
             }
         } catch (IOException | RuntimeException failure) {
             throw new PkiException("Publication content is invalid: code=PUBLICATION_CONTENT_INVALID",

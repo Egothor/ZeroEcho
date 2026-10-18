@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -232,7 +232,7 @@ class Pack7LStreamWriterTest {
             val >>>= 7;
         }
         buf[--idx] = (byte) val;
-        buf[buf.length - 1] |= 0x80;
+        buf[buf.length - 1] = (byte) (buf[buf.length - 1] | 0x80);
         return Arrays.copyOfRange(buf, idx, buf.length);
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -78,7 +78,6 @@ import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
 import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
-import zeroecho.pki.api.signing.ManagedKeyProofRequest;
 import zeroecho.pki.impl.core.IntermediateSigningPreparation;
 import zeroecho.pki.impl.core.ManagedKeyProofPreparation;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;

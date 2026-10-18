@@ -52,6 +52,33 @@ application {
     mainClass = 'zeroecho.pki.PkiApplication'
 }
 
+
+// Qualified exports name downstream modules without depending on their artifacts.
+// Let javac inspect their real descriptors while compiling only this module.
+def moduleCompilationRoot = layout.buildDirectory.dir('classes/java/main')
+def compilePkiJava = tasks.named('compileJava', JavaCompile) {
+    destinationDirectory = moduleCompilationRoot
+    modularity.inferModulePath = false
+    options.sourcepath = files()
+    // Keep classpath intact for Gradle dependency tracking; javac validates JPMS
+    // against the same complete dependency set through the explicit module path.
+    options.compilerArgumentProviders.add({
+        ['--module-path', classpath.asPath]
+    } as CommandLineArgumentProvider)
+    options.compilerArgs.addAll([
+        '--module-source-path', "zeroecho.pki=${projectDir}/src/main/java",
+        '--module-source-path', "zeroecho.app=${project(':app').projectDir}/src/main/java",
+        '--module-source-path', "zeroecho.pki.server=${project(':pki-server').projectDir}/src/main/java"
+    ])
+    inputs.files(project(':app').layout.projectDirectory.file('src/main/java/module-info.java'),
+            project(':pki-server').layout.projectDirectory.file('src/main/java/module-info.java'))
+            .withPropertyName('qualifiedExportTargets').withPathSensitivity(PathSensitivity.RELATIVE)
+}
+// Module-source-path compilation adds a module-name directory. Publish that
+// directory as classes and keep jars, tests and dependent projects on the same model.
+sourceSets.main.output.classesDirs.setFrom(moduleCompilationRoot.map { it.dir('zeroecho.pki') })
+sourceSets.main.output.classesDirs.builtBy(compilePkiJava)
+
 sourceSets {
     metadataBenchmark {
         java.srcDir 'src/metadataBenchmark/java'

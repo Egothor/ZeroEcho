@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -61,7 +61,7 @@ class KeyringStatefulProcessTest {
 
     @Test void authorityFenceExcludesAnotherJvmAndReleasesAfterExit() throws Exception {
         Path ledger = root.resolve("authority");
-        try (LocalStatefulSigningAuthority initial = LocalStatefulSigningAuthority.create(ledger)) { }
+        LocalStatefulSigningAuthority.create(ledger).close();
         Process process = start("lock", ledger, root.resolve("unused"));
         try (java.util.concurrent.ExecutorService reader = Executors.newSingleThreadExecutor()) {
             try {
@@ -80,7 +80,7 @@ class KeyringStatefulProcessTest {
                 process.destroyForcibly();
             }
         }
-        try (LocalStatefulSigningAuthority reopened = LocalStatefulSigningAuthority.open(ledger)) { }
+        LocalStatefulSigningAuthority.open(ledger).close();
     }
 
     @ParameterizedTest @ValueSource(strings = { "reserved", "image", "ready" })

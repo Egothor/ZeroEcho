@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -98,12 +98,12 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
         command.requireFields(14);
         RootCommand frozen = RootCommand.decode(command);
         PkiId authorityId = new PkiId(command.field(13));
-        X509Certificate certificate = support.certificate(result);
+        X509Certificate certificate = DomainContinuationPublisher.certificate(result);
         validateRoot(certificate, frozen.serial(), frozen.notBefore(), frozen.notAfter());
         validateHybridRoot(certificate, frozen.profile());
         byte[] der = result.bytes();
         try {
-            String certificateHash = support.sha256(der);
+            String certificateHash = DomainContinuationPublisher.sha256(der);
             PkiId credentialId = new PkiId("x509:" + certificateHash);
             PkiId issuerId = IssuerGeneration.idFor(authorityId, credentialId);
             IssuerChainPath path = IssuerChainPath.create(authorityId, issuerId, List.of(credentialId));
@@ -111,7 +111,7 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
             IssuerGeneration generation = new IssuerGeneration(issuerId, authorityId, credentialId, frozen.keyRef(),
                     IssuerGenerationState.ACTIVE, profileCommitment, profileCommitment);
             RootTargets targets = new RootTargets(credentialId, authorityId, issuerId, path.pathId(),
-                    support.sha256SubjectPublicKey(certificate));
+                    DomainContinuationPublisher.sha256SubjectPublicKey(certificate));
             requireExactPrefix(credentialId, issuerId, path.pathId(), authorityId, false);
             publishRootCredential(frozen, der, targets, domain);
             putOrRequireGeneration(generation);
@@ -126,7 +126,7 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
             DomainContinuationStore.Record domain) {
         command.requireFields(14);
         RootCommand frozen = RootCommand.decode(command);
-        X509Certificate certificate = support.certificate(result);
+        X509Certificate certificate = DomainContinuationPublisher.certificate(result);
         validateRoot(certificate, frozen.serial(), frozen.notBefore(), frozen.notAfter());
         validateHybridRoot(certificate, frozen.profile());
         byte[] der = result.bytes();
@@ -186,12 +186,12 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
 
     private void publishRootRecords(RootCommand frozen, RootPublication publication,
             DomainContinuationStore.Record domain) {
-        String certificateHash = support.sha256(publication.der());
+        String certificateHash = DomainContinuationPublisher.sha256(publication.der());
         PkiId credentialId = new PkiId("x509:" + certificateHash);
         PkiId authorityId = frozen.authorityId();
         PkiId issuerId = IssuerGeneration.idFor(authorityId, credentialId);
         IssuerChainPath path = IssuerChainPath.create(authorityId, issuerId, List.of(credentialId));
-        String publicKeyFingerprint = support.sha256SubjectPublicKey(publication.certificate());
+        String publicKeyFingerprint = DomainContinuationPublisher.sha256SubjectPublicKey(publication.certificate());
         String profileCommitment = HexFormat.of().formatHex(frozen.profile().canonicalSha256());
         IssuerGeneration generation = new IssuerGeneration(issuerId, authorityId, credentialId, frozen.keyRef(),
                 IssuerGenerationState.ACTIVE, profileCommitment, profileCommitment);
@@ -249,7 +249,7 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
                 .orElseThrow(() -> new DomainContinuationPublisher.PostconditionFailure("PARENT_PATH_UNAVAILABLE"));
         DomainContinuationPublisher.requireFrozenIssuer(parentGeneration, parentPath, frozen.issuerCaId(),
                 frozen.parentIssuerId(), frozen.parentPathCommitment());
-        X509Certificate certificate = support.certificate(result);
+        X509Certificate certificate = DomainContinuationPublisher.certificate(result);
         try {
             byte[] tbs = certificate.getTBSCertificate();
             if (tbs.length != ManagedKeyProofCommand.positiveLength(command.field(21), 1_048_576)
@@ -280,7 +280,7 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
 
     private void publishIntermediateRecords(String operation, IntermediateCommand frozen,
             IssuerChainPath parentPath, byte[] der, DomainContinuationStore.Record domain) {
-        PkiId credentialId = new PkiId("x509:" + support.sha256(der));
+        PkiId credentialId = new PkiId("x509:" + DomainContinuationPublisher.sha256(der));
         PkiId subjectIssuerId = IssuerGeneration.idFor(frozen.subjectCaId(), credentialId);
         List<PkiId> chain = new ArrayList<>(parentPath.orderedCredentialIds().size() + 1);
         chain.add(credentialId);

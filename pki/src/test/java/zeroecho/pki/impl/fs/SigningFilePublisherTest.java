@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -264,6 +264,36 @@ final class SigningFilePublisherTest {
         assertTrue(Files.isSymbolicLink(temporary[0]));
         assertArrayEquals(new byte[] { 8 }, Files.readAllBytes(referent));
         assertFalse(Files.exists(target));
+    }
+
+    @Test
+    void temporaryChannelClosesAfterFailedOwnershipTransferAndRetainsPath() throws Exception {
+        Path path = temporaryDirectory.resolve("untransferred.tmp");
+        FileChannel channel = FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        assertThrows(NullPointerException.class, () -> {
+            try (var opened = new SigningFilePublisher.TemporaryChannel(channel)) {
+                opened.transfer(null, null);
+            }
+        });
+        assertFalse(channel.isOpen());
+        assertTrue(Files.isRegularFile(path));
+    }
+
+    @Test
+    void temporaryChannelTransfersOpenChannelToPublisher() throws Exception {
+        Path path = temporaryDirectory.resolve("transferred.tmp");
+        try (FileChannel channel = FileChannel.open(path,
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            SigningFilePublisher.TemporaryFile result;
+            try (var opened = new SigningFilePublisher.TemporaryChannel(channel)) {
+                result = opened.transfer(path, null);
+            }
+            assertEquals(path, result.path());
+            assertEquals(channel, result.channel());
+            assertTrue(result.channel().isOpen());
+            writePartial(result.channel(), new byte[] { 4 });
+        }
+        assertArrayEquals(new byte[] { 4 }, Files.readAllBytes(path));
     }
 
     private Path onlyTemporary() throws IOException {

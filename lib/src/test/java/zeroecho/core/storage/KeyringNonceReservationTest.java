@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -394,9 +394,9 @@ class KeyringNonceReservationTest {
     private Path createAndClose(String file, int randomSeed) throws Exception {
         Path path = temporaryDirectory.resolve(file);
         try (KeyringPassword password = password();
-                KeyringStore ignored = KeyringStore.create(path, password, KeyringProtection.standard(),
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
                         deterministicRandom(randomSeed))) {
-            // Creation writes the initial durable reservation.
+            assertTrue(store.aliases().isEmpty(), "Fixture must start with an empty durable reservation");
         }
         return path;
     }

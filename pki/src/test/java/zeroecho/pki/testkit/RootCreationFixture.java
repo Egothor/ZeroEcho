@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -50,7 +50,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
-import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.spi.AlgorithmExecutionCapability.Direction;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;

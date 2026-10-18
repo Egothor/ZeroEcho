@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -47,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 
 import tools.jackson.core.JsonParser;
+import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.json.JsonFactory;
 
@@ -279,7 +280,7 @@ public final class PublisherSecretsManagerCli {
     private static Map<String, String> loadSecretsJson(Path path) throws IOException {
         byte[] bytes = Files.readAllBytes(path);
         Map<String, String> result = new LinkedHashMap<>();
-        try (JsonParser parser = new JsonFactory().createParser(bytes)) {
+        try (JsonParser parser = new JsonFactory().createParser(ObjectReadContext.empty(), bytes)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Secrets file must be a JSON object");
             }
@@ -289,7 +290,7 @@ public final class PublisherSecretsManagerCli {
                     throw new IOException(
                             "Secrets file values must be strings; invalid value for key: " + key);
                 }
-                result.put(key, parser.getText());
+                result.put(key, parser.getString());
             }
         }
         return Map.copyOf(result);

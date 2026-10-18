@@ -1,20 +1,37 @@
 # Build outputs
-/build/
+build/
+build-release-verification/
 .gradle/
-**/build/
 # Documentation site build output
 /site/
 # IDE / OS
 *.class
 *.iml
 .idea/
+# Eclipse project metadata (root and modules)
+.project
+.classpath
+.settings/
+.metadata/
+# Eclipse compiled output
+bin/
 .DS_Store
 # Local temp
 *.tmp
 
+# Local AI tooling and work records
+/.agents/
+/.codex/
+/.findings/
+/.fabric/
+
+# Local AWS configuration and caches
+/.aws/
+
 # Benchmark evidence output (RUN_ON_LARGE_MACHINE)
 reference-evidence*/
 
-# Host deployment smoke-test bytecode
-/deploy/__pycache__/
-/tools/__pycache__/
+# Python bytecode caches
+__pycache__/
+*.pyc
+*.pyo

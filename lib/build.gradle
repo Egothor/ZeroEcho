@@ -45,7 +45,7 @@ configurations {
 dependencies {
     // ElgamalParamSpec.parameters() is a supported public BC type boundary.
     api 'org.bouncycastle:bcpkix-jdk18on'
-	implementation 'org.egothor:conflux'
+	api 'org.egothor:conflux'
 	
 	testImplementation "org.mockito:mockito-core:5.23.0"
 	
@@ -94,7 +94,7 @@ javadoc {
     // options.stylesheetFile = overviewCss
     options.addStringOption("-add-stylesheet", overviewCss.absolutePath)
     
-    options.links("https://www.egothor.org/javadoc/conflux")
+    options.links("https://www.egothor.org/conflux/javadoc/")
     // options.overview = file("src/main/javadoc/overview.html")
 }
 

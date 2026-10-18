@@ -32,13 +32,15 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Alert, Box, Button, Link, Paper, Stack, TextField, Typography } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import { api, ApiRequestError } from '@/api/client';
 import { PageHeader } from '@/components/PageHeader';
-import { ResultView } from '@/components/ResultView';
+import { JsonView } from '@/components/operation/JsonView';
+
+const ResultView = lazy(() => import('@/components/ResultView').then((m) => ({ default: m.ResultView })));
 
 /** Read-only browser over the public repository API (`/public/v1/...`). */
 export function PublicRepositoryPage() {
@@ -79,7 +81,9 @@ export function PublicRepositoryPage() {
         )}
         {authorities.data != null && (
           <Box sx={{ mt: 2 }}>
-            <ResultView value={authorities.data} />
+            <Suspense fallback={<JsonView value={authorities.data} />}>
+              <ResultView value={authorities.data} />
+            </Suspense>
           </Box>
         )}
       </Paper>

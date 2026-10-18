@@ -37,6 +37,15 @@ plugins {
     id 'groovy-gradle-plugin'
 }
 
+
+// Isolated verification can use fresh outputs without touching existing reports.
+providers.gradleProperty('verificationOutputRoot').orNull?.with { outputRoot ->
+    if (outputRoot.isBlank() || !new File(outputRoot).isAbsolute()) {
+        throw new GradleException('verificationOutputRoot must be a nonblank absolute path')
+    }
+    layout.buildDirectory.set(new File(outputRoot, project.name))
+}
+
 repositories {
     // Use the plugin portal to apply community plugins in convention plugins.
     gradlePluginPortal()
@@ -61,4 +70,13 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+// Build plugins follow the same warning policy as application and test sources.
+tasks.withType(JavaCompile).configureEach {
+    options.warnings = true
+    options.compilerArgs.addAll(['-Xlint:all', '-Xmaxwarns', '100000'])
+    if (providers.gradleProperty('warningsAsErrors').getOrElse('true') != 'false') {
+        options.compilerArgs.add('-Werror')
+    }
 }

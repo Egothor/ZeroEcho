@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -346,7 +346,8 @@ final class SigningLedgerMaintenance implements AutoCloseable {
             Object relocationPublicationLock,
             SigningMvccRelocationCandidate.FrameMutationDecoder decoder,
             PressureProbe pressureProbe) throws IOException {
-        try (SigningMvccIndex.Snapshot snapshot = rotation.boundary()) {
+        SigningMvccIndex.Snapshot snapshot = rotation.boundary();
+        try (snapshot) {
             try (capacityClaim) {
                 checkProtectedProgressPressure(pressureProbe);
                 CandidateCheckpoint checkpoint = createCandidateCheckpoint(

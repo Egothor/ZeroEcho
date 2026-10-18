@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -230,7 +230,7 @@ class StreamingX509CrlTbsWriterTest {
         writer.write(source, writer.measure(source, CancellationSignal.NONE), BigInteger.ONE, output, CancellationSignal.NONE);
         org.bouncycastle.asn1.x509.Extensions extensions = org.bouncycastle.asn1.x509.TBSCertList.getInstance(output.toByteArray()).getExtensions();
         assertEquals(2, extensions.getExtensionOIDs().length);
-        assertArrayEquals(KEY_ID, AuthorityKeyIdentifier.getInstance(extensions.getExtensionParsedValue(Extension.authorityKeyIdentifier)).getKeyIdentifier());
+        assertArrayEquals(KEY_ID, AuthorityKeyIdentifier.getInstance(extensions.getExtensionParsedValue(Extension.authorityKeyIdentifier)).getKeyIdentifierOctets());
         assertTrue(!extensions.getExtension(Extension.authorityKeyIdentifier).isCritical());
         assertTrue(!extensions.getExtension(Extension.cRLNumber).isCritical());
         assertThrows(IllegalArgumentException.class, () -> new StreamingX509CrlTbsWriter(ALGORITHM, NAME.getEncoded(), new byte[0], NOW, NOW.plusSeconds(1)));

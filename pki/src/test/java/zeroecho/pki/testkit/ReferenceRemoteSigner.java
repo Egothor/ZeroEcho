@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -71,7 +71,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport.RemoteSigningState;
-import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport.RemoteSigningStatus;
 
 /**
  * Test reference implementation of a remote signing service, exercised in process

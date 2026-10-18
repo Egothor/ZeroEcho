@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -122,16 +122,6 @@ public final class OidAlgorithmMapper {
             StandardX509Bindings.OID_SLH_DSA_SHAKE_256S,
             StandardX509Bindings.OID_SLH_DSA_SHAKE_256F);
 
-    /**
-     * Immutable mapping from signature algorithm OID string to the corresponding
-     * ZeroEcho canonical signature algorithm identifier.
-     *
-     * <p>
-     * The table is intentionally expressed as a constant map rather than as a
-     * procedural chain of conditions so that supported OIDs remain explicit,
-     * reviewable, and easy to maintain.
-     * </p>
-     */
     /**
      * Creates no instances.
      */

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2025, Leo Galambos
  * All rights reserved.
  *
@@ -74,8 +74,11 @@ module zeroecho.pki {
     exports zeroecho.pki.spi.bootstrap;
     exports zeroecho.pki.spi.confirmation;
     exports zeroecho.pki.spi.crypto;
+    exports zeroecho.pki.spi.framework;
+    exports zeroecho.pki.spi.publish;
     exports zeroecho.pki.spi.ct;
     exports zeroecho.pki.spi.store;
+    exports zeroecho.pki.util.async;
 
     // Default backends, exposed only to sibling modules that must construct them.
     exports zeroecho.pki.impl.fs to zeroecho.pki.server, zeroecho.app;

@@ -34,7 +34,7 @@ administration surface and its current boundaries.
 
 ## Prerequisites
 
-- **Node 22.11+** and npm (for local development). The Gradle build downloads a
+- **Node 22.23.3+ (22.x)** and npm 10.9.9 (for local development). The Gradle build downloads a
   pinned Node itself (see below), so a system Node is not required for CI.
 
 ## Develop

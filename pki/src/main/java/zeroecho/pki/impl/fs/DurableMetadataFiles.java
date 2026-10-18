@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -187,10 +187,12 @@ final class DurableMetadataFiles {
         for (int attempt = 0; attempt < 16; attempt++) {
             trip(FaultPoint.TEMP_CREATE);
             Path candidate = parent.resolve(".metadata-" + UUID.randomUUID() + ".tmp");
-            try (DurableDirectory directory = openDurableDirectory(parent);
-                    SeekableByteChannel ignored = directory.newByteChannel(candidate.getFileName(),
-                            openOptions(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), fileAttributes(parent))) {
-                return candidate;
+            try (DurableDirectory directory = openDurableDirectory(parent)) {
+                SeekableByteChannel ignored = directory.newByteChannel(candidate.getFileName(),
+                        openOptions(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), fileAttributes(parent));
+                try (ignored) {
+                    return candidate;
+                }
             } catch (java.nio.file.FileAlreadyExistsException collision) {
                 if (attempt == FINAL_TEMP_CREATE_ATTEMPT) {
                     throw new IOException("Unable to create durable metadata temporary file", collision);

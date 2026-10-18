@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -45,6 +45,7 @@ import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import tools.jackson.core.JsonParser;
+import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperationValue;
@@ -57,7 +58,7 @@ class PkiSchemaValidatorTest {
         Set<String> resourceIds = new java.util.HashSet<>();
         try (InputStream resource = PkiSchemaValidator.class.getClassLoader().getResourceAsStream("schema/operationSchema.json")) {
             assertNotNull(resource);
-            try (JsonParser parser = new JsonFactory().createParser(resource)) {
+            try (JsonParser parser = new JsonFactory().createParser(ObjectReadContext.empty(), resource)) {
                 assertEquals(JsonToken.START_ARRAY, parser.nextToken());
                 while (parser.nextToken() != JsonToken.END_ARRAY) {
                     assertEquals(JsonToken.START_OBJECT, parser.currentToken());

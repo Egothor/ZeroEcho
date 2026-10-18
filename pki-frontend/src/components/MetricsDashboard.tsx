@@ -176,7 +176,7 @@ function MetricQuery({ group, authorityId }: { group: MetricGroup; authorityId: 
         if (!record(result) || authorityId && result.caId !== authorityId) throw new Error('Invalid metrics response.');
         return result;
       } catch (error) {
-        if (error instanceof ApiRequestError) throw new Error(error.status === 401 || error.status === 403 ? 'Access denied.' : 'Metrics request failed.');
+        if (error instanceof ApiRequestError) throw new Error(error.status === 401 || error.status === 403 ? 'Access denied.' : 'Metrics request failed.', { cause: error });
         throw error;
       } finally {
         clearTimeout(timer);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -1112,7 +1112,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     }
 
     /* default */ SigningMvccIndex.Snapshot snapshot() throws MetadataStoreException {
-        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
+        SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
+        try (ignored) {
             requireOpen();
             return index.snapshot();
         }
@@ -1120,7 +1121,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ SigningCurrentSelection selectCurrentFirst(
             MetadataSnapshot.KeyRange range) throws MetadataStoreException {
-        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
+        SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
+        try (ignored) {
             requireOpen();
             MetadataSnapshot.KeyRange checked = Objects.requireNonNull(range, "range");
             return index.selectCurrentFirst(checked.namespace(),
@@ -1130,7 +1132,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ SigningCurrentSelection selectCurrentRange(
             MetadataSnapshot.KeyRange range) throws MetadataStoreException {
-        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
+        SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
+        try (ignored) {
             requireOpen();
             MetadataSnapshot.KeyRange checked = Objects.requireNonNull(range, "range");
             return index.selectCurrentRange(checked.namespace(),
@@ -1282,7 +1285,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ List<String> selectDue(Instant cutoff, int maximumResults)
             throws MetadataStoreException {
-        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
+        SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
+        try (ignored) {
             requireOpen();
             try (SigningDueWorkIndex.Selection selection =
                     due.selectThrough(cutoff, maximumResults)) {
@@ -1295,7 +1299,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     /* default */ DuePage pageDue(Instant cutoff, Optional<String> exclusiveCursor,
             Optional<String> inclusiveHighWatermark, int maximumResults)
             throws MetadataStoreException {
-        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
+        SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
+        try (ignored) {
             synchronized (stateLock) {
                 requireOpen();
                 try (SigningDueWorkIndex.IdentitySelection selection = due.pageThrough(cutoff,
@@ -1315,7 +1320,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ DueSnapshot pageOwners(Optional<String> exclusiveCursor, int maximumResults)
             throws MetadataStoreException {
-        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
+        SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
+        try (ignored) {
             synchronized (stateLock) {
                 requireOpen();
                 SigningDueWorkIndex.IdentitySelection selection = owners.pageThrough(Instant.MAX,

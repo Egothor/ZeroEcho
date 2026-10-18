@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -425,8 +425,8 @@ final class SigningReactorTest {
                     PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
                     (proxy, method, arguments) -> {
                         if ("pageDueSignWorkflows".equals(method.getName())) {
-                            calls.add(new ScanCall((Optional<String>) arguments[1],
-                                    (Optional<String>) arguments[2], (Integer) arguments[3]));
+                            calls.add(new ScanCall(((Optional<?>) arguments[1]).map(String.class::cast),
+                                    ((Optional<?>) arguments[2]).map(String.class::cast), (Integer) arguments[3]));
                         }
                         try {
                             return method.invoke(store, arguments);
@@ -1208,7 +1208,7 @@ final class SigningReactorTest {
                 new Class<?>[] { PkiStore.class }, (proxy, method, arguments) -> {
                     if (suppliedHighWatermarks != null
                             && "pageDueSignWorkflows".equals(method.getName())) {
-                        suppliedHighWatermarks.add((Optional<String>) arguments[2]);
+                        suppliedHighWatermarks.add(((Optional<?>) arguments[2]).map(String.class::cast));
                     }
                     try {
                         Object result = method.invoke(store, arguments);

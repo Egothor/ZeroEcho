@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -41,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.json.JsonFactory;
 
 import zeroecho.pki.server.schema.OperationParameterSchema.FieldSpec;
@@ -89,7 +90,7 @@ public final class GenerateOperationSchema {
     public static byte[] serialize(List<OperationSpec> operations) throws IOException {
         JsonFactory factory = JsonFactory.builder().build();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (JsonGenerator gen = factory.createGenerator(out)) {
+        try (JsonGenerator gen = factory.createGenerator(ObjectWriteContext.empty(), out)) {
             gen.writeStartArray();
             for (OperationSpec op : operations) {
                 writeOperation(gen, op);

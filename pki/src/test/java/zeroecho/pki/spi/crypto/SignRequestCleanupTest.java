@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* *****************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
@@ -46,7 +46,6 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
