@@ -109,21 +109,7 @@ jobs:
             exit 1
           fi
           echo "Central deployment: $deployment_id" >> "$GITHUB_STEP_SUMMARY"
-          for attempt in $(seq 1 120); do
-            status=$(curl --silent --show-error --fail-with-body --request POST \
-              --header "Authorization: Bearer $CENTRAL_BEARER_TOKEN" \
-              "https://central.sonatype.com/api/v1/publisher/status?id=$deployment_id")
-            state=$(jq -er '.deploymentState' <<< "$status")
-            echo "Central state: $state"
-            case "$state" in
-              PUBLISHED) echo 'Maven Central publication completed.' >> "$GITHUB_STEP_SUMMARY"; exit 0 ;;
-              FAILED) echo "$status" >&2; exit 1 ;;
-              PENDING|VALIDATING|VALIDATED|PUBLISHING) sleep 15 ;;
-              *) echo "Unexpected Central state: $state" >&2; exit 1 ;;
-            esac
-          done
-          echo 'Central publication timed out; inspect the deployment before retrying.' >&2
-          exit 1
+          echo 'Upload accepted. Maven Central validation and publication continue asynchronously.' >> "$GITHUB_STEP_SUMMARY"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

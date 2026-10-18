@@ -21,10 +21,12 @@ Javadoc JAR, POM and detached signatures. Binary artifacts use BSD 3-Clause term
 sources use BSD 4-Clause terms. The Central bundle includes artifact MD5/SHA1
 checksums and excludes Gradle/Maven metadata and signature checksums.
 The ZIP is retained as a workflow artifact before uploading through the Central
-Publisher API using `AUTOMATIC`. The deployment UUID and states are logged;
-a bounded poll waits up to 30 minutes for `PUBLISHED` before creating the GitHub
-release with application TAR/ZIP distributions. Automatic publication is irreversible.
-If polling fails or times out, inspect that UUID in Central Portal before retrying;
+Publisher API using `AUTOMATIC`. The deployment UUID is recorded in the workflow summary. Once Central accepts the
+upload, the workflow creates the GitHub release with application TAR/ZIP
+distributions. Central validation and publication continue asynchronously; the
+GitHub release does not imply that the packages are already available on Central.
+Automatic publication is irreversible. Inspect the deployment UUID in Central
+Portal for its final result and before retrying if validation later fails;
 do not blindly upload the same immutable version again.
 
 ## Change scope and acceptance
