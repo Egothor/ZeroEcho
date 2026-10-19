@@ -33,9 +33,12 @@
 
 from pathlib import Path
 import hashlib
+import json
+import subprocess
+import tempfile
 import unittest
 
-from validate_source_licenses import header_text, normalize, source_path, validate_header
+from validate_source_licenses import header_text, normalize, source_path, validate, validate_header
 
 CANONICAL = (Path(__file__).resolve().parents[1] / "LICENSE-source.txt").read_text()
 
@@ -89,6 +92,41 @@ class SourceLicenseTest(unittest.TestCase):
         self.assertIsNone(validate_header("vendor/Foreign.java", source, CANONICAL, manifest))
         self.assertIsNotNone(validate_header("vendor/Foreign.java", source.replace("MIT", "BSD"), CANONICAL, manifest))
         self.assertIsNotNone(validate_header("vendor/Foreign.java", "/*" + CANONICAL + "*/", CANONICAL, manifest))
+
+    def test_headerless_foreign_bundle_is_bound_to_reviewed_source(self):
+        source = '"use strict";globalThis.vendor = "original";\n'
+        manifest = {"vendor/library.js": {
+            "origin": "reviewed upstream bundle with adjacent MIT license",
+            "header_sha256": hashlib.sha256(b"").hexdigest(),
+            "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        }}
+        self.assertIsNone(validate_header("vendor/library.js", source, CANONICAL, manifest))
+        self.assertIsNotNone(validate_header("vendor/library.js", source.replace("original", "altered"), CANONICAL, manifest))
+        self.assertIsNotNone(validate_header("vendor/library.js", source + "// changed\n", CANONICAL, manifest))
+
+    def test_repository_inventory_empty_valid_and_altered_foreign_source(self):
+        source = '"use strict";globalThis.vendor = "original";\n'
+        for contents, expected_count, expected_errors in (
+                (None, 0, 0), (source, 1, 0), (source + "// changed\n", 1, 1),
+                (source.replace("\n", "\r\n"), 1, 1)):
+            with self.subTest(contents=contents), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+                (root / "LICENSE-source.txt").write_text(CANONICAL, encoding="utf-8")
+                (root / "tools").mkdir()
+                manifest = {"vendor.js": {
+                    "origin": "reviewed upstream bundle with adjacent MIT license",
+                    "header_sha256": hashlib.sha256(b"").hexdigest(),
+                    "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+                }}
+                (root / "tools/third_party_source_licenses.json").write_text(json.dumps(manifest), encoding="utf-8")
+                if contents is not None:
+                    (root / "vendor.js").write_bytes(contents.encode("utf-8"))
+                count, errors = validate(root)
+                self.assertEqual(expected_count, count)
+                self.assertEqual(expected_errors, len(errors))
+                if errors:
+                    self.assertIn("vendor.js: third-party source differs", errors[0])
 
 
 if __name__ == "__main__":

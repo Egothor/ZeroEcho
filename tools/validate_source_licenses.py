@@ -104,6 +104,8 @@ def validate_header(path, source, canonical, third_party=None):
         notice = notices[path]
         if not notice.get("origin") or hashlib.sha256(header.encode()).hexdigest() != notice.get("header_sha256"):
             return "third-party notice differs from its reviewed provenance record"
+        if "source_sha256" in notice and hashlib.sha256(source.encode("utf-8")).hexdigest() != notice["source_sha256"]:
+            return "third-party source differs from its reviewed provenance record"
         return None
     notice = re.search(r"Copyright \([Cc]\) [0-9]{4}(?:[-–][0-9]{4})?, Leo Galambos\s+", header)
     if notice is None:
@@ -135,7 +137,7 @@ def validate(root):
         if path.is_symlink() or not path.is_file():
             errors.append(f"{relative}: source must be a regular file")
             continue
-        problem = validate_header(relative, path.read_text(encoding="utf-8"), canonical, notices)
+        problem = validate_header(relative, path.read_bytes().decode("utf-8"), canonical, notices)
         if problem:
             errors.append(f"{relative}: {problem}")
     return checked, errors

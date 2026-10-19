@@ -32,39 +32,134 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-/* ZeroEcho PKI documentation — light polish over Material defaults. */
+/* Shared navigation and reading surfaces follow the Egothor portfolio palette. */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #081b31;
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: #1266c2;
+  --md-typeset-a-color: #125fb7;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #081b31;
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: #80c5ff;
+  --md-typeset-a-color: #9bd0ff;
+}
+body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+code, pre, kbd { font-family: ui-monospace, "Cascadia Code", "Liberation Mono", monospace; }
+.md-header, .md-tabs { background: #081b31; color: #f3f7fd; }
+.md-header__title { font-weight: 720; letter-spacing: .015em; }
+.md-tabs__link { opacity: .88; }
+.md-tabs__link--active { opacity: 1; }
+.md-search__form { background: #172e46; }
+.md-typeset h1, .md-typeset h2, .md-typeset h3 { font-weight: 720; letter-spacing: -.025em; }
+.md-typeset table code { font-size: .85em; }
+.md-typeset .grid.cards > ul > li { border-radius: .3rem; }
+:focus-visible { outline: 3px solid #0064c8; outline-offset: 4px; }
+[data-md-color-scheme="slate"] :focus-visible,
+.md-header :focus-visible, .md-tabs :focus-visible,
+.ze-hero :focus-visible, .ze-api :focus-visible { outline-color: #9bd0ff; }
 
-.md-typeset .md-content__inner > h1:first-of-type {
-  font-weight: 700;
+/* Only the homepage spans the reading column; guides retain Material navigation. */
+body:has(.ze-home) .md-main__inner { max-width: none; margin-top: 0; }
+body:has(.ze-home) .md-content { min-width: 0; margin: 0; }
+body:has(.ze-home) .md-content__inner { margin: 0; padding: 0; }
+body:has(.ze-home) .md-content__inner::before { display: none; }
+body:has(.ze-home) .md-content__button { display: none; }
+.md-typeset .ze-home {
+  --ze-ink: #102944;
+  --ze-muted: #415a73;
+  --ze-line: #dbe5ef;
+  --ze-paper: #f5f8fc;
+  --ze-card: #ffffff;
+  color: var(--ze-ink);
+  background: var(--ze-paper);
+  font-size: 16px;
+  line-height: 1.6;
 }
-
-/* Hero used on the landing page. */
-.ze-hero {
-  padding: 2.5rem 0 1.5rem;
-  text-align: center;
+[data-md-color-scheme="slate"] .ze-home {
+  --ze-ink: #e8f1fc;
+  --ze-muted: #b2c5da;
+  --ze-line: #2a4059;
+  --ze-paper: #0d1e31;
+  --ze-card: #13283f;
 }
-.ze-hero h1 {
-  font-size: 2.4rem;
-  font-weight: 800;
-  margin: 0 0 0.4rem;
-  letter-spacing: -0.5px;
+.ze-home *, .ze-home *::before, .ze-home *::after { box-sizing: border-box; }
+.ze-home .ze-inner { width: min(1280px, calc(100% - 64px)); margin-inline: auto; }
+.ze-home p, .ze-home h1, .ze-home h2, .ze-home h3 { margin: 0; }
+.ze-home a { text-decoration: none; }
+.ze-hero { position: relative; isolation: isolate; overflow: hidden; background: #07182a; color: #fff; }
+.md-typeset .ze-hero-image { position: absolute; z-index: -2; inset: 0; width: 100%; max-width: none; height: 100%; object-fit: cover; object-position: center; }
+.ze-hero::before { content: ""; position: absolute; z-index: -1; inset: 0; background: linear-gradient(90deg, rgba(3,16,31,.87), rgba(3,16,31,.67) 38%, rgba(3,16,31,.08) 76%); }
+.ze-hero .ze-inner { min-height: 440px; padding-block: 52px 28px; display: flex; flex-direction: column; justify-content: space-between; gap: 32px; }
+.ze-hero-copy { max-width: 670px; }
+.md-typeset .ze-overline { font-size: 11px; font-weight: 750; letter-spacing: .15em; text-transform: uppercase; }
+.ze-hero .ze-overline { color: #b4d8fa; margin-bottom: 13px; }
+.md-typeset .ze-hero h1 { color: #fff; font-size: clamp(32px, 3.4vw, 49px); line-height: 1.13; letter-spacing: -.045em; margin: 0 0 17px; }
+.ze-hero h1 span { color: #82cbff; }
+.md-typeset .ze-hero-lead { max-width: 570px; color: #e3edf9; font-size: 16px; line-height: 1.65; margin-bottom: 23px; }
+.ze-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.md-typeset .ze-button { min-height: 44px; padding: 10px 19px; border: 1px solid #7fc3f6; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; gap: 24px; color: #fff; font-size: 13px; font-weight: 700; background: rgba(4,22,42,.66); }
+.md-typeset .ze-button-primary { background: #1376d8; border-color: #438fe0; }
+.md-typeset .ze-button:hover { background: #20568a; color: #fff; }
+.md-typeset .ze-button-primary:hover { background: #1967b4; }
+.ze-hero-facts { display: flex; flex-wrap: wrap; gap: 14px 26px; }
+.ze-hero-facts > div { border-left: 1px solid #6e8fa9; padding-left: 13px; }
+.ze-hero-facts strong { display: block; font-size: 15px; color: #fff; }
+.ze-hero-facts span { display: block; font-size: 11px; color: #c6d8eb; }
+.ze-section { padding-block: 30px; }
+.ze-section-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 20px; }
+.md-typeset .ze-section-heading h2 { font-size: 25px; letter-spacing: -.035em; line-height: 1.25; color: var(--ze-ink); }
+.md-typeset .ze-section-heading p { font-size: 14px; color: var(--ze-muted); margin-top: 5px; }
+.ze-section-heading > a { flex-shrink: 0; font-size: 13px; font-weight: 700; }
+.ze-paths { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.md-typeset .ze-path { min-width: 0; padding: 21px 20px 17px; display: flex; flex-direction: column; border: 1px solid var(--ze-line); border-radius: 5px; background: var(--ze-card); color: var(--ze-ink); transition: border-color .18s, box-shadow .18s; }
+.ze-path:hover { border-color: #82afe0; box-shadow: 0 6px 20px rgba(11,48,85,.08); }
+.ze-path-icon { color: #327bc3; margin-bottom: 18px; width: 26px; height: 26px; }
+.ze-path-icon svg { width: 100%; height: 100%; fill: currentColor; }
+.md-typeset .ze-path h3 { color: var(--ze-ink); font-size: 19px; line-height: 1.2; margin-bottom: 8px; }
+.md-typeset .ze-path p { color: var(--ze-muted); font-size: 13px; line-height: 1.55; flex: 1; }
+.ze-path-end { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: var(--md-typeset-a-color); font-size: 12px; font-weight: 700; margin-top: 19px; }
+.ze-path-end span { flex-shrink: 0; font-size: 17px; line-height: 1; }
+.ze-foundation { border-top: 1px solid var(--ze-line); }
+.ze-foundation-grid { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 35px; }
+.md-typeset .ze-foundation h2 { font-size: 24px; line-height: 1.3; color: var(--ze-ink); margin-bottom: 9px; }
+.md-typeset .ze-foundation h3 { font-size: 15px; color: var(--ze-ink); margin-bottom: 7px; }
+.md-typeset .ze-foundation p { font-size: 13px; color: var(--ze-muted); }
+.ze-api { background: #081b31; color: #f2f7fd; padding-block: 25px; }
+.ze-api .ze-inner { display: flex; justify-content: space-between; align-items: center; gap: 30px; }
+.md-typeset .ze-api h2 { color: #fff; font-size: 21px; margin-bottom: 5px; }
+.md-typeset .ze-api p { color: #bcd1e8; font-size: 13px; }
+.ze-api .ze-button { flex-shrink: 0; }
+.ze-module-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; }
+.md-typeset .ze-module-links a { color: #a5d6ff; font-family: ui-monospace, monospace; font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+@media (max-width: 1000px) {
+  .ze-paths { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ze-hero::before { background: linear-gradient(90deg, rgba(3,16,31,.9), rgba(3,16,31,.65) 57%, rgba(3,16,31,.2)); }
+  .ze-foundation-grid { gap: 22px; }
 }
-.ze-hero p {
-  font-size: 1.05rem;
-  color: var(--md-default-fg-color--light);
-  max-width: 46rem;
-  margin: 0 auto 1.4rem;
+@media (max-width: 640px) {
+  .ze-home .ze-inner { width: calc(100% - 36px); }
+  .ze-hero .ze-inner { min-height: 490px; padding-block: 35px 26px; gap: 30px; }
+  .md-typeset .ze-hero-image { object-position: 60% center; }
+  .ze-hero::before { background: rgba(3,16,31,.72); }
+  .md-typeset .ze-hero h1 { font-size: clamp(31px, 8vw, 40px); }
+  .md-typeset .ze-hero-lead { font-size: 14px; }
+  .ze-actions { gap: 9px; }
+  .md-typeset .ze-button { font-size: 12px; padding-inline: 14px; gap: 14px; }
+  .ze-hero-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; align-items: start; }
+  .ze-hero-facts > div { padding-left: 9px; }
+  .ze-hero-facts strong { font-size: 12px; }
+  .ze-hero-facts span { font-size: 10px; }
+  .ze-section { padding-block: 25px; }
+  .ze-section-heading { align-items: start; flex-direction: column; gap: 9px; }
+  .ze-paths { gap: 10px; }
+  .md-typeset .ze-path { padding: 17px 14px 15px; }
+  .md-typeset .ze-path h3 { font-size: 17px; }
+  .md-typeset .ze-path p { font-size: 12px; }
+  .ze-path-icon { margin-bottom: 13px; }
+  .ze-foundation-grid { grid-template-columns: 1fr; gap: 23px; }
+  .ze-api .ze-inner { align-items: start; flex-direction: column; gap: 20px; }
 }
-.ze-hero .md-button {
-  margin: 0.25rem;
-}
-
-/* Slightly denser feature cards. */
-.md-typeset .grid.cards > ul > li {
-  border-radius: 0.6rem;
-}
-
-/* Monospace for inline identifiers in tables reads better a touch smaller. */
-.md-typeset table code {
-  font-size: 0.85em;
-}
+@media (max-width: 359px) { .ze-paths { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .ze-path { transition: none; } }

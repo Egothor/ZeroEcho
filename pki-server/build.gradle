@@ -90,9 +90,9 @@ jar {
 
 javadoc {
     dependsOn ':lib:javadoc', ':pki:javadoc'
-    options.linksOffline("https://www.egothor.org/javadoc/zeroecho/lib/",
+    options.linksOffline("../lib/",
             project(':lib').layout.buildDirectory.dir('docs/javadoc').get().asFile.absolutePath)
-    options.linksOffline("https://www.egothor.org/javadoc/zeroecho/pki/",
+    options.linksOffline("../pki/",
             project(':pki').layout.buildDirectory.dir('docs/javadoc').get().asFile.absolutePath)
 }
 

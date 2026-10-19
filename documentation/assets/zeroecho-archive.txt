@@ -1,0 +1,15 @@
+ZeroEcho homepage hero — zeroecho-archive.webp
+Created 2026-10-19 with the built-in image_gen image-generation tool.
+An original generated illustration with a photographic appearance, not a
+photograph of a real intelligence organization or its premises.
+
+Prompt:
+A cinematic editorial photograph inspired by the discreet atmosphere of
+fictional secret organizations. A secluded brutalist intelligence archive and
+communications room at night, a dark walnut desk with closed unmarked dossiers
+and a vintage cipher instrument, rain-streaked glass and blue-lit archive
+corridors. Panoramic composition with quiet dark space on the left for the
+heading. Restrained navy and steel blue, a small warm desk-lamp glow. No people,
+lettering, logos, real organizational insignia, watermarks, weapons or UI.
+
+The generated PNG was encoded as WebP for the documentation website.

@@ -31,27 +31,31 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 site_name: ZeroEcho
+site_url: https://www.egothor.org/ZeroEcho/
+repo_url: https://github.com/Egothor/ZeroEcho
+repo_name: Egothor/ZeroEcho
 site_description: >-
   ZeroEcho — a cryptography platform: a general-purpose classic and
   post-quantum cryptography library, and a certificate authority built on it.
   Deployment, administration, user, and developer documentation.
 docs_dir: documentation
 site_dir: site
-copyright: Copyright © ZeroEcho
+exclude_docs: |
+  /overrides/
+  /assets/vendor/**/README.md
+copyright: Copyright © ZeroEcho · Egothor project
 
 theme:
   name: material
+  custom_dir: documentation/overrides
   language: en
   icon:
     logo: material/shield-lock-outline
     repo: material/source-branch
   favicon: assets/favicon.svg
-  font:
-    text: Inter
-    code: Roboto Mono
+  font: false
   features:
-    - navigation.instant
-    - navigation.instant.progress
+    - navigation.tabs
     - navigation.tracking
     - navigation.sections
     - navigation.top
@@ -66,21 +70,27 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
 
 extra:
   generator: false
+  polyfills:
+    - assets/vendor/iframe-worker/shim.js
+
+plugins:
+  - search
+  - offline
 
 validation:
   omitted_files: warn
@@ -174,6 +184,7 @@ nav:
               - user/command-line.md
           - Command-line application: developer/application.md
   - Reference:
+      - Java API documentation: developer/javadoc.md
       - reference/admin-api.md
       - reference/cli-reference.md
       - reference/configuration-reference.md

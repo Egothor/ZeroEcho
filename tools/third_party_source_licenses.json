@@ -6,5 +6,15 @@
   "gradlew.bat": {
     "origin": "Gradle wrapper generated launcher (Apache-2.0), retained upstream notice",
     "header_sha256": "0cebc95d2c2c4e5e6a5ae130439cce7d84ef2f4037b780619df61bc0e4c478fd"
+  },
+  "documentation/assets/vendor/mermaid/mermaid.min.js": {
+    "origin": "Mermaid 11.17.2 standalone UMD distribution, MIT; upstream notices retained in bundle and adjacent LICENSE; exact source and SHA-256 in README.md",
+    "header_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "source_sha256": "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8"
+  },
+  "documentation/assets/vendor/iframe-worker/shim.js": {
+    "origin": "iframe-worker 1.0.4 official standalone shim, MIT; adjacent LICENSE and README.md retain notice/provenance",
+    "header_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "source_sha256": "e8e412dbcfea9b7e31b5ffa288d7b6035915e714c542f4176a0cdbe262fc9609"
   }
 }
