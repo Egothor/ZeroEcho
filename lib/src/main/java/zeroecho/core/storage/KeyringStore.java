@@ -643,10 +643,13 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     private void removeExhaustedPrivate(String alias) throws IOException, GeneralSecurityException {
-        String removed = SecuritySupport.withPrivateSuffix(alias);
+        removeEntries(Set.of(SecuritySupport.withPrivateSuffix(alias)));
+    }
+
+    private void removeEntries(Set<String> removed) throws IOException, GeneralSecurityException {
         Map<String, EncryptedEntry> candidate = new LinkedHashMap<>();
         for (EncryptedEntry entry : entries.values()) {
-            if (entry.alias.equals(removed)) {
+            if (removed.contains(entry.alias)) {
                 continue;
             }
             int position = candidate.size();
@@ -753,6 +756,168 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         KeyringImportRegistry.HmacVariant hmacVariant = KeyringImportRegistry.HmacVariant.forStoredKey(algorithmId,
                 key);
         put(alias, algorithmId, Kind.SECRET_KEY, Encoding.RAW, key, hmacVariant);
+    }
+
+    /**
+     * Inserts both canonical key encodings in one durable encrypted snapshot.
+     * Both keys and the registered algorithm are validated before reserving any
+     * nonce. Validation checks canonical representation, not mathematical pairing.
+     * Existing single-component put methods retain their replacement semantics.
+     *
+     * <p>Only nonblank unsuffixed logical aliases are accepted. Any existing
+     * entry in the alias's suffix namespace (including incomplete pairs and legacy
+     * mixed suffix chains) makes it occupied. No existing entry is replaced.
+     * Mutations and close are serialized; readers cannot observe a partial pair.
+     * A failed prepublication write leaves no component visible; after uncertain
+     * publication this instance refuses further use until reopened. Reopening
+     * exposes either the entire pair or neither component.</p>
+     *
+     * @param alias unused logical alias, without .pub or .priv suffix
+     * @param algorithmId canonical registered asymmetric algorithm identifier
+     * @param pair pair with non-null, exportable public and private keys
+     * @throws IllegalArgumentException if the alias is null, blank, suffixed or occupied
+     * @throws NullPointerException if the pair or either component is null
+     * @throws IOException if alias or metadata UTF-8 limits are exceeded
+     *         (KEYRING_LIMIT_EXCEEDED), validation, nonce reservation or persistence fails;
+     *         KEYRING_CLOSED after close, KEYRING_DURABILITY_UNCONFIRMED on an
+     *         uncertain publication (the caller must close and reopen)
+     * @throws GeneralSecurityException if canonical validation or encryption fails
+     */
+    public void putKeyPairIfAbsent(String alias, String algorithmId, KeyPair pair)
+            throws IOException, GeneralSecurityException {
+        lifecycleLock.writeLock().lock();
+        byte[] publicBytes = null;
+        byte[] privateBytes = null;
+        try {
+            ensureOpen();
+            validateLogicalAlias(alias);
+            SecuritySupport.validateString(alias + SUFFIX_PRIVATE, MAX_ALIAS_BYTES);
+            Objects.requireNonNull(pair, "pair must not be null");
+            SecuritySupport.validateString(algorithmId, MAX_METADATA_BYTES);
+            Encoding publicEncoding = KeyringImportRegistry.encodingFor(algorithmId, Kind.PUBLIC_KEY);
+            Encoding privateEncoding = KeyringImportRegistry.encodingFor(algorithmId, Kind.PRIVATE_KEY);
+            publicBytes = validatePairComponent(algorithmId, Kind.PUBLIC_KEY, publicEncoding, pair.getPublic());
+            privateBytes = validatePairComponent(algorithmId, Kind.PRIVATE_KEY, privateEncoding, pair.getPrivate());
+            if (!logicalEntries(alias).isEmpty()) {
+                throw new IllegalArgumentException("Logical alias is occupied");
+            }
+            if (entries.size() > MAX_ENTRY_COUNT - 2) {
+                throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
+            }
+            Map<String, EncryptedEntry> candidate = new LinkedHashMap<>(entries);
+            encryptInto(candidate, alias + SUFFIX_PUBLIC, algorithmId, Kind.PUBLIC_KEY, publicEncoding,
+                    KeyringImportRegistry.HmacVariant.NONE, publicBytes, candidate.size());
+            encryptInto(candidate, alias + SUFFIX_PRIVATE, algorithmId, Kind.PRIVATE_KEY, privateEncoding,
+                    KeyringImportRegistry.HmacVariant.NONE, privateBytes, candidate.size());
+            persistence.persistSnapshot(candidate);
+            entries = candidate;
+        } finally {
+            wipe(publicBytes);
+            wipe(privateBytes);
+            lifecycleLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Removes one logical secret alias or all existing components of its pair
+     * in one durable snapshot, preserving all other entries and their order.
+     * This is logical deletion; old storage blocks and backups are not erased.
+     *
+     * <p>Accepts only nonblank aliases without .pub or .priv suffixes. Legacy
+     * suffix chains or conflicting secret/pair entries make the namespace
+     * ambiguous and are rejected without mutation. Stateful signing algorithms,
+     * including exhausted public-only entries, require a separate authority
+     * contract and cannot be removed here. Mutations and close are serialized.
+     * On uncertain I/O the instance refuses further use until reopened; reopening
+     * exposes either the original alias or its complete removal.</p>
+     *
+     * @param alias unsuffixed logical alias
+     * @return true if an alias was durably removed; false if absent, with no write
+     * @throws IllegalArgumentException if the alias is null, blank, suffixed or its namespace is ambiguous
+     * @throws IOException if the alias UTF-8 limit is exceeded
+     *         (KEYRING_LIMIT_EXCEEDED), persistence fails, the store is closed
+     *         (KEYRING_CLOSED), or stateful authority is required
+     *         (KEYRING_STATEFUL_RECOVERY_REQUIRED); uncertain publication reports
+     *         KEYRING_DURABILITY_UNCONFIRMED and requires close and reopen
+     * @throws GeneralSecurityException if reindexing encryption fails
+     */
+    public boolean removeAlias(String alias) throws IOException, GeneralSecurityException {
+        lifecycleLock.writeLock().lock();
+        try {
+            ensureOpen();
+            validateLogicalAlias(alias);
+            Set<String> selected = logicalEntries(alias);
+            if (selected.isEmpty()) {
+                return false;
+            }
+            for (String name : selected) {
+                EncryptedEntry entry = entries.get(name);
+                if (CryptoAlgorithms.require(entry.algorithm).requiresStatefulSigning()) {
+                    throw LocalStatefulSigningAuthority.recovery();
+                }
+                boolean valid = name.equals(alias) && entry.kind == Kind.SECRET_KEY
+                        || name.equals(alias + SUFFIX_PUBLIC) && entry.kind == Kind.PUBLIC_KEY
+                        || name.equals(alias + SUFFIX_PRIVATE) && entry.kind == Kind.PRIVATE_KEY;
+                if (!valid || selected.contains(alias) && selected.size() != 1) {
+                    throw new IllegalArgumentException("Ambiguous logical alias namespace");
+                }
+            }
+            removeEntries(selected);
+            return true;
+        } finally {
+            lifecycleLock.writeLock().unlock();
+        }
+    }
+
+    private static void validateLogicalAlias(String alias) throws KeyringException {
+        SecuritySupport.requireAlias(alias);
+        SecuritySupport.validateString(alias, MAX_ALIAS_BYTES);
+        if (!alias.equals(SecuritySupport.stripKnownSuffix(alias))) {
+            throw new IllegalArgumentException("Logical alias must be unsuffixed");
+        }
+    }
+
+    private Set<String> logicalEntries(String alias) {
+        Set<String> selected = new HashSet<>();
+        for (String name : entries.keySet()) {
+            String logical = name;
+            while (!logical.equals(SecuritySupport.stripKnownSuffix(logical))) {
+                logical = SecuritySupport.stripKnownSuffix(logical);
+            }
+            if (logical.equals(alias)) {
+                selected.add(name);
+            }
+        }
+        return selected;
+    }
+
+    // Provider-controlled unchecked failures must not expose key material in diagnostics.
+    @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException" })
+    private static byte[] validatePairComponent(String algorithmId, Kind kind, Encoding encoding, Key key)
+            throws IOException, GeneralSecurityException {
+        Objects.requireNonNull(key, "key must not be null");
+        KeyringImportRegistry.validateMapping(algorithmId, kind, encoding, KeyringImportRegistry.HmacVariant.NONE);
+        byte[] encoded = null;
+        boolean validated = false;
+        try {
+            if (!SecuritySupport.matchesFormat(key.getFormat(), encoding)) {
+                throw new KeyringException(Code.KEYRING_IMPORT_MAPPING_INVALID);
+            }
+            encoded = key.getEncoded();
+            if (encoded == null) {
+                throw new KeyringException(Code.KEYRING_NON_EXPORTABLE_KEY);
+            }
+            KeyringImportRegistry.validateCanonical(algorithmId, kind, encoding,
+                    KeyringImportRegistry.HmacVariant.NONE, key, encoded);
+            validated = true;
+            return encoded;
+        } catch (RuntimeException exception) {
+            throw new KeyringException(Code.KEYRING_KEY_NOT_CANONICALIZABLE);
+        } finally {
+            if (!validated) {
+                wipe(encoded);
+            }
+        }
     }
 
     /**
@@ -1014,36 +1179,42 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 }
                 Map<String, EncryptedEntry> candidate = new LinkedHashMap<>(entries);
                 int position = SecuritySupport.positionFor(candidate, alias);
-                byte[] entryId = new byte[UUID_BYTES];
-                random.nextBytes(entryId);
-                byte[] nonce = nextNonce();
-                byte[] plaintext = null;
-                byte[] aad = null;
-                byte[] ciphertext = null;
-                try {
-                    plaintext = Persistence.encodeEntryPlaintext(alias, algorithmId, kind, encoding, hmacVariant, encoded);
-                    aad = formatCodec.entryAad(entryId, position);
-                    ciphertext = KeyringSecuritySupport.crypt(Cipher.ENCRYPT_MODE, masterKey, nonce, aad, plaintext);
-                    if (ciphertext.length > MAX_ENTRY_CIPHERTEXT_BYTES) {
-                        throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
-                    }
-                    EncryptedEntry entry = new EncryptedEntry(entryId, position, alias, algorithmId, kind, encoding,
-                            hmacVariant, nonce, ciphertext, KeyringSecuritySupport.digest(ciphertext));
-                    candidate.put(alias, entry);
-                    persistence.persistSnapshot(candidate);
-                    entries = candidate;
-                } finally {
-                    wipe(entryId);
-                    wipe(nonce);
-                    wipe(plaintext);
-                    wipe(aad);
-                    wipe(ciphertext);
-                }
+                encryptInto(candidate, alias, algorithmId, kind, encoding, hmacVariant, encoded, position);
+                persistence.persistSnapshot(candidate);
+                entries = candidate;
             } finally {
                 lifecycleLock.writeLock().unlock();
             }
         } finally {
             wipe(encoded);
+        }
+    }
+
+    private void encryptInto(Map<String, EncryptedEntry> candidate, String alias, String algorithmId,
+            Kind kind, Encoding encoding, KeyringImportRegistry.HmacVariant hmacVariant,
+            byte[] encoded, int position) throws IOException, GeneralSecurityException {
+        byte[] entryId = new byte[UUID_BYTES];
+        random.nextBytes(entryId);
+        byte[] nonce = nextNonce();
+        byte[] plaintext = null;
+        byte[] aad = null;
+        byte[] ciphertext = null;
+        try {
+            plaintext = Persistence.encodeEntryPlaintext(alias, algorithmId, kind, encoding, hmacVariant, encoded);
+            aad = formatCodec.entryAad(entryId, position);
+            ciphertext = KeyringSecuritySupport.crypt(Cipher.ENCRYPT_MODE, masterKey, nonce, aad, plaintext);
+            if (ciphertext.length > MAX_ENTRY_CIPHERTEXT_BYTES) {
+                throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
+            }
+            EncryptedEntry entry = new EncryptedEntry(entryId, position, alias, algorithmId, kind, encoding,
+                    hmacVariant, nonce, ciphertext, KeyringSecuritySupport.digest(ciphertext));
+            candidate.put(alias, entry);
+        } finally {
+            wipe(entryId);
+            wipe(nonce);
+            wipe(plaintext);
+            wipe(aad);
+            wipe(ciphertext);
         }
     }
 
@@ -1196,9 +1367,10 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 KeyringSecuritySupport.validateExistingFile(destination, ownership.owner());
                 fileOperations.forceDirectory(target, parent);
             } catch (UnsupportedOperationException exception) {
-                primary = persistenceFailure(moved);
+                primary = persistenceFailure(replacementUncertain(moved, temporary));
             } catch (IOException exception) {
-                primary = moved ? persistenceFailure(true) : sanitizePersistenceFailure(exception);
+                primary = replacementUncertain(moved, temporary)
+                        ? persistenceFailure(true) : sanitizePersistenceFailure(exception);
             }
             if (!moved && temporary != null) {
                 try {
@@ -1210,6 +1382,11 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             if (primary != null) {
                 throw primary;
             }
+        }
+
+        private boolean replacementUncertain(boolean moved, Path temporary) {
+            // A consumed or inaccessible temporary cannot prove replacement failed.
+            return moved || temporary != null && !Files.exists(temporary, LinkOption.NOFOLLOW_LINKS);
         }
 
         private IOException persistenceFailure(boolean moved) {
