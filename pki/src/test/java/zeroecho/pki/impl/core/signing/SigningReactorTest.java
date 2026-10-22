@@ -611,8 +611,10 @@ final class SigningReactorTest {
                     topology(1, Duration.ofMillis(40L), List.of(),
                             new SigningLanePool(1, 1)), ignored -> { });
             reactor.start();
+            boolean shutdownRequested = false;
             try {
                 await(provider.entered);
+                shutdownRequested = true;
                 SigningExecutionException failure = assertThrows(
                         SigningExecutionException.class, reactor::close);
                 assertEquals(SigningExecutionException.Classification.SHUTDOWN_TIMEOUT,
@@ -620,10 +622,29 @@ final class SigningReactorTest {
                 assertEquals(SignWorkflowStore.State.DISPATCHED,
                         store.getSignWorkflow(blocked.command().operationId())
                                 .orElseThrow().state());
+                provider.release.countDown();
+                await(provider.returnEntered);
+                assertTrue(provider.active.get());
+                SigningExecutionException stillReturning = assertThrows(
+                        SigningExecutionException.class, reactor::close);
+                assertEquals(SigningExecutionException.Classification.SHUTDOWN_TIMEOUT,
+                        stillReturning.classification());
             } finally {
                 provider.release.countDown();
-                reactor.close();
+                provider.allowReturn.countDown();
+                try {
+                    if (!shutdownRequested) {
+                        reactor.close();
+                    }
+                } finally {
+                    // Releasing the provider is not a lane-termination barrier.
+                    for (Thread thread : reactor.ownedThreads()) {
+                        thread.join(TimeUnit.SECONDS.toMillis(5L));
+                    }
+                }
             }
+            assertTrue(reactor.ownedThreads().stream().noneMatch(Thread::isAlive));
+            reactor.close();
             assertFalse(provider.active.get());
         }
     }
@@ -1450,6 +1471,8 @@ final class SigningReactorTest {
     private static final class BlockingProvider extends RecordingProvider {
         final CountDownLatch entered = new CountDownLatch(1);
         final CountDownLatch release = new CountDownLatch(1);
+        final CountDownLatch returnEntered = new CountDownLatch(1);
+        final CountDownLatch allowReturn = new CountDownLatch(1);
         final AtomicBoolean active = new AtomicBoolean();
 
         BlockingProvider(FilesystemPkiStore store) {
@@ -1460,6 +1483,8 @@ final class SigningReactorTest {
             active.set(true);
             entered.countDown();
             awaitIgnoringInterrupt(release);
+            returnEntered.countDown();
+            awaitIgnoringInterrupt(allowReturn);
             active.set(false);
         }
     }
