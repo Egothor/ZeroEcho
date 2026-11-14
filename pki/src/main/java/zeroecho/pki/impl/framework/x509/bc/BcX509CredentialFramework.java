@@ -176,6 +176,74 @@ public final class BcX509CredentialFramework implements CredentialFramework {
         return FORMAT_ID;
     }
 
+    @Override
+    public String displayName() { return "X.509"; }
+
+    @Override
+    public SubjectInput subjectInput() {
+        return new SubjectInput("Subject — X.509 distinguished name",
+                "Use attribute=value syntax, for example CN=Example Root CA. Full profile rules are checked by the server.",
+                "CN=Example Root CA", java.util.Optional.of(
+                        "^\\s*(?:[A-Za-z][A-Za-z0-9-]*|(?:[Oo][Ii][Dd]\\.)?[0-9]+(?:\\.[0-9]+)+)\\s*=.*$"));
+    }
+
+    @Override
+    public java.util.List<CredentialRepresentation> credentialRepresentations(zeroecho.pki.api.Encoding storedEncoding) {
+        if (storedEncoding != zeroecho.pki.api.Encoding.DER) throw new IllegalArgumentException("X.509 stored credential must be DER");
+        return java.util.List.of(new CredentialRepresentation("original", "DER", "application/pkix-cert", "der", storedEncoding),
+                new CredentialRepresentation("pem", "PEM", "application/x-pem-file", "pem", zeroecho.pki.api.Encoding.PEM));
+    }
+
+    @Override
+    public zeroecho.pki.api.EncodedObject exportCredential(zeroecho.pki.api.EncodedObject stored, String representation,
+            zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
+        java.util.Objects.requireNonNull(stored, "stored");
+        java.util.Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        if (stored.encoding() != zeroecho.pki.api.Encoding.DER || stored.byteLength() > 1024 * 1024) {
+            throw new IllegalArgumentException("X.509 stored credential encoding or length is invalid");
+        }
+        if (!"original".equals(representation) && !"pem".equals(representation)) {
+            throw new UnsupportedOperationException("Unsupported X.509 credential representation");
+        }
+        byte[] der = stored.bytes();
+        try {
+            if (!java.util.Arrays.equals(der, zeroecho.pkix.Pkix.parseCertificate(der).getEncoded())) {
+                throw new java.io.IOException("X.509 credential is not canonical DER");
+            }
+        } catch (IllegalArgumentException | java.security.cert.CertificateEncodingException failure) {
+            throw new java.io.IOException("X.509 credential is not canonical DER", failure);
+        }
+        cancellation.throwIfCancelled();
+        if ("original".equals(representation)) return stored;
+        var output = new java.io.ByteArrayOutputStream();
+        output.write("-----BEGIN CERTIFICATE-----\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        output.write(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'}).encode(der));
+        output.write("\n-----END CERTIFICATE-----\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        cancellation.throwIfCancelled();
+        return new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.PEM, output.toByteArray());
+    }
+
+    @Override
+    public java.util.List<CredentialRepresentation> statusRepresentations(zeroecho.pki.api.status.StatusObjectType type,zeroecho.pki.api.Encoding encoding) {
+        if((type==zeroecho.pki.api.status.StatusObjectType.CRL||type==zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)&&encoding==zeroecho.pki.api.Encoding.DER) {
+            return java.util.List.of(new CredentialRepresentation("original","DER","application/pkix-crl","crl",encoding),
+                    new CredentialRepresentation("pem","PEM","application/x-pem-file","pem",zeroecho.pki.api.Encoding.PEM));
+        }
+        return CredentialFramework.super.statusRepresentations(type,encoding);
+    }
+
+    @Override
+    public zeroecho.core.io.RepeatableContent exportStatusContent(zeroecho.pki.api.status.StatusObjectType type,zeroecho.pki.api.Encoding encoding,
+            zeroecho.core.io.RepeatableContent content,String representation,zeroecho.core.io.CancellationSignal cancellation)throws java.io.IOException {
+        if((type==zeroecho.pki.api.status.StatusObjectType.CRL||type==zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)&&encoding==zeroecho.pki.api.Encoding.DER) {
+            new zeroecho.pki.impl.framework.x509.StreamingDerReader().inspectSignedObject(content,
+                    zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectKind.CRL,cancellation);
+            if("original".equals(representation))return content;
+            if("pem".equals(representation))return new zeroecho.pki.impl.framework.x509.StreamingPemContent(content,"X509 CRL",cancellation);
+        }
+        return CredentialFramework.super.exportStatusContent(type,encoding,content,representation,cancellation);
+    }
+
     /**
      * Returns the certification request parser used by this framework instance.
      *

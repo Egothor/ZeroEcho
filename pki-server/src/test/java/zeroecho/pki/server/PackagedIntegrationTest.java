@@ -134,11 +134,16 @@ class PackagedIntegrationTest {
             browser(identities.edgeSpkiPin());
             backupTransferThroughNginx();
             String access = checked("nginx-access", List.of("podman", "logs", nginx)).output();
-            long acceptedPosts = access.lines().filter(line -> line.contains("POST /admin/v1/operations/ca.create ")
-                    && line.contains(" 202 ")).count();
-            assertEquals(2, acceptedPosts, "Exactly one accepted root submission per CLI/browser scenario");
-            assertEquals(3, access.lines().filter(line -> line.contains("POST /admin/v1/operations/ca.create ")).count(),
-                    "Only CLI acceptance, browser approval probe, and browser acceptance may submit");
+            assertEquals(1, access.lines().filter(line -> line.contains("POST /admin/v1/operations/ca.create ")
+                    && line.contains(" 202 ")).count(), "CLI root submission remains accepted exactly once");
+            assertEquals(1, access.lines().filter(line -> line.contains("POST /admin/v1/operations/ca.create ")).count(),
+                    "Browser must not probe or repeat the legacy CA mutation");
+            assertEquals(1, access.lines().filter(line -> line.contains("POST /admin/v1/requests ")
+                    && line.contains(" 202 ")).count(), "Browser submits one durable administrative request");
+            assertEquals(1, access.lines().filter(line -> line.contains("POST /admin/v1/requests ")).count(),
+                    "Browser observes the retained request through GET only");
+            assertTrue(access.lines().anyMatch(line -> line.contains("GET /admin/v1/requests/")),
+                    "Browser polls the durable administrative request");
         } finally {
             try {
                 try { captureLogs(server); } finally { captureLogs(nginx); }
@@ -161,7 +166,7 @@ class PackagedIntegrationTest {
 
     private ObjectValue configuration(PackagedIntegrationTls identities) throws Exception {
         ObjectValue document = object(StrictJson.parse(Files.readAllBytes(
-                root.resolve("docs/pki-server-trusted-proxy-rfc9440-example.json")), 1_048_576));
+                root.resolve("documentation/examples/configuration/pki-server-trusted-proxy-rfc9440-example.json")), 1_048_576));
         ObjectValue realm = object(document.fields().get("realm"));
         ObjectValue session = object(realm.fields().get("pkiSession"));
         ObjectValue signing = json("""
@@ -228,6 +233,12 @@ class PackagedIntegrationTest {
                     realm, Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
             for (String principal : List.of("bootstrap-admin", "bootstrap-approver")) {
                 context.createPrincipal(ServerTestSupport.principal(principal), "system");
+                context.grant(ServerTestSupport.grant(principal+".status-content",principal,Permission.Effect.ALLOW,
+                        Permission.Action.CRL_DOWNLOAD,Permission.ResourceType.STATUS_OBJECT,realm,Permission.Relationship.ANY,Permission.DataView.CONTENT_FULL),"system");
+                for(Permission.Action action:List.of(Permission.Action.CERTIFICATE_READ_CONTENT,Permission.Action.CERTIFICATE_DOWNLOAD)) {
+                    context.grant(ServerTestSupport.grant(principal+".content."+action.name(),principal,Permission.Effect.ALLOW,
+                            action,Permission.ResourceType.CERTIFICATE,realm,Permission.Relationship.ANY,Permission.DataView.CONTENT_FULL),"system");
+                }
                 for (OperationSecurityDescriptors.Descriptor descriptor : new OperationSecurityDescriptors().descriptors().values()) {
                     context.grant(ServerTestSupport.grant(principal + "." + descriptor.operationId(), principal,
                             Permission.Effect.ALLOW, descriptor.action(), descriptor.resourceType(), realm,

@@ -111,6 +111,13 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
     }
 
     /**
+     * Checks endpoint policy and runtime bindings without registering it.
+     * @param endpoint exact proposed endpoint
+     * @throws IllegalStateException if policy or runtime credential bindings are unavailable
+     */
+    public void validateRegistration(CmpEndpoint endpoint) { endpoints.validateRegistration(endpoint); }
+
+    /**
      * Registers a fully bound endpoint.
      * @param endpoint mandatory policy and authority binding
      */

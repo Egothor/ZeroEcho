@@ -90,6 +90,59 @@ class ServerOperationGatewayTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void persistedControlCoordinatesBindBeforeAuthorizationAndRejectExplicitForeignScope() throws Exception {
+        try(var opened=ServerTestSupport.open(temporaryDirectory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("reader"));opened.store().createPrincipal(ServerTestSupport.principal("target"));
+            var scoped=new Permission.Scope(ServerTestSupport.REALM,Optional.of(ServerTestSupport.AUTHORITY),Optional.of(new PkiId("issuer-scoped")),Optional.of("profile-scoped"),Optional.of("responder-scoped"));
+            var acmeScope=new Permission.Scope(ServerTestSupport.REALM,Optional.of(ServerTestSupport.AUTHORITY),Optional.empty(),Optional.of("profile-scoped"));
+            var ocspScope=new Permission.Scope(ServerTestSupport.REALM,Optional.of(ServerTestSupport.AUTHORITY),Optional.of(new PkiId("issuer-scoped")),Optional.empty());
+            var retainedGrant=ServerTestSupport.grant("retained-grant","target",Permission.Effect.ALLOW,Permission.Action.CERTIFICATE_READ_METADATA,Permission.ResourceType.CERTIFICATE,scoped,Permission.Relationship.ANY,Permission.DataView.METADATA_REDACTED);
+            opened.store().createGrant(retainedGrant);
+            opened.store().createAssignment(new RoleTemplateCatalog.Assignment("retained-role","target","auditor",1,scoped,Optional.empty(),true));
+            opened.store().createBreakGlass(new BreakGlassService.Record("retained-break","target",retainedGrant,"fixture","reader",Optional.empty(),ServerTestSupport.CLOCK.instant(),Optional.empty(),ServerTestSupport.CLOCK.instant().plusSeconds(3600),BreakGlassService.State.PENDING,"a".repeat(64)));
+            List<ServerControlOperation> operations=List.of(new ServerControlOperation.InspectAcmeDirectory("directory-one"),new ServerControlOperation.InspectAcmeAccount("account-one"),new ServerControlOperation.InspectOcspResponder("responder-one"),new ServerControlOperation.InspectGrant("retained-grant"),new ServerControlOperation.InspectRoleAssignment("retained-role"),new ServerControlOperation.InspectBreakGlass("retained-break"),new ServerControlOperation.SetAcmeDirectoryActive("directory-one",true),new ServerControlOperation.DeactivateAcmeAccount("account-one"),new ServerControlOperation.SetOcspResponderActive("responder-one",true),new ServerControlOperation.RevokeGrant("retained-grant"),new ServerControlOperation.RevokeRoleAssignment("retained-role"),new ServerControlOperation.ActivateBreakGlass("retained-break"),new ServerControlOperation.RevokeBreakGlass("retained-break"));
+            var descriptors=new OperationSecurityDescriptors();
+            for(var operation:operations) {
+                var descriptor=descriptors.require(operation.name());
+                var scope=operation.name().startsWith("acme.")?acmeScope:operation.name().startsWith("ocsp.")?ocspScope:scoped;
+                opened.store().createGrant(ServerTestSupport.grant("read-"+operation.name(),"reader",Permission.Effect.ALLOW,descriptor.action(),descriptor.resourceType(),scope,Permission.Relationship.ANY,descriptor.dataView()));
+            }
+            var responder=mock(OcspResponderService.Responder.class);when(responder.authorityId()).thenReturn(ServerTestSupport.AUTHORITY);when(responder.issuerId()).thenReturn(new PkiId("issuer-scoped"));
+            var observed=new AtomicReference<Permission.Resource>();var calls=new AtomicInteger();
+            try(var construction=org.mockito.Mockito.mockConstruction(ServerControlOperationExecutor.class,(executor,context)->{
+                when(executor.protocolAvailable(any())).thenReturn(true);when(executor.acmeScope(any())).thenReturn(acmeScope);when(executor.ocspResponder(any())).thenReturn(responder);
+                org.mockito.Mockito.doAnswer(invocation->{observed.set(invocation.getArgument(2));calls.incrementAndGet();return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Completed(new PkiOperationResult("fixture",Map.of())));}).when(executor).executeAuthorized(any(),any(AdministrativeDecisionActor.class),any(),any(),any(),any(),org.mockito.ArgumentMatchers.nullable(BackupTransferChannel.class));
+            })) {
+                var policy=new ApprovalService.Policy("scoped",1,Set.of("target"),Set.of(),true,Duration.ofHours(1),true);
+                var gateway=gateway(opened,new AtomicInteger(),Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK,policy));
+                for(var operation:operations) {
+                    var type=descriptors.require(operation.name()).resourceType();var supplied=new Permission.Resource(type,new Permission.Scope(ServerTestSupport.REALM,Optional.empty(),Optional.empty(),Optional.empty()),Optional.empty(),Optional.empty());
+                    var expected=operation.name().startsWith("acme.")?acmeScope:operation.name().startsWith("ocsp.")?ocspScope:scoped;
+                    if(descriptors.require(operation.name()).mutating()) {
+                        assertEquals(expected,gateway.assessAdministrativeRequest(controlRequest("reader",operation,supplied,Optional.empty())).request().resource().scope(),operation.name());
+                    } else {
+                        assertInstanceOf(ServerOperationGateway.Outcome.ControlExecuted.class,gateway.execute(controlRequest("reader",operation,supplied,Optional.empty()),CancellationSignal.NONE),operation.name());
+                        assertEquals(expected,observed.get().scope(),operation.name());
+                    }
+                    int before=calls.get();
+                    for(var foreign:List.of(new Permission.Scope(ServerTestSupport.REALM,Optional.of(new PkiId("foreign")),Optional.empty(),Optional.empty()),new Permission.Scope(ServerTestSupport.REALM,Optional.of(ServerTestSupport.AUTHORITY),Optional.of(new PkiId("foreign")),Optional.empty()),new Permission.Scope(ServerTestSupport.REALM,Optional.empty(),Optional.empty(),Optional.of("foreign")),new Permission.Scope(ServerTestSupport.REALM,Optional.empty(),Optional.empty(),Optional.empty(),Optional.of("foreign")))) {
+                        assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,gateway.execute(controlRequest("reader",operation,new Permission.Resource(type,foreign,Optional.empty(),Optional.empty()),Optional.empty()),CancellationSignal.NONE),operation.name());
+                    }
+                    assertEquals(before,calls.get());
+                    assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,gateway.execute(controlRequest("reader",operation,new Permission.Resource(Permission.ResourceType.REALM,supplied.scope(),Optional.empty(),Optional.empty()),Optional.empty()),CancellationSignal.NONE));
+                }
+                var submit=descriptors.require(ServerControlOperation.RequestApproval.NAME);
+                opened.store().createGrant(ServerTestSupport.grant("scoped-manual-request","reader",Permission.Effect.ALLOW,submit.action(),submit.resourceType(),scoped,Permission.Relationship.ANY,submit.dataView()));
+                var approval=new ServerControlOperation.RequestApproval("manual-scoped",new AdministrativeOperation.Control(new ServerControlOperation.RevokeGrant("retained-grant")),new Permission.Resource(Permission.ResourceType.GRANT,new Permission.Scope(ServerTestSupport.REALM,Optional.empty(),Optional.empty(),Optional.empty()),Optional.empty(),Optional.empty()));
+                var admission=gateway.assessAdministrativeRequest(controlRequest("reader",approval,new Permission.Resource(Permission.ResourceType.APPROVAL,new Permission.Scope(ServerTestSupport.REALM,Optional.empty(),Optional.empty(),Optional.empty()),Optional.empty(),Optional.empty()),Optional.empty()));
+                assertEquals(scoped,admission.request().resource().scope());
+                var bound=(ServerControlOperation.RequestApproval)((AdministrativeOperation.Control)admission.request().operation()).operation();assertEquals(scoped,bound.targetResource().scope());
+                assertFalse(construction.constructed().isEmpty());
+            }
+        }
+    }
+
+    @Test
     void authoritativeScopeResolutionPreservesCredentialEvidenceIntoTypedControlActor() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
             opened.store().createPrincipal(ServerTestSupport.principal("requester"));
@@ -982,8 +1035,11 @@ class ServerOperationGatewayTest {
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
-        assertEquals(150, descriptors.descriptors().size());
-        assertEquals(51, descriptors.descriptors().values().stream()
+        assertEquals(151, descriptors.descriptors().size());
+        assertEquals(Permission.Action.CERTIFICATE_SEARCH, descriptors.descriptors().get("credential.list").action());
+        assertEquals(Permission.ResourceType.CERTIFICATE, descriptors.descriptors().get("credential.list").resourceType());
+        assertEquals(Permission.DataView.METADATA_REDACTED, descriptors.descriptors().get("credential.list").dataView());
+        assertEquals(52, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
         assertEquals(10, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
@@ -1001,7 +1057,7 @@ class ServerOperationGatewayTest {
         assertEquals(Permission.ResourceType.REVOCATION,
                 descriptors.descriptors().get(PkiOperation.ReadRevocationHistory.NAME).resourceType());
         // Trust-affecting intermediate-CA and issuance-path operations are HIGH_RISK dual-control
-        // (owner decision 2026-09-05; see docs/admin-dual-control-operations.md).
+        // (owner decision 2026-09-05; see INBOX/pki-internal/admin-dual-control-operations.md).
         assertEquals(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK,
                 descriptors.descriptors().get(PkiSigningOperation.CreateIntermediate.NAME).approvalCategory());
         assertEquals(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK,

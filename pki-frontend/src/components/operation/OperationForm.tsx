@@ -51,15 +51,21 @@ import { buildRequest, type ExecuteExtras, type FieldValue } from '@/api/operati
 import { changeFormValue, selectionFields, selectionContextKey, hasValue } from '@/api/formSelections';
 import { displayLabel } from '@/api/labels';
 import { operationSpec } from '@/api/operationCatalog';
+import { useSubjectInput } from '@/hooks/useSubjectInput';
 import { useDerivedValues } from '@/hooks/useDerivedValues';
 import { OperationField } from '@/components/operation/OperationField';
+import { JsonView } from '@/components/operation/JsonView';
 
 interface Props {
   readonly spec: OperationSpec;
   readonly embedded?: boolean;
+  /** Durable business requests never accept a manually supplied approval ID. */
+  readonly managedRequest?: boolean;
+  readonly showApproval?: boolean;
   readonly onEdited?: () => void;
   readonly busy?: boolean;
   readonly initialApprovalId?: string;
+  readonly initialDeadline?: string;
   /** Pre-filled field values (e.g. the id of the row an action was invoked from). */
   readonly initialValues?: Partial<Record<string, FieldValue>>;
   readonly onSubmit: (values: Record<string, FieldValue>, extra: ExecuteExtras) => void;
@@ -81,15 +87,29 @@ function initialValues(spec: OperationSpec, prefill?: Partial<Record<string, Fie
   return v;
 }
 
-/** Renders a typed, validated form for one operation and submits its values. */
-export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalId, initialValues: prefill, onSubmit }: Props) {
+function decodePreparedArguments(value: FieldValue): object | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : undefined;
+  } catch { return undefined; }
+}
+
+/**
+ * Renders typed operation fields or an immutable prepared approval target.
+ * @param props Operation schema, optional prepared values and explicit submission callback.
+ * @returns Accessible operation form; prepared arguments are submitted only on operator action.
+ */
+export function OperationForm(props: Props) {
+  const { spec, embedded, managedRequest, showApproval = true, onEdited, busy, initialApprovalId, initialDeadline, initialValues: prefill, onSubmit } = props;
   const [enteredValues, setValues] = useState<Record<string, FieldValue>>(() => initialValues(spec, prefill));
   const [approvalId, setApprovalId] = useState(initialApprovalId ?? '');
-  const [deadline, setDeadline] = useState('');
+  const [deadline, setDeadline] = useState(initialDeadline ?? '');
 
   const derived = useDerivedValues(spec, enteredValues);
+  const subjectInput = useSubjectInput(spec, enteredValues);
   const values = { ...enteredValues, ...derived.values };
-  const set = (name: string, value: FieldValue) => { onEdited?.(); setValues((prev) => changeFormValue(spec, prev, name, value)); };
+  const set = (name: string, value: FieldValue) => { if (initialApprovalId) setApprovalId(''); onEdited?.(); setValues((prev) => changeFormValue(spec, prev, name, value)); };
 
   const needsAuthorityInput = spec.scope === 'authority' && !spec.authorityFrom;
 
@@ -97,17 +117,22 @@ export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalI
     const extra: ExecuteExtras = {};
     if (approvalId.trim()) (extra as { approvalId?: string }).approvalId = approvalId.trim();
     if (deadline.trim()) (extra as { deadline?: string }).deadline = deadline.trim();
+    if (!ready || subjectError || validityError || derived.loading || derived.error || subjectInput.loading || subjectInput.error || busy) return;
     onSubmit(values, extra);
   };
 
   const target = spec.id === 'security.approval.request' ? operationSpec(String(values.targetOperation ?? '')) : undefined;
+  const targetPrepared = spec.id === 'security.approval.request' && hasValue(values.targetArguments);
+  const preparedArguments = targetPrepared ? decodePreparedArguments(values.targetArguments) : undefined;
   const contextFields = selectionFields(spec, values);
+  const subjectError = subjectInput.invalid;
   const validityError = spec.id === 'acme.directory.register' && values.__validityMode === 'CUSTOM' && !derived.loading
     && (!Number.isSafeInteger(Number(values.maximumValidityMillis)) || Number(values.maximumValidityMillis) <= 0
       || Number(values.maximumValidityMillis) > Number(values.__profileMaximumValidityMillis));
   const ready = spec.fields.filter((f) => f.required && !f.hidden).every((f) => hasValue(values[f.name]))
     && contextFields.filter((f) => f.required).every((f) => hasValue(values[f.name]))
-    && (!needsAuthorityInput || hasValue(values['__authorityId']));
+    && (!needsAuthorityInput || hasValue(values['__authorityId']))
+    && (!targetPrepared || preparedArguments !== undefined) && !subjectError;
 
   const hasFields = spec.fields.length > 0 || needsAuthorityInput;
   const authorityHint = useMemo(
@@ -120,6 +145,8 @@ export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalI
       <Stack spacing={2}>
         {validityError && <Alert severity="error">Choose a positive validity no greater than {String(values.__profileMaximumValidityMillis ?? 'the profile maximum')} milliseconds.</Alert>}
         {derived.error && <Alert severity="error">{derived.error.message}</Alert>}
+        {subjectInput.error && <Alert severity="error">{subjectInput.error.message}</Alert>}
+        {subjectInput.loading && <Alert severity="info">Reading selected format input rules…</Alert>}
         {derived.loading && <Alert severity="info">Reading selected record…</Alert>}
         {needsAuthorityInput && (
           <OperationField
@@ -129,10 +156,12 @@ export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalI
           />
         )}
 
-        {[...contextFields, ...spec.fields.filter((field) => !field.hidden && !(spec.id === 'security.approval.request' && ['targetArguments', 'targetAuthorityId'].includes(field.name)))].map((field) => (
+        {[...contextFields, ...spec.fields.filter((field) => !field.hidden && !(spec.id === 'security.approval.request' &&
+          ['targetArguments', 'targetAuthorityId', ...(targetPrepared ? ['targetOperation'] : [])].includes(field.name)))].map((field) => (
           <OperationField
             key={`${field.name}:${selectionContextKey(field, values)}`}
-            field={field.name === 'maximumValidityMillis' && spec.id === 'acme.directory.register' ? { ...field, readOnly: values.__validityMode !== 'CUSTOM', help: `Profile / ACME upper bound: ${String(values.__profileMaximumValidityMillis ?? 'loading')} milliseconds.` } : field}
+            error={field.name === 'subjectRef' && subjectError}
+            field={field.name === 'approvalId' && spec.id.startsWith('security.approval.') && !!prefill?.approvalId ? { ...field, readOnly: true } : field.name === 'subjectRef' && subjectInput.metadata ? { ...field, ...subjectInput.metadata } : field.name === 'maximumValidityMillis' && spec.id === 'acme.directory.register' ? { ...field, readOnly: values.__validityMode !== 'CUSTOM', help: `Profile / ACME upper bound: ${String(values.__profileMaximumValidityMillis ?? 'loading')} milliseconds.` } : field}
             context={values}
             value={values[field.name]}
             onChange={(v) => set(field.name, v)}
@@ -140,7 +169,13 @@ export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalI
           />
         ))}
 
-        {target && target.id !== 'security.approval.request' && <Box sx={{ borderLeft: 2, borderColor: 'divider', pl: 2 }}>
+        {targetPrepared && <Box role="region" aria-label="Prepared approval target" sx={{ borderLeft: 2, borderColor: 'divider', pl: 2 }}>
+          <Typography variant="subtitle2">Prepared target: {target?.title ?? String(values.targetOperation)}</Typography>
+          {preparedArguments === undefined ? <Alert severity="error">Prepared arguments are invalid. Prepare the approval again from the original operation.</Alert> :
+            <JsonView value={{ operation: values.targetOperation, ...(values.targetAuthorityId ? { authorityId: values.targetAuthorityId } : {}), arguments: preparedArguments }} />}
+          <Typography variant="body2">Review these exact arguments, choose an approval ID, then create the approval request.</Typography>
+        </Box>}
+        {!targetPrepared && target && target.id !== 'security.approval.request' && <Box sx={{ borderLeft: 2, borderColor: 'divider', pl: 2 }}>
           <Typography variant="subtitle2">Prepare {target.title}</Typography>
           <OperationForm key={target.id} spec={target} embedded busy={busy} onEdited={() => setValues((prev) => ({ ...prev, targetArguments: '', targetAuthorityId: '' }))} onSubmit={(targetValues) => {
             const { request } = buildRequest(target, targetValues);
@@ -164,23 +199,23 @@ export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalI
         <Accordion disableGutters elevation={0} sx={{ bgcolor: 'transparent', '&:before': { display: 'none' } }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ px: 0 }}>
             <Typography variant="body2" color="text.secondary">
-              Advanced (approval, deadline)
+              {managedRequest ? 'Execution settings' : 'Advanced (approval, deadline)'}
             </Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ px: 0 }}>
             <Stack spacing={2}>
-              <OperationField
+              {!managedRequest && showApproval && <OperationField
                 field={{ name: 'approvalId', type: 'text', required: false, ref: 'approval', label: 'Approval' }}
                 value={approvalId} onChange={(value) => setApprovalId(String(value ?? ''))} disabled={busy}
-              />
+              />}
               <TextField
                 fullWidth
                 size="small"
-                label="Deadline (optional)"
+                label={managedRequest ? 'Execution timeout (optional)' : 'Deadline (optional)'}
                 value={deadline}
                 onChange={(e) => setDeadline(e.target.value)}
                 placeholder="PT30S"
-                helperText="ISO-8601 duration; capped by the server maximum."
+                helperText={managedRequest ? 'ISO-8601 execution budget starting after approval (for example PT30S). Approval review has its own expiry.' : 'ISO-8601 duration; capped by the server maximum.'}
                 disabled={busy}
               />
             </Stack>
@@ -188,8 +223,8 @@ export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalI
         </Accordion>
 
         <Box>
-          <Button type={embedded ? 'button' : 'submit'} onClick={embedded ? submit : undefined} variant="contained" startIcon={<PlayArrowIcon />} disabled={busy || !ready || derived.loading || !!derived.error || validityError}>
-            {busy ? 'Running…' : embedded ? 'Use these arguments' : 'Run operation'}
+          <Button type={embedded ? 'button' : 'submit'} onClick={embedded ? submit : undefined} variant="contained" startIcon={<PlayArrowIcon />} disabled={busy || !ready || derived.loading || !!derived.error || subjectInput.loading || !!subjectInput.error || validityError}>
+            {busy ? 'Running…' : managedRequest ? 'Submit request' : spec.id === 'security.approval.approve' ? 'Approve request' : spec.id === 'security.approval.reject' ? 'Reject request' : embedded ? 'Use these arguments' : spec.id === 'security.approval.request' ? 'Create approval request' : 'Run operation'}
           </Button>
         </Box>
       </Stack>

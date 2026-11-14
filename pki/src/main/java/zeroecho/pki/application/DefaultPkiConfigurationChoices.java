@@ -41,7 +41,9 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProvider;
-import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pki.spi.framework.CredentialFramework;
+import zeroecho.pki.api.FormatId;
+import java.util.Map;
 import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.PkiStore;
 
@@ -52,6 +54,7 @@ final class DefaultPkiConfigurationChoices implements PkiConfigurationChoicesSou
     private final Optional<SigningProvider> provider;
     private final List<PublicationTarget> targets;
     private final Runnable openCheck;
+    private final Map<FormatId, FormatMetadata> formats;
 
     /* default */ DefaultPkiConfigurationChoices(PkiSessionConfiguration configuration, PkiStore store,
             Optional<SigningProvider> provider, List<PublicationTarget> targets, Runnable openCheck) {
@@ -61,6 +64,14 @@ final class DefaultPkiConfigurationChoices implements PkiConfigurationChoicesSou
 
     /* default */ DefaultPkiConfigurationChoices(List<KeyRef> configuredKeys, PkiStore store,
             Optional<SigningProvider> provider, List<PublicationTarget> targets, Runnable openCheck) {
+        this(configuredKeys, store, provider, targets, List.of(), openCheck);
+    }
+
+    /* default */ DefaultPkiConfigurationChoices(List<KeyRef> configuredKeys, PkiStore store,
+            Optional<SigningProvider> provider, List<PublicationTarget> targets,
+            List<CredentialFramework> frameworks, Runnable openCheck) {
+        this.formats = frameworks.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                CredentialFramework::formatId, framework -> new FormatMetadata(framework.displayName(), framework.subjectInput())));
         this.configuredKeys = List.copyOf(configuredKeys);
         this.store = store;
         this.provider = provider;
@@ -90,9 +101,9 @@ final class DefaultPkiConfigurationChoices implements PkiConfigurationChoicesSou
         boolean more = selected.size() > limit;
         if (more) { selected.pollLast(); }
         Optional<String> next = more ? Optional.of(selected.last()) : Optional.empty();
-        return new Choices(List.of(BcX509CredentialFramework.FORMAT_ID),
+        return new Choices(formats.keySet().stream().sorted(java.util.Comparator.comparing(FormatId::value)).toList(),
                 provider.map(value -> List.of(value.id())).orElseGet(List::of), targets,
                 selected.stream().map(KeyRef::new).toList(), next,
-                provider.map(value -> value.supportedAlgorithms().stream().sorted().toList()).orElseGet(List::of));
+                provider.map(value -> value.supportedAlgorithms().stream().sorted().toList()).orElseGet(List::of), formats);
     }
 }

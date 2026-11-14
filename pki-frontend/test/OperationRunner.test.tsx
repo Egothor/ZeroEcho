@@ -32,51 +32,17 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { expect, it, vi } from 'vitest';
-import type * as Operations from '@/api/operations';
-import { buildRequest, executeOperation, type FieldValue, type ExecuteExtras } from '@/api/operations';
-import type { OperationSpec } from '@/api/operationSchema';
-import { OperationRunner } from '@/components/operation/OperationRunner';
+import { expect, it } from 'vitest';
+import { buildRequest } from '@/api/operations';
+import { operationSpec } from '@/api/operationCatalog';
 
-vi.mock('@/api/operations', async (original) => ({
-  ...await original<typeof Operations>(), executeOperation: vi.fn(),
-}));
-// Isolate runner handoff from selector fetching; the real typed request builder remains in use.
-vi.mock('@/components/operation/OperationForm', () => ({
-  OperationForm: ({ spec, initialValues, onSubmit }: {
-    spec: OperationSpec;
-    initialValues: Record<string, FieldValue>;
-    onSubmit: (values: Record<string, FieldValue>, extra: ExecuteExtras) => void;
-  }) => <button onClick={() => onSubmit({ ...initialValues, response: 'AQID' }, {})}>Submit {spec.id}</button>,
-}));
-
-it('carries exact server confirmation preconditions and submitted authority into Complete proof', async () => {
-  const challenge = {
-    credentialId: 'credential:confirmed-by-server', expectedLifecycleRevision: 17,
-    expectedLifecycleRecordCommitment: 'ab'.repeat(32), expectedChallengeRecordCommitment: 'cd'.repeat(32),
-    challenge: 'server-owned-challenge',
-  };
-  vi.mocked(executeOperation).mockResolvedValue({ kind: 'succeeded', envelope: {
-    version: 1, requestId: 'request:challenge', operation: 'credential.confirmation.challenge.issue',
-    status: 'SUCCEEDED', failure: null, result: challenge,
-  } });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><OperationRunner operationId="credential.confirmation.challenge.issue"
-    initialValues={{ __authorityId: 'ca:selected', credentialId: 'credential:submitted' }} /></QueryClientProvider>);
-  fireEvent.click(screen.getByRole('button', { name: 'Submit credential.confirmation.challenge.issue' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Complete proof' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit credential.confirmation.proof.complete' }));
-  await waitFor(() => expect(executeOperation).toHaveBeenCalledTimes(2));
-  const [spec, values] = vi.mocked(executeOperation).mock.calls[1]!;
-  expect(buildRequest(spec, values)).toEqual({
-    path: '/admin/v1/operations/credential.confirmation.proof.complete',
-    request: { version: 1, authorityId: 'ca:selected', arguments: {
-      credentialId: challenge.credentialId, expectedLifecycleRevision: 17,
-      expectedLifecycleRecordCommitment: challenge.expectedLifecycleRecordCommitment,
-      expectedChallengeRecordCommitment: challenge.expectedChallengeRecordCommitment, response: 'AQID',
+it('preserves exact server confirmation preconditions in the retained low-level typed request builder', () => {
+  const values = { __authorityId: 'ca:selected', credentialId: 'credential:server', expectedLifecycleRevision: 17,
+    expectedLifecycleRecordCommitment: 'ab'.repeat(32), expectedChallengeRecordCommitment: 'cd'.repeat(32), response: 'AQID' };
+  expect(buildRequest(operationSpec('credential.confirmation.proof.complete')!, values)).toEqual({
+    path: '/admin/v1/operations/credential.confirmation.proof.complete', request: { version: 1, authorityId: 'ca:selected', arguments: {
+      credentialId: 'credential:server', expectedLifecycleRevision: 17, expectedLifecycleRecordCommitment: 'ab'.repeat(32),
+      expectedChallengeRecordCommitment: 'cd'.repeat(32), response: 'AQID',
     } },
   });
-  client.clear();
 });

@@ -536,6 +536,7 @@ public final class PkiCli {
         writer.println("  publication.retry --publication-id <id>");
         writer.println("  publication.reconcile --publication-id <id>");
         writer.println("  profile.list-all | request.list --limit <1..1000> [--after <cursor>]");
+        writer.println("  credential.list --authority-id <id> --limit <1..1000> [--after <cursor>] (mandatory inventory; no search index needed)");
         writer.println("  credential.search | issuer.generation.list --authority-id <id> --limit <1..1000> [--after <cursor>]");
         writer.println("  Paged inventories also accept --after <cursor>.");
         writer.println("  credential.confirmation.pending.list --authority-id <id> --cutoff-inclusive <ISO-8601>");

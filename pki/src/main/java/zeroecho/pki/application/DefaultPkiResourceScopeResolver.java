@@ -57,14 +57,23 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
     @Override
     public Optional<CredentialScope> credentialScope(PkiId credentialId) {
         openCheck.run();
+        return store.getCredential(Objects.requireNonNull(credentialId,"credentialId")).map(credential -> {
+            if(!(credential.profileBinding() instanceof EndEntityProfileBinding binding)) {
+                throw new IllegalStateException("Credential is not bound to an end-entity profile");
+            }
+            return new CredentialScope(credential.issuerRef().caId(),binding.reference().profileId());
+        });
+    }
+
+    @Override
+    public Optional<CredentialScope> credentialReadScope(PkiId credentialId) {
+        openCheck.run();
         return store.getCredential(Objects.requireNonNull(credentialId, "credentialId"))
-                .map(credential -> {
-                    if (!(credential.profileBinding() instanceof EndEntityProfileBinding binding)) {
-                        throw new IllegalStateException("Credential is not bound to an end-entity profile");
-                    }
-                    return new CredentialScope(credential.issuerRef().caId(),
-                            binding.reference().profileId());
-                });
+                .map(credential -> new CredentialScope(credential.issuerRef().caId(),
+                        switch (credential.profileBinding()) {
+                            case EndEntityProfileBinding binding -> binding.reference().profileId();
+                            case CaProfileBinding binding -> binding.reference().profileId();
+                        }));
     }
 
     @Override

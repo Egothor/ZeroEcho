@@ -60,7 +60,7 @@ export const REF_SOURCES: Readonly<Record<string, RefSource>> = {
   authority: page('ca.list', 'authorities', 'caId', 'authority', ['displayName', 'kind', 'state']),
   profile: page('profile.list-all', 'profiles', 'profileId', 'certificate profile', ['displayName', 'certificateType', 'formatId']),
   request: page('request.list', 'requests', 'requestId', 'certificate request', ['formatId', 'profileId']),
-  credential: page('credential.search', 'credentials', 'credentialId', 'certificate', ['profileId', 'status', 'notAfter'], { inputs: { __authorityId: '$authority' } }),
+  credential: page('credential.list', 'credentials', 'credentialId', 'certificate', ['profileId', 'status', 'notAfter'], { inputs: { __authorityId: '$authority' } }),
   issuer: page('issuer.generation.list', 'generations', 'issuerId', 'issuer generation', ['state', 'profileId'], { inputs: { __authorityId: '$authority' } }),
   status: page('inventory.status', 'statusObjects', 'statusObjectId', 'revocation list', ['type', 'thisUpdate'], { inputs: { issuerCaId: '$authority' } }),
   parentIssuer: page('issuer.generation.list', 'generations', 'issuerId', 'parent issuer generation', ['state', 'profileId'], { inputs: { __authorityId: '__parentAuthorityId' } }),

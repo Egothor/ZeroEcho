@@ -69,7 +69,7 @@ class BackupTransferConfigurationTest {
 
     @Test void committedExampleUsesSupportedVersionAndExplicitBudgets() throws Exception {
         BackupTransferConfiguration example = BackupTransferConfiguration.read(
-                Path.of("../docs/pki-backup-transfer-example.json"));
+                Path.of("../documentation/examples/configuration/pki-backup-transfer-example.json"));
         assertEquals(64L * 1024 * 1024, example.maximumArchiveBytes());
         assertEquals(2 * example.workspaceReservationBytes(), example.maximumWorkspaceBytes());
     }

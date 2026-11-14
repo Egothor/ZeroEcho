@@ -56,6 +56,17 @@ import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
  */
 public interface ProfileService {
     /**
+     * Checks a profile activation without audit or store mutation.
+     * @param profileId existing profile identity
+     * @param profileVersion existing positive version
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if profile or runtime bindings are invalid
+     */
+    default void validateActivation(String profileId, long profileVersion) {
+        throw new UnsupportedOperationException("Pure profile activation validation unavailable");
+    }
+
+    /**
      * Imports a bounded strict JSON profile document without activating it.
      * @param jsonDocument canonical profile JSON bytes
      * @return imported immutable profile reference

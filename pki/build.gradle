@@ -111,6 +111,7 @@ dependencies {
     metadataBenchmarkAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 }
 
+def metadataBenchmarkReports = rootProject.layout.buildDirectory.dir('reports/benchmarks')
 tasks.register('metadataBenchmark', JavaExec) {
     group = 'verification'
     description = 'Runs opt-in JMH X.509 resolution and parameter catalog benchmarks.'
@@ -119,7 +120,7 @@ tasks.register('metadataBenchmark', JavaExec) {
     mainClass = 'org.openjdk.jmh.Main'
     workingDir = rootProject.projectDir
     doFirst {
-        java.nio.file.Files.createDirectories(rootProject.layout.buildDirectory.dir('reports/benchmarks').get().asFile.toPath())
+        java.nio.file.Files.createDirectories(metadataBenchmarkReports.get().asFile.toPath())
     }
 }
 

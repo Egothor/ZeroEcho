@@ -63,14 +63,11 @@ class CommittedServerConfigurationExamplesTest {
     Stream<DynamicTest> decodesEveryMaintainedServerExample() throws IOException {
         Path repository = Path.of(System.getProperty("configurationExamples.repository"));
         List<Example> examples = new ArrayList<>();
-        for (String directory : List.of("docs", "documentation", "deploy")) {
+        for (String directory : List.of("documentation", "deploy")) {
             Path root = repository.resolve(directory);
             assertTrue(Files.isDirectory(root), "Missing maintained example directory: " + directory);
             try (Stream<Path> paths = Files.walk(root)) {
                 for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
-                    if (path.startsWith(repository.resolve("docs/codex"))) {
-                        continue;
-                    }
                     String relative = repository.relativize(path).toString();
                     String name = path.getFileName().toString();
                     if (name.endsWith(".json")) {
@@ -136,7 +133,7 @@ class CommittedServerConfigurationExamplesTest {
     @Test
     void currentVersionAuthorityAlsoRejectsFutureVersion() throws IOException {
         Path repository = Path.of(System.getProperty("configurationExamples.repository"));
-        String document = Files.readString(repository.resolve("docs/pki-server-production-example.json"));
+        String document = Files.readString(repository.resolve("documentation/examples/configuration/pki-server-production-example.json"));
         String future = document.replaceFirst("\"version\"\\s*:\\s*\\d+",
                 "\"version\": " + (PkiServerConfiguration.CURRENT_VERSION + 1));
         assertFalse(document.equals(future));

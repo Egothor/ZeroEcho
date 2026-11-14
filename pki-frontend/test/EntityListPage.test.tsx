@@ -40,6 +40,10 @@ import { DOMAIN_LISTINGS } from '@/app/domainListings';
 import type { OperationCatalogResponse } from '@/api/types';
 import type * as Operations from '@/api/operations';
 
+vi.mock('@/components/operation/OperationField', () => ({ OperationField: ({ field }: { field: { name: string } }) => <label>{field.name}<input /><small>{field.name === '__authorityId' ? 'A short hint' : 'A longer helper description that wraps over several lines without truncation'}</small></label> }));
+
+vi.mock('@/components/InProgressRequests', () => ({ InProgressRequests: () => null }));
+
 const discovery = vi.hoisted(() => ({
   data: undefined as OperationCatalogResponse | undefined,
   isLoading: false,
@@ -60,7 +64,7 @@ it.each(['pending', 'failed', 'empty'])('does not expose certificate search when
   discovery.isError = state === 'failed';
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}>
-    <EntityListPage navId="issuance" title="Certificates" listings={DOMAIN_LISTINGS.issuance!} />
+    <EntityListPage navId="issuance" title="Certificates" listings={[DOMAIN_LISTINGS.issuance![1]!]} />
   </QueryClientProvider>);
   expect(screen.getByText('Certificate search is unavailable for this deployment or identity.')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Load' })).not.toBeInTheDocument();
@@ -68,3 +72,24 @@ it.each(['pending', 'failed', 'empty'])('does not expose certificate search when
   expect(execute).not.toHaveBeenCalled();
 });
 
+
+it('top-aligns responsive filters with unequal helper content without clipping fields', () => {
+  discovery.data = { count: 1, operations: [{ operation: 'credential.search', family: 'PKI_OPERATION', mutating: false, resourceType: 'CREDENTIAL', approval: 'NONE', dataView: 'METADATA_REDACTED' }] };
+  discovery.isLoading = false; discovery.isError = false;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(<QueryClientProvider client={client}><EntityListPage navId="issuance" title="Certificates" listings={[DOMAIN_LISTINGS.issuance![1]!]} /></QueryClientProvider>);
+  const row = view.container.querySelector('[role="group"][aria-label="Entity filters"]');
+  expect(row).not.toBeNull();
+  expect(row!.querySelectorAll('small').length).toBeGreaterThan(1);
+  expect(new Set([...row!.querySelectorAll('small')].map(helper => helper.textContent)).size).toBe(2);
+  const className = [...row!.classList].find(value => value.startsWith('css-'))!;
+  const desktopRules = [...document.styleSheets].flatMap(sheet => [...sheet.cssRules])
+    .filter((rule): rule is CSSMediaRule => 'conditionText' in rule && rule.conditionText === '(min-width:900px)')
+    .flatMap(rule => [...rule.cssRules]);
+  const desktop = desktopRules.find((rule): rule is CSSStyleRule => 'selectorText' in rule && typeof rule.selectorText === 'string' && rule.selectorText.includes(`.${className}`) && 'style' in rule && !!(rule as CSSStyleRule).style.getPropertyValue('align-items'));
+  expect(desktop).toBeDefined();
+  expect(desktop!.style.getPropertyValue('align-items')).toBe('flex-start');
+  expect(row!.getAttribute('style') ?? '').not.toMatch(/height|overflow/);
+  expect(row!.textContent).toMatch(/Load|Apply/);
+  client.clear();
+});

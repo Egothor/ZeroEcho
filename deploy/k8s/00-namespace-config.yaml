@@ -35,7 +35,7 @@
 #
 # Minimal but correct. POSIX-only: the store/keyring PVCs MUST be backed by a
 # POSIX filesystem StorageClass (see deploy/README.md and
-# docs/windows-portability-analysis.md). YAML parse-checked only (no cluster,
+# documentation/deployment/requirements.md). YAML parse-checked only (no cluster,
 # no container engine available here).
 ###############################################################################
 apiVersion: v1
@@ -45,7 +45,7 @@ metadata:
 ---
 # Strict versioned server configuration (schema version 8), trusted-proxy /
 # RFC 9440 topology. Replace commitments and mappings with your realm's values;
-# this is the shape, sourced from docs/pki-server-trusted-proxy-rfc9440-example.json.
+# this is the shape, sourced from documentation/examples/configuration/pki-server-trusted-proxy-rfc9440-example.json.
 apiVersion: v1
 kind: ConfigMap
 metadata:

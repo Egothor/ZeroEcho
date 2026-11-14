@@ -12,6 +12,10 @@ An installation may provide its own wrapper; the Gradle launcher is named `app`.
 The server distribution instead provides `zeroecho-pki-server` under
 `pki-server/build/install/zeroecho-pki-server/bin/`.
 
+The [CLI configuration and execution guide](pki-cli.md) provides detailed
+configuration, structured-argument and recovery examples. The
+[worked local examples](../examples/pki-cli/README.md) provide executable scripts.
+
 The `zeroecho pki` utility runs certificate-authority operations from the command
 line. It has two modes, selected purely by the parameters you pass:
 

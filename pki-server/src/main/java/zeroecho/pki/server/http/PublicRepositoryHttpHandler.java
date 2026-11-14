@@ -109,7 +109,7 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
                 return;
             }
             URI uri = exchange.getRequestURI();
-            if (uri.getRawFragment() != null || uri.getRawPath().indexOf('%') >= 0) {
+            if (uri.getRawFragment() != null) {
                 sendFailure(exchange, requestId, 400, "MALFORMED_REQUEST");
                 return;
             }
@@ -298,7 +298,7 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
 
     private static AuthorityPage authorityPage(String query) {
         if (query == null) return new AuthorityPage(Optional.empty(), 100);
-        if (query.isEmpty() || query.length() > 1_024 || query.indexOf('%') >= 0) throw new MalformedRequest();
+        if (query.isEmpty() || query.length() > 1_024) throw new MalformedRequest();
         Optional<PkiId> after = Optional.empty();
         int limit = 100;
         boolean foundAfter = false;
@@ -309,8 +309,7 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
             String name = field.substring(0, separator);
             String value = field.substring(separator + 1);
             if ("after".equals(name) && !foundAfter && !value.isEmpty()) {
-                if (!value.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")) throw new MalformedRequest();
-                after = Optional.of(new PkiId(value));
+                after = Optional.of(new PkiId(HttpPathIdentifier.decode(value)));
                 foundAfter = true;
             } else if ("limit".equals(name) && !foundLimit && value.matches("[1-9][0-9]{0,3}")) {
                 try { limit = Integer.parseInt(value); } catch (NumberFormatException failure) {
@@ -536,8 +535,7 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
     }
 
     private static PkiId id(String value) {
-        if (!value.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")) throw unavailable();
-        return new PkiId(value);
+        return new PkiId(HttpPathIdentifier.decode(value));
     }
 
     private static IllegalArgumentException unavailable() {

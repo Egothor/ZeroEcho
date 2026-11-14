@@ -164,6 +164,7 @@ final class PkiOperationRegistry {
     private void registerInventoryBindings(Map<String, Binding> configured) {
         add(configured, PkiOperation.ListProfiles.NAME, this::allProfiles);
         add(configured, PkiOperation.ListRequests.NAME, this::listRequests);
+        add(configured, PkiOperation.ListCredentials.NAME, this::listCredentials);
         add(configured, PkiOperation.SearchCredentials.NAME, this::searchCredentials);
         add(configured, PkiOperation.ListIssuerGenerations.NAME, this::listGenerations);
         add(configured, PkiOperation.ListPendingCredentialConfirmations.NAME, this::pendingConfirmations);
@@ -571,6 +572,12 @@ final class PkiOperationRegistry {
     private PkiOperation listRequests(PkiOperationValue.ObjectValue arguments, Path base) {
         pageFields(arguments, Set.of());
         return new PkiOperation.ListRequests(limit(arguments), optionalText(arguments, AFTER));
+    }
+
+    private PkiOperation listCredentials(PkiOperationValue.ObjectValue arguments, Path base) {
+        pageFields(arguments, Set.of(SCOPE_AUTHORITY_ID));
+        return new PkiOperation.ListCredentials(new PkiId(text(arguments, SCOPE_AUTHORITY_ID)),
+                limit(arguments), optionalText(arguments, AFTER));
     }
 
     private PkiOperation searchCredentials(PkiOperationValue.ObjectValue arguments, Path base) {

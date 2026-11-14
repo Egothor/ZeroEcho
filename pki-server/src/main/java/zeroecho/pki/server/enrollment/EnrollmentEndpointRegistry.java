@@ -151,13 +151,23 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
     public Snapshot register(EnrollmentEndpoint endpoint) {
         Objects.requireNonNull(endpoint, "endpoint");
         synchronized (control) { // NOPMD AvoidSynchronizedStatement - Shares the authoritative control-store monitor across admission and durable state transitions.
-            requireBinding(endpoint, true);
-            if (runtime != null) {
-                runtime.validateEndpoint(endpoint);
-            }
+            validateRegistration(endpoint);
             Optional<ServerControlStore.ProtocolRecord> previous = stored(protocol(endpoint), endpoint.label());
             long revision = previous.map(value -> Math.incrementExact(decode(value).revision())).orElse(1L);
             return persist(endpoint, revision, true, previous.map(ServerControlStore.ProtocolRecord::commitment));
+        }
+    }
+
+    /**
+     * Validates current endpoint bindings and runtime capabilities without publishing metadata.
+     * @param endpoint exact proposed endpoint
+     * @throws IllegalStateException if an active policy or runtime capability is unavailable
+     */
+    public void validateRegistration(EnrollmentEndpoint endpoint) {
+        Objects.requireNonNull(endpoint,"endpoint");
+        synchronized(control) { // NOPMD AvoidSynchronizedStatement - Pure validation shares the authoritative policy monitor with registration.
+            requireBinding(endpoint,true);
+            if(runtime!=null)runtime.validateEndpoint(endpoint);
         }
     }
 

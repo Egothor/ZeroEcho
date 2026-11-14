@@ -62,6 +62,9 @@ import java.util.Objects;
 @SuppressWarnings("PMD.LongVariable")
 public enum PkiFailureReason {
 
+    /** The caller supplied an invalid X.509 CA distinguished name. */
+    CA_SUBJECT_INVALID(PkiFailureClassification.VALIDATION_FAILURE, true),
+
     /**
      * A store mutation's durable outcome is unknown, so authoritative recovery
      * must complete before processing continues. This describes internal storage

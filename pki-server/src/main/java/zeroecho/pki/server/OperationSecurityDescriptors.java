@@ -163,6 +163,7 @@ public final class OperationSecurityDescriptors {
                 read(PkiOperation.ListProfiles.NAME, Permission.Action.PROFILE_READ, Permission.ResourceType.PROFILE),
                 read(PkiOperation.ListRequests.NAME, Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.REQUEST),
                 read(PkiOperation.SearchCredentials.NAME, Permission.Action.CERTIFICATE_SEARCH, Permission.ResourceType.CERTIFICATE),
+                read(PkiOperation.ListCredentials.NAME, Permission.Action.CERTIFICATE_SEARCH, Permission.ResourceType.CERTIFICATE),
                 read(PkiOperation.ListIssuerGenerations.NAME, Permission.Action.AUTHORITY_READ, Permission.ResourceType.ISSUER),
                 read(PkiOperation.ListAuthorities.NAME, Permission.Action.AUTHORITY_LIST, Permission.ResourceType.AUTHORITY),
                 read(PkiOperation.InspectAuthority.NAME, Permission.Action.AUTHORITY_READ, Permission.ResourceType.AUTHORITY),
@@ -532,6 +533,7 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.ListProfiles ignored -> resource.scope().authorityId().isEmpty() && resource.objectId().isEmpty();
             case PkiOperation.ListRequests ignored -> resource.scope().authorityId().isEmpty() && resource.objectId().isEmpty();
             case PkiOperation.SearchCredentials value -> resource.scope().authorityId().filter(value.authorityId()::equals).isPresent() && resource.objectId().isEmpty();
+            case PkiOperation.ListCredentials value -> resource.scope().authorityId().filter(value.authorityId()::equals).isPresent() && resource.objectId().isEmpty();
             case PkiOperation.ListIssuerGenerations value -> resource.scope().authorityId().filter(value.authorityId()::equals).isPresent() && resource.objectId().isEmpty();
             case PkiOperation.ListAuthorities ignored -> resource.scope().authorityId().isEmpty();
             case PkiOperation.InspectProfile value -> resource.scope().profileId().filter(value.profileId()::equals).isPresent();
@@ -636,6 +638,7 @@ public final class OperationSecurityDescriptors {
         return switch (operation) {
             case PkiOperation.ListProfiles value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.ListRequests value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
+            case PkiOperation.ListCredentials value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case PkiOperation.SearchCredentials value -> "authority=" + atom(value.authorityId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""))
                     + ";subject=" + atom(value.subjectFilter().orElse("")) + ";serial=" + atom(value.serialFilter().orElse(""))
                     + ";fingerprint=" + atom(value.fingerprintFilter().orElse("")) + ";status=" + atom(value.statusFilter().orElse(""))

@@ -81,14 +81,15 @@ export type NavGroup = 'Overview' | 'Issuance' | 'Lifecycle' | 'Trust & Access' 
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/', icon: DashboardIcon, group: 'Overview', operationPrefixes: [] },
+  { id: 'administrative-requests', label: 'Requests', path: '/administrative-requests', icon: AssignmentIcon, group: 'Overview', operationPrefixes: [] },
   { id: 'realm', label: 'Realm', path: '/realm', icon: LanguageIcon, group: 'Overview', operationPrefixes: [] },
   { id: 'backup', label: 'Backup and restore', path: '/backup', icon: FolderIcon, group: 'Operations', operationPrefixes: ['backup.stream.'] },
 
   { id: 'authorities', label: 'Certificate Authorities', path: '/authorities', icon: AccountBalanceIcon, group: 'Issuance', operationPrefixes: ['ca.'] },
   { id: 'issuers', label: 'Issuer Generations & Paths', path: '/issuers', icon: AccountTreeIcon, group: 'Issuance', operationPrefixes: ['issuer.'] },
   { id: 'profiles', label: 'Certificate Profiles', path: '/profiles', icon: DescriptionIcon, group: 'Issuance', operationPrefixes: ['profile.'] },
-  { id: 'requests', label: 'Requests (CSRs)', path: '/requests', icon: UploadFileIcon, group: 'Issuance', operationPrefixes: ['request.'] },
-  { id: 'issuance', label: 'Issuance', path: '/issuance', icon: VerifiedIcon, group: 'Issuance', operationPrefixes: ['credential.issue', 'credential.inspect', 'credential.search'] },
+  { id: 'requests', label: 'Certificate requests (CSRs)', path: '/requests', icon: UploadFileIcon, group: 'Issuance', operationPrefixes: ['request.'] },
+  { id: 'issuance', label: 'Certificates', path: '/issuance', icon: VerifiedIcon, group: 'Issuance', operationPrefixes: ['credential.issue', 'credential.inspect', 'credential.list', 'credential.search'] },
 
   { id: 'lifecycle', label: 'Lifecycle', path: '/lifecycle', icon: AutorenewIcon, group: 'Lifecycle', operationPrefixes: ['credential.renew', 'credential.replace', 'credential.reissue'] },
   { id: 'confirmations', label: 'Credential Confirmation', path: '/confirmations', icon: FactCheckIcon, group: 'Lifecycle', operationPrefixes: ['credential.confirmation.'] },

@@ -36,7 +36,7 @@
 #
 # POSIX-ONLY. The ZeroEcho filesystem PKI store and keyring require a POSIX
 # filesystem (0700/0600 permission enforcement, atomic rename, directory fsync,
-# advisory flock). See docs/windows-portability-analysis.md. This image MUST run
+# advisory flock). See documentation/deployment/requirements.md. This image MUST run
 # on a Linux/POSIX host; it will not provide its durability guarantees on a
 # non-POSIX bind mount.
 #

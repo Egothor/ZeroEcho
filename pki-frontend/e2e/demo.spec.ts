@@ -64,7 +64,7 @@ test('authorities screen auto-loads an entity table', async ({ page }) => {
   await expect(page.getByText('ZeroEcho Root CA', { exact: false })).toBeVisible();
 });
 
-test('HIGH_RISK create (via Create menu) surfaces the approval-required flow', async ({ page }) => {
+test('HIGH_RISK create submits once and follows automatic execution after explicit approval', async ({ page }) => {
   await openDemo(page);
   await nav(page).getByRole('link', { name: 'Certificate Authorities' }).click();
   await page.getByRole('button', { name: 'Create' }).click();
@@ -72,13 +72,27 @@ test('HIGH_RISK create (via Create menu) surfaces the approval-required flow', a
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Certificate format', { exact: true }).click();
   await page.getByRole('option', { name: /X.509 certificate/ }).click();
-  await dialog.getByLabel('Subject', { exact: true }).fill('CN=New Root');
+  await dialog.getByLabel('Distinguished name', { exact: true }).fill('CN=New Root');
   await dialog.getByLabel('Certificate profile', { exact: true }).click();
   await page.getByRole('option', { name: /Root authority/ }).click();
   await dialog.getByLabel('Signing key', { exact: true }).click();
-  await page.getByRole('option', { name: /Root authority key/ }).click();
-  await dialog.getByRole('button', { name: /Run operation/i }).click();
-  await expect(dialog.getByText('Approval required')).toBeVisible();
+  await page.getByRole('listbox').getByRole('option', { name: /local:root\.prv$/ }).click();
+  await expect(dialog.getByRole('button', { name: /Prepare approval|Create approval|Use approved/ })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Submit request', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page).toHaveURL(/\/administrative-requests\/request-/);
+  const detail = page.url();
+  await expect(page.getByText('WAITING_APPROVAL', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submit request', exact: true })).toHaveCount(0);
+  await page.getByLabel(/^Justification/).fill('Explicit demo root approval');
+  await page.getByRole('button', { name: 'Approve request', exact: true }).click();
+  await expect(page.getByText('Operation completed.', { exact: true })).toBeVisible();
+  expect(page.url()).toBe(detail);
+  await expect(page.getByRole('button', { name: /Submit request|Use approved request|Prepare approval request/ })).toHaveCount(0);
+  await nav(page).getByRole('link', { name: 'Requests', exact: true }).click();
+  await expect(page.getByRole('link', { name: /request-/ })).toHaveCount(1);
+  await page.getByRole('link', { name: /request-/ }).click();
+  await expect(page.getByText('Operation completed.', { exact: true })).toBeVisible();
 });
 
 test('grants are presented as a table with per-row actions (multi-entity tabs)', async ({ page }) => {

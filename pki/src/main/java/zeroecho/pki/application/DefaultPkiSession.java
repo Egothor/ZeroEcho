@@ -130,7 +130,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         this.signingGraph = Objects.requireNonNull(signingGraph, "signingGraph");
         this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
         this.resourceScopes = new DefaultPkiResourceScopeResolver(store, this::requireOpen);
-        this.repository = new DefaultPkiRepository(store, this::requireOpen);
+        this.repository = new DefaultPkiRepository(store, this::requireOpen, graph.frameworks());
         zeroecho.pki.api.credential.EffectiveCredentialStatusResolver statusDelegate =
                 new zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver(store, clock);
         this.credentialStatuses = () -> {
@@ -150,7 +150,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         this.signingCommands = signingGraph.semanticService()
                 .map(service -> new DefaultPkiSigningCommands(service, repository, requests, this::requireOpen));
         DefaultPkiConfigurationChoices choices = new DefaultPkiConfigurationChoices(configuredKeys, store,
-                Optional.ofNullable(signingGraph.provider()), graph.targets(), this::requireOpen);
+                Optional.ofNullable(signingGraph.provider()), graph.targets(), graph.frameworks(), this::requireOpen);
         PkiOperationExecutor coreOperations = new DefaultPkiOperationExecutor(configuration, store, profiles, revocations,
                 requests, publications, confirmations, algorithmBindings, this::requireOpen, choices, clock,
                 liveSource);
@@ -435,8 +435,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             Bootstrap bootstrap, X509AuthoritySnapshot authority, BcX509VerificationExecutor verification, X509AlgorithmBindingRegistry bindings) {
         Optional<PublicationService> publications = Optional.empty();
         try {
-            CertificationRequestService requests = new DefaultCertificationRequestService(store,
-                    new BcX509CredentialFramework(authority, verification), bindings);
+            BcX509CredentialFramework framework = new BcX509CredentialFramework(authority, verification);
+            CertificationRequestService requests = new DefaultCertificationRequestService(store, framework, bindings);
             List<Publisher> configuredPublishers = new ArrayList<>();
             for (ProviderConfig publisher : publishers) {
                 configuredPublishers.add(bootstrap.openPublisher(publisher));
@@ -444,7 +444,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             publications = configuredPublishers.isEmpty() ? Optional.empty()
                     : Optional.of(new DefaultPublicationService(store, clock, configuredPublishers));
             return new ServiceGraph(Optional.of(requests), publications,
-                    configuredPublishers.stream().map(Publisher::target).toList());
+                    configuredPublishers.stream().map(Publisher::target).toList(), List.of(framework));
         } catch (RuntimeException | Error primary) {
             closeResource(publications.orElse(null), primary);
             throw primary;
@@ -806,15 +806,17 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
     }
 
     private record ServiceGraph(Optional<CertificationRequestService> requests,
-            Optional<PublicationService> publications, List<zeroecho.pki.api.publication.PublicationTarget> targets) {
+            Optional<PublicationService> publications, List<zeroecho.pki.api.publication.PublicationTarget> targets,
+            List<zeroecho.pki.spi.framework.CredentialFramework> frameworks) {
         private ServiceGraph {
             requests = Objects.requireNonNull(requests, "requests");
             publications = Objects.requireNonNull(publications, "publications");
             targets = List.copyOf(targets);
+            frameworks = List.copyOf(frameworks);
         }
 
         private static ServiceGraph empty() {
-            return new ServiceGraph(Optional.empty(), Optional.empty(), List.of());
+            return new ServiceGraph(Optional.empty(), Optional.empty(), List.of(), List.of());
         }
     }
 

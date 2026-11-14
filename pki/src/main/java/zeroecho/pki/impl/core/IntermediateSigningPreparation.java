@@ -160,6 +160,81 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
     }
 
     /**
+     * Validates current issuer/path, profile, subject and managed public-key
+     * metadata without signatures, proof staging, serial allocation or CA mutation.
+     * Execution repeats all checks and obtains its own fresh proof and serial.
+     *
+     * @param access separately authenticated and authorized invocation context
+     * @param input immutable intermediate creation coordinates
+     * @param cancellation cooperative validation cancellation
+     * @throws IOException if public metadata cannot be read or validation is cancelled
+     * @throws RuntimeException if issuer, profile, subject, key or algorithm policy rejects input
+     */
+    public void validate(AccessContext access, IntermediateCreateCommand input,
+            CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        IntermediateInput publicInput = readInput(input, cancellation);
+        ValidatedCaCertificateRequest approved = validateProfile(input, publicInput,
+                new PkiId("preflight:intermediate"), BigInteger.ONE);
+        validatedTbs(publicInput.parent(), publicInput.proof(), approved);
+        cancellation.throwIfCancelled();
+    }
+
+    private IntermediateInput readInput(IntermediateCreateCommand input, CancellationSignal cancellation) throws IOException {
+        EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
+        CaRecord ca = store.getCa(input.issuerCaId()).orElseThrow(() -> reject("ISSUER_MISSING"));
+        if (!ca.caId().equals(input.issuerCaId()) || ca.state() != CaState.ACTIVE) throw reject("ISSUER_INACTIVE");
+        IssuerGeneration generation = IssuerAuthorities.current(store, ca);
+        IssuerChainPath path = IssuerAuthorities.issuancePath(store, ca);
+        if (path.orderedCredentialIds().size() >= IssuerChainPath.MAX_CERTIFICATES) throw reject("PATH_TOO_LONG");
+        Credential issuer = store.getCredential(generation.credentialId()).orElseThrow(() -> reject("ISSUER_CREDENTIAL_MISSING"));
+        requireIssuer(ca, generation, path, issuer);
+        evaluation.requireUsable(issuer, CredentialUse.INTERMEDIATE_ISSUER);
+        ActiveCertificateProfile profile = store.requireActiveProfile(input.profileId());
+        if (!profile.reference().profileId().equals(input.profileId())
+                || !input.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) throw reject("PROFILE_BINDING_INVALID");
+        CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.INTERMEDIATE_CA, input.formatId());
+        ManagedKeyProofPreparation.ProofPlan proof = proofs.plan(new ManagedKeyProofRequest.CaSubject(
+                ca.caId(), Optional.empty(), input.profileId(), input.keyRef()), cancellation);
+        if (generation.signingKeyRef().equals(input.keyRef())) throw reject("SUBJECT_KEY_IS_PARENT_KEY");
+        List<SubjectRdn> subject = CaCertificateProfileValidator.validateSubject(input.subjectRef(), profile.definition());
+        X509Certificate parent = path(path, issuer, BcX509ProfileSupport.subject(subject), evaluation.evaluationTime(), cancellation);
+        return new IntermediateInput(evaluation.evaluationTime(), ca, generation, path, issuer, profile, proof, subject, parent);
+    }
+
+    private ValidatedCaCertificateRequest validateProfile(IntermediateCreateCommand input, IntermediateInput publicInput,
+            PkiId child, BigInteger serial) {
+        return CaCertificateProfileValidator.validateApprovedSubject(
+                ValidatedCaCertificateRequest.Operation.CREATE_INTERMEDIATE, publicInput.profile(), CertificateProfileKind.INTERMEDIATE_CA,
+                input.formatId(), publicInput.ca().caId(), child, publicInput.subject(), publicInput.proof().publicKeyInfo(),
+                Optional.empty(), publicInput.evaluationTime().truncatedTo(ChronoUnit.SECONDS),
+                Optional.of(publicInput.parent().getNotAfter().toInstant()), serial, authority)
+                .withFrozenPublication(publicInput.generation().issuerId(), publicInput.path().pathId(),
+                        publicInput.path().pathCommitment(), input.keyRef());
+    }
+
+    private byte[] validatedTbs(X509Certificate parent, ManagedKeyProofPreparation.ProofPlan proof,
+            ValidatedCaCertificateRequest approved) {
+        AlgorithmIdentifier algorithm = algorithm(parent, approved);
+        Validity validity = wholeSecondValidity(approved.validity());
+        byte[] tbs = Pkix.certificateBuilder().serialNumber(approved.serial()).issuer(parent.getSubjectX500Principal())
+                .subject(BcX509ProfileSupport.subject(approved.subjectRdns())).publicKeyInfo(proof.publicKeyInfo().bytes())
+                .validity(validity.notBefore(), validity.notAfter())
+                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
+                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
+        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
+        provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
+        FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
+        return tbs;
+    }
+
+    private record IntermediateInput(java.time.Instant evaluationTime, CaRecord ca, IssuerGeneration generation,
+            IssuerChainPath path, Credential issuer, ActiveCertificateProfile profile,
+            ManagedKeyProofPreparation.ProofPlan proof, List<SubjectRdn> subject, X509Certificate parent) { }
+
+    /**
      * Freezes one authorized invocation's issuer, profile, proof-bound subject key
      * and TBS. The caller must authorize the operation separately. A successful
      * return transfers both unowned candidates; failed adoption must retire both.
@@ -181,41 +256,20 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         Objects.requireNonNull(ttl, "ttl");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         validateSubmission(submission, ttl);
-        EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
-        CaRecord ca = store.getCa(input.issuerCaId()).orElseThrow(() -> reject("ISSUER_MISSING"));
-        if (!ca.caId().equals(input.issuerCaId()) || ca.state() != CaState.ACTIVE) { throw reject("ISSUER_INACTIVE"); }
-        IssuerGeneration generation = IssuerAuthorities.current(store, ca);
-        IssuerChainPath path = IssuerAuthorities.issuancePath(store, ca);
-        if (path.orderedCredentialIds().size() >= IssuerChainPath.MAX_CERTIFICATES) { throw reject("PATH_TOO_LONG"); }
-        Credential issuer = store.getCredential(generation.credentialId()).orElseThrow(() -> reject("ISSUER_CREDENTIAL_MISSING"));
-        requireIssuer(ca, generation, path, issuer);
-        evaluation.requireUsable(issuer, CredentialUse.INTERMEDIATE_ISSUER);
-        ActiveCertificateProfile profile = store.requireActiveProfile(input.profileId());
-        if (!profile.reference().profileId().equals(input.profileId())
-                || !input.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
-        CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.INTERMEDIATE_CA, input.formatId());
-        ManagedKeyProofPreparation.ProofPlan proof = proofs.plan(new ManagedKeyProofRequest.CaSubject(
-                ca.caId(), Optional.empty(), input.profileId(), input.keyRef()), cancellation);
-        if (generation.signingKeyRef().equals(input.keyRef())) { throw reject("SUBJECT_KEY_IS_PARENT_KEY"); }
-        List<SubjectRdn> subject = CaCertificateProfileValidator.validateSubject(input.subjectRef(), profile.definition());
-        X509Certificate parent = path(path, issuer, BcX509ProfileSupport.subject(subject), evaluation.evaluationTime(), cancellation);
+        IntermediateInput publicInput = readInput(input, cancellation);
+        CaRecord ca = publicInput.ca();
+        IssuerGeneration generation = publicInput.generation();
+        IssuerChainPath path = publicInput.path();
+        Credential issuer = publicInput.issuer();
+        ActiveCertificateProfile profile = publicInput.profile();
+        ManagedKeyProofPreparation.ProofPlan proof = publicInput.proof();
+        X509Certificate parent = publicInput.parent();
+        List<SubjectRdn> subject = publicInput.subject();
         PkiId child = authorityId(submission.id());
         BigInteger serial = CertificateSerialAllocator.allocate();
-        ValidatedCaCertificateRequest approved = CaCertificateProfileValidator.validateApprovedSubject(
-                ValidatedCaCertificateRequest.Operation.CREATE_INTERMEDIATE, profile, CertificateProfileKind.INTERMEDIATE_CA,
-                input.formatId(), ca.caId(), child, subject, proof.publicKeyInfo(), Optional.empty(),
-                evaluation.evaluationTime().truncatedTo(ChronoUnit.SECONDS), Optional.of(parent.getNotAfter().toInstant()), serial, authority)
-                .withFrozenPublication(generation.issuerId(), path.pathId(), path.pathCommitment(), input.keyRef());
-        AlgorithmIdentifier algorithm = algorithm(parent, approved);
+        ValidatedCaCertificateRequest approved = validateProfile(input, publicInput, child, serial);
         X500Principal exactSubject = BcX509ProfileSupport.subject(subject);
-        byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(parent.getSubjectX500Principal())
-                .subject(exactSubject).publicKeyInfo(proof.publicKeyInfo().bytes())
-                .validity(approved.validity().notBefore(), approved.validity().notAfter())
-                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
-                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
-        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
-        provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
-        FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
+        byte[] tbs = validatedTbs(parent, proof, approved);
         List<String> fields = List.of(input.formatId().value(), ca.caId().value(),
                 child.value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
                 profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
@@ -307,6 +361,93 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         Objects.requireNonNull(ttl, "ttl");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         validateSubmission(submission, ttl);
+        ExistingIntermediate existing = readExisting(input, CertificateSerialAllocator.allocate(), cancellation);
+        CaRecord subject = existing.subject(); CaRecord ca = existing.ca();
+        IssuerGeneration generation = existing.generation(); IssuerChainPath path = existing.path();
+        Credential issuer = existing.issuer(); ActiveCertificateProfile profile = existing.profile();
+        ManagedKeyProofPreparation.ProofPlan proof = existing.proof(); X509Certificate parent = existing.parent();
+        X500Principal subjectPrincipal = existing.subjectPrincipal();
+        String profileId = profile.reference().profileId(); FormatId formatId = existing.formatId();
+        ValidatedCaCertificateRequest approved = existing.approved(); BigInteger serial = approved.serial();
+        Validity validity = wholeSecondValidity(approved.validity());
+        AlgorithmIdentifier algorithm = algorithm(parent, approved);
+        byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(parent.getSubjectX500Principal())
+                .subject(subjectPrincipal).publicKeyInfo(proof.publicKeyInfo().bytes())
+                .validity(validity.notBefore(), validity.notAfter())
+                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
+                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
+        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
+        provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
+        FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
+        List<String> fields = List.of(formatId.value(), ca.caId().value(),
+                subject.caId().value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
+                profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
+                HexFormat.of().formatHex(profile.reference().canonicalSha256()), subject.subjectRef().value(),
+                validity.notBefore().toString(), validity.notAfter().toString(), serial.toString(),
+                generation.signingKeyRef().value(), issuer.content().contentId(), issuer.content().sha256(),
+                hash(proof.publicKeyInfo().bytes()), "", "",
+                DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs));
+        return stage(access, submission, ttl, generation, input.operation().name(), fields, proof, tbs, cancellation);
+    }
+
+    /**
+     * Validates issuance input without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed issuance input
+     * @param cancellation cooperative cancellation
+     * @throws IOException if authoritative content cannot be read
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    public void validateExisting(AccessContext access, IntermediateCertIssueCommand command, CancellationSignal cancellation) throws IOException {
+        validateExistingInput(access, command, cancellation);
+    }
+
+    /**
+     * Validates rollover input without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed rollover input
+     * @param cancellation cooperative cancellation
+     * @throws IOException if authoritative content cannot be read
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    public void validateExisting(AccessContext access, CaRolloverCommand.Intermediate command, CancellationSignal cancellation) throws IOException {
+        validateExistingInput(access, command, cancellation);
+    }
+
+    /**
+     * Validates rotation input without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed rotation input
+     * @param cancellation cooperative cancellation
+     * @throws IOException if authoritative content cannot be read
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    public void validateExisting(AccessContext access, CaKeyRotationCommand.Intermediate command, CancellationSignal cancellation) throws IOException {
+        validateExistingInput(access, command, cancellation);
+    }
+
+    private void validateExistingInput(AccessContext access, Object command, CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        ExistingRequest input;
+        if (command instanceof IntermediateCertIssueCommand value) {
+            input = new ExistingRequest(value.subjectCaId(), value.issuerCaId(), value.keyRef(),
+                    Optional.of(new ExplicitProfile(value.formatId(), value.profileId())), true,
+                    value.requestedValidity(), value.attributes(), ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE);
+        } else if (command instanceof CaRolloverCommand.Intermediate value) {
+            input = new ExistingRequest(value.caId(), value.issuerCaId(), value.keyRef(), Optional.empty(), true,
+                    value.requestedValidity(), value.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE);
+        } else if (command instanceof CaKeyRotationCommand.Intermediate value) {
+            input = new ExistingRequest(value.caId(), value.issuerCaId(), value.newKeyRef(), Optional.empty(), false,
+                    Optional.empty(), value.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE);
+        } else { throw new UnsupportedOperationException("Unsupported intermediate lifecycle input"); }
+        ExistingIntermediate existing = readExisting(input, BigInteger.ONE, cancellation);
+        validatedTbs(existing.parent(), existing.proof(), existing.approved());
+        cancellation.throwIfCancelled();
+    }
+
+    private ExistingIntermediate readExisting(ExistingRequest input, BigInteger serial,
+            CancellationSignal cancellation) throws IOException {
         if (!input.attributes().ids().isEmpty()) { throw reject("ATTRIBUTES_NOT_SUPPORTED"); }
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
         CaRecord subject = existingSubject(input);
@@ -337,32 +478,19 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         X500Principal subjectPrincipal = currentCertificate.getSubjectX500Principal();
         List<SubjectRdn> subjectRdns = CaCertificateProfileValidator.validateTrustedSubject(subjectPrincipal, profile.definition());
         X509Certificate parent = path(path, issuer, subjectPrincipal, evaluation.evaluationTime(), cancellation);
-        BigInteger serial = CertificateSerialAllocator.allocate();
         ValidatedCaCertificateRequest approved = CaCertificateProfileValidator.validateApprovedSubject(
                 input.operation(), profile, CertificateProfileKind.INTERMEDIATE_CA,
                 formatId, ca.caId(), subject.caId(), subjectRdns, proof.publicKeyInfo(), input.requestedValidity(),
                 evaluation.evaluationTime(), Optional.of(parent.getNotAfter().toInstant()), serial, authority)
                 .withFrozenPublication(generation.issuerId(), path.pathId(), path.pathCommitment(), input.keyRef());
-        Validity validity = wholeSecondValidity(approved.validity());
-        AlgorithmIdentifier algorithm = algorithm(parent, approved);
-        byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(parent.getSubjectX500Principal())
-                .subject(subjectPrincipal).publicKeyInfo(proof.publicKeyInfo().bytes())
-                .validity(validity.notBefore(), validity.notAfter())
-                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
-                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
-        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
-        provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
-        FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
-        List<String> fields = List.of(formatId.value(), ca.caId().value(),
-                subject.caId().value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
-                profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
-                HexFormat.of().formatHex(profile.reference().canonicalSha256()), subject.subjectRef().value(),
-                validity.notBefore().toString(), validity.notAfter().toString(), serial.toString(),
-                generation.signingKeyRef().value(), issuer.content().contentId(), issuer.content().sha256(),
-                hash(proof.publicKeyInfo().bytes()), "", "",
-                DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs));
-        return stage(access, submission, ttl, generation, input.operation().name(), fields, proof, tbs, cancellation);
+        return new ExistingIntermediate(subject, ca, generation, path, issuer, profile, proof, parent,
+                subjectPrincipal, formatId, approved);
     }
+
+    private record ExistingIntermediate(CaRecord subject, CaRecord ca, IssuerGeneration generation,
+            IssuerChainPath path, Credential issuer, ActiveCertificateProfile profile,
+            ManagedKeyProofPreparation.ProofPlan proof, X509Certificate parent,
+            X500Principal subjectPrincipal, FormatId formatId, ValidatedCaCertificateRequest approved) { }
 
     private X509Certificate path(IssuerChainPath path, Credential issuer, X500Principal childSubject,
             Instant now, CancellationSignal cancellation) throws IOException {

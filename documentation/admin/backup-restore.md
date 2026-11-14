@@ -43,7 +43,7 @@ below uses the same verification and cold activation rules. The legacy
 Remote transfer is disabled unless the server is started with
 `--backup-transfer-config /path/to/transfer.json`. The separate version-1
 document preserves the main server schema (version 8).
-Start from the repository example `docs/pki-backup-transfer-example.json`
+Start from the repository example `documentation/examples/configuration/pki-backup-transfer-example.json`
 and choose every value for the deployment. In the packaged server, set
 `ZEROECHO_BACKUP_TRANSFER_CONFIG` to the mounted configuration file.
 

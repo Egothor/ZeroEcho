@@ -229,6 +229,13 @@ operations:
     arguments:
       credentialId: "Stable credential identifier (UUID)"
 
+  credential.list:
+    summary: "List stored credential metadata for an authority"
+    description: "Mandatory bounded inventory scoped to the selected issuing authority, independent of the optional H2 search index. Current row authorization is applied before limiting results. Requires CERTIFICATE_SEARCH with METADATA_REDACTED; metadata access does not authorize certificate-content downloads."
+    arguments:
+      limit: "Maximum number of authorized results (1–1000)"
+      after: "Optional exclusive credential-ID cursor; use nextCursor from the preceding page"
+
   credential.search:
     summary: "Search credential inventory using the optional embedded index"
     description: "Unavailable unless the store search index is explicitly enabled and ready. Filters are combined with current row authorization before limiting results. SAN filters match exact typed values from issued certificate DER."

@@ -398,8 +398,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
     /**
      * Reports deployment capability availability independently of caller permission.
      * @param operationId catalog operation identity
-     * @return false when backup transfer storage or the operation's EST, SCEP,
-     *         or CMP service is not installed
+     * @return false when backup transfer storage or the operation's ACME, enrollment-request,
+     *         EST, SCEP or CMP service is not installed
      */
     public boolean operationAvailable(String operationId) {
         return controlExecutor.protocolAvailable(operationId)
@@ -408,6 +408,60 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                         && selection.credentialSearchAvailable())
                 && (!operationId.startsWith("backup.stream.") || controlExecutor.backupTransfersAvailable());
     }
+    /** Applies shared pure control preconditions to an already authorized retained target. */
+    void validateAdministrativeControl(Admission admission) {
+        if(!(admission.request().operation() instanceof AdministrativeOperation.Control control))throw new IllegalArgumentException("Control operation required");
+        controlExecutor.validateAdministrative(control.operation(),admission.request().principalId());
+    }
+
+    /**
+     * Side-effect-free admission assessment for one retained administrative mutation.
+     *
+     * @param request authenticated original requester and exact target
+     * @return authoritative target, commitment, current decision and required policy
+     * @throws SecurityException when current authority, scope or operation availability rejects the target
+     */
+    public Admission assessAdministrativeRequest(Request request) {
+        openCheck.run();
+        Request exact = authoritativeRequest(Objects.requireNonNull(request, "request"));
+        if (!realmId.equals(exact.realmId()) || !realmId.equals(exact.resource().scope().realmId())) throw new SecurityException("Outside realm");
+        var descriptor = validateOperationScope(exact, null);
+        if (!descriptor.mutating()) throw new SecurityException("Only mutations may be retained");
+        if (exact.operation() instanceof AdministrativeOperation.Signing signing
+                && signing.operation() instanceof PkiSigningOperation.CreateAuthority && !exposure.authorityCreationPermitted()) throw new SecurityException("Creation outside scope");
+        SecurityPrincipal principal = control.requirePrincipal(exact.principalId());
+        List<Permission.Grant> grants = new ArrayList<>(control.grantsFor(principal.principalId()));
+        for (RoleTemplateCatalog.Assignment assignment : control.assignmentsFor(principal.principalId())) grants.addAll(roles.instantiate(assignment));
+        var emergency = breakGlass.activeFor(principal.principalId()); grants.addAll(emergency.grants());
+        Permission.Action action = exact.operation() instanceof AdministrativeOperation.Pki pki ? action(pki.operation(), descriptor.action()) : descriptor.action();
+        var decision = authorization.authorize(new AuthorizationEngine.Request(realmId, exposure, principal, action,
+                exact.resource(), exact.relationship(), descriptor.dataView(), operationContext(exact.operation(), exact.context(), false), grants, emergency.grantIds()));
+        boolean grantRequired = decision.code() == AuthorizationEngine.Code.APPROVAL_REQUIRED;
+        var category = descriptors.approvalPolicyCategory(exact.operation(), grantRequired);
+        Optional<String> profile = profileDrivenIssuanceProfileId(exact.operation());
+        if (profile.isPresent()) category = issuanceApprovalCategory(profile.orElseThrow());
+        if (!decision.allowed() && !(grantRequired && category != OperationSecurityDescriptors.ApprovalCategory.NONE)) throw new SecurityException("Current authorization denied");
+        Optional<ApprovalService.Policy> policy = category == OperationSecurityDescriptors.ApprovalCategory.NONE ? Optional.empty()
+                : Optional.ofNullable(approvalPolicies.get(category));
+        if (category != OperationSecurityDescriptors.ApprovalCategory.NONE && policy.isEmpty()) throw new SecurityException("Policy unavailable");
+        return new Admission(exact, descriptors.commitment(realmId, exact.operation(), exact.resource()), policy, decision);
+    }
+
+    /**
+     * Immutable current-authority assessment; possession is never an execution capability.
+     * @param request authoritative target and original trusted actor
+     * @param commitment exact operation commitment
+     * @param policy required frozen approval policy, absent when no decision is required
+     * @param decision current authorization decision
+     */
+    public record Admission(Request request, String commitment, Optional<ApprovalService.Policy> policy,
+            AuthorizationEngine.Decision decision) { }
+
+    Optional<IssuanceExecutionEvidence> administrativeSigningEvidence(Admission admission) {
+        return signingEvidence(control.requirePrincipal(admission.request().principalId()), admission.request(),
+                admission.decision(), admission.request().approvalId(), admission.commitment());
+    }
+
     /**
      * Admits and synchronously executes one operation.
      *
@@ -685,6 +739,21 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      */
     public AuthorizationEngine.Decision authorizeControl(String principalId, Permission.Action action,
             Permission.Resource resource, Permission.Context context, String correlationId) {
+        return authorizeControl(principalId,action,resource,Permission.DataView.METADATA_REDACTED,context,correlationId);
+    }
+
+    /**
+     * Authorizes an explicit trusted transport view using the complete live permission engine.
+     * @param principalId authenticated current principal
+     * @param action exact permission action
+     * @param resource authoritatively resolved object and scope
+     * @param dataView required view, including CONTENT_FULL for certificate bytes
+     * @param context trusted operation context
+     * @param correlationId bounded trace identity
+     * @return complete current allow or deny decision
+     */
+    public AuthorizationEngine.Decision authorizeControl(String principalId,Permission.Action action,
+            Permission.Resource resource,Permission.DataView dataView,Permission.Context context,String correlationId) {
         openCheck.run();
         Permission.requirePrincipal(principalId);
         Permission.requireBounded(correlationId, 256, "correlation ID");
@@ -694,7 +763,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         grants.addAll(emergency.grants());
         AuthorizationEngine.Decision decision = authorization.authorize(new AuthorizationEngine.Request(realmId,
                 exposure, principal, action, resource, Permission.Relationship.ANY,
-                Permission.DataView.METADATA_REDACTED, context, grants, emergency.grantIds()));
+                Objects.requireNonNull(dataView,"dataView"), context, grants, emergency.grantIds()));
         audit.record(decision.allowed() ? "AUTHORIZATION_ALLOW" : "AUTHORIZATION_DENY", principalId,
                 Optional.empty(), Map.of("action", action.name(), "code", decision.code().name(),
                         "correlation", correlationId));
@@ -838,7 +907,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
 
     private static boolean selectionOperation(PkiOperation operation) {
         return operation instanceof PkiOperation.ListProfiles || operation instanceof PkiOperation.ListRequests
-                || operation instanceof PkiOperation.SearchCredentials || operation instanceof PkiOperation.ListIssuerGenerations
+                || operation instanceof PkiOperation.SearchCredentials || operation instanceof PkiOperation.ListCredentials || operation instanceof PkiOperation.ListIssuerGenerations
                 || operation instanceof PkiOperation.ListAuthorities || operation instanceof PkiOperation.ListStatus
                 || operation instanceof PkiOperation.ListPublications || operation instanceof PkiOperation.ListAlgorithmBindings;
     }
@@ -859,7 +928,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         } else if (operation instanceof PkiOperation.ListRequests) {
             object = Optional.of(new PkiId(selectionText(row, "requestId")));
             if (row.fields().get(PROFILE_ID) instanceof PkiOperationValue.Text value) { profile = Optional.of(value.value()); }
-        } else if (operation instanceof PkiOperation.SearchCredentials) {
+        } else if (operation instanceof PkiOperation.SearchCredentials || operation instanceof PkiOperation.ListCredentials) {
             authority = Optional.of(new PkiId(selectionText(row, "authorityId")));
             issuer = Optional.of(new PkiId(selectionText(row, "issuerId")));
             profile = Optional.of(selectionText(row, PROFILE_ID));
@@ -1037,7 +1106,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             return;
         }
         Optional<PkiId> actual = switch (operation) {
-            case PkiOperation.InspectCredential value -> credentialAuthority(value.credentialId());
+            case PkiOperation.InspectCredential value -> readCredentialAuthority(value.credentialId());
             case PkiOperation.RevokeCredential value -> credentialAuthority(value.credentialId());
             case PkiOperation.HoldCredential value -> credentialAuthority(value.credentialId());
             case PkiOperation.UnholdCredential value -> credentialAuthority(value.credentialId());
@@ -1079,6 +1148,10 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 && !credentialAuthority(predecessor.orElseThrow()).equals(resource.scope().authorityId())) {
             throw new SecurityException("Authoritative object scope does not match the request");
         }
+    }
+
+    private Optional<PkiId> readCredentialAuthority(PkiId credentialId) {
+        return resourceScopes.credentialReadScope(credentialId).map(PkiResourceScopeResolver.CredentialScope::authorityId);
     }
 
     private Optional<PkiId> credentialAuthority(PkiId credentialId) {
@@ -1183,10 +1256,57 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 request.credentialEvidence(), request.operation(), resource, request.relationship(), request.context(), request.approvalId(), request.correlationId());
     }
 
+    /** Resolves only existing closed control identities; supplied coordinates remain strict constraints. */
+    private Optional<Permission.Scope> persistedControlScope(ServerControlOperation operation) {
+        return switch(operation) {
+            case ServerControlOperation.InspectAcmeDirectory value -> Optional.of(controlExecutor.acmeScope(value));
+            case ServerControlOperation.SetAcmeDirectoryActive value -> Optional.of(controlExecutor.acmeScope(value));
+            case ServerControlOperation.InspectAcmeAccount value -> Optional.of(controlExecutor.acmeScope(value));
+            case ServerControlOperation.DeactivateAcmeAccount value -> Optional.of(controlExecutor.acmeScope(value));
+            case ServerControlOperation.InspectOcspResponder value -> Optional.of(ocspScope(value.responderId()));
+            case ServerControlOperation.SetOcspResponderActive value -> Optional.of(ocspScope(value.responderId()));
+            case ServerControlOperation.InspectGrant value -> Optional.of(control.requireGrant(value.grantId()).scope());
+            case ServerControlOperation.RevokeGrant value -> Optional.of(control.requireGrant(value.grantId()).scope());
+            case ServerControlOperation.InspectRoleAssignment value -> Optional.of(control.requireAssignment(value.assignmentId()).scope());
+            case ServerControlOperation.RevokeRoleAssignment value -> Optional.of(control.requireAssignment(value.assignmentId()).scope());
+            case ServerControlOperation.ActivateBreakGlass value -> Optional.of(breakGlass.requireCurrent(value.breakGlassId()).grant().scope());
+            case ServerControlOperation.InspectBreakGlass value -> Optional.of(breakGlass.requireCurrent(value.breakGlassId()).grant().scope());
+            case ServerControlOperation.RevokeBreakGlass value -> Optional.of(breakGlass.requireCurrent(value.breakGlassId()).grant().scope());
+            default -> Optional.empty();
+        };
+    }
+    private Permission.Scope ocspScope(String id) {
+        var responder=controlExecutor.ocspResponder(id);
+        return new Permission.Scope(realmId,Optional.of(responder.authorityId()),Optional.of(responder.issuerId()),Optional.empty());
+    }
+    private Permission.Resource persistedControlResource(ServerControlOperation operation,Permission.Resource supplied,Permission.Scope scope) {
+        if(supplied.type()!=descriptors.require(operation.name()).resourceType()||supplied.objectId().isPresent()||supplied.ownerPrincipalId().isPresent()
+                ||!scope.realmId().equals(supplied.scope().realmId())
+                ||supplied.scope().authorityId().isPresent()&&!supplied.scope().authorityId().equals(scope.authorityId())
+                ||supplied.scope().issuerId().isPresent()&&!supplied.scope().issuerId().equals(scope.issuerId())
+                ||supplied.scope().profileId().isPresent()&&!supplied.scope().profileId().equals(scope.profileId())
+                ||supplied.scope().responderId().isPresent()&&!supplied.scope().responderId().equals(scope.responderId()))throw new SecurityException("Persisted control scope differs");
+        return new Permission.Resource(supplied.type(),scope,Optional.empty(),Optional.empty());
+    }
+
     private Request authoritativeControlRequest(Request request) {
         Request exact = request;
         if (request.operation() instanceof AdministrativeOperation.Control controlOperation) {
             ServerControlOperation operation = controlOperation.operation();
+            var persisted=persistedControlScope(operation);
+            if(persisted.isPresent()) {
+                var resource=persistedControlResource(operation,request.resource(),persisted.orElseThrow());
+                return new Request(request.realmId(),request.principalId(),request.authenticationMode(),request.transportPrincipalId(),request.credentialEvidence(),request.operation(),resource,request.relationship(),request.context(),request.approvalId(),request.correlationId());
+            }
+            if(operation instanceof ServerControlOperation.RequestApproval approval&&approval.targetOperation() instanceof AdministrativeOperation.Control target) {
+                var targetScope=persistedControlScope(target.operation());
+                if(targetScope.isPresent()) {
+                    var targetResource=persistedControlResource(target.operation(),approval.targetResource(),targetScope.orElseThrow());
+                    var bound=new ServerControlOperation.RequestApproval(approval.approvalId(),approval.targetOperation(),targetResource);
+                    var resource=authoritativeApprovalResource(request.resource(),targetResource.scope());
+                    return new Request(request.realmId(),request.principalId(),request.authenticationMode(),request.transportPrincipalId(),request.credentialEvidence(),new AdministrativeOperation.Control(bound),resource,request.relationship(),request.context(),request.approvalId(),request.correlationId());
+                }
+            }
             Optional<String> enrollmentId = switch (operation) {
                 case ServerControlOperation.InspectEnrollmentRequest value -> Optional.of(value.id());
                 case ServerControlOperation.DecideEnrollmentRequest value -> Optional.of(value.id());

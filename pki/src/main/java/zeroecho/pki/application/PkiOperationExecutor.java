@@ -46,6 +46,18 @@ import zeroecho.core.io.CancellationSignal;
 public interface PkiOperationExecutor {
 
     /**
+     * Checks current input and state without committing the operation or emitting audit writes.
+     * Execution must repeat all checks against its then-current authoritative state.
+     * @param operation immutable typed input
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if a pure validator is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validate(PkiOperation operation, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure operation validation unavailable");
+    }
+
+    /**
      * Executes one typed operation synchronously.
      *
      * @param operation validated typed operation

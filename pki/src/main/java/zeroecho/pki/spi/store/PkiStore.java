@@ -108,6 +108,17 @@ import zeroecho.pki.api.status.StatusObjectType;
 public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, AutoCloseable { // NOPMD - TooManyMethods: one cohesive strict-schema or store-transaction ownership contract.
 
     /**
+     * Checks current revocation state without appending transitions or confirmation cleanup.
+     * @param command immutable transition command
+     * @param overdueConfirmation whether overdue pending confirmation rules also apply
+     * @throws UnsupportedOperationException if this provider has no pure validator
+     * @throws RuntimeException if target state, clock or confirmation policy rejects input
+     */
+    default void validateRevocation(zeroecho.pki.api.revocation.RevocationCommand command, boolean overdueConfirmation) {
+        throw new UnsupportedOperationException("Pure revocation validation unavailable");
+    }
+
+    /**
      * Discards an unpublished restore attempt after cold coordinator recovery.
      * The current restore identifier must still equal {@code previousRestoreId};
      * a published or uncertain attempt must never be discarded. Implementations

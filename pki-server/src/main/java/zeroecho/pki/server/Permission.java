@@ -59,6 +59,7 @@ public final class Permission {
         /** Manages role definitions. */ ROLE_MANAGE(7),
         /** Grants or revokes permissions. */ PERMISSION_GRANT(8),
         /** Forwards an authenticated client identity. */ FORWARD_AUTHENTICATED_CLIENT_IDENTITY(9),
+        /** Allows a qualified approver to decide an approval they requested. */ APPROVAL_DECIDE_OWN(10),
         /** Lists authorities. */ AUTHORITY_LIST(20),
         /** Reads authority metadata. */ AUTHORITY_READ(21),
         /** Creates an authority. */ AUTHORITY_CREATE(22),

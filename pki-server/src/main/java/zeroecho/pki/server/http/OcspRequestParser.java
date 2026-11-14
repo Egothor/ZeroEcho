@@ -131,8 +131,10 @@ final class OcspRequestParser {
                 && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.DER_NULL) {
             return OcspResponseService.CertIdHash.SHA1;
         }
+        // SHA-256 CertIDs from OpenSSL use explicit NULL; both digest parameter forms identify the same hash.
         if (OID_SHA256.equals(algorithm.oid())
-                && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.ABSENT) {
+                && (algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.ABSENT
+                    || algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.DER_NULL)) {
             return OcspResponseService.CertIdHash.SHA256;
         }
         throw malformed();

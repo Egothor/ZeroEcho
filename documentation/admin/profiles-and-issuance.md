@@ -109,7 +109,14 @@ returned by issuance) rather than from a realm-wide list.
 
 ## Browse / search credentials
 
-**Browse credentials** (`credential.search`) requires the optional H2 search index
+**List stored credentials** (`credential.list`) is the mandatory metadata inventory
+and works without H2. Select the issuing `authorityId`, set `limit` from 1 to 1000,
+and pass the previous page's `nextCursor` as the optional exclusive `after` cursor.
+The local CLI accepts `credential.list --authority-id <id> --limit <1..1000>
+[--after <cursor>]`. Metadata listing does not grant certificate-content download
+permission.
+
+**Advanced search** (`credential.search`) requires the optional H2 search index
 to be activated in the [deployment configuration](../reference/configuration-reference.md).
 It lists credentials issued by a given authority. Supply `authorityId` to scope the results, then optionally narrow them
 with any combination of the filters below. All filters are optional and

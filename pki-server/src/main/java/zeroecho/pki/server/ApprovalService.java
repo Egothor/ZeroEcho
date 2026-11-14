@@ -217,18 +217,40 @@ public final class ApprovalService {
     private final ServerControlStore store;
     private final Clock clock;
     private final SafeAudit audit;
+    private final OwnDecisionAuthorizer ownDecisionAuthorizer;
+    private volatile Runnable decisionWake = () -> { };
+
+    void onDecision(Runnable wake) { decisionWake = Objects.requireNonNull(wake, "wake"); }
+
+    /** Resolves the additional own-decision capability without replacing ordinary approval checks. */
+    @FunctionalInterface
+    interface OwnDecisionAuthorizer {
+        boolean allowed(Request request, SecurityPrincipal principal, String justification);
+    }
+
+    /** Supplies the same authoritative clock to side-effect-free control preflight. */
+    Instant validationTime() { return clock.instant(); }
 
     /**
      * Creates a durable approval service over one server-control authority.
+     *
+     * <p>This embedded constructor always enforces requester separation. The realm runtime
+     * installs its additional scoped own-decision authorizer separately.</p>
      *
      * @param store durable server-control store
      * @param clock authoritative server clock
      * @param auditSink required safe audit sink
      */
     public ApprovalService(ServerControlStore store, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink) {
+        this(store, clock, auditSink, (request, principal, justification) -> false);
+    }
+
+    /* default */ ApprovalService(ServerControlStore store, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink,
+            OwnDecisionAuthorizer ownDecisionAuthorizer) {
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.audit = new SafeAudit(clock, auditSink);
+        this.ownDecisionAuthorizer = Objects.requireNonNull(ownDecisionAuthorizer, "ownDecisionAuthorizer");
     }
 
     /**
@@ -270,8 +292,10 @@ public final class ApprovalService {
         SecurityPrincipal principal = store.requirePrincipal(principalId);
         Request current = requireCurrent(approvalId);
         requirePending(current);
-        if (!principal.enabled() || current.policy().requesterSeparation()
-                && current.requesterPrincipalId().equals(principal.principalId())) {
+        boolean ownSeparatedDecision = current.policy().requesterSeparation()
+                && current.requesterPrincipalId().equals(principal.principalId());
+        if (!principal.enabled() || ownSeparatedDecision
+                && !ownDecisionAuthorizer.allowed(current, principal, justification)) {
             throw new IllegalStateException("Principal is not eligible to decide this approval");
         }
         boolean direct = current.policy().eligibleApprovers().contains(principal.principalId());
@@ -296,6 +320,7 @@ public final class ApprovalService {
                         >= current.policy().threshold() ? State.APPROVED : State.PENDING;
         Request updated = copy(current, state, decisions, Optional.empty());
         store.replaceApproval(current, updated);
+        try { decisionWake.run(); } catch (RuntimeException ignored) { /* Periodic durable recovery remains authoritative. */ }
         audit.record("APPROVAL_DECISION", principal.principalId(), Optional.empty(),
                 Map.of("state", state.name(), "approvalId", approvalId, "choice", choice.name(),
                         "opCommitment", current.operationCommitment()));

@@ -61,7 +61,7 @@ These deployment examples require the named configuration and TLS files.
 The public local CLI configuration is **version 1**, with `mode: "local"`
 and `operatorId`. Its embedded backend configuration is a separate **version 6**
 contract. Server configuration is **version 8**. Do not interchange them.
-See the [CLI guide](docs/pki-cli.md), [worked local demos](docs/examples/pki-cli/README.md),
+See the [CLI guide](documentation/reference/pki-cli.md), [worked local demos](documentation/examples/pki-cli/README.md),
 and [deployment instructions](deploy/README.md).
 
 ## Support and limits
@@ -95,8 +95,6 @@ and [deployment instructions](deploy/README.md).
 The [documentation home](documentation/index.md) links user, operator and developer
 guides. The [architecture](documentation/overview/architecture.md) and
 [module reference](documentation/developer/modules.md) describe implemented ownership.
-[Future work](docs/project-work-plan.md) lists accepted deferrals separately from
-implemented capabilities.
 
 ```bash
 python3 -m pip install -r documentation/requirements.txt

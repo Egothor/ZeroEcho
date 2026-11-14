@@ -94,6 +94,7 @@ ENV NGINX_ENVSUBST_FILTER="^(NGINX_|PKI_)" \
     NGINX_SERVER_NAME="pki.example.com" \
     NGINX_HTTPS_PORT="8443" \
     PKI_UPSTREAM="pki-server:8443" \
+    PKI_PUBLIC_UPSTREAM="127.0.0.1:9" \
     PKI_PROXY_SSL_NAME="zeroecho-admin"
 
 # TLS material is provided at run time as read-only mounts:

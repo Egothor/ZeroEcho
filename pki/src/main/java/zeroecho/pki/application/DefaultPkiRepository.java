@@ -68,8 +68,18 @@ final class DefaultPkiRepository implements PkiRepository {
     private static final int MAX_PAGE = 1_000;
     private final PkiStore store;
     private final Runnable requireOpen;
+    private final java.util.Map<zeroecho.pki.api.FormatId, zeroecho.pki.spi.framework.CredentialFramework> frameworks;
+    private static final int MAX_CREDENTIAL_BYTES = 1024 * 1024;
+    private static final int MAX_EXPORT_BYTES = 2 * MAX_CREDENTIAL_BYTES + 256;
 
     /* default */ DefaultPkiRepository(PkiStore store, Runnable requireOpen) {
+        this(store, requireOpen, List.of());
+    }
+
+    /* default */ DefaultPkiRepository(PkiStore store, Runnable requireOpen,
+            List<zeroecho.pki.spi.framework.CredentialFramework> configuredFrameworks) {
+        this.frameworks = configuredFrameworks.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                zeroecho.pki.spi.framework.CredentialFramework::formatId, value -> value));
         this.store = Objects.requireNonNull(store, "store");
         this.requireOpen = Objects.requireNonNull(requireOpen, "requireOpen");
     }
@@ -114,6 +124,97 @@ final class DefaultPkiRepository implements PkiRepository {
         return store.getStatusObject(Objects.requireNonNull(statusObjectId, "statusObjectId"));
     }
 
+    @Override public List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> credentialRepresentations(PkiId credentialId) {
+        requireOpen.run();
+        Credential credential = credential(credentialId).orElseThrow(() -> new PkiException("Credential not found"));
+        return representations(credential);
+    }
+
+    private List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> representations(Credential credential) {
+        var framework = frameworks.get(credential.formatId());
+        var values = List.copyOf(framework == null
+                ? List.of(zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation.original(credential.content().encoding()))
+                : framework.credentialRepresentations(credential.content().encoding()));
+        if (values.isEmpty() || values.size() > 16 || values.stream().map(value -> value.id()).distinct().count() != values.size()
+                || values.stream().noneMatch(value -> "original".equals(value.id()))) {
+            throw new PkiException("Credential representation metadata is invalid");
+        }
+        return values;
+    }
+
+    @Override public PkiRepositoryContent openCredential(PkiId credentialId, String representation,
+            CancellationSignal cancellation) throws IOException {
+        requireOpen.run();
+        Objects.requireNonNull(representation, "representation");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        Credential credential = credential(credentialId).orElseThrow(() -> new PkiException("Credential not found"));
+        var selected = representations(credential).stream().filter(value -> value.id().equals(representation)).findFirst()
+                .orElseThrow(() -> new UnsupportedOperationException("Unsupported credential representation"));
+        if (credential.content().length() < 1 || credential.content().length() > MAX_CREDENTIAL_BYTES) {
+            throw new IOException("Credential content exceeds export budget");
+        }
+        RepeatableContent nativeContent = store.stagedContent().openContent(credential.content());
+        boolean transferred = false;
+        try {
+            byte[] originalBytes = readCredential(nativeContent, credential, cancellation);
+            var framework = frameworks.get(credential.formatId());
+            var original = new zeroecho.pki.api.EncodedObject(credential.content().encoding(), originalBytes);
+            var exported = framework == null ? original : framework.exportCredential(original, representation, cancellation);
+            if (exported.encoding() != selected.encoding() || exported.byteLength() > MAX_EXPORT_BYTES) {
+                throw new IOException("Credential representation encoding or output budget differs");
+            }
+            byte[] bytes = exported.bytes();
+            cancellation.throwIfCancelled();
+            if ("original".equals(representation)) {
+                if (!java.util.Arrays.equals(originalBytes, bytes)) throw new IOException("Original credential representation changed bytes");
+                var lease = new PkiRepositoryContent(credentialId, credential.issuerRef().caId(), PkiRepositoryContent.Role.CERTIFICATE,
+                        credential.content(), nativeContent);
+                transferred = true;
+                return lease;
+            }
+            return new PkiRepositoryContent(credentialId, credential.issuerRef().caId(), PkiRepositoryContent.Role.CERTIFICATE,
+                    bytes.length, digest(bytes), new ExportContent(bytes));
+        } finally {
+            if (!transferred) nativeContent.close();
+        }
+    }
+
+    private static byte[] readCredential(RepeatableContent content, Credential credential, CancellationSignal cancellation) throws IOException {
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (InputStream input = content.openStream()) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                cancellation.throwIfCancelled();
+                if (read > credential.content().length() - bytes.size()) throw new IOException("Credential content length differs");
+                bytes.write(buffer, 0, read);
+            }
+        }
+        byte[] exact = bytes.toByteArray();
+        if (exact.length != credential.content().length() || !digest(exact).equals(credential.content().sha256())) {
+            throw new IOException("Credential content integrity differs");
+        }
+        return exact;
+    }
+
+    private static String digest(byte[] bytes) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
+        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
+    }
+
+    private static final class ExportContent implements RepeatableContent {
+        private final byte[] bytes;
+        private boolean closed;
+        ExportContent(byte[] bytes) { this.bytes = bytes; }
+        @Override public synchronized InputStream openStream() throws IOException {
+            if (closed) throw new IOException("Credential export lease closed");
+            return new java.io.ByteArrayInputStream(bytes);
+        }
+        @Override public OptionalLong length() { return OptionalLong.of(bytes.length); }
+        @Override public String contentId() { return "credential-export:" + digest(bytes); }
+        @Override public synchronized void close() { closed = true; }
+    }
+
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override public PkiRepositoryContent openCredential(PkiId credentialId) {
         requireOpen.run();
@@ -138,6 +239,48 @@ final class DefaultPkiRepository implements PkiRepository {
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    @Override public List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> statusRepresentations(PkiId id) {
+        requireOpen.run();var object=statusObject(id).orElseThrow(() -> new PkiException("Status object not found"));
+        var framework=frameworks.get(object.formatId());
+        var values=List.copyOf(framework==null?List.of(zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation.original(object.content().encoding()))
+                :framework.statusRepresentations(object.type(),object.content().encoding()));
+        if(values.isEmpty()||values.size()>16||values.stream().map(value -> value.id()).distinct().count()!=values.size()
+                ||values.stream().noneMatch(value -> value.id().equals("original")))throw new PkiException("Status representation metadata is invalid");
+        return values;
+    }
+
+    @Override public PkiRepositoryContent openStatusObject(PkiId id,String representation,CancellationSignal cancellation)throws IOException {
+        requireOpen.run();Objects.requireNonNull(cancellation,"cancellation").throwIfCancelled();
+        var object=statusObject(id).orElseThrow(() -> new PkiException("Status object not found"));
+        var selected=statusRepresentations(id).stream().filter(value -> value.id().equals(representation)).findFirst()
+                .orElseThrow(() -> new UnsupportedOperationException("Status representation unavailable"));
+        long nativeLimit=256L*1024*1024;
+        if(object.content().length()<1||object.content().length()>nativeLimit)throw new IOException("Status content exceeds download budget");
+        RepeatableContent exported=store.stagedContent().openContent(object.content());boolean transferred=false;
+        try {
+            var nativeDigest=inspectStatusStream(exported,object.content().length(),nativeLimit,cancellation);
+            if(!nativeDigest.equals(object.content().sha256()))throw new IOException("Status source integrity differs");
+            var framework=frameworks.get(object.formatId());
+            if(framework!=null)exported=framework.exportStatusContent(object.type(),object.content().encoding(),exported,representation,cancellation);
+            else if(!representation.equals("original"))throw new UnsupportedOperationException("Status representation unavailable");
+            long length=exported.length().orElseThrow(() -> new IOException("Status representation length unavailable"));
+            String digest=inspectStatusStream(exported,length,368L*1024*1024,cancellation);
+            if(selected.id().equals("original")&&(length!=object.content().length()||!digest.equals(object.content().sha256())))throw new IOException("Original status representation changed bytes");
+            var role=object.type()==StatusObjectType.CRL||object.type()==StatusObjectType.DELTA_CRL?PkiRepositoryContent.Role.CRL:PkiRepositoryContent.Role.STATUS_OBJECT;
+            var result=new PkiRepositoryContent(id,object.issuerCaId(),role,length,digest,exported);transferred=true;return result;
+        } finally {if(!transferred)exported.close();}
+    }
+    private static String inspectStatusStream(RepeatableContent content,long expected,long maximum,CancellationSignal cancellation)throws IOException {
+        if(expected<1||expected>maximum)throw new IOException("Status representation exceeds download budget");
+        MessageDigest digest;
+        try {digest=MessageDigest.getInstance("SHA-256");}catch(NoSuchAlgorithmException impossible){throw new IllegalStateException("SHA-256 unavailable",impossible);}
+        long count=0;byte[] buffer=new byte[16*1024];
+        try(var input=content.openStream()) {
+            int read;while((read=input.read(buffer))!=-1){cancellation.throwIfCancelled();if(read>expected-count)throw new IOException("Status representation length differs");count+=read;digest.update(buffer,0,read);}
+        }
+        cancellation.throwIfCancelled();if(count!=expected)throw new IOException("Status representation length differs");return HexFormat.of().formatHex(digest.digest());
+    }
+
     @Override public PkiRepositoryContent openStatusObject(PkiId statusObjectId) {
         requireOpen.run();
         StatusObject object = statusObject(statusObjectId).orElseThrow(() -> new PkiException("Status object not found"));

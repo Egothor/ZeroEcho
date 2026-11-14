@@ -34,6 +34,8 @@
 package zeroecho.pki.application;
 
 import java.util.List;
+import java.util.Map;
+import zeroecho.pki.spi.framework.CredentialFramework;
 import java.util.Objects;
 import java.util.Optional;
 import zeroecho.core.io.CancellationSignal;
@@ -52,10 +54,27 @@ public interface PkiConfigurationChoicesSource {
      * @param keys sorted distinct key references, at most the requested limit
      * @param nextCursor last returned key reference when another key is known
      * @param algorithms signature algorithms supported by the configured signing provider
+     * @param formatMetadata safe presentation metadata supplied by each configured framework
      */
     record Choices(List<FormatId> formats, List<String> signingProviders,
             List<PublicationTarget> publicationTargets, List<KeyRef> keys, Optional<String> nextCursor,
-            List<String> algorithms) {
+            List<String> algorithms, Map<FormatId, FormatMetadata> formatMetadata) {
+        /**
+         * Retains source compatibility for callers that have only opaque format IDs.
+         * @param formats configured credential format IDs
+         * @param signingProviders configured signing providers
+         * @param publicationTargets configured publication targets
+         * @param keys bounded known key page
+         * @param nextCursor exclusive next-page key cursor
+         * @param algorithms configured signing algorithm IDs
+         */
+        public Choices(List<FormatId> formats, List<String> signingProviders, List<PublicationTarget> publicationTargets,
+                List<KeyRef> keys, Optional<String> nextCursor, List<String> algorithms) {
+            this(formats, signingProviders, publicationTargets, keys, nextCursor, algorithms,
+                    formats.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                            value -> value, value -> new FormatMetadata(value.value(), CredentialFramework.SubjectInput.generic()))));
+        }
+
         /** Snapshots the immutable non-secret metadata. */
         public Choices {
             formats = List.copyOf(formats);
@@ -64,6 +83,24 @@ public interface PkiConfigurationChoicesSource {
             keys = List.copyOf(keys);
             nextCursor = Objects.requireNonNull(nextCursor, "nextCursor");
             algorithms = List.copyOf(algorithms);
+            formatMetadata = Map.copyOf(formatMetadata);
+            if (!formatMetadata.keySet().equals(java.util.Set.copyOf(formats))) {
+                throw new IllegalArgumentException("Format metadata must match configured formats");
+            }
+        }
+    }
+
+    /**
+     * Immutable non-secret presentation data for one configured credential format.
+     * @param displayName user-facing format name
+     * @param subjectInput format-owned subject input guidance
+     */
+    record FormatMetadata(String displayName, CredentialFramework.SubjectInput subjectInput) {
+        /** Validates bounded names and required subject guidance. */
+        public FormatMetadata {
+            Objects.requireNonNull(displayName, "displayName");
+            Objects.requireNonNull(subjectInput, "subjectInput");
+            if (displayName.isBlank() || displayName.length() > 128) throw new IllegalArgumentException("Invalid format name");
         }
     }
 

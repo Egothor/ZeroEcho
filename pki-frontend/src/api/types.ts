@@ -41,6 +41,8 @@ export interface OperationDescriptor {
   readonly operation: string;
   readonly family: OperationFamily;
   readonly mutating: boolean;
+  /** Whether the server accepts this operation through the durable administrative-request API. */
+  readonly durableRequest?: boolean;
   readonly resourceType: string;
   readonly approval: string;
   readonly dataView: string;

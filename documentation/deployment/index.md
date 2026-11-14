@@ -7,6 +7,10 @@ host prerequisites, the two container images, the data and configuration contrac
 a Kubernetes deployment, day-two operations, and the security model you must
 uphold at the edge.
 
+For a guided Linux installation, start with the
+[rootless Podman installer](rootless-podman.md). To exercise a running installation
+from a separate host console, follow the [PKI exercise guide](pki-exercise.md).
+
 ## What you will deploy
 
 The platform runs as two cooperating containers on a private network:

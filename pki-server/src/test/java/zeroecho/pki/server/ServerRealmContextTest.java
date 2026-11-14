@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -172,7 +173,8 @@ class ServerRealmContextTest {
     void concurrentCloseSharesOneSuccessfulAttemptAndClosesExactlyOnce() throws Exception {
         PkiSession session = mock(PkiSession.class);
         ServerControlStore control = mock(ServerControlStore.class);
-        ServerRealmContext context = closeContext(session, control);
+        AdministrativeRequestCoordinator requests = mock(AdministrativeRequestCoordinator.class);
+        ServerRealmContext context = closeContext(session, control, requests);
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         doAnswer(invocation -> {
@@ -195,13 +197,19 @@ class ServerRealmContextTest {
         assertEquals(ServerRealmContext.State.CLOSED, context.state());
         verify(session, times(1)).close();
         verify(control, times(1)).close();
+        verify(requests, times(1)).close();
+        var order = inOrder(requests, session, control);
+        order.verify(requests).close();
+        order.verify(session).close();
+        order.verify(control).close();
     }
 
     @Test
     void concurrentFailureIsSharedAndOneLaterRetryClosesRemainingResources() throws Exception {
         PkiSession session = mock(PkiSession.class);
         ServerControlStore control = mock(ServerControlStore.class);
-        ServerRealmContext context = closeContext(session, control);
+        AdministrativeRequestCoordinator requests = mock(AdministrativeRequestCoordinator.class);
+        ServerRealmContext context = closeContext(session, control, requests);
         CountDownLatch firstEntered = new CountDownLatch(1);
         CountDownLatch firstRelease = new CountDownLatch(1);
         CountDownLatch retryEntered = new CountDownLatch(1);
@@ -231,6 +239,7 @@ class ServerRealmContextTest {
         }
         assertEquals(ServerRealmContext.State.CLOSING, context.state());
         verify(control, never()).close();
+        verify(requests, times(1)).close();
 
         try (ExecutorService callers = Executors.newFixedThreadPool(2)) {
             Future<?> owner = submitClose(callers, context, null);
@@ -245,13 +254,21 @@ class ServerRealmContextTest {
         assertEquals(ServerRealmContext.State.CLOSED, context.state());
         verify(session, times(2)).close();
         verify(control, times(1)).close();
+        verify(requests, times(2)).close();
+        var order = inOrder(requests, session, control);
+        order.verify(requests).close();
+        order.verify(session).close();
+        order.verify(requests).close();
+        order.verify(session).close();
+        order.verify(control).close();
     }
 
     @Test
     void serverWorkerOnlyQuiescesAndRequestsExternalRetry() throws Exception {
         PkiSession session = mock(PkiSession.class);
         ServerControlStore control = mock(ServerControlStore.class);
-        ServerRealmContext context = closeContext(session, control);
+        AdministrativeRequestCoordinator requests = mock(AdministrativeRequestCoordinator.class);
+        ServerRealmContext context = closeContext(session, control, requests);
 
         IllegalStateException retry = assertThrows(IllegalStateException.class,
                 () -> context.closeFromServerWorker(true));
@@ -259,11 +276,17 @@ class ServerRealmContextTest {
         assertEquals(ServerRealmContext.State.CLOSING, context.state());
         verify(session, never()).close();
         verify(control, never()).close();
+        verify(requests, never()).close();
 
         context.close();
         assertEquals(ServerRealmContext.State.CLOSED, context.state());
         verify(session, times(1)).close();
         verify(control, times(1)).close();
+        verify(requests, times(1)).close();
+        var order = inOrder(requests, session, control);
+        order.verify(requests).close();
+        order.verify(session).close();
+        order.verify(control).close();
     }
 
     @Test
@@ -462,7 +485,8 @@ class ServerRealmContextTest {
         assertTrue(Files.notExists(root.resolve("VERSION")));
     }
 
-    private static ServerRealmContext closeContext(PkiSession session, ServerControlStore control)
+    private static ServerRealmContext closeContext(PkiSession session, ServerControlStore control,
+            AdministrativeRequestCoordinator requests)
             throws Exception {
         ServerRealmContext context = mock(ServerRealmContext.class, Answers.CALLS_REAL_METHODS);
         ServerRealmConfiguration configuration = mock(ServerRealmConfiguration.class);
@@ -470,6 +494,7 @@ class ServerRealmContextTest {
         setField(context, "configuration", configuration);
         setField(context, "session", session);
         setField(context, "control", control);
+        setField(context, "administrativeRequests", requests);
         setField(context, "audit", mock(SafeAudit.class));
         setField(context, "state", new AtomicReference<>(ServerRealmContext.State.OPEN));
         setField(context, "closeGate", new RetryableCloseGate());

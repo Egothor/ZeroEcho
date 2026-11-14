@@ -71,6 +71,45 @@ import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pkix.Pkix;
 
 final class IntermediateSigningPreparationTest {
+    @Test void preflightRejectsKnownPureEdDsaLimitBeforeStaging(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
+            IntermediateCreationFixture fixture = new IntermediateCreationFixture();
+            fixture.initialize(store, 1);
+            var preparation = new IntermediateSigningPreparation(store, IntermediateCreationFixture.CLOCK,
+                    fixture.provider, fixture.signing, fixture.bindings, IntermediateCreationFixture.ALGORITHM,
+                    1, fixture.proofPreparation(store));
+            assertThrows(IllegalArgumentException.class, () -> preparation.validate(IntermediateCreationFixture.ACCESS,
+                    fixture.command("CN=Child"), CancellationSignal.NONE));
+            assertEquals(0, fixture.provider.dispatches);
+            assertEquals(1, store.listCas().size());
+        }
+    }
+
+    @Test void preflightChecksIssuerSubjectAndKeyWithoutAnyStaging(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore actual = open(root)) {
+            IntermediateCreationFixture fixture = new IntermediateCreationFixture();
+            fixture.initialize(actual, 1);
+            AtomicInteger stages = new AtomicInteger();
+            StagedContentStore staging = proxy(StagedContentStore.class, actual.stagedContent(), (method, args) -> {
+                if (method.equals("beginContent")) stages.incrementAndGet();
+                return PROCEED;
+            });
+            PkiStore store = proxy(PkiStore.class, actual, (method, args) -> method.equals("stagedContent") ? staging : PROCEED);
+            IntermediateSigningPreparation preparation = fixture.preparer(store);
+            preparation.validate(IntermediateCreationFixture.ACCESS, fixture.command("CN=Child"), CancellationSignal.NONE);
+            PkiException invalid = assertThrows(PkiException.class, () -> preparation.validate(
+                    IntermediateCreationFixture.ACCESS, fixture.command("Child"), CancellationSignal.NONE));
+            assertEquals(zeroecho.pki.api.PkiFailureReason.CA_SUBJECT_INVALID, invalid.failureReason().orElseThrow());
+            var good = fixture.command("CN=Child");
+            assertThrows(RuntimeException.class, () -> preparation.validate(IntermediateCreationFixture.ACCESS,
+                    new zeroecho.pki.api.ca.IntermediateCreateCommand(good.formatId(), new PkiId("missing"), good.subjectRef(),
+                            good.profileId(), good.keyRef(), good.attributes()), CancellationSignal.NONE));
+            assertEquals(0, stages.get());
+            assertEquals(0, fixture.provider.dispatches);
+            assertEquals(1, actual.listCas().size());
+        }
+    }
+
     @Test void existingLegacySubjectRotationPreservesActualDerAndMetadata(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();

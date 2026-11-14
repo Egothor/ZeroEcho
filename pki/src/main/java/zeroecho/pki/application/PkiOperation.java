@@ -52,7 +52,7 @@ import zeroecho.pki.api.status.StatusObjectType;
 
 /** Closed set of synchronous non-signing PKI operations. */
 public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration, PkiOperation.ValidateProfile, // NOPMD ExcessivePublicCount - Sealed public operation algebra preserves stable consumer API.
-        PkiOperation.ListProfiles, PkiOperation.ListRequests, PkiOperation.SearchCredentials,
+        PkiOperation.ListProfiles, PkiOperation.ListRequests, PkiOperation.ListCredentials, PkiOperation.SearchCredentials,
         PkiOperation.ListIssuerGenerations, PkiOperation.ListAlgorithmBindings, PkiOperation.InspectAlgorithmBinding,
         PkiOperation.ValidateAlgorithmBindings, PkiOperation.RegisterProfile,
         PkiOperation.InspectProfile, PkiOperation.ListProfileVersions, PkiOperation.ActivateProfile,
@@ -110,6 +110,25 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
         /** Stable operation name. */ public static final String NAME = "request.list";
         /** Validates the page limit and exclusive cursor. */
         public ListRequests { requireLimit(limit); after = requireCursor(after); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists authoritative credential metadata without requiring an optional search index.
+     * CA and leaf credentials are scoped to their canonical issuing authority.
+     * Authorization predicates are applied before page capacity is consumed.
+     * @param authorityId exact issuing authority identifier
+     * @param limit maximum returned entries, from 1 through 1000
+     * @param after optional exclusive credential-ID cursor
+     */
+    record ListCredentials(PkiId authorityId, int limit, Optional<String> after) implements PkiOperation {
+        /** Stable mandatory inventory operation name. */
+        public static final String NAME = "credential.list";
+        /** Validates the required authority and bounded keyset page. */
+        public ListCredentials {
+            Objects.requireNonNull(authorityId, "authorityId");
+            requireLimit(limit); after = requireCursor(after);
+        }
         @Override public String name() { return NAME; }
     }
 

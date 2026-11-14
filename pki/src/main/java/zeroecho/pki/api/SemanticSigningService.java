@@ -79,6 +79,135 @@ import zeroecho.pki.application.IssuanceExecutionEvidence;
  */
 public interface SemanticSigningService {
     /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateIntermediateIssuance(AccessContext access, zeroecho.pki.api.ca.IntermediateCertIssueCommand command,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateCaRollover(AccessContext access, zeroecho.pki.api.ca.CaRolloverCommand command,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateCaKeyRotation(AccessContext access, zeroecho.pki.api.ca.CaKeyRotationCommand command,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateEndEntity(AccessContext access, zeroecho.pki.api.issuance.EndEntityIssuanceRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateRenewal(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateReplacement(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates current input and policy without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed operation input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if pure validation is unavailable
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    default void validateReissue(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure input validation unavailable");
+    }
+
+    /**
+     * Validates root creation using current profile, public-key and algorithm
+     * metadata without signing, allocating a serial, staging content or accepting
+     * an operation. Execution repeats validation against its current inputs.
+     *
+     * @param access separately authenticated and authorized invocation context
+     * @param command existing managed key, profile and subject coordinates
+     * @param cancellation cooperative validation cancellation
+     * @throws UnsupportedOperationException if this provider has no pure validator
+     * @throws PkiException if known profile, subject or key policy rejects input
+     * @throws NullPointerException if an argument is null
+     */
+    default void validateRootCreation(AccessContext access, zeroecho.pki.api.ca.CaCreateCommand command,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure root creation validation unavailable");
+    }
+
+    /**
+     * Validates intermediate creation using current issuer/path, profile and
+     * public-key metadata without signing, serial allocation, staging or acceptance.
+     * Execution repeats validation, including its fresh proof and signing boundary.
+     *
+     * @param access separately authenticated and authorized invocation context
+     * @param command existing issuer, managed key, profile and subject coordinates
+     * @param cancellation cooperative validation cancellation
+     * @throws UnsupportedOperationException if this provider has no pure validator
+     * @throws PkiException if known issuer, profile, subject or key policy rejects input
+     * @throws NullPointerException if an argument is null
+     */
+    default void validateIntermediateCreation(AccessContext access, zeroecho.pki.api.ca.IntermediateCreateCommand command,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure intermediate creation validation unavailable");
+    }
+
+    /**
      * Prepares a self-issued root certificate using an existing managed key and
      * the exact active root profile. The caller must separately authenticate and
      * authorize root creation. The selected provider exports its canonical DER

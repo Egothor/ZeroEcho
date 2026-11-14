@@ -97,6 +97,10 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AFTER, new FieldSemantics(TEXT_TEXT, "", false, true, false, "", "", ""))
                         ))),
+                new Presentation("credential.list", "List certificates", "Browse stored certificates without an optional search index.", "issuance",
+                        new TransportSemantics(TEXT_AUTHORITY,"",Map.ofEntries(
+                                Map.entry(TEXT_LIMIT,new FieldSemantics(TEXT_INTEGER,"",false,false,false,"","","")),
+                                Map.entry(TEXT_AFTER,new FieldSemantics(TEXT_TEXT,"",false,true,false,"","",""))))),
                 new Presentation("credential.search", "Browse certificates", "Browse certificates issued by an authority.", "issuance",
                         new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),

@@ -75,7 +75,8 @@ final class PkiConfigurationChoicesTest {
             assertEquals(List.of("remote-configured"), page.signingProviders());
             assertEquals(List.of("Ed25519", "RSA"), page.algorithms());
             assertEquals(List.of(target), page.publicationTargets());
-            assertEquals(List.of("x509"), page.formats().stream().map(value -> value.value()).toList());
+            assertTrue(page.formats().isEmpty());
+            assertTrue(page.formatMetadata().isEmpty());
             assertTrue(page.keys().size() <= 125);
             all.addAll(page.keys().stream().map(KeyRef::value).toList());
             cursor = page.nextCursor();
@@ -112,6 +113,40 @@ final class PkiConfigurationChoicesTest {
         assertEquals(List.of(new KeyRef("persisted-key")), choices.keys());
         assertTrue(choices.signingProviders().isEmpty());
         assertTrue(choices.algorithms().isEmpty());
+    }
+
+    @Test
+    void formatGuidanceBelongsToTheFrameworkAndLegacyIdsRemainGeneric() {
+        var opaque = new zeroecho.pki.api.FormatId("opaque");
+        var choices = new PkiConfigurationChoicesSource.Choices(List.of(opaque), List.of(), List.of(),
+                List.of(), Optional.empty(), List.of());
+        assertEquals("opaque", choices.formatMetadata().get(opaque).displayName());
+        assertTrue(choices.formatMetadata().get(opaque).subjectInput().pattern().isEmpty());
+        assertEquals("Subject reference", choices.formatMetadata().get(opaque).subjectInput().label());
+        assertThrows(IllegalArgumentException.class, () -> new PkiConfigurationChoicesSource.Choices(
+                List.of(opaque), List.of(), List.of(), List.of(), Optional.empty(), List.of(), Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new zeroecho.pki.spi.framework.CredentialFramework.SubjectInput(
+                "", "", "", Optional.empty()));
+    }
+
+    @Test
+    void configuredFrameworkSuppliesSubjectGuidanceWithoutFormatIdBranches() throws Exception {
+        var fixture = new zeroecho.pki.testkit.RootCreationFixture();
+        var framework = new zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework(
+                zeroecho.pki.testkit.PkiTestRuntime.signingAuthority(fixture.provider),
+                new zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor());
+        var source = new DefaultPkiConfigurationChoices(List.of(), store(visitor -> { }, new AtomicInteger()),
+                Optional.empty(), List.of(), List.of(framework), () -> { });
+        var choices = source.configurationChoices(10, Optional.empty(), CancellationSignal.NONE);
+        assertEquals(List.of(framework.formatId()), choices.formats());
+        var metadata = choices.formatMetadata().get(framework.formatId());
+        assertEquals(framework.subjectInput(), metadata.subjectInput());
+        assertEquals("X.509", metadata.displayName());
+        var hint = java.util.regex.Pattern.compile(metadata.subjectInput().pattern().orElseThrow());
+        assertTrue(hint.matcher("CN=HQ ACME").matches());
+        assertTrue(!hint.matcher("HQ ACME").matches());
+        assertTrue(hint.matcher("OID.2.5.4.3=Example Root CA").matches());
+        assertTrue(hint.matcher("oid.2.5.4.3=Example Root CA").matches());
     }
 
     private static PkiStore store(Consumer<Consumer<KeyRef>> rows, AtomicInteger calls) {

@@ -72,7 +72,7 @@ it('keeps descendant mount requests on the demo transport through StrictMode rep
   await waitFor(() => expect(observe).toHaveBeenCalledTimes(2));
   expect(liveFetch).not.toHaveBeenCalled();
   for (const [response] of observe.mock.calls) {
-    expect(JSON.parse(response.body).realmId).toBe('demo');
+    expect(JSON.parse(response.body).result.realmId).toBe('demo');
   }
 });
 

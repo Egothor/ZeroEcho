@@ -52,6 +52,8 @@ interface Props {
   readonly value: FieldValue;
   readonly onChange: (value: FieldValue) => void;
   readonly disabled?: boolean;
+  /** Field-level validation failure supplied by the typed operation form. */
+  readonly error?: boolean;
 }
 
 function labelFor(field: FieldSpec): string {
@@ -60,7 +62,7 @@ function labelFor(field: FieldSpec): string {
 }
 
 /** Renders one operation argument as a typed MUI control. */
-export function OperationField({ field, value, onChange, disabled, context }: Props) {
+export function OperationField({ field, value, onChange, disabled, context, error }: Props) {
   const label = labelFor(field);
 
   if (field.name === 'targetOperation' || field.name === 'targetOperationId') {
@@ -205,6 +207,7 @@ export function OperationField({ field, value, onChange, disabled, context }: Pr
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
+          error={error}
           helperText={field.help}
           disabled={disabled}
           slotProps={

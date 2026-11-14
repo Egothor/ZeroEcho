@@ -272,6 +272,8 @@ public final class ServerControlOperationExecutor {
 
     /** Whether the configured service for a protocol operation is installed. */
     /* default */ boolean protocolAvailable(String operationId) {
+        if (operationId.startsWith("acme.")) return acme.get() != null;
+        if (operationId.startsWith("enrollment.request.")) return enrollment.get() != null;
         if (operationId.startsWith("est.")) return est.get() != null;
         if (operationId.startsWith("scep.")) return scep.get() != null;
         return !operationId.startsWith("cmp.") || cmp.get() != null;
@@ -399,11 +401,79 @@ public final class ServerControlOperationExecutor {
                 Optional.of(service.resolveDirectoryProfilePrecondition(operation.registration())));
     }
 
+    /** Reports high-risk control operations with a shared pure admission validator. */
+    static boolean administrativeValidationAvailable(String operation) {
+        return Set.of(ServerControlOperation.SetPrincipalEnabled.DISABLE,
+                ServerControlOperation.CreateRoleAssignment.NAME,ServerControlOperation.CreateGrant.NAME,
+                ServerControlOperation.CreateBreakGlass.CREATE,ServerControlOperation.ActivateBreakGlass.ACTIVATE,
+                ServerControlOperation.SetDisclosure.NAME,ServerControlOperation.RegisterAcmeDirectory.NAME,
+                ServerControlOperation.SetAcmeDirectoryActive.ACTIVATE,ServerControlOperation.RegisterEstEndpoint.NAME,
+                ServerControlOperation.RegisterScepEndpoint.NAME,ServerControlOperation.RegisterCmpEndpoint.NAME,
+                ServerControlOperation.RegisterEnrollmentProfile.NAME,ServerControlOperation.UpdateEnrollmentProfile.NAME,
+                ServerControlOperation.ActivateEnrollmentProfile.NAME,ServerControlOperation.SetRepositoryAlias.NAME,
+                ServerControlOperation.RemoveRepositoryAlias.NAME,ServerControlOperation.RegisterOcspResponder.NAME,
+                ServerControlOperation.SetOcspResponderActive.ACTIVATE).contains(operation);
+    }
+
+    /** Checks current control preconditions without creating approvals or changing metadata. */
+    void validateAdministrative(ServerControlOperation operation,String actor) {
+        switch(operation) {
+            case ServerControlOperation.SetPrincipalEnabled value -> store.requirePrincipal(value.principalId());
+            case ServerControlOperation.CreateRoleAssignment value -> {
+                var assignment=value.assignment();
+                if(!assignment.scope().realmId().equals(realmId))throw new SecurityException("Assignment realm differs");
+                roles.instantiate(assignment);store.requirePrincipal(assignment.principalId());
+                requireFuture(assignment.expiresAt());requireAbsent(() -> store.requireAssignment(assignment.assignmentId()));
+            }
+            case ServerControlOperation.CreateGrant value -> {
+                var grant=value.grant();
+                if(!grant.scope().realmId().equals(realmId))throw new SecurityException("Grant realm differs");
+                store.requirePrincipal(grant.principalId());requireFuture(grant.expiresAt());
+                requireAbsent(() -> store.requireGrant(grant.grantId()));
+            }
+            case ServerControlOperation.CreateBreakGlass value -> {
+                store.requirePrincipal(value.principalId());store.requirePrincipal(actor);
+                if(!value.grant().scope().realmId().equals(realmId))throw new SecurityException("Grant realm differs");
+                new BreakGlassService.Record(value.breakGlassId(),value.principalId(),value.grant(),value.reason(),actor,
+                        Optional.empty(),approvals.validationTime(),Optional.empty(),value.expiresAt(),BreakGlassService.State.PENDING,"0".repeat(64));
+                requireAbsent(() -> store.requireBreakGlass(value.breakGlassId()));
+            }
+            case ServerControlOperation.ActivateBreakGlass value -> {
+                var current=store.requireBreakGlass(value.breakGlassId());
+                if(current.state()!=BreakGlassService.State.PENDING||!current.expiresAt().isAfter(approvals.validationTime()))throw new IllegalStateException("Emergency grant is not pending");
+            }
+            case ServerControlOperation.SetDisclosure value -> store.requireDisclosure(value.objectId());
+            case ServerControlOperation.RegisterOcspResponder value -> ocsp().validateRegistration(value.registration());
+            case ServerControlOperation.SetOcspResponderActive value -> ocsp().validateActivation(value.responderId());
+            case ServerControlOperation.SetRepositoryAlias value -> aliases().validateSet(value.authorityId(),value.type(),value.targetObjectId(),value.issuerId(),value.expectedCurrentCommitment());
+            case ServerControlOperation.RemoveRepositoryAlias value -> aliases().validateRemove(value.authorityId(),value.type(),value.expectedCurrentCommitment());
+            case ServerControlOperation.RegisterAcmeDirectory value -> acme().validateDirectoryRegistration(value.registration(),value.profilePrecondition().orElseThrow());
+            case ServerControlOperation.SetAcmeDirectoryActive value -> {if(value.active())acme().validateDirectoryActivation(value.directoryId());else acme().directory(value.directoryId());}
+            case ServerControlOperation.RegisterEstEndpoint value -> est().validateRegistration(value.endpoint());
+            case ServerControlOperation.RegisterScepEndpoint value -> scep().validateRegistration(value.endpoint());
+            case ServerControlOperation.RegisterCmpEndpoint value -> cmp().validateRegistration(value.endpoint());
+            case ServerControlOperation.RegisterEnrollmentProfile value -> enrollmentProfiles().validateRegistration(value.profile());
+            case ServerControlOperation.UpdateEnrollmentProfile value -> enrollmentProfiles().validateUpdate(value.profile());
+            case ServerControlOperation.ActivateEnrollmentProfile value -> enrollmentProfiles().validateState(value.id(),zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE);
+
+            default -> throw new UnsupportedOperationException("Pure control validation is unavailable");
+        }
+    }
+    private void requireFuture(Optional<java.time.Instant> expiry) {
+        if(expiry.filter(value -> !value.isAfter(approvals.validationTime())).isPresent())throw new IllegalArgumentException("Grant expiry is not in the future");
+    }
+    private static void requireAbsent(java.util.function.Supplier<?> lookup) {
+        boolean exists;
+        try { lookup.get();exists=true; } catch(IllegalArgumentException missing) { exists=false; }
+        if(exists)throw new IllegalStateException("Control identity already exists");
+    }
+
     private ServerControlOperationOutcome dispatch(ServerControlOperation operation, AdministrativeDecisionActor decisionActor,
             Permission.Resource authorizedResource, Optional<String> approvalId,
             Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory, CancellationSignal cancellation,
             BackupTransferChannel channel) throws java.io.IOException {
         String actor = decisionActor.principalId();
+        if(administrativeValidationAvailable(operation.name()))validateAdministrative(operation,actor);
         return switch (operation) {
             case ServerControlOperation.ConfigurationChoices value -> ordinary(operation, configurationChoices(value, cancellation));
             case ServerControlOperation.ListCapabilities value -> ordinary(operation, capabilities(value, cancellation));
@@ -640,8 +710,17 @@ public final class ServerControlOperationExecutor {
                 : service.configuredEabProviders().stream().sorted()
                         .<PkiOperationValue>map(id -> object("providerId", text(id), DISPLAY_NAME, text(id))).toList();
         return object("formats", new PkiOperationValue.ListValue(choices.formats().stream()
-                        .<PkiOperationValue>map(format -> object("formatId", text(format.value()), DISPLAY_NAME,
-                                text("x509".equals(format.value()) ? "X.509" : format.value()))).toList()),
+                        .<PkiOperationValue>map(format -> {
+                            var metadata = choices.formatMetadata().get(format);
+                            var input = metadata.subjectInput();
+                            Map<String, PkiOperationValue> guidance = new LinkedHashMap<>();
+                            guidance.put("label", text(input.label()));
+                            guidance.put("help", text(input.help()));
+                            guidance.put("placeholder", text(input.placeholder()));
+                            input.pattern().ifPresent(value -> guidance.put("pattern", text(value)));
+                            return object("formatId", text(format.value()), DISPLAY_NAME, text(metadata.displayName()),
+                                    "subjectInput", new PkiOperationValue.ObjectValue(guidance));
+                        }).toList()),
                 "signingProviders", new PkiOperationValue.ListValue(choices.signingProviders().stream()
                         .<PkiOperationValue>map(id -> object("providerId", text(id), DISPLAY_NAME, text(id))).toList()),
                 "publicationTargets", new PkiOperationValue.ListValue(choices.publicationTargets().stream()
@@ -1096,10 +1175,21 @@ public final class ServerControlOperationExecutor {
                 "effect", text(value.effect().name()), "action", text(value.action().name()),
                 "enabled", bool(value.enabled()));
     }
-    private static PkiOperationValue approval(ApprovalService.Request value) {
-        return object("approvalId", text(value.approvalId()), "operation", text(value.operationId()),
+    private PkiOperationValue approval(ApprovalService.Request value) {
+        var base = object("approvalId", text(value.approvalId()), "operation", text(value.operationId()),
                 "requesterId", text(value.requesterPrincipalId()), FIELD_STATE, text(value.state().name()),
                 FIELD_EXPIRES_AT, text(value.expiresAt().toString()));
+        if(value.approvalId().startsWith("admin-request.")) {
+            String id=value.approvalId().substring("admin-request.".length());
+            var linked=store.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,id);
+            if(linked.isPresent()) {
+                var request=AdministrativeRequestCodec.decode(linked.orElseThrow());
+                if(request.approvalId().filter(value.approvalId()::equals).isPresent() && request.actor().principalId().equals(value.requesterPrincipalId())) {
+                    var fields=new LinkedHashMap<>(base.fields());fields.put("administrativeRequestId",text(id));return new PkiOperationValue.ObjectValue(fields);
+                }
+            }
+        }
+        return base;
     }
     private static PkiOperationValue breakGlass(BreakGlassService.Record value) {
         return object("breakGlassId", text(value.breakGlassId()), "principalId", text(value.principalId()),
@@ -1126,14 +1216,14 @@ public final class ServerControlOperationExecutor {
         return object(TEXT_ITEMS, new PkiOperationValue.ListValue(values), TEXT_NEXT_OFFSET,
                 integer(page.nextOffset()), TEXT_HAS_MORE, bool(page.hasMore()));
     }
-    private static PkiOperationValue approvalPage(ServerControlStore.Page<ApprovalService.Request> page,
+    private PkiOperationValue approvalPage(ServerControlStore.Page<ApprovalService.Request> page,
             Permission.Scope requested, ServerControlOperation.ListApprovals filter) {
         List<PkiOperationValue> values = page.values().stream()
                 .filter(item -> contains(requested, item.scope()))
                 .filter(item -> filter.state().map(item.state()::equals).orElse(true))
                 .filter(item -> filter.requesterPrincipalId().map(item.requesterPrincipalId()::equals).orElse(true))
                 .filter(item -> filter.targetOperationId().map(item.operationId()::equals).orElse(true))
-                .map(ServerControlOperationExecutor::approval).toList();
+                .map(this::approval).toList();
         return object(TEXT_ITEMS, new PkiOperationValue.ListValue(values), TEXT_NEXT_OFFSET,
                 integer(page.nextOffset()), TEXT_HAS_MORE, bool(page.hasMore()));
     }

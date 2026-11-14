@@ -95,11 +95,58 @@ public interface PkiRepository {
      */
     Optional<StatusObject> statusObject(PkiId statusObjectId);
     /**
+     * Returns format-owned public-content representation metadata without opening content.
+     * No retrieval authorization is implied; the caller must authorize the exact object.
+     * @param credentialId exact stored credential identity
+     * @return immutable supported representations
+     * @throws UnsupportedOperationException if this repository has no representation capability
+     */
+    default List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> credentialRepresentations(PkiId credentialId) {
+        throw new UnsupportedOperationException("Credential representations unavailable");
+    }
+
+    /**
+     * Opens exact original bytes or an explicitly supported format-owned representation.
+     * The caller must authorize full content access before invoking this method.
+     * @param credentialId exact stored credential identity
+     * @param representation advertised representation identity
+     * @param cancellation cooperative bounded-read and conversion cancellation
+     * @return lifecycle-owned immutable public content with exact output length and digest
+     * @throws java.io.IOException if bounded integrity validation, conversion or cancellation fails
+     * @throws UnsupportedOperationException if this repository or format lacks the representation
+     */
+    default PkiRepositoryContent openCredential(PkiId credentialId, String representation,
+            zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
+        throw new UnsupportedOperationException("Credential representation unavailable");
+    }
+
+    /**
      * Opens validated immutable certificate content.
      * @param credentialId credential identifier
      * @return closeable validated content
      */
     PkiRepositoryContent openCredential(PkiId credentialId);
+    /**
+     * Returns format-owned status representations without content access authority.
+     * @param statusObjectId exact stored status identity
+     * @return immutable native and optional format-specific representations
+     */
+    default List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> statusRepresentations(PkiId statusObjectId) {
+        throw new UnsupportedOperationException("Status representations unavailable");
+    }
+    /**
+     * Opens an integrity-validated repeatable streaming representation, bounded to 256 MiB native bytes.
+     * Callers must authorize the exact stored authority/object before opening it.
+     * @param statusObjectId exact immutable status identity
+     * @param representation one advertised identifier
+     * @param cancellation shared bounded operation cancellation
+     * @return caller-owned content lease with exact length and SHA-256
+     * @throws java.io.IOException if bounds, integrity, representation or cancellation checks fail
+     */
+    default PkiRepositoryContent openStatusObject(PkiId statusObjectId,String representation,
+            zeroecho.core.io.CancellationSignal cancellation)throws java.io.IOException {
+        throw new UnsupportedOperationException("Status representation unavailable");
+    }
     /**
      * Opens validated immutable status-object content.
      * @param statusObjectId object identifier

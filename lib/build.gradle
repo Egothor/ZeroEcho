@@ -58,6 +58,8 @@ dependencies {
 def generatedDir = layout.buildDirectory.dir("generated/docs").get().asFile
 def staticOverview = file("src/main/javadoc/overview.html")
 def overviewCss = file("src/main/javadoc/css/overview.css")
+def generatedTable = new File(generatedDir, "crypto-catalog-table.html")
+def composedOverview = new File(generatedDir, "overview.composed.html")
 
 tasks.register('generateCryptoTable', JavaExec) {
     group = 'documentation'
@@ -77,13 +79,13 @@ tasks.register('composeOverview') {
     dependsOn tasks.named('generateCryptoTable')
     doLast {
         def template = staticOverview.getText('UTF-8')
-        def table = file("$generatedDir/crypto-catalog-table.html").getText('UTF-8')
+        def table = generatedTable.getText('UTF-8')
         def marker = "<!-- CRYPTO_CATALOG_TABLE -->"
         if (!template.contains(marker)) {
             throw new GradleException("Marker not found in ${staticOverview}: ${marker}")
         }
         def composed = template.replace(marker, table)
-        file("$generatedDir/overview.composed.html").setText(composed, 'UTF-8')
+        composedOverview.setText(composed, 'UTF-8')
     }
 }
 

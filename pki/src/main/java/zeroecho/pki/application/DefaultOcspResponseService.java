@@ -160,6 +160,31 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
+    @Override public void validateSigningMetadata(PkiId authorityId, PkiId responderCredentialId,
+            KeyRef signingKeyRef, String signatureAlgorithm, Optional<String> signatureBindingId,
+            CancellationSignal cancellation) {
+        requireOpen.run();
+        Objects.requireNonNull(authorityId, "authorityId");
+        Objects.requireNonNull(responderCredentialId, "responderCredentialId");
+        Objects.requireNonNull(signingKeyRef, "signingKeyRef");
+        Objects.requireNonNull(signatureBindingId, "signatureBindingId");
+        Objects.requireNonNull(cancellation, "cancellation");
+        try {
+            cancellation.throwIfCancelled();
+            var binding = signingMetadata(responderCredentialId, signatureAlgorithm, signatureBindingId);
+            X509Certificate responder = binding.responder();
+            if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource source)) {
+                throw new UnsupportedOperationException("Public responder key metadata unavailable");
+            }
+            var publicInfo = Objects.requireNonNull(source.resolvePublicKeyInfo(signingKeyRef), "public key metadata");
+            if (publicInfo.encoding() != Encoding.DER
+                    || !java.util.Arrays.equals(publicInfo.bytes(), Pkix.subjectPublicKeyInfo(responder))) {
+                throw new PkiException("OCSP signing metadata differs: code=OCSP_SIGNING_BINDING_FAILED");
+            }
+            cancellation.throwIfCancelled();
+        } catch (IOException failure) { throw new PkiException("OCSP metadata validation failed: code=OCSP_SIGNING_BINDING_FAILED", failure); }
+    }
+
     @Override public void validateSigningBinding(PkiId authorityId, PkiId responderCredentialId,
             KeyRef signingKeyRef, String signatureAlgorithm, Optional<String> signatureBindingId,
             CancellationSignal cancellation) {
@@ -172,8 +197,9 @@ final class DefaultOcspResponseService implements OcspResponseService {
         byte[] challenge = "ZeroEcho OCSP signing binding v1".getBytes(StandardCharsets.US_ASCII);
         try {
             cancellation.throwIfCancelled();
-            X509Certificate responder = certificate(responderCredentialId);
-            SigningAlgorithm algorithm = algorithm(responder, signatureAlgorithm, signatureBindingId);
+            var binding = signingMetadata(responderCredentialId, signatureAlgorithm, signatureBindingId);
+            X509Certificate responder = binding.responder();
+            SigningAlgorithm algorithm = binding.algorithm();
             byte[] signature = rawSign(authorityId, signingKeyRef, algorithm.identity(), challenge, Encoding.BINARY, cancellation);
             ContentVerifier verifier = Pkix.verifier(Pkix.subjectPublicKeyInfo(responder), algorithm.identifier());
             try (java.io.OutputStream output = verifier.contentStream()) {
@@ -189,6 +215,13 @@ final class DefaultOcspResponseService implements OcspResponseService {
             throw new PkiException("OCSP signing binding validation failed: code=OCSP_SIGNING_BINDING_FAILED");
         }
     }
+
+    private SigningMetadata signingMetadata(PkiId responderCredentialId, String requested,
+            Optional<String> binding) throws IOException {
+        X509Certificate responder = certificate(responderCredentialId);
+        return new SigningMetadata(responder, algorithm(responder, requested, binding));
+    }
+    private record SigningMetadata(X509Certificate responder, SigningAlgorithm algorithm) { }
 
     private SigningAlgorithm algorithm(X509Certificate responder, String requested, Optional<String> binding) {
         AlgorithmIdentity identity = authority.resolveIdentity(requested);

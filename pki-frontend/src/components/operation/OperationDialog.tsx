@@ -65,6 +65,7 @@ export function OperationDialog({ operationId, open, onClose, initialValues, onC
             operationId={operationId}
             initialValues={initialValues}
             onCompleted={onCompleted}
+            onRequestSubmitted={() => onClose()}
           />
         )}
       </DialogContent>

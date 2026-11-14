@@ -134,6 +134,7 @@ public final class OperationParameterSchemas {
                         FieldSpec.integer("limit", true), FieldSpec.text("after", false)),
                 op("request.list",
                         FieldSpec.integer("limit", true), FieldSpec.text("after", false)),
+                op("credential.list",FieldSpec.integer("limit",true),FieldSpec.text("after",false)),
                 op("credential.search",
                         FieldSpec.integer("limit", true), FieldSpec.text("after", false),
                         FieldSpec.text("subjectFilter", false), FieldSpec.text("serialFilter", false),

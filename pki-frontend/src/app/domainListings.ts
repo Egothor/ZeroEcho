@@ -74,7 +74,8 @@ export const DOMAIN_LISTINGS: Record<string, readonly DomainListing[]> = {
     { title: 'Certificate requests', listOperationId: 'request.list', args: { limit: 100 }, resultKey: 'requests', idKey: 'requestId', idArg: 'requestId', entity: 'request', createOperationIds: ['request.import'] },
   ],
   issuance: [
-    { title: 'Certificates', listOperationId: 'credential.search', args: { limit: 100 }, resultKey: 'credentials', idKey: 'credentialId', idArg: 'credentialId', entity: 'certificate', createOperationIds: ['credential.issue'] },
+    { title: 'Certificates', listOperationId: 'credential.list', args: { limit: 100 }, resultKey: 'credentials', idKey: 'credentialId', idArg: 'credentialId', entity: 'certificate', createOperationIds: ['credential.issue'] },
+    { title: 'Advanced search', listOperationId: 'credential.search', args: { limit: 100 }, resultKey: 'credentials', idKey: 'credentialId', idArg: 'credentialId', entity: 'certificate', createOperationIds: ['credential.issue'] },
   ],
   authorities: [
     { title: 'Authorities', listOperationId: 'ca.list', args: { limit: 200 }, resultKey: 'authorities', idKey: 'caId', idArg: 'caId', entity: 'authority', createOperationIds: ['ca.create', 'ca.intermediate.create', 'ca.intermediate.issue'] },
@@ -88,7 +89,7 @@ export const DOMAIN_LISTINGS: Record<string, readonly DomainListing[]> = {
     { title: 'Role templates', listOperationId: 'security.role-template.list', args: {}, resultKey: 'value', idKey: 'templateId', idArg: 'templateId', entity: 'role template' },
   ],
   approvals: [
-    { title: 'Approvals', listOperationId: 'security.approval.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'approvalId', idArg: 'approvalId', entity: 'approval', createOperationIds: ['security.approval.request'] },
+    { title: 'Approvals', listOperationId: 'security.approval.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'approvalId', idArg: 'approvalId', entity: 'approval' },
   ],
   'break-glass': [
     { title: 'Break-glass', listOperationId: 'security.break-glass.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'breakGlassId', idArg: 'breakGlassId', entity: 'break-glass grant', createOperationIds: ['security.break-glass.create'] },

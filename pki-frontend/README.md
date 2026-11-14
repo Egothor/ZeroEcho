@@ -29,7 +29,7 @@ the `verifyBouncyCastleConfinement` gate. It compiles against nothing in
 
 React 19 + TypeScript + Vite + MUI (Material UI, with MUI X DataGrid for result
 tables) + TanStack Query + React Router. The
-[capability reference](docs/backend-gap-analysis.md) describes the implemented
+[capability reference](../documentation/admin/console.md) describes the implemented
 administration surface and its current boundaries.
 
 ## Prerequisites
@@ -139,10 +139,8 @@ image, data/config contract, compose/k8s manifests, and smoke test live under
 
 ## Capability boundaries
 
-The [capability reference](docs/backend-gap-analysis.md) describes current backend
-support. Known identities are available through selection APIs; advanced search
-filters and other unapproved extensions belong to the single
-[outstanding-work plan](../docs/project-work-plan.md).
+The [administration console guide](../documentation/admin/console.md) describes current
+backend support. Known identities are available through selection APIs.
 
 ### Selections and signing receipts
 
@@ -150,7 +148,7 @@ Existing PKI identities use searchable, paged selections with readable names and
 exact identifiers. Authority/profile/issuer changes clear dependent choices.
 Read failures remain visible; an unavailable list does not enable arbitrary IDs.
 New subjects, imported documents and external key references remain authorable.
-See [selection API contract](docs/selection-api.md) for permissions and paging.
+See [selection API contract](../documentation/reference/selection-api.md) for permissions and paging.
 
 The ten signing operations submit once and receive HTTP 202 with an operation ID.
 The client polls the fixed same-origin signing-operation route sequentially for

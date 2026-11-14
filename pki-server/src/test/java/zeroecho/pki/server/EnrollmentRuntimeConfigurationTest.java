@@ -92,7 +92,7 @@ class EnrollmentRuntimeConfigurationTest {
 
     @Test
     void cliStrictlyValidatesCompanionWithoutOpeningStores() throws Exception {
-        Path main = Path.of(System.getProperty("user.dir")).getParent().resolve("docs/pki-server-loopback-example.json");
+        Path main = Path.of(System.getProperty("user.dir")).getParent().resolve("documentation/examples/configuration/pki-server-loopback-example.json");
         Path config = Files.writeString(directory.resolve("enrollment.json"), EnrollmentTestSupport.runtimeJson());
         assertEquals(0, PkiServerMain.run(new String[] { "--validate-config", "--config", main.toString(),
                 "--enrollment-config", config.toString() }));
@@ -107,14 +107,14 @@ class EnrollmentRuntimeConfigurationTest {
     @Test
     void parsesMaintainedCompanionExample() throws Exception {
         Path root = Path.of(System.getProperty("user.dir")).getParent();
-        EnrollmentRuntimeConfiguration example = EnrollmentRuntimeConfiguration.read(root.resolve("docs/pki-enrollment-example.json"));
+        EnrollmentRuntimeConfiguration example = EnrollmentRuntimeConfiguration.read(root.resolve("documentation/examples/configuration/pki-enrollment-example.json"));
         assertEquals(1, example.credentialSets().size());
         assertEquals("scep-example-v1", example.activeCredentials().getFirst().credentialId());
     }
 
     @Test void parsesExplicitEstGeneratorSelectionWithoutImplicitProtocolReuse() throws Exception {
         Path root = Path.of(System.getProperty("user.dir")).getParent();
-        String json = Files.readString(root.resolve("docs/pki-enrollment-example.json")).replace("\"SCEP\"", "\"EST\"");
+        String json = Files.readString(root.resolve("documentation/examples/configuration/pki-enrollment-example.json")).replace("\"SCEP\"", "\"EST\"");
         EnrollmentRuntimeConfiguration configuration = decode(json);
         assertEquals(EnrollmentRuntimeConfiguration.Protocol.EST, configuration.credentialSets().getFirst().protocol());
         assertEquals(EnrollmentRuntimeConfiguration.Protocol.EST, configuration.activeCredentials().getFirst().protocol());

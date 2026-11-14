@@ -230,6 +230,7 @@ public final class PkiHttpsServer implements AutoCloseable {
                 realm.installEnrollmentRuntime(enrollment.orElseThrow(), resolvedDependencies, clock);
                 realm.installEnrollmentCoordinator(exact.authentication(), clock);
             }
+            realm.administrativeRequests().start(exact.authentication());
             metricsRealm.set(realm);
             schedulingConfigured.set(realm.session().statusSchedules().isPresent());
             realm.auditTransport("SERVER_STARTUP", "system", Map.of("state", "STARTING"));

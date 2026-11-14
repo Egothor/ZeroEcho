@@ -311,6 +311,36 @@ public final class OpenApiGenerator {
             });
             y.blank();
 
+            // Raw artifact routes are intentionally outside the operation catalogue.
+            for (String kind : java.util.List.of("certificate", "status")) {
+                String permission = kind.equals("status") ? "CRL_DOWNLOAD / STATUS_OBJECT / CONTENT_FULL"
+                        : "CERTIFICATE_READ_CONTENT and CERTIFICATE_DOWNLOAD / CERTIFICATE / CONTENT_FULL";
+                for (boolean content : new boolean[]{false, true}) {
+                    String route = "/" + kind + "-artifacts/{id}" + (content ? "/content" : "");
+                    y.blockMapping("'" + route + "'", () -> y.blockMapping("get", () -> {
+                        y.mapping("summary", content ? "Download an authorized immutable " + kind + " artifact" : "Inspect authorized " + kind + " representations");
+                        y.mapping(TEXT_DESCRIPTION, "Authenticated private route. Exact canonical stored object scope is checked; anonymous publication is independent. "
+                                + (content ? "Requires " + permission + ". Provider-owned representation selected by query; returns a native attachment with exact Content-Length, Content-Digest, no-store and nosniff. Status exports stream with bounded memory and cancellation (256 MiB native, 368 MiB encoded maximum)."
+                                : "Metadata permission is required; representations is empty when full-content authorization is absent. Returns result.value with object identity and provider-owned id, label, mediaType, fileName and same-origin href."));
+                        y.blockMapping("parameters", () -> {
+                            y.sequenceItem(() -> { y.mapping("name", "id"); y.mapping("in", "path"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); });
+                            if(content)y.sequenceItem(() -> { y.mapping("name", "representation"); y.mapping("in", "query"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); });
+                        });
+                        y.blockMapping("responses", () -> {
+                            y.blockMapping("'200'", () -> { y.mapping(TEXT_DESCRIPTION, content ? "Authorized attachment; body is binary and never JSON encoded" : "Authorized metadata envelope");
+                                y.blockMapping("content", () -> y.blockMapping(content ? "application/octet-stream" : "application/json", () -> y.blockMapping("schema", () -> { y.mapping("type", content ? "string" : "object"); if(content)y.mapping("format", "binary"); }))); });
+                            y.blockMapping("'404'", () -> y.mapping(TEXT_DESCRIPTION, "Unavailable object, representation or authorization"));
+                        });
+                    }));
+                }
+            }
+            y.blockMapping("'/authorities/{id}/certificate'", () -> y.blockMapping("get", () -> {
+                y.mapping("summary", "Resolve the current CA certificate and its authorized representations");
+                y.mapping(TEXT_DESCRIPTION, "Requires authority metadata access and canonical certificate metadata scope; download links require both certificate full-content permissions. Intermediate CA content scope remains its canonical parent issuance authority.");
+                y.blockMapping("parameters", () -> y.sequenceItem(() -> { y.mapping("name", "id"); y.mapping("in", "path"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); }));
+                emitStandardResponses(y);
+            }));
+
             // Per-operation endpoints
             for (Map.Entry<String, OperationDescriptorCatalog.Entry> entry : descriptors.entrySet()) {
                 String opId = entry.getKey();

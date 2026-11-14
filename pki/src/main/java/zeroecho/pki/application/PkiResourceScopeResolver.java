@@ -62,12 +62,25 @@ public interface PkiResourceScopeResolver {
     }
 
     /**
-     * Returns the exact logical authority and frozen profile of one committed credential.
+     * Returns the exact authority and frozen profile for legacy end-entity lifecycle eligibility.
+     * CA bindings are not implicitly eligible for this scope. Metadata and content readers use
+     * {@link #credentialReadScope(PkiId)} instead; individual mutation APIs retain their own policy.
      *
-     * @param credentialId credential identifier
+     * @param credentialId end-entity credential identifier
      * @return scope, or empty
      */
     Optional<CredentialScope> credentialScope(PkiId credentialId);
+
+    /**
+     * Resolves scope for reading stored credential metadata or explicitly authorized content.
+     * Implementations may support CA bindings here without broadening lifecycle mutation eligibility.
+     * The default preserves the legacy resolver for existing implementations.
+     * @param credentialId exact stored credential identifier
+     * @return authoritative read coordinates, or empty when absent
+     */
+    default Optional<CredentialScope> credentialReadScope(PkiId credentialId) {
+        return credentialScope(credentialId);
+    }
 
     /**
      * Returns frozen authorization coordinates for a temporary hold or release,

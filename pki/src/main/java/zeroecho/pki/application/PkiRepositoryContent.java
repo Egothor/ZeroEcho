@@ -45,7 +45,7 @@ import zeroecho.pki.api.content.DurableContentReference;
 public final class PkiRepositoryContent implements AutoCloseable {
     /** Closed semantic role of public repository content. */
     public enum Role {
-        /** X.509 certificate DER. */
+        /** Public credential in its original or explicitly selected format representation. */
         CERTIFICATE,
         /** X.509 certificate-revocation-list DER. */
         CRL,
@@ -56,17 +56,26 @@ public final class PkiRepositoryContent implements AutoCloseable {
     private final PkiId objectId;
     private final PkiId authorityId;
     private final Role role;
-    private final DurableContentReference reference;
+    private final long contentLength;
+    private final String contentDigest;
     private final RepeatableContent content;
 
     /** Creates a validated application-layer content lease. */
     /* default */ PkiRepositoryContent(PkiId objectId, PkiId authorityId, Role role,
             DurableContentReference reference,
             RepeatableContent content) {
+        this(objectId, authorityId, role, Objects.requireNonNull(reference, "reference").length(), reference.sha256(), content);
+    }
+
+    /** Creates a transient export lease without manufacturing durable store provenance. */
+    /* default */ PkiRepositoryContent(PkiId objectId, PkiId authorityId, Role role,
+            long contentLength, String contentDigest, RepeatableContent content) {
         this.objectId = Objects.requireNonNull(objectId, "objectId");
         this.authorityId = Objects.requireNonNull(authorityId, "authorityId");
         this.role = Objects.requireNonNull(role, "role");
-        this.reference = Objects.requireNonNull(reference, "reference");
+        this.contentLength = contentLength;
+        this.contentDigest = Objects.requireNonNull(contentDigest, "contentDigest");
+        if (contentLength < 0 || !contentDigest.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid content commitment");
         this.content = Objects.requireNonNull(content, "content");
     }
 
@@ -93,13 +102,13 @@ public final class PkiRepositoryContent implements AutoCloseable {
      *
      * @return exact length in bytes
      */
-    public long length() { return reference.length(); }
+    public long length() { return contentLength; }
     /**
      * Returns the immutable content commitment.
      *
      * @return lowercase SHA-256 content commitment
      */
-    public String sha256() { return reference.sha256(); }
+    public String sha256() { return contentDigest; }
     /**
      * Opens a new integrity-checking sequential content stream.
      *

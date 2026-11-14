@@ -290,6 +290,7 @@ final class CaCertificateProfileValidator {
     }
 
     private static PkiException reject(String code) {
-        return new PkiException("CA certificate profile rejected: code=" + code);
+        return new PkiException("CA certificate profile rejected: code=" + code,
+                "CA_SUBJECT_INVALID".equals(code) ? zeroecho.pki.api.PkiFailureReason.CA_SUBJECT_INVALID : null);
     }
 }

@@ -95,6 +95,47 @@ class OcspRequestParserTest {
     }
 
     @Test
+    void acceptsSha256AbsentAndOpenSslNullParametersWithIdenticalCertId() throws Exception {
+        X509CertificateHolder issuer = certificate();
+        var digests = new JcaDigestCalculatorProviderBuilder().build();
+        var absent = new AlgorithmIdentifier(NISTObjectIdentifiers.id_sha256);
+        var explicitNull = new AlgorithmIdentifier(NISTObjectIdentifiers.id_sha256,
+                org.bouncycastle.asn1.DERNull.INSTANCE);
+        OCSPReqBuilder absentBuilder = new OCSPReqBuilder();
+        absentBuilder.addRequest(new CertificateID(digests.get(absent), issuer, BigInteger.valueOf(19)));
+        OCSPReqBuilder nullBuilder = new OCSPReqBuilder();
+        nullBuilder.addRequest(new CertificateID(digests.get(explicitNull), issuer, BigInteger.valueOf(19)));
+        var hashes = Set.of(OcspResponseService.CertIdHash.SHA256);
+        var expected = OcspRequestParser.parse(absentBuilder.build().getEncoded(), 1, hashes, 32)
+                .requests().getFirst();
+        var actual = OcspRequestParser.parse(nullBuilder.build().getEncoded(), 1, hashes, 32)
+                .requests().getFirst();
+        assertEquals(expected.hash(), actual.hash());
+        assertEquals(expected.serial(), actual.serial());
+        assertArrayEquals(expected.issuerNameHash(), actual.issuerNameHash());
+        assertArrayEquals(expected.issuerKeyHash(), actual.issuerKeyHash());
+        assertThrows(IllegalArgumentException.class, () -> OcspRequestParser.parse(
+                nullBuilder.build().getEncoded(), 1, Set.of(OcspResponseService.CertIdHash.SHA1), 32));
+    }
+
+    @Test
+    void rejectsSha256NonNullParametersAndUnknownHashOid() throws Exception {
+        for (AlgorithmIdentifier algorithm : java.util.List.of(
+                new AlgorithmIdentifier(NISTObjectIdentifiers.id_sha256,
+                        new org.bouncycastle.asn1.ASN1Integer(1)),
+                new AlgorithmIdentifier(new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.2.3.4")))) {
+            var certId = new org.bouncycastle.asn1.ocsp.CertID(algorithm,
+                    new DEROctetString(new byte[32]), new DEROctetString(new byte[32]),
+                    new org.bouncycastle.asn1.ASN1Integer(19));
+            OCSPReqBuilder builder = new OCSPReqBuilder();
+            builder.addRequest(new CertificateID(certId));
+            byte[] encoded = builder.build().getEncoded();
+            assertThrows(IllegalArgumentException.class, () -> OcspRequestParser.parse(encoded, 1,
+                    Set.of(OcspResponseService.CertIdHash.SHA256), 32));
+        }
+    }
+
+    @Test
     void rejectsAlternateGetEncodingBoundsAndUnknownCriticalExtension() throws Exception {
         System.out.println("rejectsAlternateGetEncodingBoundsAndUnknownCriticalExtension");
         X509CertificateHolder issuer = certificate();

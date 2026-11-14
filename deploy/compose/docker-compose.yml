@@ -36,7 +36,7 @@
 #   browser --mTLS--> nginx (edge) --mTLS--> pki-server (admin listener)
 #
 # POSIX-ONLY. The store/keyring volumes MUST be POSIX filesystems (see
-# deploy/README.md and docs/windows-portability-analysis.md). Secrets are passed
+# deploy/README.md and documentation/deployment/requirements.md). Secrets are passed
 # ONLY via environment variables; nothing secret is baked into an image.
 #
 # Fill in host paths and secrets via deploy/.env (copy from deploy/.env.example).

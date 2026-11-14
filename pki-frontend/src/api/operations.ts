@@ -37,10 +37,15 @@ import { ApiRequestError, getRaw, postRaw, type RawResult } from '@/api/client';
 import type { OperationCatalogResponse, OperationDescriptor, OperationEnvelope, OperationRequest } from '@/api/types';
 import type { FieldSpec, OperationSpec } from '@/api/operationSchema';
 
-/** Fetch the operation descriptors the current principal may invoke. */
-export function useOperationDescriptors() {
+/**
+ * Fetches operation descriptors the current principal may invoke.
+ * @param enabled Whether discovery should run for this consumer.
+ * @returns Authorized operation catalog query state.
+ */
+export function useOperationDescriptors(enabled = true) {
   return useQuery({
     queryKey: ['operations'],
+    enabled,
     queryFn: loadOperationDescriptors,
     staleTime: 5 * 60_000,
   });
@@ -63,7 +68,7 @@ export async function loadOperationDescriptors(): Promise<OperationCatalogRespon
         || typeof value.family !== 'string'
         || !['PKI_OPERATION', 'SIGNING_OPERATION', 'SERVER_CONTROL_OPERATION'].includes(value.family)
         || typeof value.resourceType !== 'string' || typeof value.approval !== 'string'
-        || typeof value.dataView !== 'string') return protocolError(raw.status);
+        || typeof value.dataView !== 'string' || (value.durableRequest !== undefined && typeof value.durableRequest !== 'boolean')) return protocolError(raw.status);
     ids.add(value.operation);
     operations.push(value as unknown as OperationDescriptor);
   }

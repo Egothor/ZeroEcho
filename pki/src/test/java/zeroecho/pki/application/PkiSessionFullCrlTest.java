@@ -201,6 +201,8 @@ class PkiSessionFullCrlTest {
             issuer = fixture.installIssuer(2, IssuerGenerationState.ACTIVE, List.of(oldIssuer));
             assertEquals(new PkiResourceScopeResolver.CredentialScope(CA, "root"),
                     session.resourceScopes().holdCredentialScope(credential).orElseThrow());
+            assertEquals(new PkiResourceScopeResolver.CredentialScope(CA, "root"),
+                    session.resourceScopes().credentialReadScope(credential).orElseThrow());
             assertThrows(IllegalStateException.class, () -> session.resourceScopes().credentialScope(credential));
             assertTrue(RevocationEvidenceExecutor.require(session.operations()).executeHold(new PkiOperation.HoldCredential(credential), holdEvidence, CancellationSignal.NONE)
                     instanceof PkiOperationOutcome.Completed);

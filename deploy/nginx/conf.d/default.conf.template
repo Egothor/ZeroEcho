@@ -41,12 +41,19 @@
 #   NGINX_SERVER_NAME  public UI hostname (e.g. pki.example.com)
 #   NGINX_HTTPS_PORT   TLS listen port inside the container (default 8443)
 #   PKI_UPSTREAM       pki-server admin host:port (e.g. pki-server:8443)
+#   PKI_PUBLIC_UPSTREAM explicit public listener host:port; disabled default 127.0.0.1:9
 #   PKI_PROXY_SSL_NAME SNI / cert name expected on the pki-server TLS cert
 ###############################################################################
 
 upstream pki_admin {
     server ${PKI_UPSTREAM};
     keepalive 16;
+}
+
+# Provision this independently from the administrative API; no anonymous publishing is enabled here.
+upstream pki_public {
+    server ${PKI_PUBLIC_UPSTREAM};
+    keepalive 8;
 }
 
 # Redirect plain HTTP to HTTPS (defence in depth; the UI is HTTPS-only).
@@ -137,8 +144,39 @@ server {
         add_header Cross-Origin-Resource-Policy "same-origin" always;
     }
 
-    # /admin, /public, /health, /account are the pki-server route prefixes.
-    location ~ ^/(admin|public|health|account)(/|$) {
+    # Only the separately configured public repository listener serves public routes.
+    location ~ ^/public/v1(/|$) {
+        proxy_pass https://pki_public;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+
+        # Upstream mTLS: present nginx's transport client identity and verify
+        # the pki-server server certificate.
+        proxy_ssl_certificate         /etc/nginx/tls/upstream/proxy-client.crt;
+        proxy_ssl_certificate_key     /etc/nginx/tls/upstream/proxy-client.key;
+        proxy_ssl_trusted_certificate /etc/nginx/tls/upstream/pki-server-ca.pem;
+        proxy_ssl_verify        on;
+        proxy_ssl_verify_depth  3;
+        proxy_ssl_server_name   on;
+        proxy_ssl_name          ${PKI_PROXY_SSL_NAME};
+        proxy_ssl_protocols     TLSv1.3 TLSv1.2;
+
+        # Forward the verified browser leaf as RFC 9440 Client-Cert.
+        proxy_set_header Client-Cert $rfc9440_client_cert;
+        # Anti-spoofing: an empty proxy_set_header value makes nginx DROP the
+        # field, so any client-supplied Client-Cert-Chain / nginx-format header
+        # is stripped and never reaches pki-server.
+        proxy_set_header Client-Cert-Chain "";
+        proxy_set_header X-ZeroEcho-Client-Cert "";
+
+        proxy_connect_timeout 5s;
+        proxy_read_timeout    120s;
+        proxy_send_timeout    120s;
+    }
+
+    # /admin, /health, /account are the pki-server route prefixes.
+    location ~ ^/(admin|health|account)(/|$) {
         proxy_pass https://pki_admin;
         proxy_http_version 1.1;
         proxy_set_header Connection "";

@@ -54,6 +54,13 @@ class OpenApiCatalogParityTest {
         Path output = temporary.resolve("openapi.yaml");
         OpenApiGenerator.main(new String[]{"test", "src/main/resources/openapi-supplement.yaml", output.toString()});
         String yaml = Files.readString(output);
+        for(String kind:java.util.List.of("certificate","status")) {
+            String metadata=block(yaml,"  '/"+kind+"-artifacts/{id}':",2);
+            String content=block(yaml,"  '/"+kind+"-artifacts/{id}/content':",2);
+            assertTrue(metadata.contains("get:")&&metadata.contains("application/json:"));
+            assertTrue(content.contains("name: \"representation\"")&&content.contains("format: \"binary\""));
+            assertTrue(content.contains("CONTENT_FULL")&&content.contains("Content-Digest"));
+        }
         Set<String> paths = new HashSet<>();
         Matcher path = Pattern.compile("(?m)^  '/operations/([a-z][a-z0-9.-]+)':$").matcher(yaml);
         while (path.find()) assertTrue(paths.add(path.group(1)));

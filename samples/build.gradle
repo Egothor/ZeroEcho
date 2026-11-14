@@ -57,6 +57,8 @@ tasks.named("jar").configure { enabled = false }
 tasks.named("javadoc").configure { enabled = false }
 tasks.named("assemble").configure { enabled = false }
 
+def runSamples = providers.gradleProperty('runSamples')
+
 // Make these tests opt-in so they don’t run in normal CI builds
 tasks.named("test", Test) {
     useJUnitPlatform {
@@ -64,7 +66,7 @@ tasks.named("test", Test) {
     }
     // Only run if -PrunSamples is supplied
     onlyIf {
-        project.hasProperty("runSamples")
+        runSamples.isPresent()
     }
     
     // Don't fail the build if zero tests match the tag

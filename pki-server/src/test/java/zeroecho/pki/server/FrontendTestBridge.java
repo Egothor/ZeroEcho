@@ -108,7 +108,9 @@ final class FrontendTestBridge implements AutoCloseable {
                 reply(exchange, 200, "application/json", "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 return;
             }
-            if (exchange.getRequestURI().getRawQuery() != null) {
+            if (exchange.getRequestURI().getRawQuery() != null
+                    && !(method.equals("GET") && (path.equals("/admin/v1/requests")
+                    ||path.matches("/admin/v1/(?:certificate|status)-artifacts/[A-Za-z0-9:%._-]+/content")))) {
                 reply(exchange, 400, "text/plain", new byte[0]);
                 return;
             }
@@ -134,8 +136,11 @@ final class FrontendTestBridge implements AutoCloseable {
             }
             if (api) {
                 boolean allowed = method.equals("GET") && (GET_ROUTES.contains(path)
-                        || path.matches("/admin/v1/signing-operations/[A-Za-z0-9:%._-]+"))
-                        || method.equals("POST") && (approve || deniedEnrollment
+                        || path.matches("/admin/v1/signing-operations/[A-Za-z0-9:%._-]+")
+                        || path.equals("/admin/v1/requests") || path.matches("/admin/v1/requests/[A-Za-z0-9:._-]+")
+                        ||path.matches("/admin/v1/(?:certificate|status)-artifacts/[A-Za-z0-9:%._-]+(?:/content)?")
+                        ||path.matches("/admin/v1/authorities/[A-Za-z0-9:%._-]+/certificate"))
+                        || method.equals("POST") && (approve || deniedEnrollment || path.equals("/admin/v1/requests")
                         || (path.startsWith("/admin/v1/operations/")
                         && OPERATIONS.contains(path.substring("/admin/v1/operations/".length()))));
                 if (!allowed) {
@@ -148,14 +153,16 @@ final class FrontendTestBridge implements AutoCloseable {
                     return;
                 }
                 URI target = upstream.resolve(approve ? "/admin/v1/operations/security.approval.approve"
-                        : deniedEnrollment ? "/admin/v1/operations/enrollment.profile.suspend" : exchange.getRequestURI().getRawPath());
+                        : deniedEnrollment ? "/admin/v1/operations/enrollment.profile.suspend" : exchange.getRequestURI().getRawPath()
+                                + (exchange.getRequestURI().getRawQuery() == null ? "" : "?" + exchange.getRequestURI().getRawQuery()));
                 HttpRequest request = HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(15))
                         .header("Accept", "application/json").header("Content-Type", "application/json")
                         .method(method, body.length == 0 ? HttpRequest.BodyPublishers.noBody()
                                 : HttpRequest.BodyPublishers.ofByteArray(body)).build();
                 HttpResponse<byte[]> response = (approve || deniedEnrollment ? approver : administrator).send(request,
                         ignored -> new LimitedBodySubscriber());
-                reply(exchange, response.statusCode(), "application/json", response.body());
+                for(String header:List.of("Content-Disposition","X-Content-Type-Options"))response.headers().firstValue(header).ifPresent(value -> exchange.getResponseHeaders().set(header,value));
+                reply(exchange, response.statusCode(), response.headers().firstValue("Content-Type").orElse("application/octet-stream"), response.body());
             } else {
                 if (!method.equals("GET")) {
                     reply(exchange, 405, "text/plain", new byte[0]);

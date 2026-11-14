@@ -33,14 +33,15 @@
  ******************************************************************************/
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { Alert, Button, Box, Divider, Paper, Stack, Typography } from '@mui/material';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Alert, Box, Divider, Paper, Stack, Typography } from '@mui/material';
 import { ApiRequestError } from '@/api/client';
-import { buildRequest, executeOperation, pollOperation, type ExecuteExtras, type ExecuteOutcome, type FieldValue } from '@/api/operations';
+import { executeOperation, pollOperation, type ExecuteExtras, type ExecuteOutcome, type FieldValue, useOperationDescriptors } from '@/api/operations';
 import { operationSpec } from '@/api/operationCatalog';
 import type { OperationDescriptor } from '@/api/types';
 import { OperationForm } from '@/components/operation/OperationForm';
 import { OperationBadges } from '@/components/operation/OperationBadges';
+import { AdministrativeRequestRunner } from '@/components/operation/AdministrativeRequestRunner';
 import { OutcomeView } from '@/components/operation/OutcomeView';
 
 interface Props {
@@ -52,6 +53,8 @@ interface Props {
   readonly initialValues?: Partial<Record<string, FieldValue>>;
   /** Notified with the operation result (used by entity screens to refresh lists). */
   readonly onCompleted?: (outcome: ExecuteOutcome) => void;
+  /** Closes a business form after its stable request ID is transferred to the worklist. */
+  readonly onRequestSubmitted?: (requestId: string, acknowledged: boolean) => void;
 }
 
 /**
@@ -59,127 +62,58 @@ interface Props {
  * acceptance / pending / approval semantics, rendered as an outcome. UI never
  * grants authority — a hidden or disabled control is not an authorization
  * boundary; the server decides on every request.
+ * @param props Operation identity, optional initial values and notification callback.
+ * @returns Supported durable business form or direct read/approval decision form.
  */
-export function OperationRunner({
-  operationId,
-  descriptor,
-  permitted = true,
-  initialValues,
-  onCompleted,
-}: Props) {
-  const spec = operationSpec(operationId);
-  const [outcome, setOutcome] = useState<ExecuteOutcome | null>(null);
-  const [followup, setFollowup] = useState<{ id: string; values: Record<string, FieldValue> } | null>(null);
-  const [submitted, setSubmitted] = useState<Record<string, FieldValue>>({});
-  const [error, setError] = useState<string | null>(null);
+export function OperationRunner(props: Props) {
+  const spec = operationSpec(props.operationId);
+  const business = !!spec && !spec.read && !spec.id.startsWith('security.approval.');
+  const discovery = useOperationDescriptors(business && !props.descriptor);
+  const descriptor = props.descriptor ?? discovery.data?.operations.find((item) => item.operation === props.operationId);
+  if (business) {
+    if (props.permitted === false) return <Alert severity="warning">This operation is unavailable for the current identity.</Alert>;
+    if (descriptor?.durableRequest === true) return <AdministrativeRequestRunner spec={spec!} initialValues={props.initialValues} onSubmitted={props.onRequestSubmitted} />;
+    return <Alert severity={discovery.isError ? 'error' : 'info'}>
+      {discovery.isLoading ? 'Reading durable request capabilities…' : 'This operation is not supported by the server’s durable request workflow. Use its dedicated protocol or streaming page where available; no operation was submitted.'}
+    </Alert>;
+  }
+  if (spec?.id === 'security.approval.request') return <Alert severity="info">Approval requests are created automatically when you submit a business operation in Requests. Legacy approval-only records do not queue or execute their targets.</Alert>;
+  return <LegacyOperationRunner {...props} />;
+}
 
+function LegacyOperationRunner(props: Props) {
+  const { operationId, descriptor, permitted = true, initialValues, onCompleted } = props;
+  const spec = operationSpec(operationId);
+  const client = useQueryClient();
+  const [outcome, setOutcome] = useState<ExecuteOutcome | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const complete = (result: ExecuteOutcome) => {
+    setOutcome(result); setError(null);
+    if (result.kind === 'succeeded' && !spec?.read) {
+      for (const key of ['domainList', 'entityOptions', 'administrativeRequests']) void client.invalidateQueries({ queryKey: [key] });
+    }
+    onCompleted?.(result);
+  };
   const mutation = useMutation({
     mutationFn: ({ values, extra }: { values: Record<string, FieldValue>; extra: ExecuteExtras }) => {
       if (!spec) throw new Error('Unknown operation');
       return executeOperation(spec, values, extra);
     },
-    onSuccess: (result) => {
-      setOutcome(result);
-      setError(null);
-      onCompleted?.(result);
-    },
-    onError: (e) => {
-      setOutcome(null);
-      if (e instanceof ApiRequestError) {
-        setError(`${e.code}: ${e.message}`);
-      } else {
-        setError(e instanceof Error ? e.message : 'Execution failed');
-      }
-    },
+    onSuccess: complete,
+    onError: (failure) => { setOutcome(null); setError(failure instanceof ApiRequestError ? `${failure.code}: ${failure.message}` : failure instanceof Error ? failure.message : 'Execution failed'); },
   });
-
   const statusMutation = useMutation({
-    mutationFn: async () => {
-      if (outcome?.kind !== 'pending') throw new Error('No pending operation');
-      return pollOperation(outcome);
-    },
-    onSuccess: (result) => {
-      setOutcome(result);
-      setError(null);
-      onCompleted?.(result);
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : 'Unable to check the operation.'),
+    mutationFn: () => { if (outcome?.kind !== 'pending') throw new Error('No retained operation'); return pollOperation(outcome); },
+    onSuccess: complete, onError: failure => setError(failure instanceof Error ? failure.message : 'Unable to read status.'),
   });
-
-  if (!spec) {
-    return (
-      <Alert severity="info">
-        Operation <code>{operationId}</code> is not in the guided catalog. Use the Operations Explorer raw mode to
-        invoke it.
-      </Alert>
-    );
-  }
-
-  return (
-    <Paper variant="outlined" sx={{ p: 3 }}>
-      <Stack spacing={1} sx={{ mb: 2 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
-          <Box>
-            <Typography variant="h3" component="h2">
-              {spec.title}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {spec.summary}
-            </Typography>
-          </Box>
-        </Stack>
-        <OperationBadges spec={spec} descriptor={descriptor} />
-        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'Roboto Mono, monospace' }}>
-          {spec.id}
-        </Typography>
-      </Stack>
-
-      {!permitted && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Your identity is not currently authorized to invoke this operation. You may still attempt it; the server
-          decides.
-        </Alert>
-      )}
-
-      <Divider sx={{ mb: 2 }} />
-
-      {spec.id === 'credential.confirmation.proof.complete' && !initialValues?.expectedChallengeRecordCommitment && <Alert severity="info" sx={{ mb: 2 }} action={<Button onClick={() => setFollowup({ id: 'credential.confirmation.challenge.issue', values: { ...initialValues } })}>Issue challenge</Button>}>
-        Issue a fresh confirmation challenge, then use Complete proof to carry its server-provided preconditions.
-      </Alert>}
-      <OperationForm
-        spec={spec}
-        busy={mutation.isPending || statusMutation.isPending}
-        initialValues={initialValues}
-        onSubmit={(values, extra) => { setSubmitted(values); setFollowup(null); mutation.mutate({ values, extra }); }}
-      />
-
-      {outcome?.kind === 'succeeded' && spec.id === 'credential.confirmation.challenge.issue' && <Button onClick={() => {
-        const result = outcome.envelope.result ?? {};
-        const values: Record<string, FieldValue> = { __authorityId: submitted.__authorityId };
-        for (const key of ['credentialId', 'expectedLifecycleRevision', 'expectedLifecycleRecordCommitment', 'expectedChallengeRecordCommitment']) {
-          const value = result[key]; if (typeof value === 'string' || typeof value === 'number') values[key] = value;
-        }
-        setFollowup({ id: 'credential.confirmation.proof.complete', values });
-      }}>Complete proof</Button>}
-      {outcome?.kind === 'approval-required' && <Button onClick={() => {
-        const { request } = buildRequest(spec, submitted);
-        setFollowup({ id: 'security.approval.request', values: { targetOperation: spec.id, targetArguments: JSON.stringify(request.arguments), targetAuthorityId: request.authorityId ?? '' } });
-      }}>Prepare approval request</Button>}
-      {followup && <OperationRunner key={followup.id} operationId={followup.id} initialValues={followup.values} />}
-
-      {(outcome || error) && (
-        <Box sx={{ mt: 3 }}>
-          {error && <Alert severity="error">{error}</Alert>}
-          {outcome && (
-            <OutcomeView
-              outcome={outcome}
-              onCheckStatus={() => statusMutation.mutate()}
-              checkingStatus={mutation.isPending || statusMutation.isPending}
-
-            />
-          )}
-        </Box>
-      )}
-    </Paper>
-  );
+  if (!spec) return <Alert severity="info">Operation <code>{operationId}</code> is unavailable in the guided catalog.</Alert>;
+  return <Paper component="section" aria-label={spec.title} variant="outlined" sx={{ p: 3 }}><Stack spacing={2}>
+    <Box><Typography variant="h3" component="h2">{spec.title}</Typography><Typography>{spec.summary}</Typography></Box>
+    <OperationBadges spec={spec} descriptor={descriptor} />
+    {!permitted && <Alert severity="info">The server authorizes every operation for the current identity.</Alert>}
+    <Divider />
+    <OperationForm spec={spec} initialValues={initialValues} showApproval={!spec.id.startsWith('security.approval.')} busy={mutation.isPending || statusMutation.isPending || outcome?.kind === 'pending'} onSubmit={(values, extra) => mutation.mutate({ values, extra })} />
+    {error && <Alert severity="error">{error}</Alert>}
+    {outcome && <OutcomeView outcome={outcome} onCheckStatus={() => statusMutation.mutate()} checkingStatus={statusMutation.isPending} />}
+  </Stack></Paper>;
 }

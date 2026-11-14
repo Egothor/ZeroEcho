@@ -216,12 +216,7 @@ public final class RepositoryAliasService {
      */
     public Record setCurrentCrl(PkiId authorityId, PkiId statusObjectId, Optional<String> expected,
             String actorPrincipalId) {
-        StatusObject status = repository.statusObject(statusObjectId)
-                .orElseThrow(() -> new IllegalArgumentException("Status object is unavailable"));
-        if (!authorityId.equals(status.issuerCaId()) || status.type() != StatusObjectType.CRL) {
-            throw new IllegalArgumentException("Current CRL target is invalid");
-        }
-        requirePublic(statusObjectId, DisclosureService.ObjectType.CRL, "CRL is not public");
+        StatusObject status = validateStatusTarget(authorityId,statusObjectId,StatusObjectType.CRL);
         return set(authorityId, Type.CURRENT_CRL, statusObjectId, Optional.empty(), Optional.empty(),
                 status.content().sha256(), expected, actorPrincipalId);
     }
@@ -237,12 +232,7 @@ public final class RepositoryAliasService {
      */
     public Record setCurrentDeltaCrl(PkiId authorityId, PkiId statusObjectId, Optional<String> expected,
             String actorPrincipalId) {
-        StatusObject status = repository.statusObject(statusObjectId)
-                .orElseThrow(() -> new IllegalArgumentException("Status object is unavailable"));
-        if (!authorityId.equals(status.issuerCaId()) || status.type() != StatusObjectType.DELTA_CRL) {
-            throw new IllegalArgumentException("Current delta-CRL target is invalid");
-        }
-        requirePublic(statusObjectId, DisclosureService.ObjectType.DELTA_CRL, "Delta CRL is not public");
+        StatusObject status = validateStatusTarget(authorityId,statusObjectId,StatusObjectType.DELTA_CRL);
         return set(authorityId, Type.CURRENT_DELTA_CRL, statusObjectId, Optional.empty(), Optional.empty(),
                 status.content().sha256(), expected, actorPrincipalId);
     }
@@ -259,6 +249,53 @@ public final class RepositoryAliasService {
      */
     public Record setCurrentChain(PkiId authorityId, PkiId issuerId, PkiId pathId, Optional<String> expected,
             String actorPrincipalId) {
+        IssuerChainPath path = validateChainTarget(authorityId,issuerId,pathId);
+        return set(authorityId, Type.CURRENT_CHAIN, pathId, Optional.of(issuerId), Optional.of(pathId),
+                path.pathCommitment(), expected, actorPrincipalId);
+    }
+
+    /**
+     * Validates a proposed public alias and its current-record expectation without publishing it.
+     * @param authorityId exact logical authority
+     * @param type alias type
+     * @param targetId immutable target identifier
+     * @param issuerId exact issuer for a chain target
+     * @param expected expected existing alias commitment
+     * @throws IllegalArgumentException if the immutable target is invalid
+     * @throws IllegalStateException if the current alias expectation conflicts
+     * @throws SecurityException if target disclosure is not public
+     */
+    public void validateSet(PkiId authorityId,Type type,PkiId targetId,Optional<PkiId> issuerId,Optional<String> expected) {
+        String targetCommitment;
+        Optional<PkiId> pathId=Optional.empty();
+        if(type==Type.CURRENT_CHAIN) {
+            var path=validateChainTarget(authorityId,issuerId.orElseThrow(),targetId);targetCommitment=path.pathCommitment();pathId=Optional.of(targetId);
+        } else {
+            var status=validateStatusTarget(authorityId,targetId,type==Type.CURRENT_CRL?StatusObjectType.CRL:StatusObjectType.DELTA_CRL);targetCommitment=status.content().sha256();
+        }
+        validateExpectation(store.findRepositoryAlias(idFor(realmId,authorityId,type)),targetId,issuerId,pathId,targetCommitment,expected);
+    }
+
+    /**
+     * Validates an alias removal expectation without removing the alias.
+     * @param authorityId owning authority
+     * @param type alias type
+     * @param expected required current commitment
+     * @return existing alias
+     * @throws IllegalStateException if the current alias expectation conflicts
+     */
+    public Record validateRemove(PkiId authorityId,Type type,String expected) {
+        var current=require(authorityId,type);
+        if(current.state()!=State.REMOVED&&!current.recordCommitment().equals(expected))throw new IllegalStateException("Repository alias expectation conflicts");
+        return current;
+    }
+    private StatusObject validateStatusTarget(PkiId authorityId,PkiId targetId,StatusObjectType type) {
+        var status=repository.statusObject(targetId).orElseThrow(() -> new IllegalArgumentException("Status object is unavailable"));
+        if(!authorityId.equals(status.issuerCaId())||status.type()!=type)throw new IllegalArgumentException("Repository status target is invalid");
+        requirePublic(targetId,type==StatusObjectType.CRL?DisclosureService.ObjectType.CRL:DisclosureService.ObjectType.DELTA_CRL,"Status object is not public");
+        return status;
+    }
+    private IssuerChainPath validateChainTarget(PkiId authorityId,PkiId issuerId,PkiId pathId) {
         IssuerGeneration issuer = repository.issuer(issuerId)
                 .orElseThrow(() -> new IllegalArgumentException("Issuer generation is unavailable"));
         IssuerChainPath path = repository.chainPath(pathId)
@@ -270,8 +307,19 @@ public final class RepositoryAliasService {
         for (PkiId credentialId : path.orderedCredentialIds()) {
             requirePublic(credentialId, DisclosureService.ObjectType.CA_CERTIFICATE, "Chain credential is not public");
         }
-        return set(authorityId, Type.CURRENT_CHAIN, pathId, Optional.of(issuerId), Optional.of(pathId),
-                path.pathCommitment(), expected, actorPrincipalId);
+        return path;
+    }
+    private static void validateExpectation(Optional<Record> current,PkiId targetId,Optional<PkiId> issuerId,
+            Optional<PkiId> pathId,String targetCommitment,Optional<String> expected) {
+        if(current.isEmpty()) {
+            if(expected.isPresent())throw new IllegalStateException("Repository alias expectation conflicts");
+        } else if(expected.isPresent()) {
+            if(!current.orElseThrow().recordCommitment().equals(expected.orElseThrow()))throw new IllegalStateException("Repository alias expectation conflicts");
+        } else {
+            var existing=current.orElseThrow();
+            if(existing.state()!=State.ACTIVE||!existing.targetObjectId().equals(targetId)||!existing.issuerId().equals(issuerId)
+                    ||!existing.pathId().equals(pathId)||!existing.targetCommitment().equals(targetCommitment))throw new IllegalStateException("Repository alias update requires expected-current commitment");
+        }
     }
 
     /**
@@ -284,7 +332,7 @@ public final class RepositoryAliasService {
      * @return durably removed alias record
      */
     public Record remove(PkiId authorityId, Type type, String expectedCommitment, String actorPrincipalId) {
-        Record current = require(authorityId, type);
+        Record current = validateRemove(authorityId,type,expectedCommitment);
         if (current.state() == State.REMOVED) {
             return current;
         }
@@ -303,6 +351,7 @@ public final class RepositoryAliasService {
         Instant now = clock.instant();
         String aliasId = idFor(realmId, authorityId, type);
         Optional<Record> current = store.findRepositoryAlias(aliasId);
+        validateExpectation(current,targetId,issuerId,pathId,targetCommitment,expected);
         if (current.isPresent() && expected.isEmpty()) {
             Record existing = current.orElseThrow();
             if (existing.state() == State.ACTIVE && existing.targetObjectId().equals(targetId)

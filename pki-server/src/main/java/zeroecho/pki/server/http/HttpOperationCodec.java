@@ -83,7 +83,7 @@ import zeroecho.pki.server.scep.ScepEndpoint;
 
 /** Closed strict HTTP decoding for operations exposed by the existing gateway. */
 @SuppressWarnings("PMD")
-final class HttpOperationCodec {
+public final class HttpOperationCodec {
     static final class LegacyBackupLimitException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         LegacyBackupLimitException() { super("BACKUP_LEGACY_LIMIT_USE_STREAMING"); }
@@ -97,14 +97,32 @@ final class HttpOperationCodec {
         if (decoded.length > maximum) throw new LegacyBackupLimitException();
         return decoded;
     }
-    /** Fully decoded gateway input excluding authenticated principal and request ID. */
-    record Decoded(AdministrativeOperation operation, Permission.Resource resource, Permission.Context context,
+    /**
+     * Fully decoded gateway input excluding authenticated principal and request ID.
+     * @param operation exact closed operation
+     * @param resource requested resource, subsequently resolved by the gateway
+     * @param context operation-specific authorization context
+     * @param approvalId legacy explicit approval linkage, absent for new durable submissions
+     * @param requestedDeadline execution duration, never an approval-wait expiry
+     */
+    public record Decoded(AdministrativeOperation operation, Permission.Resource resource, Permission.Context context,
             Optional<String> approvalId, Optional<Duration> requestedDeadline) { }
 
     private HttpOperationCodec() {
     }
 
-    static Decoded decode(String operationId, byte[] document, int maximumBytes, RealmId realmId,
+    /**
+     * Decodes the same strict operation envelope for HTTP and retained workflow recovery.
+     * This method establishes no authentication or authorization.
+     * @param operationId exact catalog identity
+     * @param document bounded UTF-8 JSON envelope
+     * @param maximumBytes maximum accepted document size
+     * @param realmId trusted server realm
+     * @param descriptors current closed catalog lookup
+     * @return typed target requiring gateway authorization
+     * @throws IllegalArgumentException for malformed or unsupported input
+     */
+    public static Decoded decode(String operationId, byte[] document, int maximumBytes, RealmId realmId,
             java.util.function.Function<String, OperationSecurityDescriptors.Descriptor> descriptors) {
         Fields root;
         try { root = Fields.of(StrictJson.parse(document, maximumBytes)); }
@@ -283,6 +301,10 @@ final class HttpOperationCodec {
             case PkiOperation.ListRequests.NAME -> {
                 fields.allowed(Set.of("limit", "after"));
                 yield new PkiOperation.ListRequests(fields.integer("limit"), fields.optionalText("after"));
+            }
+            case PkiOperation.ListCredentials.NAME -> {
+                fields.allowed(Set.of("limit","after"));
+                yield new PkiOperation.ListCredentials(authority.orElseThrow(),fields.integer("limit"),fields.optionalText("after"));
             }
             case PkiOperation.SearchCredentials.NAME -> {
                 fields.allowed(Set.of("limit", "after", "subjectFilter", "serialFilter", "fingerprintFilter", "statusFilter", "profileIdFilter", "sanFilter"));
@@ -571,7 +593,8 @@ final class HttpOperationCodec {
                         Permission.ResourceType.valueOf(fields.text("resourceType")), scope,
                         Permission.Relationship.valueOf(fields.text("relationship")),
                         Permission.DataView.valueOf(fields.text("dataView")),
-                        fields.enumSet("conditions", Permission.Condition.class), fields.optionalInstant("expiresAt"), true));
+                        fields.contains("conditions") ? fields.enumSet("conditions", Permission.Condition.class) : Set.of(),
+                        fields.optionalInstant("expiresAt"), true));
             }
             case ServerControlOperation.InspectGrant.NAME -> {
                 fields.exact("grantId"); yield new ServerControlOperation.InspectGrant(fields.text("grantId"));
@@ -1048,8 +1071,11 @@ final class HttpOperationCodec {
                     value.authorityId());
             case ServerControlOperation.RemoveRepositoryAlias value -> authorityScope(realmId, authority,
                     value.authorityId());
-            case ServerControlOperation.RegisterAcmeDirectory value -> authorityScope(realmId, authority,
-                    value.registration().authorityId());
+            case ServerControlOperation.RegisterAcmeDirectory value -> {
+                Permission.Scope checked = authorityScope(realmId, authority, value.registration().authorityId());
+                yield new Permission.Scope(checked.realmId(), checked.authorityId(), Optional.empty(),
+                        Optional.of(value.registration().profileId()));
+            }
             case ServerControlOperation.RegisterOcspResponder value -> new Permission.Scope(realmId,
                     Optional.of(value.registration().authorityId()), Optional.of(value.registration().issuerId()),
                     Optional.empty());
@@ -1107,6 +1133,7 @@ final class HttpOperationCodec {
             case PkiOperation.TransitionAuthority value -> Optional.of(value.caId());
             case PkiOperation.ListStatus value -> Optional.of(value.issuerCaId());
             case PkiOperation.SearchCredentials value -> Optional.of(value.authorityId());
+            case PkiOperation.ListCredentials value -> Optional.of(value.authorityId());
             case PkiOperation.ListIssuerGenerations value -> Optional.of(value.authorityId());
             case PkiOperation.ListPendingCredentialConfirmations value -> Optional.of(value.authorityId());
             case PkiOperation.SelectIssuancePath value -> Optional.of(value.caId());

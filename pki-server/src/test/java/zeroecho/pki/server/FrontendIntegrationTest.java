@@ -197,6 +197,12 @@ class FrontendIntegrationTest {
                     Optional.empty(), Optional.empty());
             for (String principal : List.of("administrator", "approver")) {
                 context.createPrincipal(ServerTestSupport.principal(principal), "system");
+                context.grant(ServerTestSupport.grant(principal+".status-content",principal,Permission.Effect.ALLOW,
+                        Permission.Action.CRL_DOWNLOAD,Permission.ResourceType.STATUS_OBJECT,scope,Permission.Relationship.ANY,Permission.DataView.CONTENT_FULL),"system");
+                for(Permission.Action action:List.of(Permission.Action.CERTIFICATE_READ_CONTENT,Permission.Action.CERTIFICATE_DOWNLOAD)) {
+                    context.grant(ServerTestSupport.grant(principal+".content."+action.name(),principal,Permission.Effect.ALLOW,
+                            action,Permission.ResourceType.CERTIFICATE,scope,Permission.Relationship.ANY,Permission.DataView.CONTENT_FULL),"system");
+                }
                 for (OperationSecurityDescriptors.Descriptor descriptor : new OperationSecurityDescriptors().descriptors().values()) {
                     if (principal.equals("administrator")
                             && descriptor.action() == Permission.Action.CMP_ENDPOINT_ADMINISTER

@@ -46,7 +46,7 @@ const DESCRIPTIONS: Record<string, string> = {
   issuers: 'Inspect issuer generations and manage certificate chain paths.',
   profiles: 'Register, validate, inspect, and activate certificate profiles.',
   requests: 'Import and verify certification requests (CSRs).',
-  issuance: 'Issue and inspect credentials.',
+  issuance: 'Browse, issue and download certificates. Choose an authority to load its certificate inventory.',
   lifecycle: 'Renew, replace, and reissue credentials.',
   confirmations: 'Manage credential confirmation (proof-of-possession) challenges.',
   revocation: 'Revoke credentials and read revocation state and history.',
@@ -86,6 +86,7 @@ export function DomainPage() {
         title={item?.label ?? 'Entities'}
         description={DESCRIPTIONS[navId]}
         listings={listings}
+        initialAuthorityId={navId === 'issuance' ? new URLSearchParams(location.search).get('authorityId') ?? undefined : undefined}
       />
     );
   }

@@ -124,6 +124,8 @@ public final class ServerControlStore implements AutoCloseable {
             "io.zeroecho.server.revocation-audit-projection";
     /** Stable namespace for the durable cross-store audit-log integrity anchor. */
     public static final String AUDIT_ANCHOR = "io.zeroecho.server.audit-anchor";
+    /** Closed private namespace for retained administrative execution intents. */
+    public static final String ADMINISTRATIVE_REQUEST = "io.zeroecho.server.administrative-request";
     /** Stable namespace for per-family success-evidence audit-projection cursors. */
     public static final String AUDIT_EVIDENCE_PROJECTION = "io.zeroecho.server.audit-evidence-projection";
 
@@ -179,7 +181,7 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static final Set<String> PROTOCOL_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
             ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER,
-            REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, AUDIT_EVIDENCE_PROJECTION, ENROLLMENT_PROFILE,
+            REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, ADMINISTRATIVE_REQUEST, AUDIT_EVIDENCE_PROJECTION, ENROLLMENT_PROFILE,
             ENROLLMENT_ENDPOINT, ENROLLMENT_CREDENTIAL, ENROLLMENT_REQUEST, CMP_TRANSACTION, CMP_RESPONSE, ENROLLMENT_KEYGEN);
 
     /**
@@ -779,6 +781,64 @@ public final class ServerControlStore implements AutoCloseable {
         } catch (IOException failure) {
             throw new IllegalStateException("Protocol metadata mutation failed");
         }
+    }
+
+    /**
+     * Atomically creates/replaces one administrative request and its linked approval transition.
+     *
+     * @param request exact next private request record
+     * @param expectedRequest empty for create, otherwise exact prior request commitment
+     * @param expectedApproval empty for approval creation or no approval transition
+     * @param approval optional exact next approval; empty leaves approvals untouched
+     */
+    public synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval) {
+        requireOpen();
+        if (!request.namespace().equals(ADMINISTRATIVE_REQUEST) || expectedApproval.isPresent() && approval.isEmpty()) {
+            throw new IllegalArgumentException("Administrative request transition is invalid");
+        }
+        AdministrativeRequest retained = AdministrativeRequestCodec.decode(request);
+        approval.ifPresent(value -> {
+            if (!retained.approvalId().equals(Optional.of(value.approvalId()))
+                    || !retained.policyCommitment().equals(Optional.of(value.policyCommitment()))
+                    || !retained.actor().principalId().equals(value.requesterPrincipalId())
+                    || !retained.operation().equals(value.operationId())
+                    || !retained.operationCommitment().equals(value.operationCommitment())
+                    || !retained.scope().equals(value.scope())
+                    || expectedApproval.filter(previous -> !previous.approvalId().equals(value.approvalId())).isPresent()) {
+                throw new IllegalArgumentException("Approval does not bind administrative request");
+            }
+        });
+        try (MetadataSnapshot snapshot = metadata.snapshot(); MetadataTransaction transaction = metadata.beginTransaction()) {
+            MetadataKey requestKey = key(ADMINISTRATIVE_REQUEST, request.recordId());
+            Optional<MetadataSnapshot.Record> previous = snapshot.get(requestKey);
+            RepeatableContent next = new ByteContent(encode(output -> writeProtocol(output, request)));
+            if (expectedRequest.isEmpty()) {
+                if (previous.isPresent()) throw new IllegalStateException("Administrative request already exists");
+                transaction.create(requestKey, next, CancellationSignal.NONE);
+            } else {
+                MetadataSnapshot.Record existing = previous.orElseThrow(() -> new IllegalStateException("Administrative request unavailable"));
+                ProtocolRecord decoded = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, ADMINISTRATIVE_REQUEST));
+                if (!decoded.commitment().equals(expectedRequest.orElseThrow())) throw new IllegalStateException("Administrative request changed");
+                transaction.replace(requestKey, existing.recordRevision(), next, CancellationSignal.NONE);
+            }
+            if (approval.isPresent()) {
+                var value = approval.orElseThrow(); MetadataKey approvalKey = key(APPROVAL, value.approvalId());
+                Optional<MetadataSnapshot.Record> prior = snapshot.get(approvalKey);
+                RepeatableContent encoded = new ByteContent(encode(output -> writeApproval(output, value)));
+                if (expectedApproval.isEmpty()) {
+                    if (prior.isPresent()) throw new IllegalStateException("Linked approval already exists");
+                    transaction.create(approvalKey, encoded, CancellationSignal.NONE);
+                } else {
+                    var observed = prior.orElseThrow(() -> new IllegalStateException("Linked approval unavailable"));
+                    if (!decode(observed, KIND_APPROVAL, ServerControlStore::readApproval).equals(expectedApproval.orElseThrow())) {
+                        throw new IllegalStateException("Linked approval changed");
+                    }
+                    transaction.replace(approvalKey, observed.recordRevision(), encoded, CancellationSignal.NONE);
+                }
+            }
+            if (transaction.commit().outcome() != MetadataCommitResult.Outcome.COMMITTED) throw new IllegalStateException("Administrative transition requires reconciliation");
+        } catch (IOException failure) { throw new IllegalStateException("Administrative transition failed"); }
     }
 
     /**

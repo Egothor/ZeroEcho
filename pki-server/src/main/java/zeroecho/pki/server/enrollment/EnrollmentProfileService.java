@@ -96,9 +96,44 @@ public final class EnrollmentProfileService {
      * @throws IllegalStateException if the identity exists or persistence fails
      */
     public void register(EnrollmentProfile profile) {
-        Objects.requireNonNull(profile, "profile");
+        validateRegistration(profile);
         control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(
                 record(profile, 1), Optional.empty())));
+    }
+
+    /**
+     * Checks registration identity and finite encoding without changing metadata.
+     * @param profile exact proposed policy
+     * @throws IllegalStateException if the identity already exists
+     */
+    public void validateRegistration(EnrollmentProfile profile) {
+        Objects.requireNonNull(profile,"profile");record(profile,1);
+        if(find(profile.id()).isPresent())throw new IllegalStateException("Enrollment profile already exists");
+    }
+
+    /**
+     * Checks replacement compatibility and finite encoding without changing metadata.
+     * @param profile exact proposed existing policy
+     * @throws IllegalArgumentException if the policy identity is absent
+     * @throws IllegalStateException if active endpoint bindings would become incompatible
+     */
+    public void validateUpdate(EnrollmentProfile profile) {
+        synchronized(control) { // NOPMD AvoidSynchronizedStatement - Pure validation shares the authoritative policy monitor.
+            var existing=require(profile.id());
+            EnrollmentEndpointRegistry.requireCompatibleProfile(control,profile);
+            record(profile,Math.incrementExact(decode(existing).revision()));
+        }
+    }
+
+    /**
+     * Checks a state transition without changing metadata.
+     * @param id existing policy identity
+     * @param state desired policy state
+     * @throws IllegalArgumentException if the policy identity is absent
+     * @throws IllegalStateException if the replacement is incompatible
+     */
+    public void validateState(String id,EnrollmentProfileState state) {
+        validateUpdate(decode(require(id)).profile().withState(state));
     }
 
     /**

@@ -177,6 +177,7 @@ final class PkiSigningCommandsTest {
         for (Mapping mapping : mappings) {
             checkMapping(mapping, CaKind.ROOT, EVIDENCE);
             checkMapping(mapping, CaKind.ROOT, Optional.empty());
+            if (!(mapping.operation() instanceof PkiSigningOperation.GenerateStatus)) checkValidationMapping(mapping, CaKind.ROOT);
         }
         checkMapping(new Mapping(new PkiSigningOperation.RolloverCaCertificate(CA, Optional.of(PARENT)),
                 "prepareCaRollover", value -> {
@@ -248,6 +249,43 @@ final class PkiSigningCommandsTest {
                 assertThrows(IllegalArgumentException.class, () -> commands.completedResult(observation(SemanticSigningKind.CA, state)));
             }
         }
+    }
+
+    @Test
+    void validationUsesOnlyPureServiceMethodsAndRejectsUnsupportedOperations() {
+        List<String> calls = new ArrayList<>();
+        SemanticSigningService service = proxy(SemanticSigningService.class, (receiver, method, arguments) -> {
+            assertSame(ACCESS, arguments[0]);
+            assertSame(CancellationSignal.NONE, arguments[2]);
+            if (!method.getName().equals("validateRootCreation") && !method.getName().equals("validateIntermediateCreation")) {
+                throw new AssertionError("Unexpected mutable service call: " + method.getName());
+            }
+            calls.add(method.getName());
+            return null;
+        });
+        var commands = commands(service, CaKind.ROOT, Optional.empty(), () -> { });
+        commands.validate(new PkiSigningOperation.CreateAuthority(FORMAT, SUBJECT, "profile", KEY),
+                ACCESS, Optional.empty(), CancellationSignal.NONE);
+        commands.validate(new PkiSigningOperation.CreateIntermediate(FORMAT, PARENT, SUBJECT, "profile", Optional.of(KEY)),
+                ACCESS, Optional.empty(), CancellationSignal.NONE);
+        assertEquals(List.of("validateRootCreation", "validateIntermediateCreation"), calls);
+        assertThrows(UnsupportedOperationException.class, () -> commands.validate(
+                new PkiSigningOperation.GenerateStatus(CA, StatusObjectType.CRL, FORMAT), ACCESS, EVIDENCE, CancellationSignal.NONE));
+        assertThrows(NullPointerException.class, () -> commands.validate(null, ACCESS, Optional.empty(), CancellationSignal.NONE));
+        assertEquals(2, calls.size());
+    }
+
+    private static void checkValidationMapping(Mapping mapping, CaKind kind) {
+        RuntimeException rejected = new IllegalStateException("Pure validation boundary reached");
+        var service = proxy(SemanticSigningService.class, (receiver, method, arguments) -> {
+            assertEquals(mapping.method().replace("prepare", "validate"), method.getName());
+            assertSame(ACCESS, arguments[0]); mapping.check().accept(arguments[1]);
+            assertSame(CancellationSignal.NONE, arguments[arguments.length - 1]);
+            if (arguments.length == 4) assertSame(EVIDENCE, arguments[2]);
+            throw rejected;
+        });
+        assertSame(rejected, assertThrows(IllegalStateException.class, () -> commands(service, kind, Optional.of(requests()), () -> { })
+                .validate(mapping.operation(), ACCESS, EVIDENCE, CancellationSignal.NONE)));
     }
 
     private static void checkMapping(Mapping mapping, CaKind kind, Optional<IssuanceExecutionEvidence> evidence) {

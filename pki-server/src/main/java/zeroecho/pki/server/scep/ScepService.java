@@ -82,6 +82,13 @@ public final class ScepService {
         endpoints = Objects.requireNonNull(realm.enrollmentEndpoints(), "enrollmentEndpoints");
     }
 
+    /**
+     * Checks endpoint policy and runtime bindings without registering it.
+     * @param endpoint exact proposed endpoint
+     * @throws IllegalStateException if policy or runtime credential bindings are unavailable
+     */
+    public void validateRegistration(ScepEndpoint endpoint) { endpoints.validateRegistration(endpoint); }
+
     /** Registers or replaces an endpoint.
 
      * @param endpoint validated configuration

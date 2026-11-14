@@ -40,6 +40,8 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppLayout } from '@/components/AppLayout';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DomainPage } from '@/pages/DomainPage';
+import { AdministrativeRequestsPage } from '@/pages/AdministrativeRequestsPage';
+import { AdministrativeRequestPage } from '@/pages/AdministrativeRequestPage';
 import { RealmPage } from '@/pages/RealmPage';
 import { BackupPage } from '@/pages/BackupPage';
 import { OperationsExplorerPage } from '@/pages/OperationsExplorerPage';
@@ -74,6 +76,8 @@ export function App() {
             <Routes>
               <Route element={<AppLayout />}>
                 <Route index element={<DashboardPage />} />
+                <Route path="/administrative-requests" element={<AdministrativeRequestsPage />} />
+                <Route path="/administrative-requests/:requestId" element={<AdministrativeRequestPage />} />
                 <Route path="/realm" element={<RealmPage />} />
                 <Route path="/backup" element={<BackupPage />} />
                 <Route path="/operations" element={<OperationsExplorerPage />} />

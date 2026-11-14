@@ -86,8 +86,8 @@ export function OutcomeView({ outcome, onCheckStatus, checkingStatus }: Props) {
         >
           <AlertTitle>Approval required</AlertTitle>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            This operation is HIGH_RISK or grant-conditioned. Create a durable approval, have it approved by a
-            separate principal, then re-run with the approval id.
+            This direct operation requires additional approval. No administrative request was queued by this response.
+            Submit business work through Requests; legacy approval-only records cannot execute a stored target.
           </Typography>
           {outcome.operationCommitment && (
             <Typography variant="caption" sx={{ fontFamily: 'Roboto Mono, monospace' }}>

@@ -35,6 +35,7 @@
 import type { Transport, TransportRequest, TransportResponse } from '@/api/transport';
 import type { SigningCompletedResult } from '@/api/types';
 import type { OperationSpec } from '@/api/operationSchema';
+import type { AdministrativeRequest, AdministrativeRequestSubmission } from '@/api/administrativeRequests';
 import { operationSpec } from '@/api/operationCatalog';
 import { createDemoState, demoId, type DemoState } from '@/demo/demoData';
 import { discoverableOperations, roleCanInvoke, type DemoRole } from '@/demo/roles';
@@ -43,7 +44,7 @@ const REALM = {
   realmId: 'demo',
   displayName: 'ZeroEcho Demo Realm',
   authorityExposure: 'PUBLIC',
-  authorityCreationPermitted: true,
+  authorityCreationPermitted: true, publicRepository: { available: false },
 };
 
 /** Operation id -> demo collection whose contents a list operation returns. */
@@ -52,6 +53,7 @@ const LIST_MAP: Record<string, string> = {
   'profile.list-all': 'profiles',
   'request.list': 'requests',
   'credential.search': 'credentials',
+  'credential.list': 'credentials',
   'issuer.generation.list': 'generations',
   'security.disclosure.capability.list': 'capabilities',
   'issuer.path.list': 'chainPaths',
@@ -101,11 +103,17 @@ const CREATE_MAP: Record<string, string> = {
   'publication.register': 'publications',
 };
 
+function durableRequestSupported(spec: OperationSpec) {
+  return !spec.read && !spec.id.startsWith('security.approval.') && !spec.id.startsWith('backup.')
+    && (spec.approval === 'NONE' || ['ca.create', 'ca.intermediate.create'].includes(spec.id));
+}
+
 function descriptorOf(spec: OperationSpec) {
   return {
     operation: spec.id,
     family: spec.family,
     mutating: !spec.read,
+    durableRequest: durableRequestSupported(spec),
     resourceType: spec.family === 'SERVER_CONTROL_OPERATION' ? 'REALM' : 'AUTHORITY',
     approval: spec.approval,
     dataView: 'METADATA_REDACTED',
@@ -148,7 +156,7 @@ function cursorPage(items: Record<string, unknown>[], key: string, args: Record<
 
 function dispatch(spec: OperationSpec, args: Record<string, unknown>, state: DemoState): unknown {
   if (spec.id === 'configuration.choices') return { value: {
-    formats: [{ formatId: 'x509', displayName: 'X.509 certificate' }],
+    formats: [{ formatId: 'x509', displayName: 'X.509 certificate', subjectInput: { label: 'Distinguished name', help: 'Use attribute=value syntax, for example CN=Example Root CA. Full profile rules are checked by the server.', placeholder: 'CN=Example Root CA', pattern: String.raw`^\s*(?:[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)+)\s*=.*$` } }],
     signingProviders: [{ providerId: 'local', displayName: 'Local signing provider' }],
     publicationTargets: [{ targetType: 'FILESYSTEM', targetId: 'public-repository', displayName: 'Public repository' }],
     keys: cursorPage([
@@ -186,7 +194,7 @@ function dispatch(spec: OperationSpec, args: Record<string, unknown>, state: Dem
       const key = name === 'requesterPrincipalId' ? 'requesterId' : name === 'targetOperationId' ? 'operation' : name;
       if (args[name]) items = items.filter((item) => item[key] === args[name]);
     }
-    if (spec.id === 'credential.search' || spec.id === 'issuer.generation.list') items = items.filter((item) => item.authorityId === args.__authorityId);
+    if (spec.id === 'credential.search' || spec.id === 'credential.list' || spec.id === 'issuer.generation.list') items = items.filter((item) => item.authorityId === args.__authorityId);
     if (spec.id === 'inventory.status') items = items.filter((item) => item.issuerCaId === args.issuerCaId);
     if (spec.id === 'profile.list') return { profileId: args.profileId, versions: items, count: items.length, activeVersion: items.find((item) => item.active)?.profileVersion };
     if (spec.id === 'security.role-template.list') return { value: items };
@@ -242,6 +250,19 @@ export function createDemoTransport(getRole: () => DemoRole): Transport {
   // Demo-only receipt state; the production client keeps no workflow registry.
   const signing = new Map<string, { spec: OperationSpec; result: SigningCompletedResult }>();
 
+  const work = new Map<string, { intent: AdministrativeRequestSubmission; record: AdministrativeRequest; owner: DemoRole }>();
+  const runWork = (entry: { intent: AdministrativeRequestSubmission; record: AdministrativeRequest }) => {
+    if (entry.record.state !== 'READY') return;
+    entry.record.state = 'RUNNING'; entry.record.updatedAt = new Date().toISOString();
+    try {
+      const spec = operationSpec(entry.intent.operation)!;
+      const result = dispatch(spec, { ...entry.intent.arguments, __authorityId: entry.intent.authorityId }, state);
+      entry.record.result = typeof result === 'object' && result !== null ? result as Record<string, unknown> : { value: result };
+      if (spec.family === 'SIGNING_OPERATION') entry.record.signingOperationId = demoId('sign');
+      entry.record.state = 'SUCCEEDED';
+    } catch { entry.record.state = 'FAILED'; entry.record.failureCode = 'DEMO_OPERATION_FAILED'; }
+    entry.record.updatedAt = new Date().toISOString();
+  };
   return async (req: TransportRequest): Promise<TransportResponse> => {
     const role = getRole();
     const path = req.path.split('?')[0] ?? req.path;
@@ -249,7 +270,42 @@ export function createDemoTransport(getRole: () => DemoRole): Transport {
     // Simulate light latency so loading states are visible.
     await new Promise((r) => setTimeout(r, 120));
 
-    if (req.method === 'GET' && path === '/admin/v1/realm') return json(200, REALM);
+    if (req.method === 'POST' && path === '/admin/v1/requests') {
+      let intent: AdministrativeRequestSubmission;
+      try { intent = JSON.parse(req.body ?? '{}') as AdministrativeRequestSubmission; } catch { return json(400, { error: 'INVALID_REQUEST' }); }
+      const spec = operationSpec(intent.operation);
+      if (intent.version !== 1 || typeof intent.requestId !== 'string' || !intent.requestId || !intent.arguments || !spec || !durableRequestSupported(spec)) return json(400, { error: 'REQUEST_OPERATION_UNSUPPORTED' });
+      if (!roleCanInvoke(role, spec)) return json(403, { error: 'AUTHORIZATION_DENIED' });
+      const old = work.get(intent.requestId);
+      if (old) return old.owner === role && JSON.stringify(old.intent) === JSON.stringify(intent)
+        ? json(202, envelope('administrative.request.submit', 'PENDING', old.record)) : json(409, { error: 'REQUEST_ID_CONFLICT' });
+      const now = new Date().toISOString();
+      const record: AdministrativeRequest = { requestId: intent.requestId, operation: intent.operation, requesterPrincipalId: role, summary: typeof intent.arguments.subjectRef === 'string' ? intent.arguments.subjectRef.slice(0, 256) : intent.operation,
+        state: spec.approval === 'NONE' ? 'READY' : 'WAITING_APPROVAL', createdAt: now, updatedAt: now,
+        ...(intent.deadline ? { executionTimeout: intent.deadline } : {}), target: { arguments: intent.arguments, ...(intent.authorityId ? { authorityId: intent.authorityId } : {}) } };
+      if (record.state === 'WAITING_APPROVAL') {
+        record.approvalId = `demo-approval-${intent.requestId}`;
+        (state.approvals ??= []).push({ approvalId: record.approvalId, administrativeRequestId: record.requestId, operation: intent.operation, requesterId: role, state: 'PENDING', createdAt: now });
+      }
+      const entry = { intent, record, owner: role }; work.set(intent.requestId, entry);
+      const response = json(202, envelope('administrative.request.submit', 'PENDING', record));
+      if (record.state === 'READY') queueMicrotask(() => runWork(entry));
+      return response;
+    }
+    if (req.method === 'GET' && path === '/admin/v1/requests') {
+      const offset = Number(req.query?.offset ?? 0), limit = Number(req.query?.limit ?? 25);
+      const records = [...work.values()].filter(entry => (entry.owner === role || role === 'ADMINISTRATOR') && (!req.query?.state || entry.record.state === req.query.state) && (!req.query?.operation || entry.record.operation === req.query.operation)).map(entry => {
+        const { target: _target, result: _result, ...summary } = entry.record; return summary;
+      });
+      return json(200, envelope('administrative.request.list', 'SUCCEEDED', { requests: records.slice(offset, offset + limit), nextOffset: offset + limit, hasMore: offset + limit < records.length }));
+    }
+    if (req.method === 'GET' && path.startsWith('/admin/v1/requests/')) {
+      const entry = work.get(decodeURIComponent(path.slice('/admin/v1/requests/'.length)));
+      if (!entry || (entry.owner !== role && role !== 'ADMINISTRATOR')) return json(404, { error: 'REQUEST_NOT_FOUND' });
+      return json(200, envelope('administrative.request.inspect', 'SUCCEEDED', entry.record));
+    }
+
+    if (req.method === 'GET' && path === '/admin/v1/realm') return json(200, envelope('realm.inspect', 'SUCCEEDED', REALM));
     if (req.method === 'GET' && path === '/health/live') return json(200, { status: 'LIVE' });
     if (req.method === 'GET' && path === '/health/ready') return json(200, { status: 'READY' });
 
@@ -296,6 +352,19 @@ export function createDemoTransport(getRole: () => DemoRole): Transport {
         }));
       }
 
+      if (['security.approval.approve', 'security.approval.reject'].includes(id)) {
+        const approval = state.approvals?.find(value => value.approvalId === args.approvalId);
+        if (!approval) return json(404, { error: 'APPROVAL_NOT_FOUND' });
+        if (approval.requesterId === role && role !== 'ADMINISTRATOR') return json(403, { error: 'REQUESTER_SEPARATION' });
+        if (typeof args.justification !== 'string' || !args.justification.trim()) return json(400, { error: 'JUSTIFICATION_REQUIRED' });
+        approval.state = id.endsWith('.approve') ? 'APPROVED' : 'REJECTED';
+        const entry = typeof approval.administrativeRequestId === 'string' ? work.get(approval.administrativeRequestId) : undefined;
+        if (entry && entry.record.state === 'WAITING_APPROVAL') {
+          entry.record.state = approval.state === 'APPROVED' ? 'READY' : 'REJECTED'; entry.record.updatedAt = new Date().toISOString();
+          if (entry.record.state === 'READY') queueMicrotask(() => runWork(entry));
+        }
+        return json(200, envelope(id, 'SUCCEEDED', { value: approval }));
+      }
       const result = dispatch(spec, { ...args, __authorityId: body.authorityId }, state);
       if (spec.family === 'SIGNING_OPERATION') {
         const operationId = demoId('sign');

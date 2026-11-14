@@ -125,7 +125,8 @@ final class AdminHttpHandler implements HttpHandler {
                 return;
             }
             URI uri = exchange.getRequestURI();
-            if (uri.getRawQuery() != null || uri.getRawFragment() != null) throw malformed(requestId, "route");
+            if (uri.getRawFragment() != null || uri.getRawQuery() != null && !"/admin/v1/requests".equals(uri.getPath())
+                    && !uri.getRawPath().matches("/admin/v1/(?:certificate|status)-artifacts/[^/]+/content")) throw malformed(requestId, "route");
             String path = uri.getPath();
             if ("/health/live".equals(path)) {
                 response = requireMethod(exchange, "GET")
@@ -188,6 +189,9 @@ final class AdminHttpHandler implements HttpHandler {
         if ("/admin/v1/backup/upload".equals(path) || "/admin/v1/backup/download".equals(path)) {
             return backupTransfer(exchange, path.endsWith("/upload"), requestId, authenticated);
         }
+        if (path.equals("/admin/v1/requests") || path.startsWith("/admin/v1/requests/")) return administrativeRequests(exchange,path,requestId,authenticated);
+        if(path.startsWith("/admin/v1/status-artifacts/"))return statusArtifact(exchange,requestId,principalId);
+        if(path.startsWith("/admin/v1/certificate-artifacts/")||path.startsWith("/admin/v1/authorities/")&&path.endsWith("/certificate"))return certificateArtifact(exchange,requestId,principalId);
         if ("/admin/v1/realm".equals(path)) return realm(exchange, requestId, principalId);
         if ("/admin/v1/schema".equals(path)) return schema(requestId);
         if ("/admin/v1/operations".equals(path)) return operations(exchange, requestId, principalId);
@@ -217,6 +221,64 @@ final class AdminHttpHandler implements HttpHandler {
         if (requireMethod(exchange, "GET")) return descriptor(requestId, descriptor.orElseThrow());
         if (!requireMethod(exchange, "POST")) return method(requestId, operationId);
         return execute(exchange, requestId, authenticated, operationId);
+    }
+
+    private HttpResponses.Response administrativeRequests(HttpsExchange exchange,String path,String trace,
+            PkiServerAuthenticationResult.Authenticated actor) throws IOException {
+        String viewer=actor.endClientPrincipalId();
+        var coordinator=realm.administrativeRequests();
+        try {
+            if (path.startsWith("/admin/v1/requests/")) {
+                if (!requireMethod(exchange,"GET")) return method(trace,"administrative.request.inspect");
+                String id=path.substring("/admin/v1/requests/".length());
+                if(!id.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")) return notFound(trace);
+                return HttpResponses.success(trace,"administrative.request.inspect",coordinator.projection(coordinator.inspect(id,viewer),viewer,true));
+            }
+            if(requireMethod(exchange,"GET")) {
+                Map<String,String> query=new java.util.HashMap<>();
+                String raw=exchange.getRequestURI().getRawQuery();
+                if(raw!=null) for(String pair:raw.split("&")) {
+                    String[] item=pair.split("=",2);
+                    if(item.length!=2 || !Set.of("offset","limit","state","requester","operation").contains(item[0]) || query.putIfAbsent(item[0],java.net.URLDecoder.decode(item[1],java.nio.charset.StandardCharsets.UTF_8))!=null) throw new IllegalArgumentException("Invalid request page");
+                }
+                int offset=Integer.parseInt(query.getOrDefault("offset","0")),limit=Integer.parseInt(query.getOrDefault("limit","25"));
+                var page=coordinator.list(viewer,offset,limit,Optional.ofNullable(query.get("state")).map(zeroecho.pki.server.AdministrativeRequest.State::valueOf),Optional.ofNullable(query.get("requester")),Optional.ofNullable(query.get("operation")));
+                Map<String,PkiOperationValue> result=new LinkedHashMap<>();
+                result.put("requests",new PkiOperationValue.ListValue(page.values().stream().map(v->(PkiOperationValue)coordinator.projection(v,viewer,false)).toList()));
+                result.put("nextOffset",new PkiOperationValue.IntegerValue(page.nextOffset()));result.put("hasMore",new PkiOperationValue.BooleanValue(page.hasMore()));
+                return HttpResponses.success(trace,"administrative.request.list",new PkiOperationValue.ObjectValue(result));
+            }
+            if(!requireMethod(exchange,"POST")) return method(trace,"administrative.request.submit");
+            if(exchange.getRequestURI().getRawQuery()!=null) throw new IllegalArgumentException("Submit query is forbidden");
+            if(!"application/json".equalsIgnoreCase(exchange.getRequestHeaders().getFirst("Content-Type"))) return HttpResponses.failure(415,trace,"administrative.request.submit","VALIDATION_FAILURE","UNSUPPORTED_MEDIA_TYPE","UNSUPPORTED_MEDIA_TYPE",false,false);
+            byte[] document=body(exchange.getRequestBody(),exchange.getRequestHeaders().getFirst("Content-Length"));
+            var fields=((PkiOperationValue.ObjectValue)StrictJson.parse(document,Math.min(262144,configuration.listener().maximumBodyBytes()))).fields();
+            if(!fields.keySet().containsAll(Set.of("version","requestId","operation","arguments"))
+                    || !Set.of("version","requestId","operation","arguments","authorityId","deadline").containsAll(fields.keySet())) throw new IllegalArgumentException("Invalid request fields");
+            String id=((PkiOperationValue.Text)fields.get("requestId")).value();String operation=((PkiOperationValue.Text)fields.get("operation")).value();
+            Map<String,PkiOperationValue> envelope=new LinkedHashMap<>(fields);envelope.remove("requestId");envelope.remove("operation");
+            var encoded=new PkiOperationValue.ObjectValue(envelope);
+            var decoded=HttpOperationCodec.decode(operation,StrictJson.encode(encoded),262144,configuration.realm().realmId(),realm.gateway()::descriptor);
+            Duration duration=decoded.requestedDeadline().orElse(configuration.execution().defaultDeadline());
+            if(duration.compareTo(configuration.execution().maximumDeadline())>0) duration=configuration.execution().maximumDeadline();
+            if(duration.compareTo(Duration.ofSeconds(120))>0) duration=Duration.ofSeconds(120);
+            var request=new ServerOperationGateway.Request(configuration.realm().realmId(),viewer,actor.mode(),actor.transportPrincipalId(),actor.credentialEvidence(),
+                    decoded.operation(),decoded.resource(),Permission.Relationship.ANY,decoded.context(),Optional.empty(),trace);
+            var accepted=coordinator.submit(id,request,encoded,duration);
+            return HttpResponses.administrativeAccepted(trace,coordinator.projection(accepted,viewer,true));
+        } catch(zeroecho.pki.server.AdministrativeRequestCoordinator.Conflict conflict) {
+            return HttpResponses.failure(409,trace,"administrative.request.submit","CONFLICT","REQUEST_ID_CONFLICT","REQUEST_ID_CONFLICT",false,false);
+        } catch(zeroecho.pki.server.AdministrativeRequestCoordinator.Capacity full) {
+            return HttpResponses.failure(429,trace,"administrative.request.submit","OVERLOADED","ADMINISTRATIVE_REQUEST_CAPACITY","ADMINISTRATIVE_REQUEST_CAPACITY",false,false);
+        } catch(zeroecho.pki.server.AdministrativeRequestCoordinator.ValidationFailure invalid) {
+            return HttpResponses.failure(400,trace,"administrative.request.submit","VALIDATION_FAILURE",invalid.code(),invalid.code(),false,false);
+        } catch(zeroecho.pki.api.PkiException invalid) {
+            String code=invalid.failureReason().filter(zeroecho.pki.api.PkiFailureReason::externalSafe).map(Enum::name).orElse("PKI_POLICY_REJECTED");
+            return HttpResponses.failure(400,trace,"administrative.request.submit","VALIDATION_FAILURE",code,code,false,false);
+        } catch(SecurityException unavailable) { return notFound(trace); }
+        catch(IllegalArgumentException | ClassCastException invalid) {
+            return HttpResponses.failure(400,trace,"administrative.request.submit","VALIDATION_FAILURE","INVALID_ADMINISTRATIVE_REQUEST","INVALID_ADMINISTRATIVE_REQUEST",false,false);
+        }
     }
 
     /* default */ HttpResponses.Response signingOperation(String requestId, String principalId, String signingId) {
@@ -404,6 +466,38 @@ final class AdminHttpHandler implements HttpHandler {
         }
     }
 
+    private HttpResponses.Response statusArtifact(HttpsExchange exchange,String trace,String principal) {
+        if(!requireMethod(exchange,"GET"))return method(trace,"status.artifact.inspect");
+        ServerRuntime.Submitted<HttpResponses.Response> submitted;
+        try {submitted=runtime.submit(cancellation -> new StatusArtifactHttp(realm).respond(exchange,principal,trace,cancellation));}
+        catch(RejectedExecutionException overloaded){return HttpResponses.failure(429,trace,"status.artifact.inspect","OVERLOADED","OPERATION_QUEUE_FULL","OPERATION_QUEUE_FULL",false,false);}
+        try {return submitted.future().get(configuration.execution().maximumDeadline().toMillis(),TimeUnit.MILLISECONDS);}
+        catch(TimeoutException timeout){submitted.cancellation().cancel();submitted.future().cancel(true);exchange.close();return null;}
+        catch(InterruptedException interrupted){submitted.cancellation().cancel();submitted.future().cancel(true);exchange.close();Thread.currentThread().interrupt();return null;}
+        catch(ExecutionException failed){if(exchange.getResponseCode()!=-1){exchange.close();return null;}return HttpResponses.failure(500,trace,"status.artifact.inspect","INTERNAL_FAILURE","SAFE_INTERNAL_FAILURE","SAFE_INTERNAL_FAILURE",false,false);}
+        finally{submitted.finish();}
+    }
+
+    private HttpResponses.Response certificateArtifact(HttpsExchange exchange,String trace,String principal) {
+        if(!requireMethod(exchange,"GET"))return method(trace,"certificate.artifact.inspect");
+        ServerRuntime.Submitted<HttpResponses.Response> submitted;
+        try {
+            submitted=runtime.submit(cancellation -> new CertificateArtifactHttp(realm).respond(
+                    exchange.getRequestURI().getRawPath(),exchange.getRequestURI().getRawQuery(),principal,trace,cancellation));
+        } catch(RejectedExecutionException overloaded) {
+            return HttpResponses.failure(429,trace,"certificate.artifact.inspect","OVERLOADED","OPERATION_QUEUE_FULL","OPERATION_QUEUE_FULL",false,false);
+        }
+        try {
+            return submitted.future().get(configuration.execution().defaultDeadline().toMillis(),TimeUnit.MILLISECONDS);
+        } catch(TimeoutException timeout) {
+            submitted.cancellation().cancel();submitted.future().cancel(true);return deadline(trace,"certificate.artifact.inspect");
+        } catch(InterruptedException interrupted) {
+            submitted.cancellation().cancel();submitted.future().cancel(true);Thread.currentThread().interrupt();return deadline(trace,"certificate.artifact.inspect");
+        } catch(ExecutionException failed) {
+            return HttpResponses.failure(500,trace,"certificate.artifact.inspect","INTERNAL_FAILURE","SAFE_INTERNAL_FAILURE","SAFE_INTERNAL_FAILURE",false,false);
+        } finally {submitted.finish();}
+    }
+
     private HttpResponses.Response realm(HttpsExchange exchange, String requestId, String principalId) {
         if (!requireMethod(exchange, "GET")) return method(requestId, "realm.inspect");
         Permission.Resource resource = new Permission.Resource(Permission.ResourceType.REALM,
@@ -419,6 +513,13 @@ final class AdminHttpHandler implements HttpHandler {
                 configuration.realm().authorityExposure().mode().name()));
         fields.put("authorityCreationPermitted", new PkiOperationValue.BooleanValue(
                 configuration.realm().authorityExposure().authorityCreationPermitted()));
+        Map<String,PkiOperationValue> publicRepository = new LinkedHashMap<>();
+        Optional<String> publicPath=configuration.publicListener().flatMap(PkiServerConfiguration.PublicListener::consoleBasePath);
+        publicRepository.put("available",new PkiOperationValue.BooleanValue(publicPath.isPresent()));
+        publicRepository.put("authorityListAvailable",new PkiOperationValue.BooleanValue(publicPath.isPresent()
+                &&configuration.publicListener().map(PkiServerConfiguration.PublicListener::authorityListExposed).orElse(false)));
+        publicPath.ifPresent(value -> publicRepository.put("basePath",new PkiOperationValue.Text(value)));
+        fields.put("publicRepository",new PkiOperationValue.ObjectValue(publicRepository));
         return HttpResponses.success(requestId, "realm.inspect", new PkiOperationValue.ObjectValue(fields));
     }
 
@@ -610,6 +711,7 @@ final class AdminHttpHandler implements HttpHandler {
         fields.put("operation", new PkiOperationValue.Text(value.operationId()));
         fields.put("family", new PkiOperationValue.Text(value.family().name()));
         fields.put("mutating", new PkiOperationValue.BooleanValue(value.mutating()));
+        fields.put("durableRequest", new PkiOperationValue.BooleanValue(zeroecho.pki.server.AdministrativeRequestCoordinator.supports(value)));
         fields.put("resourceType", new PkiOperationValue.Text(value.resourceType().name()));
         fields.put("approval", new PkiOperationValue.Text(value.approvalCategory().name()));
         fields.put("dataView", new PkiOperationValue.Text(value.dataView().name()));
@@ -664,7 +766,8 @@ final class AdminHttpHandler implements HttpHandler {
     private void send(HttpExchange exchange, String requestId, HttpResponses.Response response)
             throws IOException {
         byte[] body = response.body();
-        exchange.getResponseHeaders().set("Content-Type", JSON);
+        exchange.getResponseHeaders().set("Content-Type", response.contentType());
+        response.attachmentFileName().ifPresent(value -> exchange.getResponseHeaders().set("Content-Disposition","attachment; filename=\""+value+"\""));
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         if (response.oneTimeSensitive()) {

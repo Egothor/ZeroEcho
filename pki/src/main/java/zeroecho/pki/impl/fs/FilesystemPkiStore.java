@@ -3591,6 +3591,33 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
+    public void validateRevocation(RevocationCommand command, boolean overdueConfirmation) {
+        requireStoreUsable();
+        Objects.requireNonNull(command, "command");
+        getCredential(command.credentialId()).orElseThrow(() -> new PkiException(
+                "Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND", PkiFailureReason.REVOCATION_CREDENTIAL_NOT_FOUND));
+        Optional<RevocationRecord> current = getRevocation(command.credentialId());
+        Instant time = Objects.requireNonNull(clock.instant(), "store clock instant");
+        if (overdueConfirmation) {
+            if (!(command instanceof RevocationCommand.RevokePermanently exact) || exact.reason() != RevocationReason.UNSPECIFIED) {
+                throw new IllegalArgumentException("Overdue pending confirmation revocation reason must be UNSPECIFIED");
+            }
+            CredentialConfirmationLifecycle lifecycle = readStoredConfirmation(command.credentialId())
+                    .map(StoredConfirmation::lifecycle).orElseThrow(FilesystemPkiStore::confirmationRevocationConflict);
+            if (current.filter(value -> value.transition().state() == RevocationState.PERMANENTLY_REVOKED).isPresent()) {
+                var transition = current.orElseThrow().transition();
+                if (transition.permanentReason().orElse(null) != RevocationReason.UNSPECIFIED
+                        || !sameAttributes(transition.attributes(), command.attributes())) throw confirmationRevocationConflict();
+                return;
+            }
+            if (lifecycle.state() != CredentialConfirmationLifecycle.State.PENDING
+                    || lifecycle.initialPolicy() == ConfirmationDisclosurePolicy.PUBLIC
+                    || !time.isAfter(lifecycle.confirmationReviewAt())) throw confirmationRevocationConflict();
+        }
+        nextRevocationTransition(current, command, time);
+    }
+
+    @Override
     public RevocationRecord revokeOverduePendingCredentialConfirmation(
             final RevocationCommand.RevokePermanently command) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();

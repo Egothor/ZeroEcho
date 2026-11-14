@@ -52,6 +52,23 @@ import zeroecho.core.io.CancellationSignal;
  */
 @SuppressWarnings("PMD.ControlStatementBraces")
 public interface OcspResponseService {
+    /**
+     * Checks configured responder key metadata and algorithm binding without signing a challenge.
+     * A successful check does not replace the approved execution's proof of key possession.
+     * @param authorityId authorized logical authority
+     * @param responderCredentialId exact responder credential
+     * @param signingKeyRef configured managed signing key
+     * @param signatureAlgorithm exact signature identity
+     * @param signatureBindingId optional explicit format binding
+     * @param cancellation cooperative cancellation
+     * @throws UnsupportedOperationException if public key metadata validation is unavailable
+     * @throws RuntimeException if key metadata, certificate or algorithm binding differs
+     */
+    default void validateSigningMetadata(PkiId authorityId, PkiId responderCredentialId, KeyRef signingKeyRef,
+            String signatureAlgorithm, Optional<String> signatureBindingId, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure OCSP signing metadata validation unavailable");
+    }
+
     /** Supported RFC CertID digest identities. */
     enum CertIdHash {
         /** SHA-1 CertID digest used by the mandatory OCSP interoperability profile. */

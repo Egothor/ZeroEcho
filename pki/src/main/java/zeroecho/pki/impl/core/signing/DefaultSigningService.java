@@ -124,6 +124,10 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
     }
 
+    /* default */ void validateInput(String algorithm, long bytes) {
+        provider.inputCapabilities().select(algorithm, bytes);
+    }
+
     @Override public SigningSubmissionId newSubmissionId() {
         requireOpen.run();
         return SigningSubmissionId.create(namespace, store.signingNow(), random);

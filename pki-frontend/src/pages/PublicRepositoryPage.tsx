@@ -32,6 +32,8 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import { Link as RouterLink } from 'react-router-dom';
+import { useRealm } from '@/hooks/useRealm';
 import { lazy, Suspense, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Alert, Box, Button, Link, Paper, Stack, TextField, Typography } from '@mui/material';
@@ -45,16 +47,23 @@ const ResultView = lazy(() => import('@/components/ResultView').then((m) => ({ d
 /** Read-only browser over the public repository API (`/public/v1/...`). */
 export function PublicRepositoryPage() {
   const [authorityId, setAuthorityId] = useState('');
+  const realm = useRealm();
+  const basePath = realm.data?.publicRepository?.available === true && realm.data.publicRepository.basePath === '/public/v1' ? realm.data.publicRepository.basePath : undefined;
+
+  const listAvailable = !!basePath && realm.data?.publicRepository?.authorityListAvailable === true;
 
   const authorities = useMutation({
-    mutationFn: () => api.get<unknown>('/public/v1/authorities', { query: { limit: 100 } }),
+    mutationFn: () => {
+      if (!listAvailable) throw new Error('The public authority list is not published on this console endpoint.');
+      return api.get<unknown>(`${basePath}/authorities`, { query: { limit: 100 } });
+    },
   });
 
-  const links = authorityId.trim()
+  const links = basePath && authorityId.trim()
     ? [
-        { label: 'Current chain', href: `/public/v1/authorities/${encodeURIComponent(authorityId.trim())}/chain` },
-        { label: 'Current CRL', href: `/public/v1/authorities/${encodeURIComponent(authorityId.trim())}/crl` },
-        { label: 'Delta CRL', href: `/public/v1/authorities/${encodeURIComponent(authorityId.trim())}/delta-crl` },
+        { label: 'Current chain', href: `${basePath}/authorities/${encodeURIComponent(authorityId.trim())}/chain` },
+        { label: 'Current CRL', href: `${basePath}/authorities/${encodeURIComponent(authorityId.trim())}/crl` },
+        { label: 'Delta CRL', href: `${basePath}/authorities/${encodeURIComponent(authorityId.trim())}/delta-crl` },
       ]
     : [];
 
@@ -65,13 +74,20 @@ export function PublicRepositoryPage() {
         description="The unauthenticated public distribution surface: authority metadata, chains, CRLs, and published certificates."
       />
 
+      <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+        <Link component={RouterLink} to="/authorities">Authenticated certificate authorities</Link>
+        <Link component={RouterLink} to="/issuance">Certificates and downloads</Link>
+      </Stack>
+      {realm.isLoading && <Typography role="status">Checking public repository availability…</Typography>}
+      {!realm.isLoading && !basePath && <Alert severity="info" sx={{ mb: 2 }}>The public repository is unavailable on this console endpoint. Use the authenticated certificate views above. Public access and disclosure are not enabled by this page.</Alert>}
       <Paper variant="outlined" sx={{ p: 3, mb: 3 }}>
         <Typography variant="h3" sx={{ mb: 1.5 }}>
           Published authorities
         </Typography>
-        <Button variant="outlined" onClick={() => authorities.mutate()} disabled={authorities.isPending}>
+        <Button variant="outlined" onClick={() => authorities.mutate()} disabled={!listAvailable || authorities.isPending}>
           {authorities.isPending ? 'Loading…' : 'List authorities'}
         </Button>
+        {basePath && !listAvailable && <Alert severity="info" sx={{ mt: 2 }}>The authority list is not published. Individual public artifacts remain available through their authorized public routes.</Alert>}
         {authorities.isError && (
           <Alert severity="warning" sx={{ mt: 2 }}>
             {authorities.error instanceof ApiRequestError
@@ -94,6 +110,7 @@ export function PublicRepositoryPage() {
         </Typography>
         <TextField
           size="small"
+          disabled={!basePath}
           fullWidth
           label="Authority id"
           value={authorityId}
@@ -116,7 +133,7 @@ export function PublicRepositoryPage() {
           ))}
           {links.length === 0 && (
             <Typography variant="body2" color="text.secondary">
-              Enter an authority id to build download links.
+              The published public endpoint must be available before authority download links can be used.
             </Typography>
           )}
         </Stack>

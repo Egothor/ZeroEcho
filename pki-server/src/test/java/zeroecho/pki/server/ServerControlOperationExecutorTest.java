@@ -77,6 +77,30 @@ class ServerControlOperationExecutorTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void missingOptionalProtocolServicesAreNotAdvertisedAndInstalledServicesExecute() throws Exception {
+        try(var opened=ServerTestSupport.open(temporaryDirectory)) {
+            var control=executor(opened);
+            for(String operation:List.of("acme.account.list","acme.directory.list","acme.order.inspect","enrollment.request.list","enrollment.request.inspect"))
+                assertFalse(control.protocolAvailable(operation),operation);
+            for(String operation:List.of("enrollment.profile.list","ocsp.responder.list","credential.list"))assertTrue(control.protocolAvailable(operation),operation);
+            for(var operation:List.of(new ServerControlOperation.ListAcmeAccounts(0,1),new ServerControlOperation.ListEnrollmentRequests(0,1))) {
+                var unavailable=assertInstanceOf(ServerControlOperationOutcome.Ordinary.class,control.execute(operation,"operator-a",resource(Permission.ResourceType.REALM,realmScope()),Optional.empty(),CancellationSignal.NONE));
+                assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Failed.class,unavailable.outcome());
+            }
+            var acme=mock(zeroecho.pki.server.acme.AcmeService.class);
+            org.mockito.Mockito.when(acme.accounts(0,1)).thenReturn(new ServerControlStore.Page<>(List.of(),0,false));
+            control.installAcme(acme);
+            var enrollment=mock(zeroecho.pki.server.enrollment.EnrollmentCoordinator.class);
+            org.mockito.Mockito.when(enrollment.list(0,1)).thenReturn(new ServerControlStore.Page<>(List.of(),0,false));
+            control.installEnrollmentCoordinator(enrollment);
+            assertTrue(control.protocolAvailable("acme.account.list"));assertTrue(control.protocolAvailable("enrollment.request.list"));
+            ordinary(control.execute(new ServerControlOperation.ListAcmeAccounts(0,1),"operator-a",resource(Permission.ResourceType.REALM,realmScope()),Optional.empty(),CancellationSignal.NONE));
+            ordinary(control.execute(new ServerControlOperation.ListEnrollmentRequests(0,1),"operator-a",resource(Permission.ResourceType.REALM,realmScope()),Optional.empty(),CancellationSignal.NONE));
+            org.mockito.Mockito.verify(acme).accounts(0,1);org.mockito.Mockito.verify(enrollment).list(0,1);
+        }
+    }
+
+    @Test
     void restoreRejectsBeforeInvokingCustomBackupService() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
             ServerControlOperationExecutor executor = executor(opened);
@@ -102,8 +126,11 @@ class ServerControlOperationExecutorTest {
     void catalogContainsAllExplicitOperationFamilies() {
         System.out.println("catalogContainsAllExplicitOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(150, catalog.descriptors().size());
-        assertEquals(51, catalog.descriptors().values().stream()
+        assertEquals(151, catalog.descriptors().size());
+        assertEquals(Permission.Action.CERTIFICATE_SEARCH, catalog.descriptors().get("credential.list").action());
+        assertEquals(Permission.ResourceType.CERTIFICATE, catalog.descriptors().get("credential.list").resourceType());
+        assertEquals(Permission.DataView.METADATA_REDACTED, catalog.descriptors().get("credential.list").dataView());
+        assertEquals(52, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
         assertEquals(10, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());

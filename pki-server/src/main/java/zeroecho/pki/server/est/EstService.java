@@ -115,6 +115,13 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
     // -------------------------------------------------------------------------
 
     /**
+     * Checks endpoint policy and runtime bindings without registering it.
+     * @param endpoint exact proposed endpoint
+     * @throws IllegalStateException if policy or runtime credential bindings are unavailable
+     */
+    public void validateRegistration(EstEndpoint endpoint) { endpoints.validateRegistration(endpoint); }
+
+    /**
      * Registers an EST endpoint, replacing any existing endpoint with the same label.
      *
      * @param endpoint the endpoint to register

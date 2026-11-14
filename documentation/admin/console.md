@@ -16,14 +16,14 @@ realm-wide list.
 
 | Group | Areas |
 |---|---|
-| **Overview** | Dashboard, Realm |
-| **Issuance** | Certificate Authorities, Issuer Generations & Paths, Certificate Profiles, Requests (CSRs), Issuance |
+| **Overview** | Dashboard, Realm, Requests |
+| **Issuance** | Certificate Authorities, Issuer Generations & Paths, Certificate Profiles, Certificate requests (CSRs), Certificates |
 | **Lifecycle** | Lifecycle, Credential Confirmation, Revocation, Status & CRLs, Publication |
 | **Trust & Access** | Principals, Roles & Grants, Approvals, Break-glass, Disclosure & Capabilities, Audit |
 | **Operations** | ACME, OCSP, Repository Aliases, Algorithm Bindings & Config, Operations Explorer |
 | **Public** | Public Repository |
 
-The **Dashboard** and **Realm** overview screens and the **Public Repository** are
+The **Dashboard**, **Realm**, **Requests** and **Public Repository** screens are
 always visible. Every other area is governed by the operations it contains and is
 hidden when you can invoke none of them (see
 [Discoverability](#the-console-hides-what-you-cannot-do)).
@@ -88,7 +88,9 @@ enumerations (for example a revocation reason or a CA state), string-set and
 enum-set inputs, and base64 inputs for encoded documents such as a CSR or a
 profile.
 
-When you submit, the form shows the operation's outcome directly:
+Read operations and direct approval decisions show their outcomes inline. Supported
+business mutations transfer to the durable request detail, where these lifecycle
+outcomes remain visible:
 
 === "Succeeded"
 
@@ -102,14 +104,51 @@ When you submit, the form shows the operation's outcome directly:
 
 === "Approval required"
 
-    The form reports that the operation is high-risk or grant-conditioned, shows
-    the *operation commitment*, and offers to create a durable
-    [approval](access-control.md#approvals) bound to these exact arguments.
+    Submitting a supported business operation automatically retains its exact
+    target and creates the required [approval](access-control.md#approvals).
+    The request detail shows the pending human decision; the user does not create
+    a second approval request or re-enter the operation afterward.
 
 === "Pending"
 
-    A signing hand-off did not return within the wait budget. The console reports
-    the signing-operation id so the work can be resumed later.
+    The server continues the retained request independently of the browser.
+    Its request detail reports progress, the signing-operation id when available,
+    and the final result. Refreshing the page reads status without executing again.
+
+The complete [operation coverage and recovery contract](administrative-requests.md)
+classifies every catalog mutation, including dedicated interactive transports.
+
+### Submit once and follow the request
+
+Choose **Submit request** on a supported business form. The server retains its exact
+arguments and authority scope, decides whether approval is required, and creates
+the linked approval automatically. The dialog closes and opens **Requests** detail.
+There is no separate approval-creation form and no need to enter the CA again.
+
+When the state is `WAITING_APPROVAL`, an eligible human explicitly approves with a
+justification, either on the request detail or under **Approvals**. The server then
+executes the retained operation independently of the browser. Closing the browser,
+changing pages or approving elsewhere does not require another submission. Return
+to **Requests** to inspect progress, the signing-operation receipt and final result.
+Refresh and polling only read the retained request; they never repeat its command.
+If a submission response is lost, the console keeps its request ID and inspects
+that ID instead of automatically resubmitting.
+
+The CA and certificate areas also show **In progress — not issued** requests.
+These are pending intents, not issued CA or certificate records. Their bounded
+pages have explicit pagination; completed and failed requests remain in the general
+worklist. Successful issuance refreshes the actual entity table.
+
+The selected credential format supplies the subject field's label, example and
+syntax hint. Correct any field-level syntax error before submitting; the server
+still checks the complete format and profile rules. Values are never silently
+rewritten. Execution timeout, when supplied, is the execution budget after approval,
+not a limit on human review time.
+
+Legacy hash-only approvals have no retained executable operation. They are labelled
+**Legacy approval-only** and do not represent queued CA creation. Low-level API
+clients retain their explicit approval/execute contract; guided business forms use
+the durable request service and show unsupported operations without replay fallbacks.
 
 ### Type-to-search pickers for references
 
@@ -120,11 +159,33 @@ picker: authority, publication, principal, grant, role template, role assignment
 approval, break-glass grant, ACME directory, ACME account, OCSP responder, and
 algorithm binding.
 
-Fields that name an entity without a realm-wide list — for example a credential,
-request, profile, issuer generation, status object, or chain path — accept the
-identifier directly. You obtain these identifiers by inspecting the parent record
-(for example the request or credential returned by an earlier step) or from the
-area's key-filtered table.
+Scoped selectors first ask for an authority or issuer generation, then load the
+authorized records belonging to that context. Certificate pickers use the
+mandatory inventory and do not require the optional advanced search index.
+
+## Certificates and downloads
+
+Open **Certificates** and choose an authority to load its bounded certificate
+inventory. **View certificates** on a CA row selects that authority automatically;
+no identifier copying is needed. Optional **Advanced search** remains a separate
+index-dependent view. A CA's own certificate is available directly from its CA
+row even when it was issued by a parent authority and belongs to that parent's
+inventory.
+
+Choose **Download CA certificate** or **Download certificate** on a table row to
+read the currently authorized representations. The server resolves the current CA
+certificate and supplies the format-specific choices. A completed issuance or CA
+request also offers these download links beside its result. PEM is offered only
+when that credential provider exports it; other formats keep their own binary
+representation. Download links use native authenticated attachments, preserving
+binary bytes. Metadata visibility alone does not grant download access, and the
+server rechecks permissions when the file is requested.
+
+**Public Repository** checks whether this console endpoint has an explicitly
+published public API binding. When unavailable, it sends no public repository
+requests and links to the authenticated CA and certificate views instead. Opening
+this page never enables anonymous distribution or changes disclosure policy.
+Certificate downloads in demo mode do not fall through to the real server.
 
 ## The console hides what you cannot do
 
@@ -170,3 +231,62 @@ navigation and available actions change:
 
 Continue with [Certificate authorities](authorities.md) to establish trust, or
 jump to the area you need from the [guide index](index.md#where-to-go-next).
+
+### Stored certificates and downloads
+
+The certificate table and credential selectors use the mandatory `credential.list`
+inventory. They do not require the optional H2 search index; advanced
+`credential.search` remains a separate capability. Inventory is bounded and scoped
+to the selected issuing authority.
+
+A CA row resolves its current certificate on the server. Certificate rows and
+completed issuance results expose format-provided download representations. X.509
+provides original DER and PEM; an opaque format can provide only its original
+bytes. These actions download public certificate material, never private keys.
+The browser receives a binary attachment with a server-generated filename.
+
+Metadata permission alone does not permit downloading. Both
+`CERTIFICATE_READ_CONTENT` and `CERTIFICATE_DOWNLOAD` with `CONTENT_FULL` are
+required on the exact credential scope. Intermediate CA certificates retain their
+canonical issuing-parent scope: reading the child authority alone does not grant
+content access to the parent's issued certificate. A CA-current lookup also checks
+read access to the requested child authority before resolving its certificate.
+
+The public repository is independent of authenticated downloads. Rootless installs
+leave its listener disabled; the console shows that state and makes no public
+listing requests. Publishing it requires an explicitly configured public listener
+with TLS, trusted-proxy authentication and `consoleBasePath: "/public/v1"`, together
+with a matching nginx `PKI_PUBLIC_UPSTREAM`. The separate `authorityListExposed`
+policy controls whether the console offers public listing. Enabling that routing
+binding does not change any certificate's disclosure policy.
+
+
+### Private CRL and status downloads
+
+Status & CRLs rows, inspection results and completed `status.generate` requests offer
+native download links. Representations come from the configured format provider:
+X.509 full and delta CRLs offer DER and PEM; other formats offer their native
+original bytes. Downloading does not publish the object anonymously.
+
+Fresh installations give the initial administrator pair explicit status content
+access. Existing installations require a deliberate migration:
+
+```sh
+./deploy/rootless-pki.sh update --status-access
+```
+
+This flag adds only `CRL_DOWNLOAD` with `CONTENT_FULL` on status objects to the
+validated original administrator pair. It is independent of `--certificate-access`
+and `--root-admin`. A retained update must be resumed with the same explicit flags;
+configuration, keys, policies and existing grants are preserved. Revoked or changed
+initial permissions cause refusal rather than restoration.
+
+The authenticated metadata route is `GET /admin/v1/status-artifacts/{id}` and its
+server-owned attachment links select `original` or a provider-supported representation
+at `/content?representation=...`. Metadata access alone gives no content links.
+Authorization uses the exact stored status-object identifier and its stored logical
+CA authority; historical issuer/profile scope is never guessed from today's issuer.
+Downloads prevalidate immutable content length/hash, send an exact length and SHA-256
+Content-Digest, stream with bounded memory, and honor the configured maximum execution
+deadline and cancellation. Native objects are limited to 256 MiB and encoded output
+to 368 MiB. No public listener or disclosure rule is enabled by this migration.

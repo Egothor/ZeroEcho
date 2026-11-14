@@ -97,6 +97,58 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
     }
 
     @Override
+    public void validate(PkiSigningOperation operation, AccessContext access,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        requireOpen.run();
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(evidence, "evidence");
+        Objects.requireNonNull(cancellation, "cancellation");
+        switch (operation) {
+            case PkiSigningOperation.CreateAuthority value -> service.validateRootCreation(access,
+                    new CaCreateCommand(value.formatId(), value.subjectRef(), value.profileId(), value.keyRef(),
+                            EMPTY_ATTRIBUTES), cancellation);
+            case PkiSigningOperation.CreateIntermediate value -> service.validateIntermediateCreation(access,
+                    new IntermediateCreateCommand(value.formatId(), value.issuerCaId(), value.subjectRef(),
+                            value.profileId(), value.keyRef().orElseThrow(), EMPTY_ATTRIBUTES), cancellation);
+            case PkiSigningOperation.IssueIntermediateCertificate value -> service.validateIntermediateIssuance(access,
+                    new IntermediateCertIssueCommand(value.formatId(), value.issuerCaId(), value.subjectCaId(),
+                            value.profileId(), authority(value.subjectCaId()).issuerKeyRef(),
+                            value.requestedValidity(), EMPTY_ATTRIBUTES), cancellation);
+            case PkiSigningOperation.RolloverCaCertificate value -> {
+                CaRecord current = authority(value.caId());
+                requireIssuer(current, value.issuerCaId());
+                CaRolloverCommand command = current.kind() == CaKind.ROOT
+                        ? new CaRolloverCommand.Root(value.caId(), Optional.empty(), EMPTY_ATTRIBUTES)
+                        : new CaRolloverCommand.Intermediate(value.caId(), value.issuerCaId().orElseThrow(),
+                                current.issuerKeyRef(), Optional.empty(), EMPTY_ATTRIBUTES);
+                service.validateCaRollover(access, command, cancellation);
+            }
+            case PkiSigningOperation.RotateCaKey value -> {
+                CaRecord current = authority(value.caId());
+                requireIssuer(current, value.issuerCaId());
+                CaKeyRotationCommand command = current.kind() == CaKind.ROOT
+                        ? new CaKeyRotationCommand.Root(value.caId(), value.newKeyRef().orElseThrow(),
+                                EMPTY_ATTRIBUTES)
+                        : new CaKeyRotationCommand.Intermediate(value.caId(), value.newKeyRef().orElseThrow(),
+                                value.issuerCaId().orElseThrow(), EMPTY_ATTRIBUTES);
+                service.validateCaKeyRotation(access, command, cancellation);
+            }
+            case PkiSigningOperation.IssueCredential value -> service.validateEndEntity(access,
+                    new EndEntityIssuanceRequest(value.issuerCaId(), csr(value.requestId()), value.profileId(),
+                            Optional.empty()), evidence, cancellation);
+            case PkiSigningOperation.RenewCredential value -> service.validateRenewal(access,
+                    new EndEntityRenewalRequest(value.credentialId(), Optional.empty()), evidence, cancellation);
+            case PkiSigningOperation.ReplaceCredential value -> service.validateReplacement(access,
+                    new EndEntityReplacementRequest(value.existingCredentialId(), csr(value.requestId()),
+                            value.profileId()), evidence, cancellation);
+            case PkiSigningOperation.ReissueCredential value -> service.validateReissue(access,
+                    new EndEntityReissueRequest(value.credentialId()), evidence, cancellation);
+            default -> throw new UnsupportedOperationException("Pure signing input validation unavailable");
+        }
+    }
+
+    @Override
     public PreparedSemanticSigningRequest prepare(PkiSigningOperation operation, AccessContext access,
             Optional<IssuanceExecutionEvidence> evidence,
             CancellationSignal cancellation) {

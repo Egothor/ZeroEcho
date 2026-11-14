@@ -116,10 +116,11 @@ def npmBuild = tasks.register('npmBuild', com.github.gradle.node.npm.task.NpmTas
 
 // The opt-in demo browser suite uses the built SPA and Vite preview by default.
 // The real backend fixture is the separate :pki-server:frontendIntegrationTest task.
+def runFrontendE2e = providers.gradleProperty('runFrontendE2e')
 def npmE2e = tasks.register('npmE2e', com.github.gradle.node.npm.task.NpmTask) {
     dependsOn npmBuild
     args = ['run', 'test:e2e']
-    onlyIf { project.hasProperty('runFrontendE2e') }
+    onlyIf { runFrontendE2e.isPresent() }
 }
 
 // Package the built SPA as a distributable archive (consumed by the container image).

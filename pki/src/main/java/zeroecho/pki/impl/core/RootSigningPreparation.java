@@ -150,6 +150,74 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
     }
 
     /**
+     * Validates the currently known root inputs without serial allocation,
+     * content staging, provider signing or authority mutation. Alternative keys
+     * are checked as public metadata only; their signature is never requested.
+     * Execution repeats these checks and validates its exact generated TBS size.
+     *
+     * @param access separately authenticated and authorized invocation context
+     * @param input immutable root creation input
+     * @param cancellation cooperative validation cancellation
+     * @throws IOException if public metadata cannot be read or validation is cancelled
+     * @throws RuntimeException if the profile, subject, key or algorithm is invalid
+     */
+    public void validate(AccessContext access, CaCreateCommand input,
+            CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        RootInput publicInput = readInput(input, cancellation);
+        // These local coordinates exercise policy without consuming a real serial or operation ID.
+        PkiId validationId = new PkiId("preflight:root");
+        ValidatedCaCertificateRequest approved = validateProfile(input, publicInput, validationId,
+                BigInteger.ONE, clock.instant());
+        validateTbs(input.altKeyRef(), publicInput.profile(), publicInput.spki(), approved, cancellation);
+        cancellation.throwIfCancelled();
+    }
+
+    private void validateTbs(Optional<KeyRef> alternativeKey, ActiveCertificateProfile profile, byte[] spki,
+            ValidatedCaCertificateRequest approved, CancellationSignal cancellation) throws IOException {
+        wholeSecondValidity(approved.validity());
+        algorithm(approved);
+        if (profile.definition().hybridMode() instanceof HybridCertificateMode.AltSignature alternative) {
+            publicKeyInfo(alternativeKey.orElseGet(() -> new KeyRef(alternative.altKeyRef())), cancellation);
+            AlgorithmIdentity identity = authority.resolveIdentity(alternative.altSignatureAlgorithmId());
+            if (identity.kind() != AlgorithmIdentity.Kind.SIGNATURE) throw reject("ALT_ALGORITHM_INVALID");
+            X509SecurityFloor.requirePermitted(identity);
+            bindings.standard(identity, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE)
+                    .orElseThrow(() -> reject("ALT_ALGORITHM_BINDING_MISSING"));
+            if (!(provider instanceof AltSigningCapability)) throw reject("ALT_SIGNING_CAPABILITY_UNAVAILABLE");
+        } else {
+            Validity validity = wholeSecondValidity(approved.validity());
+            byte[] tbs = buildTbs(alternativeKey, profile.definition().hybridMode(), approved,
+                    algorithm(approved), BcX509ProfileSupport.subject(approved.subjectRdns()), spki,
+                    validity, cancellation);
+            if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) throw reject("TBS_TOO_LARGE");
+            provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
+            FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
+        }
+    }
+
+    private RootInput readInput(CaCreateCommand input, CancellationSignal cancellation) throws IOException {
+        ActiveCertificateProfile profile = store.requireActiveProfile(input.profileId());
+        if (!profile.reference().profileId().equals(input.profileId())
+                || !input.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) throw reject("PROFILE_BINDING_INVALID");
+        CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.ROOT_CA, input.formatId());
+        if (!input.attributes().ids().isEmpty()) throw reject("ATTRIBUTES_NOT_SUPPORTED");
+        return new RootInput(profile, publicKeyInfo(input.keyRef(), cancellation));
+    }
+
+    private ValidatedCaCertificateRequest validateProfile(CaCreateCommand input, RootInput publicInput,
+            PkiId root, BigInteger serial, Instant evaluationTime) {
+        return CaCertificateProfileValidator.validate(
+                ValidatedCaCertificateRequest.Operation.CREATE_ROOT, publicInput.profile(), CertificateProfileKind.ROOT_CA,
+                input.formatId(), root, root, input.subjectRef(), new EncodedObject(Encoding.DER, publicInput.spki()),
+                Optional.empty(), evaluationTime, Optional.empty(), serial, authority);
+    }
+
+    private record RootInput(ActiveCertificateProfile profile, byte[] spki) { }
+
+    /**
      * Freezes the exact active root profile, approved subject and one provider SPKI
      * into a single unsigned certificate candidate. Whole-second validity narrows
      * the approved interval. All policy, algorithm and size checks precede staging.
@@ -173,19 +241,12 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         validateSubmission(submission, ttl);
         Instant evaluationTime = clock.instant();
-        ActiveCertificateProfile profile = store.requireActiveProfile(input.profileId());
-        if (!profile.reference().profileId().equals(input.profileId())
-                || !input.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
-        CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.ROOT_CA, input.formatId());
-        if (!input.attributes().ids().isEmpty()) { throw reject("ATTRIBUTES_NOT_SUPPORTED"); }
-        byte[] spki = publicKeyInfo(input.keyRef(), cancellation);
-        EncodedObject exactKey = new EncodedObject(Encoding.DER, spki);
+        RootInput publicInput = readInput(input, cancellation);
+        ActiveCertificateProfile profile = publicInput.profile();
+        byte[] spki = publicInput.spki();
         PkiId root = DomainCommandEncoding.rootAuthorityId(submission.id());
         BigInteger serial = CertificateSerialAllocator.allocate();
-        ValidatedCaCertificateRequest approved = CaCertificateProfileValidator.validate(
-                ValidatedCaCertificateRequest.Operation.CREATE_ROOT, profile, CertificateProfileKind.ROOT_CA,
-                input.formatId(), root, root, input.subjectRef(), exactKey, Optional.empty(), evaluationTime,
-                Optional.empty(), serial, authority);
+        ValidatedCaCertificateRequest approved = validateProfile(input, publicInput, root, serial, evaluationTime);
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(approved);
         X500Principal subject = BcX509ProfileSupport.subject(approved.subjectRdns());
@@ -257,29 +318,15 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         Objects.requireNonNull(ttl, "ttl");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         validateSubmission(submission, ttl);
-        if (!attributes.ids().isEmpty()) { throw reject("ATTRIBUTES_NOT_SUPPORTED"); }
-        Instant evaluationTime = clock.instant();
-        CaRecord root = store.getCa(caId).orElseThrow(() -> reject("ROOT_MISSING"));
-        if (!root.caId().equals(caId) || root.kind() != CaKind.ROOT || root.state() != CaState.ACTIVE) {
-            throw reject("ROOT_UNAVAILABLE");
-        }
-        Credential selected = IssuerAuthorities.currentCredential(store, root);
-        if (!(selected.profileBinding() instanceof CaProfileBinding historical)) { throw reject("ROOT_PROFILE_BINDING_INVALID"); }
-        ActiveCertificateProfile profile = store.requireActiveProfile(historical.reference().profileId());
-        if (!profile.reference().profileId().equals(historical.reference().profileId())
-                || !selected.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
-        CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.ROOT_CA, selected.formatId());
-        requireHybridContinuity(selected, historical, profile, cancellation);
-        KeyRef keyRef = replacementKey.orElse(root.issuerKeyRef());
-        byte[] spki = publicKeyInfo(keyRef, cancellation);
-        EncodedObject exactKey = new EncodedObject(Encoding.DER, spki);
-        X500Principal subject = new X500Principal(root.subjectRef().value());
-        List<SubjectRdn> rdns = CaCertificateProfileValidator.validateTrustedSubject(subject, profile.definition());
-        BigInteger serial = CertificateSerialAllocator.allocate();
-        ValidatedCaCertificateRequest approved = CaCertificateProfileValidator.validateApprovedSubject(
-                ValidatedCaCertificateRequest.Operation.CREATE_ROOT, profile, CertificateProfileKind.ROOT_CA,
-                selected.formatId(), caId, caId, rdns, exactKey, requestedValidity, evaluationTime,
-                Optional.empty(), serial, authority);
+        ExistingRoot existing = readExisting(caId, replacementKey, requestedValidity, attributes,
+                CertificateSerialAllocator.allocate(), cancellation);
+        Credential selected = existing.selected();
+        ActiveCertificateProfile profile = existing.profile();
+        KeyRef keyRef = existing.keyRef();
+        byte[] spki = existing.spki();
+        X500Principal subject = existing.subject();
+        ValidatedCaCertificateRequest approved = existing.approved();
+        BigInteger serial = approved.serial();
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(approved);
         byte[] tbs = buildTbs(Optional.empty(), profile.definition().hybridMode(), approved, algorithm, subject,
@@ -299,6 +346,73 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         return stage(access, keyRef, submission, ttl, template, tbs, cancellation);
     }
 
+
+    /**
+     * Validates rollover input without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed rollover input
+     * @param cancellation cooperative cancellation
+     * @throws IOException if authoritative content cannot be read
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    public void validateExisting(AccessContext access, CaRolloverCommand.Root command, CancellationSignal cancellation) throws IOException {
+        validateExistingInput(access, command, cancellation);
+    }
+
+    /**
+     * Validates rotation input without serial allocation, signing, staging or acceptance.
+     * @param access trusted invocation context
+     * @param command typed rotation input
+     * @param cancellation cooperative cancellation
+     * @throws IOException if authoritative content cannot be read
+     * @throws RuntimeException if input or authoritative state is invalid
+     */
+    public void validateExisting(AccessContext access, CaKeyRotationCommand.Root command, CancellationSignal cancellation) throws IOException {
+        validateExistingInput(access, command, cancellation);
+    }
+
+    private void validateExistingInput(AccessContext access, Object command, CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        ExistingRoot existing;
+        if (command instanceof CaRolloverCommand.Root input) {
+            existing = readExisting(input.caId(), Optional.empty(), input.requestedValidity(), input.attributes(), BigInteger.ONE, cancellation);
+        } else if (command instanceof CaKeyRotationCommand.Root input) {
+            existing = readExisting(input.caId(), Optional.of(input.newKeyRef()), Optional.empty(), input.attributes(), BigInteger.ONE, cancellation);
+        } else { throw new UnsupportedOperationException("Unsupported root lifecycle input"); }
+        validateTbs(Optional.empty(), existing.profile(), existing.spki(), existing.approved(), cancellation);
+        cancellation.throwIfCancelled();
+    }
+
+    private ExistingRoot readExisting(PkiId caId, Optional<KeyRef> replacementKey, Optional<Validity> requestedValidity,
+            AttributeSet attributes, BigInteger serial, CancellationSignal cancellation) throws IOException {
+        if (!attributes.ids().isEmpty()) { throw reject("ATTRIBUTES_NOT_SUPPORTED"); }
+        Instant evaluationTime = clock.instant();
+        CaRecord root = store.getCa(caId).orElseThrow(() -> reject("ROOT_MISSING"));
+        if (!root.caId().equals(caId) || root.kind() != CaKind.ROOT || root.state() != CaState.ACTIVE) {
+            throw reject("ROOT_UNAVAILABLE");
+        }
+        Credential selected = IssuerAuthorities.currentCredential(store, root);
+        if (!(selected.profileBinding() instanceof CaProfileBinding historical)) { throw reject("ROOT_PROFILE_BINDING_INVALID"); }
+        ActiveCertificateProfile profile = store.requireActiveProfile(historical.reference().profileId());
+        if (!profile.reference().profileId().equals(historical.reference().profileId())
+                || !selected.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
+        CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.ROOT_CA, selected.formatId());
+        requireHybridContinuity(selected, historical, profile, cancellation);
+        KeyRef keyRef = replacementKey.orElse(root.issuerKeyRef());
+        byte[] spki = publicKeyInfo(keyRef, cancellation);
+        EncodedObject exactKey = new EncodedObject(Encoding.DER, spki);
+        X500Principal subject = new X500Principal(root.subjectRef().value());
+        List<SubjectRdn> rdns = CaCertificateProfileValidator.validateTrustedSubject(subject, profile.definition());
+        ValidatedCaCertificateRequest approved = CaCertificateProfileValidator.validateApprovedSubject(
+                ValidatedCaCertificateRequest.Operation.CREATE_ROOT, profile, CertificateProfileKind.ROOT_CA,
+                selected.formatId(), caId, caId, rdns, exactKey, requestedValidity, evaluationTime,
+                Optional.empty(), serial, authority);
+        return new ExistingRoot(selected, profile, keyRef, spki, subject, approved);
+    }
+
+    private record ExistingRoot(Credential selected, ActiveCertificateProfile profile, KeyRef keyRef, byte[] spki,
+            X500Principal subject, ValidatedCaCertificateRequest approved) { }
 
     private byte[] buildTbs(Optional<KeyRef> alternativeKey, HybridCertificateMode hybridMode,
             ValidatedCaCertificateRequest approved,

@@ -100,9 +100,11 @@ final class EndEntityIssuancePreparation {
     private final BcX509ProofOfPossessionVerifier proofVerifier;
     private final X509ProfileBindingMatcher bindingMatcher;
     private final AlgorithmIdentity signature;
+    private final java.util.function.Supplier<BigInteger> serialSource;
 
     /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm) {
+        this.serialSource = CertificateSerialAllocator::allocate;
         this.store = Objects.requireNonNull(store, "store");
         this.status = new StoreBackedEffectiveCredentialStatusResolver(store, clock);
         this.authority = Objects.requireNonNull(authority, "authority");
@@ -114,6 +116,16 @@ final class EndEntityIssuancePreparation {
             throw new IllegalArgumentException("Configured signing algorithm must be a canonical signature identity");
         }
         X509SecurityFloor.requirePermitted(signature);
+    }
+
+    private EndEntityIssuancePreparation(EndEntityIssuancePreparation source) {
+        store = source.store; status = source.status; authority = source.authority;
+        proofVerifier = source.proofVerifier; bindingMatcher = source.bindingMatcher; signature = source.signature;
+        serialSource = () -> BigInteger.ONE;
+    }
+
+    /* default */ EndEntityIssuancePreparation withoutSerialAllocation() {
+        return new EndEntityIssuancePreparation(this);
     }
 
     /* default */ EndEntityLifecyclePreparation lifecyclePreparation() {
@@ -223,7 +235,7 @@ final class EndEntityIssuancePreparation {
         }
         cancellation.throwIfCancelled();
         return new Prepared(access, approved, generation.signingKeyRef(), signature, signingBinding,
-                CertificateSerialAllocator.allocate(), evaluation.evaluationTime(), issuerDer, issuer.content());
+                serialSource.get(), evaluation.evaluationTime(), issuerDer, issuer.content());
     }
 
     private static void requireSelectedIssuance(IssuanceIntent expected, IssuerGeneration generation, IssuerChainPath path) {

@@ -149,6 +149,9 @@ nav:
       - developer/sdk-utilities.md
       - developer/ext-module.md
       - developer/extending.md
+      - developer/releases.md
+      - developer/pki-failure-model.md
+      - developer/pki-single-admission-reactor-architecture.md
   - Applications:
       - applications/index.md
       - Certificate Authority:
@@ -162,6 +165,8 @@ nav:
               - deployment/kubernetes.md
               - deployment/operations.md
               - deployment/security-hardening.md
+              - deployment/rootless-podman.md
+              - deployment/pki-exercise.md
           - Administration:
               - admin/index.md
               - admin/console.md
@@ -170,6 +175,7 @@ nav:
               - admin/revocation-and-status.md
               - admin/publication.md
               - admin/access-control.md
+              - admin/administrative-requests.md
               - admin/audit-and-disclosure.md
               - admin/protocols.md
               - admin/backup-restore.md
@@ -193,3 +199,11 @@ nav:
       - reference/security-model.md
       - reference/operation-permissions.md
       - reference/glossary.md
+      - reference/pki-cli.md
+      - reference/pki-deployment-cli-contracts.md
+      - reference/pki-server-admin-https.md
+      - reference/pki-server-acme.md
+      - reference/pki-server-ocsp.md
+      - reference/pki-server-public-repository.md
+      - reference/selection-api.md
+      - Local CLI examples: examples/pki-cli/README.md

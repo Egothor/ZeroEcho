@@ -166,16 +166,23 @@ public final class DefaultProfileService implements ProfileService {
     }
 
     @Override
+    public void validateActivation(String profileId, long profileVersion) {
+        requireProfileId(profileId);
+        if (profileVersion <= 0) throw new IllegalArgumentException("profileVersion must be positive");
+        ImportedCertificateProfileVersion version = store.getProfileVersion(profileId, profileVersion)
+                .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
+        validateBindings(version.definition());
+        validateRuntimeBindings(version.definition());
+    }
+
+    @Override
     public CertificateProfileRef activateProfile(String profileId, long profileVersion) {
         requireProfileId(profileId);
         if (profileVersion <= 0) {
             throw new IllegalArgumentException("profileVersion must be positive");
         }
         return executeAudited("PROFILE_ACTIVATE", profileId, profileVersion, Code.PROFILE_ACTIVATION_FAILED, () -> {
-            ImportedCertificateProfileVersion version = store.getProfileVersion(profileId, profileVersion)
-                    .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
-            validateBindings(version.definition());
-            validateRuntimeBindings(version.definition());
+            validateActivation(profileId, profileVersion);
             CertificateProfileRef result = store.activateProfile(profileId, profileVersion);
             audit("PROFILE_ACTIVATE", result, "SUCCESS");
             return result;

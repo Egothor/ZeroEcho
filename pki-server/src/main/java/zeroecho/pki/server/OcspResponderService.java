@@ -526,13 +526,46 @@ public final class OcspResponderService {
      */
     public Responder register(Registration supplied) {
         Objects.requireNonNull(supplied, "supplied");
-        return register(create(supplied.responderId(), supplied.alias(), supplied.authorityId(), supplied.issuerId(),
+        return register(draft(supplied));
+    }
+
+    /**
+     * Validates registration metadata and certificate dependencies without a signing challenge or mutation.
+     * @param supplied exact proposed responder
+     * @throws IllegalStateException if its identity, certificate or signing metadata is unavailable
+     * @throws UnsupportedOperationException if the provider lacks pure key metadata validation
+     */
+    public void validateRegistration(Registration supplied) {
+        Responder value=draft(Objects.requireNonNull(supplied,"supplied"));
+        if(aliasIndex.containsKey(value.alias())||control.protocolRecord(ServerControlStore.OCSP_RESPONDER,value.responderId()).isPresent())throw new IllegalStateException("Responder identity already exists");
+        validateDependencies(value,false);
+        validateSigningMetadata(value);
+    }
+
+    /**
+     * Validates activation metadata without issuing a challenge signature or changing state.
+     * @param responderId existing responder identity
+     * @throws IllegalStateException if current certificate or signing metadata is unavailable
+     * @throws UnsupportedOperationException if the provider lacks pure key metadata validation
+     */
+    public void validateActivation(String responderId) {
+        var value=require(responderId);validateDependencies(value,false);
+        validateSigningMetadata(value);
+    }
+    private void validateSigningMetadata(Responder value) {
+        signing.orElseThrow(() -> new IllegalStateException("OCSP signing service is unavailable"))
+                .validateSigningMetadata(value.authorityId(),value.responderCredentialId(),value.signingKeyRef(),
+                        value.signatureAlgorithm(),value.signatureBindingId(),zeroecho.core.io.CancellationSignal.NONE);
+    }
+
+    private Responder draft(Registration supplied) {
+        return create(supplied.responderId(), supplied.alias(), supplied.authorityId(), supplied.issuerId(),
                 supplied.signingMode(), supplied.responderCredentialId(), supplied.signingKeyRef(),
                 supplied.chainPathId(), supplied.signatureAlgorithm(), supplied.signatureBindingId(),
                 supplied.signatureBindingCommitment(), supplied.responderIdForm(), supplied.responseValidity(),
                 supplied.noncePolicy(), supplied.maximumNonceBytes(), supplied.acceptedHashes(),
                 supplied.maximumRequestBytes(), supplied.maximumEntries(), supplied.cacheLifetime(),
-                supplied.requestAuthenticationMode(), supplied.requesterTrustPolicy()));
+                supplied.requestAuthenticationMode(), supplied.requesterTrustPolicy());
     }
 
     /** Canonically seals an already constructed internal draft. */

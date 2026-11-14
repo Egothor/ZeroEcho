@@ -92,6 +92,68 @@ import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
 final class RootSigningPreparationTest {
+    @Test void preflightRejectsBadSubjectWithTypedReasonWithoutStagingOrSigning(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore actual = open(root)) {
+            RootCreationFixture fixture = new RootCreationFixture();
+            fixture.initialize(actual);
+            AtomicInteger stages = new AtomicInteger();
+            PkiStore store = observedStages(actual, stages);
+            RootSigningPreparation preparation = fixture.preparer(store);
+            CaCreateCommand command = fixture.command();
+            PkiException rejected = assertThrows(PkiException.class, () -> preparation.validate(
+                    RootCreationFixture.ACCESS, new CaCreateCommand(command.formatId(),
+                            new SubjectRef("Example Root CA"), command.profileId(), command.keyRef(), command.attributes()),
+                    CancellationSignal.NONE));
+            assertEquals(zeroecho.pki.api.PkiFailureReason.CA_SUBJECT_INVALID, rejected.failureReason().orElseThrow());
+            preparation.validate(RootCreationFixture.ACCESS, command, CancellationSignal.NONE);
+            assertEquals(0, stages.get());
+            assertEquals(0, fixture.provider.dispatches.get());
+            assertTrue(actual.listCas().isEmpty());
+            assertThrows(RuntimeException.class, () -> preparation.validate(RootCreationFixture.ACCESS,
+                    new CaCreateCommand(command.formatId(), command.subjectRef(), "missing", command.keyRef(), command.attributes()),
+                    CancellationSignal.NONE));
+            assertThrows(RuntimeException.class, () -> preparation.validate(RootCreationFixture.ACCESS,
+                    new CaCreateCommand(command.formatId(), command.subjectRef(), command.profileId(), new KeyRef("missing"), command.attributes()),
+                    CancellationSignal.NONE));
+            assertEquals(0, stages.get());
+            assertEquals(0, fixture.provider.dispatches.get());
+        }
+    }
+
+    @Test void alternativeSignaturePreflightNeverSigns(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore actual = open(root)) {
+            RootCreationFixture fixture = new RootCreationFixture();
+            fixture.initialize(actual);
+            var base = actual.requireActiveProfile("root-test").definition();
+            RootCreationFixture.install(actual, new zeroecho.pki.api.profile.CertificateProfileDefinition(
+                    base.certificateType(), "root-alt", 1, base.formatId(), base.displayName(), base.maximumValidity(),
+                    base.approvalRequirement(), base.subjectPolicy(), base.certificatePolicy(), base.algorithmBindingPolicy(),
+                    base.confirmationPolicy(), new zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature(
+                            RootCreationFixture.ALGORITHM, RootCreationFixture.REPLACEMENT_KEY.value())));
+            AtomicInteger alternativeSigns = new AtomicInteger();
+            SigningProvider provider = (SigningProvider) Proxy.newProxyInstance(SigningProvider.class.getClassLoader(),
+                    new Class<?>[] { SigningProvider.class, zeroecho.pki.spi.crypto.PublicKeyInfoSource.class,
+                            zeroecho.pki.spi.crypto.AltSigningCapability.class }, (proxy, method, arguments) -> {
+                        if (method.getDeclaringClass() == zeroecho.pki.spi.crypto.AltSigningCapability.class) {
+                            alternativeSigns.incrementAndGet();
+                            throw new AssertionError("Preflight must not sign");
+                        }
+                        try { return method.invoke(fixture.provider, arguments); }
+                        catch (InvocationTargetException failure) { throw failure.getCause(); }
+                    });
+            AtomicInteger stages = new AtomicInteger();
+            var preparation = new RootSigningPreparation(observedStages(actual, stages), RootCreationFixture.CLOCK,
+                    provider, PkiTestRuntime.signingAuthority(provider), fixture.bindings, RootCreationFixture.ALGORITHM, 4_000_000);
+            var command = fixture.command();
+            preparation.validate(RootCreationFixture.ACCESS, new CaCreateCommand(command.formatId(), command.subjectRef(),
+                    "root-alt", command.keyRef(), command.attributes()), CancellationSignal.NONE);
+            assertEquals(0, alternativeSigns.get());
+            assertEquals(0, stages.get());
+            assertEquals(0, fixture.provider.dispatches.get());
+            assertTrue(actual.listCas().isEmpty());
+        }
+    }
+
     @Test void freezesCanonicalSubjectProfileSpkiAndNarrowedValidityWithoutPublishing(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();

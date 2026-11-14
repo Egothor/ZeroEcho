@@ -286,6 +286,23 @@ public final class AcmeService {
      */
     public synchronized AcmeState.Directory registerDirectory(DirectoryRegistration registration,
             ServerControlOperation.AcmeDirectoryProfilePrecondition profilePrecondition) {
+        return store.create(prepareDirectory(registration,profilePrecondition));
+    }
+
+    /**
+     * Checks the complete registration against current PKI policy without creating a directory.
+     * @param registration exact proposed directory
+     * @param profilePrecondition frozen active profile and confirmation-policy commitments
+     * @throws IllegalArgumentException if the proposed policy or dependencies are invalid
+     * @throws IllegalStateException if a frozen profile commitment changed
+     */
+    public synchronized void validateDirectoryRegistration(DirectoryRegistration registration,
+            ServerControlOperation.AcmeDirectoryProfilePrecondition profilePrecondition) {
+        prepareDirectory(registration,profilePrecondition);
+    }
+
+    private AcmeState.Directory prepareDirectory(DirectoryRegistration registration,
+            ServerControlOperation.AcmeDirectoryProfilePrecondition profilePrecondition) {
         Objects.requireNonNull(registration, "registration");
         ServerControlOperation.AcmeDirectoryProfilePrecondition expected =
                 Objects.requireNonNull(profilePrecondition, "profilePrecondition");
@@ -331,7 +348,7 @@ public final class AcmeService {
                 registration.challengeProviderIds(), registration.eabProviderId(), registration.eabRequired(),
                 confirmationPolicy, confirmationPolicy.configurationCommitment(),
                 AcmeState.DirectoryStatus.INACTIVE, policy, clock.instant(), ZERO);
-        return store.create(unsealed);
+        return unsealed;
     }
 
     /**
@@ -351,6 +368,19 @@ public final class AcmeService {
      * @return active directory revision
      */
     public synchronized AcmeState.Directory activateDirectory(String directoryId) {
+        AcmeState.Directory current = validateDirectoryActivation(directoryId);
+        if (current.status() == AcmeState.DirectoryStatus.ACTIVE) return current;
+        AcmeState.Directory updated = copyDirectory(current, AcmeState.DirectoryStatus.ACTIVE);
+        return (AcmeState.Directory) store.replace(List.of(new AcmeControlStore.Replacement(current, updated))).get(0);
+    }
+
+    /**
+     * Validates a directory activation without changing directory state.
+     * @param directoryId exact existing revision
+     * @return current validated directory
+     * @throws IllegalStateException if frozen dependencies or activation state reject admission
+     */
+    public synchronized AcmeState.Directory validateDirectoryActivation(String directoryId) {
         AcmeState.Directory current = requireDirectory(directoryId);
         if (current.status() == AcmeState.DirectoryStatus.ACTIVE) return current;
         validateFrozenDirectory(current);
@@ -360,8 +390,7 @@ public final class AcmeService {
                 throw new IllegalStateException("Another ACME directory revision is active");
             }
         }
-        AcmeState.Directory updated = copyDirectory(current, AcmeState.DirectoryStatus.ACTIVE);
-        return (AcmeState.Directory) store.replace(List.of(new AcmeControlStore.Replacement(current, updated))).get(0);
+        return current;
     }
 
     /**

@@ -32,6 +32,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import { CertificateDownloads } from '@/components/CertificateDownloads';
 import { useMemo } from 'react';
 import { Box, Chip, Stack, Table, TableBody, TableCell, TableRow, Typography } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
@@ -52,13 +53,20 @@ export function RecordGrid({ title, rows }: { readonly title?: string; readonly 
   const columns = useMemo<GridColDef[]>(() => {
     const keys = new Set<string>();
     rows.slice(0, 50).forEach((r) => Object.keys(r).forEach((k) => keys.add(k)));
-    return Array.from(keys).map((k) => ({
+    const columns: GridColDef[] = Array.from(keys).map((k) => ({
       field: k,
       headerName: k,
       flex: 1,
       minWidth: 130,
       valueGetter: (_v, row) => cell((row as Record<string, unknown>)[k]),
     }));
+    if(rows.some(row => typeof row.statusObjectId === 'string' || typeof row.credentialId === 'string'))columns.push({
+      field: '__artifact', headerName: 'Download', minWidth: 240, flex: 1,
+      renderCell: params => typeof params.row.statusObjectId === 'string'
+        ? <CertificateDownloads statusObjectId={params.row.statusObjectId} compact />
+        : typeof params.row.credentialId === 'string' ? <CertificateDownloads credentialId={params.row.credentialId} compact /> : null,
+    });
+    return columns;
   }, [rows]);
 
   const gridRows = useMemo(
@@ -141,11 +149,16 @@ export function ResultView({ value }: { readonly value: unknown }) {
   }
 
   const record = value as Record<string, unknown>;
+  const nested = record.value && typeof record.value === 'object' && !Array.isArray(record.value) ? record.value as Record<string, unknown> : record;
+  const statusObjectId = typeof nested.statusObjectId === 'string' ? nested.statusObjectId : undefined;
+  const credentialId = typeof nested.credentialId === 'string' ? nested.credentialId : undefined;
+  const authorityId = !credentialId && typeof nested.caId === 'string' ? nested.caId : undefined;
   const arrays = Object.entries(record).filter(([, v]) => isRecordArray(v));
   const rest = Object.fromEntries(Object.entries(record).filter(([, v]) => !isRecordArray(v)));
 
   return (
     <Stack spacing={2}>
+      {(statusObjectId || credentialId || authorityId) && <CertificateDownloads statusObjectId={statusObjectId} credentialId={credentialId} authorityId={authorityId} />}
       {Object.keys(rest).length > 0 && <KeyValueTable record={rest} />}
       {arrays.map(([k, v]) => (
         <RecordGrid key={k} title={k} rows={v as Record<string, unknown>[]} />

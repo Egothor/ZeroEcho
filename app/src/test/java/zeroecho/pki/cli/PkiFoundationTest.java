@@ -162,6 +162,24 @@ class PkiFoundationTest {
     }
 
     @Test
+    void mandatoryCredentialInventoryBindsTypedAuthorityLimitsAndExclusiveCursor() throws IOException {
+        PkiOperationRegistry registry=new PkiOperationRegistry();
+        for(int limit:List.of(1,1000)) {
+            var inventory=assertInstanceOf(PkiOperation.ListCredentials.class,
+                    core(registry.bind("credential.list",arguments("{\"authorityId\":\"root\",\"limit\":"+limit+",\"after\":\"x509:previous\"}"),temporaryDirectory)));
+            assertEquals(new PkiId("root"),inventory.authorityId());assertEquals(limit,inventory.limit());
+            assertEquals(Optional.of("x509:previous"),inventory.after());
+        }
+        assertEquals(Optional.empty(),assertInstanceOf(PkiOperation.ListCredentials.class,
+                core(registry.bind("credential.list",arguments("{\"authorityId\":\"root\",\"limit\":10}"),temporaryDirectory))).after());
+        for(String invalid:List.of("{\"limit\":10}","{\"authorityId\":\"root\",\"limit\":0}",
+                "{\"authorityId\":\"root\",\"limit\":1001}","{\"authorityId\":\"root\",\"limit\":\"10\"}",
+                "{\"authorityId\":\"root\",\"limit\":10,\"after\":\"\"}","{\"authorityId\":\"root\",\"limit\":10,\"subjectFilter\":\"x\"}")) {
+            assertThrows(IllegalArgumentException.class,()->registry.bind("credential.list",arguments(invalid),temporaryDirectory));
+        }
+    }
+
+    @Test
     void currentCoreFieldsAndConfirmationCasRemainTyped() throws IOException {
         PkiOperationRegistry registry = new PkiOperationRegistry();
         PkiOperation.SearchCredentials search = assertInstanceOf(PkiOperation.SearchCredentials.class,

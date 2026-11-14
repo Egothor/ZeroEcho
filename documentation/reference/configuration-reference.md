@@ -453,7 +453,7 @@ paths resolve against the process working directory; use absolute paths in
 deployment configuration. Unknown fields and invalid cross-references are rejected.
 For the packaged container, mount the companion and set
 `ZEROECHO_ENROLLMENT_CONFIG` to its path inside the container.
-The repository's `docs/pki-enrollment-example.json` illustrates a SCEP credential
+The repository's `documentation/examples/configuration/pki-enrollment-example.json` illustrates a SCEP credential
 set. Replace its authority, issuer and chain identifiers with actual repository
 identifiers, provision the referenced key and DER chain, and choose budgets for
 your deployment. Its values are examples, not automatically selected defaults.

@@ -32,6 +32,8 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import zeroecho.buildlogic.FrontendTestArguments
+
 plugins {
     id 'buildlogic.java-library-conventions'
     id 'application'
@@ -60,13 +62,60 @@ application {
     applicationName = 'zeroecho-pki-server'
 }
 
+// Explicit offline bootstrap; never invoked by the permanent server entrypoint.
+def adminBootstrapScripts = tasks.register('adminBootstrapScripts', CreateStartScripts) {
+    applicationName = 'zeroecho-pki-admin-bootstrap'
+    mainClass = 'zeroecho.pki.server.PkiAdminBootstrap'
+    outputDir = layout.buildDirectory.dir('admin-bootstrap-scripts').get().asFile
+    classpath = tasks.named('startScripts').get().classpath
+}
+def rootAdminScripts = tasks.register('rootAdminScripts', CreateStartScripts) {
+    applicationName = 'zeroecho-pki-root-admin'
+    mainClass = 'zeroecho.pki.server.PkiRootAdmin'
+    outputDir = layout.buildDirectory.dir('root-admin-scripts').get().asFile
+    classpath = tasks.named('startScripts').get().classpath
+}
+def certificateAccessScripts = tasks.register('certificateAccessScripts', CreateStartScripts) {
+    applicationName = 'zeroecho-pki-certificate-access'
+    mainClass = 'zeroecho.pki.server.PkiCertificateAccess'
+    outputDir = layout.buildDirectory.dir('certificate-access-scripts').get().asFile
+    classpath = tasks.named('startScripts').get().classpath
+}
+def statusAccessScripts = tasks.register('statusAccessScripts', CreateStartScripts) {
+    applicationName = 'zeroecho-pki-status-access'
+    mainClass = 'zeroecho.pki.server.PkiStatusAccess'
+    outputDir = layout.buildDirectory.dir('status-access-scripts').get().asFile
+    classpath = tasks.named('startScripts').get().classpath
+}
+distributions {
+    main {
+        contents {
+            from(statusAccessScripts) {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+            from(certificateAccessScripts) {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+            from(rootAdminScripts) {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+            from(adminBootstrapScripts) {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+        }
+    }
+}
+
 tasks.named('test') {
     useJUnitPlatform { excludeTags 'frontend-integration', 'packaged-integration' }
     dependsOn tasks.named('installDist')
-    def maintainedExamples = ['docs', 'documentation', 'deploy'].collect { directory ->
+    def maintainedExamples = ['documentation', 'deploy'].collect { directory ->
         rootProject.fileTree(directory) {
             include '**/*.json', '**/*.yaml', '**/*.yml', '**/*.md'
-            exclude 'codex/**'
         }
     }
     inputs.files(maintainedExamples).withPropertyName('maintainedConfigurationExamples')
@@ -118,12 +167,6 @@ tasks.register('frontendIntegrationTest', Test) {
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform { includeTags 'frontend-integration' }
     systemProperty 'frontend.directory', project(':pki-frontend').projectDir.absolutePath
-    doFirst {
-        def frontendNode = project(':pki-frontend').extensions.getByName('node')
-        def nodeDirectory = frontendNode.resolvedNodeDir.get().asFile
-        def executable = new File(nodeDirectory, frontendNode.resolvedPlatform.get().isWindows() ? 'node.exe' : 'bin/node')
-        systemProperty 'frontend.node', providers.gradleProperty('frontendNode').getOrElse(executable.absolutePath)
-    }
     systemProperty 'frontend.browser', providers.gradleProperty('frontendBrowser').getOrElse('')
     outputs.upToDateWhen { false }
     testLogging { showStandardStreams = true }
@@ -141,12 +184,24 @@ tasks.register('packagedIntegrationTest', Test) {
     systemProperty 'packaged.serverImage', providers.gradleProperty('packagedServerImage').getOrElse('localhost/zeroecho-pki-server:integration-test')
     systemProperty 'packaged.nginxImage', providers.gradleProperty('packagedNginxImage').getOrElse('localhost/zeroecho-pki-nginx:integration-test')
     systemProperty 'frontend.browser', providers.gradleProperty('frontendBrowser').getOrElse('')
-    doFirst {
-        def frontendNode = project(':pki-frontend').extensions.getByName('node')
-        def nodeDirectory = frontendNode.resolvedNodeDir.get().asFile
-        def executable = new File(nodeDirectory, frontendNode.resolvedPlatform.get().isWindows() ? 'node.exe' : 'bin/node')
-        systemProperty 'frontend.node', providers.gradleProperty('frontendNode').getOrElse(executable.absolutePath)
-    }
     outputs.upToDateWhen { false }
     testLogging { showStandardStreams = true }
+}
+
+// The frontend plugin may be applied after this project. Its callback runs during configuration.
+def frontendProject = project(':pki-frontend')
+def frontendNodeOverride = providers.gradleProperty('frontendNode')
+frontendProject.plugins.withId('com.github.node-gradle.node') {
+    def frontendNode = frontendProject.extensions.getByName('node')
+    def frontendNodeExecutable = frontendNodeOverride.orElse(
+            frontendNode.resolvedNodeDir.zip(frontendNode.resolvedPlatform) { directory, platform ->
+                new File(directory.asFile, platform.isWindows() ? 'node.exe' : 'bin/node').absolutePath
+            })
+    ['frontendIntegrationTest', 'packagedIntegrationTest'].each { taskName ->
+        tasks.named(taskName, Test) {
+            def frontendArguments = objects.newInstance(FrontendTestArguments)
+            frontendArguments.executable.set(frontendNodeExecutable)
+            jvmArgumentProviders.add(frontendArguments)
+        }
+    }
 }

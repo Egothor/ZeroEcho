@@ -32,6 +32,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import { X509Certificate } from 'node:crypto';
 import { test, expect, request as requests, type Page, type Locator } from '@playwright/test';
 import { join } from 'node:path';
 
@@ -39,9 +40,29 @@ type Envelope = { status: string; result: Record<string, unknown> | null };
 type OperationRequest = { version: number; arguments: Record<string, unknown>; authorityId?: string };
 
 function runner(page: Page, title: string): Locator {
-  return page.getByRole('heading', { name: title, exact: true })
-    .locator('xpath=ancestor::div[contains(@class,"MuiPaper-root")][1]');
+  return page.getByRole('region', { name: title, exact: true });
 }
+async function verifyCertificateAttachments(page: Page, subject: string) {
+  async function bytes(label: string, extension: string): Promise<Buffer> {
+    const accepted = page.waitForEvent('download');
+    await page.getByRole('link', { name: new RegExp(`Download (?:CA )?certificate — ${label}$`) }).click();
+    const download = await accepted;
+    expect(await download.failure()).toBeNull();
+    expect(download.suggestedFilename().endsWith('.' + extension)).toBe(true);
+    const stream = await download.createReadStream();
+    expect(stream).not.toBeNull();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+  }
+  const der = await bytes('DER', 'der');
+  const pem = await bytes('PEM', 'pem');
+  expect(pem.toString('ascii')).toContain('-----BEGIN CERTIFICATE-----');
+  const certificate = new X509Certificate(der);
+  expect(certificate.subject).toContain(subject);
+  expect(new X509Certificate(pem).raw).toEqual(certificate.raw);
+}
+
 async function choose(page: Page, form: Locator, label: string, value: RegExp) {
   await form.getByLabel(label, { exact: true }).click();
   await page.getByRole('option', { name: value }).first().click();
@@ -68,52 +89,39 @@ test('packaged SPA uses mTLS identities, known choices and a retained asynchrono
     await expect(page.getByText(/Demo mode/i)).toHaveCount(0);
     const root = await operation(page, 'ca.create', 'Create root authority');
     await choose(page, root, 'Certificate format', /X.509/);
-    await root.getByLabel('Subject', { exact: true }).fill('CN=Packaged Browser Root');
+    await root.getByLabel(/distinguished name$/i).fill('CN=Packaged Browser Root');
     await choose(page, root, 'Certificate profile', /Root CA/);
     await choose(page, root, 'Signing key', /fixture:root.prv/);
-    const required = page.waitForResponse((r) => r.url().endsWith('/operations/ca.create') && r.status() === 409);
-    await root.getByRole('button', { name: /^Run operation$/i }).first().click();
-    const originalBody = (await required).request().postDataJSON() as OperationRequest;
-    await expect(root.getByText('Approval required', { exact: true })).toBeVisible();
-    await root.getByRole('button', { name: 'Prepare approval request' }).click();
-    const approval = runner(page, 'Request approval');
-    await approval.getByRole('textbox', { name: 'Approval', exact: true }).fill('packaged-browser-root');
-    const requested = page.waitForResponse((r) => r.url().endsWith('/operations/security.approval.request'));
-    await approval.getByRole('button', { name: /^Run operation$/i }).last().click();
-    const response = await requested;
-    expect(response.status()).toBe(200);
-    expect((response.request().postDataJSON() as OperationRequest).arguments.targetArguments).toEqual(originalBody.arguments);
-    const decision = { version: 1, arguments: { approvalId: 'packaged-browser-root', justification: 'Independent packaged browser approval' } };
+    let submissions = 0;
+    let directCommands = 0;
+    page.on('request', sent => {
+      if (sent.method() === 'POST' && sent.url().endsWith('/admin/v1/requests')) submissions++;
+      if (sent.method() === 'POST' && sent.url().endsWith('/operations/ca.create')) directCommands++;
+    });
+    const accepted = page.waitForResponse(response => response.url().endsWith('/admin/v1/requests') && response.status() === 202);
+    await root.getByRole('button', { name: 'Submit request', exact: true }).click();
+    const response = await accepted;
+    const intent = response.request().postDataJSON() as OperationRequest;
+    expect(intent.arguments.subjectRef).toBe('CN=Packaged Browser Root');
+    const projection = (await response.json() as Envelope).result!;
+    const id = String(projection.requestId);
+    const approvalId = String(projection.approvalId);
+    expect(id).not.toBe('undefined');
+    expect(approvalId).not.toBe('undefined');
+    await expect(page).toHaveURL(new RegExp(`/administrative-requests/${id}$`));
+    const decision = { version: 1, arguments: { approvalId, justification: 'Independent packaged browser approval' } };
     const self = await request.post('/admin/v1/operations/security.approval.approve', { data: decision });
     expect(self.status()).toBeGreaterThanOrEqual(400);
     expect(self.status()).toBeLessThan(500);
     const approved = await approver.post('/admin/v1/operations/security.approval.approve', { data: decision });
     expect(approved.status()).toBe(200);
     expect((await approved.json() as Envelope).status).toBe('SUCCEEDED');
-    await root.getByText('Advanced (approval, deadline)', { exact: true }).first().click();
-    await choose(page, root.locator('form').first(), 'Approval (optional)', /packaged-browser-root/);
-
-    let submissions = 0;
-    const inspected: string[] = [];
-    page.on('request', (sent) => {
-      if (sent.method() === 'POST' && sent.url().endsWith('/operations/ca.create')) submissions++;
-      if (sent.method() === 'GET' && sent.url().includes('/signing-operations/')) inspected.push(sent.url());
-    });
-    // Client-side observation failure cannot undo acceptance or trigger another POST.
-    await page.route('**/admin/v1/signing-operations/*', (route) => route.abort('failed'), { times: 1 });
-    const accepted = page.waitForResponse((r) => r.url().endsWith('/operations/ca.create'));
-    await root.getByRole('button', { name: /^Run operation$/i }).first().click();
-    const acceptedResponse = await accepted;
-    expect(acceptedResponse.status()).toBe(202);
-    const id = String((await acceptedResponse.json() as Envelope).result?.operationId);
-    expect(id).not.toBe('undefined');
-    await expect(root.getByText(`Operation: ${id}`, { exact: true })).toBeVisible();
-    await expect(root.getByText('Pending', { exact: true })).toBeVisible();
-    await root.getByRole('button', { name: 'Check status', exact: true }).click();
-    await expect(root.getByText('Succeeded', { exact: true })).toBeVisible();
+    // Browser closure cannot prevent dispatch: the independent server owns the request.
+    await page.reload();
+    await expect(page.getByText('SUCCEEDED', { exact: true }).first()).toBeVisible({ timeout: 30000 });
     expect(submissions).toBe(1);
-    expect(inspected.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(inspected)).toEqual(new Set([`${baseURL}/admin/v1/signing-operations/${encodeURIComponent(id)}`]));
+    expect(directCommands).toBe(0);
+    await verifyCertificateAttachments(page, 'CN=Packaged Browser Root');
 
     const issue = await operation(page, 'credential.issue', 'Issue credential');
     await choose(page, issue, 'Issuing authority', /Authority · Root · Active/);

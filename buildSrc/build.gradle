@@ -64,13 +64,17 @@ java {
 }
 
 dependencies {
+    testImplementation gradleTestKit()
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Optional external distribution qualification; the repository wrapper remains unchanged.
+    systemProperty 'gradleQualificationHome', providers.gradleProperty('gradleQualificationHome').getOrElse('')
 }
+
 
 // Build plugins follow the same warning policy as application and test sources.
 tasks.withType(JavaCompile).configureEach {
@@ -79,4 +83,24 @@ tasks.withType(JavaCompile).configureEach {
     if (providers.gradleProperty('warningsAsErrors').getOrElse('true') != 'false') {
         options.compilerArgs.add('-Werror')
     }
+}
+
+// A selected, locally installed distribution is exercised; this never invents a future version.
+tasks.register('gradleCompatibilityTest', Test) {
+    group = 'verification'
+    description = 'Runs execution/configuration-cache regression fixtures with -PgradleQualificationHome=/absolute/gradle-installation.'
+    def qualificationHome = providers.gradleProperty('gradleQualificationHome')
+    inputs.property('gradleQualificationHome', qualificationHome.map { installation ->
+        if (!new File(installation).isAbsolute()) {
+            throw new GradleException('gradleCompatibilityTest requires an absolute -PgradleQualificationHome installation')
+        }
+        installation
+    })
+    dependsOn tasks.named('testClasses')
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'zeroecho.buildlogic.FrontendTestArgumentsTest' }
+    systemProperty 'gradleQualificationHome', qualificationHome.getOrElse('')
+    outputs.upToDateWhen { false }
 }

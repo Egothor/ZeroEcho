@@ -523,18 +523,46 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param publicImmutableCache immutable-object public cache duration
      * @param publicAliasCache stable-alias public cache duration
      * @param authorityListExposed whether safe public authority metadata routes are enabled
+     * @param consoleBasePath explicitly provisioned same-origin public route, absent when not published to the console
      */
     public record PublicListener(InetAddress address, int port, Optional<ProviderConfig> tlsProvider,
             boolean allowPlaintextLoopback, Authentication authentication, int maximumHeaderBytes,
             int maximumBodyBytes, Execution execution,
             Duration maximumStreamDuration, Duration publicImmutableCache, Duration publicAliasCache,
-            boolean authorityListExposed) {
+            boolean authorityListExposed, Optional<String> consoleBasePath) {
+        /**
+         * Creates a listener without asserting a published same-origin console route.
+         * @param address bind address
+         * @param port bind port, zero requests an ephemeral port
+         * @param tlsProvider optional TLS configuration
+         * @param allowPlaintextLoopback explicit local plaintext permission
+         * @param authentication public authentication policy
+         * @param maximumHeaderBytes header bound
+         * @param maximumBodyBytes body bound
+         * @param execution independent execution limits
+         * @param maximumStreamDuration stream deadline
+         * @param publicImmutableCache immutable cache lifetime
+         * @param publicAliasCache alias cache lifetime
+         * @param authorityListExposed safe public authority listing permission
+         */
+        public PublicListener(InetAddress address,int port,Optional<ProviderConfig> tlsProvider,
+                boolean allowPlaintextLoopback,Authentication authentication,int maximumHeaderBytes,
+                int maximumBodyBytes,Execution execution,Duration maximumStreamDuration,
+                Duration publicImmutableCache,Duration publicAliasCache,boolean authorityListExposed) {
+            this(address,port,tlsProvider,allowPlaintextLoopback,authentication,maximumHeaderBytes,maximumBodyBytes,
+                    execution,maximumStreamDuration,publicImmutableCache,publicAliasCache,authorityListExposed,Optional.empty());
+        }
         /** Validates public-listener transport policy and independent finite bounds. */
         public PublicListener {
             Objects.requireNonNull(address, "address");
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("Public listener port is invalid");
+            consoleBasePath=Objects.requireNonNull(consoleBasePath,"consoleBasePath");
+            if(consoleBasePath.filter(value -> !value.equals("/public/v1")).isPresent())throw new IllegalArgumentException("Published public repository path is invalid");
             tlsProvider = Objects.requireNonNull(tlsProvider, "tlsProvider");
             Objects.requireNonNull(authentication, "authentication");
+            if(consoleBasePath.isPresent()&&(tlsProvider.isEmpty()||authentication.mode()!=AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY)) {
+                throw new IllegalArgumentException("Published public console route requires TLS and trusted reverse proxy authentication");
+            }
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "public header bound");
             bounded(maximumBodyBytes, 1, 65_536, "public body bound");
             Objects.requireNonNull(execution, "execution");

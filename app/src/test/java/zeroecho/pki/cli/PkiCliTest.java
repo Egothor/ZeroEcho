@@ -34,6 +34,7 @@
 package zeroecho.pki.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -46,6 +47,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -396,6 +398,11 @@ class PkiCliTest {
         assertEquals(0, PkiCli.execute(new String[] { "credential.inspect", "--credential-id", "--url",
                 "--config", configuration.toString() }, new ByteArrayOutputStream(), opener, () -> false));
         assertEquals("--url", ((PkiOperation.InspectCredential) opener.operations.get(1)).credentialId().value());
+        assertEquals(0, PkiCli.execute(new String[] { "credential.list", "--authority-id", "root", "--limit", "1", "--after", "x509:previous",
+                "--config", configuration.toString() }, new ByteArrayOutputStream(), opener, () -> false));
+        var inventory=assertInstanceOf(PkiOperation.ListCredentials.class,opener.operations.get(2));
+        assertEquals(new zeroecho.pki.api.PkiId("root"),inventory.authorityId());
+        assertEquals(Optional.of("x509:previous"),inventory.after());
     }
 
     @Test

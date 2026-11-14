@@ -55,7 +55,7 @@ describe('demo backend', () => {
   it('serves realm metadata', async () => {
     const res = await backend('ADMINISTRATOR').get('/admin/v1/realm');
     expect(res.status).toBe(200);
-    expect(parse(res)['realmId']).toBe('demo');
+    expect(parse(res)).toMatchObject({ version: 1, operation: 'realm.inspect', status: 'SUCCEEDED', failure: null, result: { realmId: 'demo' } });
   });
 
   it('filters the operation catalog by persona', async () => {
@@ -111,4 +111,21 @@ describe('demo backend', () => {
     expect(Array.isArray(result['authorities'])).toBe(true);
     expect((result['authorities'] as unknown[]).length).toBeGreaterThan(0);
   });
+});
+
+it('retains a durable CA intent and executes only after an explicit linked approval', async () => {
+  const b = backend('ADMINISTRATOR');
+  const intent = { version: 1, requestId: 'durable-demo', operation: 'ca.create', arguments: { formatId: 'x509', subjectRef: 'CN=Durable Demo', profileId: 'root-ca', keyRef: 'demo:root' } };
+  const accepted = await b.post('/admin/v1/requests', intent);
+  expect(accepted.status).toBe(202);
+  const waiting = parse(accepted).result as Record<string, unknown>;
+  expect(waiting.state).toBe('WAITING_APPROVAL');
+  expect((parse(await b.get('/admin/v1/requests/durable-demo')).result as Record<string, unknown>).state).toBe('WAITING_APPROVAL');
+  await b.post('/admin/v1/operations/security.approval.approve', { version: 1, arguments: { approvalId: waiting.approvalId, justification: 'Explicit root decision' } });
+  const completed = parse(await b.get('/admin/v1/requests/durable-demo')).result as Record<string, unknown>;
+  expect(completed.state).toBe('SUCCEEDED');
+  expect(completed.result).toBeDefined();
+  const listed = (parse(await b.get('/admin/v1/requests')).result as { requests: Record<string, unknown>[] }).requests[0]!;
+  expect(listed.target).toBeUndefined();
+  expect((parse(await b.post('/admin/v1/requests', intent)).result as Record<string, unknown>).requestId).toBe('durable-demo');
 });

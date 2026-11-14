@@ -209,6 +209,110 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         this.root = Objects.requireNonNull(root, "root");
     }
 
+    @Override public void validateIntermediateIssuance(AccessContext access, zeroecho.pki.api.ca.IntermediateCertIssueCommand command,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            intermediate.orElseThrow(UnsupportedOperationException::new).validateExisting(access, command, cancellation);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateCaRollover(AccessContext access, zeroecho.pki.api.ca.CaRolloverCommand command,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            if (command instanceof zeroecho.pki.api.ca.CaRolloverCommand.Root input) root.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
+            else if (command instanceof zeroecho.pki.api.ca.CaRolloverCommand.Intermediate input) intermediate.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateCaKeyRotation(AccessContext access, zeroecho.pki.api.ca.CaKeyRotationCommand command,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            if (command instanceof zeroecho.pki.api.ca.CaKeyRotationCommand.Root input) root.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
+            else if (command instanceof zeroecho.pki.api.ca.CaKeyRotationCommand.Intermediate input) intermediate.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateEndEntity(AccessContext access, zeroecho.pki.api.issuance.EndEntityIssuanceRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            var validated = endEntity.validate(access, command, evidence, cancellation);
+            signing.validateInput(validated.signatureAlgorithm(), validated.tbsBytes());
+            FullCrlSigningCommand.requireAdmission(validated.signatureAlgorithm(), validated.tbsBytes(), pureEdDsaMaximumTbsBytes);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateRenewal(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            var validated = endEntity.validate(access, command, evidence, cancellation);
+            signing.validateInput(validated.signatureAlgorithm(), validated.tbsBytes());
+            FullCrlSigningCommand.requireAdmission(validated.signatureAlgorithm(), validated.tbsBytes(), pureEdDsaMaximumTbsBytes);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateReplacement(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            var validated = endEntity.validate(access, command, evidence, cancellation);
+            signing.validateInput(validated.signatureAlgorithm(), validated.tbsBytes());
+            FullCrlSigningCommand.requireAdmission(validated.signatureAlgorithm(), validated.tbsBytes(), pureEdDsaMaximumTbsBytes);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateReissue(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest command,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            var validated = endEntity.validate(access, command, evidence, cancellation);
+            signing.validateInput(validated.signatureAlgorithm(), validated.tbsBytes());
+            FullCrlSigningCommand.requireAdmission(validated.signatureAlgorithm(), validated.tbsBytes(), pureEdDsaMaximumTbsBytes);
+        } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
+    }
+
+    @Override public void validateRootCreation(AccessContext access,
+            zeroecho.pki.api.ca.CaCreateCommand command, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT);
+        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            root.orElseThrow(() -> new UnsupportedOperationException("Root validation unavailable"))
+                    .validate(access, command, cancellation);
+        } catch (IOException failure) { throw new PkiException("Root input validation failed", failure); }
+    }
+
+    @Override public void validateIntermediateCreation(AccessContext access,
+            zeroecho.pki.api.ca.IntermediateCreateCommand command, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(access, ACCESS_ARGUMENT);
+        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        try {
+            intermediate.orElseThrow(() -> new UnsupportedOperationException("Intermediate validation unavailable"))
+                    .validate(access, command, cancellation);
+        } catch (IOException failure) { throw new PkiException("Intermediate input validation failed", failure); }
+    }
+
     // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
     // Typed rethrows preserve the original failure object; wrapped failures preserve their original cause.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })

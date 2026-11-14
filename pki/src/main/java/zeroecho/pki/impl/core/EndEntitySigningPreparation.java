@@ -340,6 +340,104 @@ public final class EndEntitySigningPreparation {
                 Optional.of(approved.predecessor().credentialId()));
     }
 
+    /**
+     * Validates typed issuance input using public metadata and a local serial coordinate.
+     * No serial allocation, signing, content staging or acceptance is reachable.
+     * @param access trusted invocation context
+     * @param request typed issuance input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @return bounded non-secret signing input admission coordinates
+     * @throws IOException if authoritative metadata cannot be read
+     * @throws RuntimeException if input, predecessor, profile or evidence is invalid
+     */
+    public Validation validate(AccessContext access, EndEntityIssuanceRequest request, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        return validateInput(access, request, evidence, cancellation);
+    }
+
+    /**
+     * Validates typed issuance input using public metadata and a local serial coordinate.
+     * No serial allocation, signing, content staging or acceptance is reachable.
+     * @param access trusted invocation context
+     * @param request typed issuance input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @return bounded non-secret signing input admission coordinates
+     * @throws IOException if authoritative metadata cannot be read
+     * @throws RuntimeException if input, predecessor, profile or evidence is invalid
+     */
+    public Validation validate(AccessContext access, EndEntityRenewalRequest request, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        return validateInput(access, request, evidence, cancellation);
+    }
+
+    /**
+     * Validates typed issuance input using public metadata and a local serial coordinate.
+     * No serial allocation, signing, content staging or acceptance is reachable.
+     * @param access trusted invocation context
+     * @param request typed issuance input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @return bounded non-secret signing input admission coordinates
+     * @throws IOException if authoritative metadata cannot be read
+     * @throws RuntimeException if input, predecessor, profile or evidence is invalid
+     */
+    public Validation validate(AccessContext access, EndEntityReplacementRequest request, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        return validateInput(access, request, evidence, cancellation);
+    }
+
+    /**
+     * Validates typed issuance input using public metadata and a local serial coordinate.
+     * No serial allocation, signing, content staging or acceptance is reachable.
+     * @param access trusted invocation context
+     * @param request typed issuance input
+     * @param evidence trusted execution evidence when available
+     * @param cancellation cooperative cancellation
+     * @return bounded non-secret signing input admission coordinates
+     * @throws IOException if authoritative metadata cannot be read
+     * @throws RuntimeException if input, predecessor, profile or evidence is invalid
+     */
+    public Validation validate(AccessContext access, EndEntityReissueRequest request, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        return validateInput(access, request, evidence, cancellation);
+    }
+
+    private Validation validateInput(AccessContext access, Object request, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(evidence, EVIDENCE_ARGUMENT);
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        EndEntityIssuancePreparation pure = validation.withoutSerialAllocation();
+        EndEntityLifecyclePreparation lifecycleValidation = pure.lifecyclePreparation();
+        EndEntityIssuancePreparation.Prepared approved;
+        if (request instanceof EndEntityIssuanceRequest input) {
+            approved = pure.prepare(access, input, cancellation);
+        } else if (request instanceof EndEntityRenewalRequest input) {
+            approved = lifecycleValidation.prepareRenewal(lifecycleAccess(access, input.existingCredentialId()), input, cancellation).issuance();
+        } else if (request instanceof EndEntityReplacementRequest input) {
+            approved = lifecycleValidation.prepareReplacement(lifecycleAccess(access, input.existingCredentialId()), input, cancellation).issuance();
+        } else if (request instanceof EndEntityReissueRequest input) {
+            approved = lifecycleValidation.prepareReissue(lifecycleAccess(access, input.existingCredentialId()), input, cancellation).issuance();
+        } else { throw new UnsupportedOperationException("Unsupported issuance input"); }
+        validateEvidence(evidence, approved.access(), approved.request().issuerCaId().value(), approved.request().profileId());
+        int length = tbs(approved).length;
+        if (length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Certificate body exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
+        }
+        cancellation.throwIfCancelled();
+        return new Validation(approved.signature().canonicalForm(), length);
+    }
+
+    /**
+     * Public non-secret input admission coordinates; no generated artifact is retained.
+     * @param signatureAlgorithm exact selected signature identity
+     * @param tbsBytes bounded local TBS length
+     */
+    public record Validation(String signatureAlgorithm, int tbsBytes) { }
+
     private static AccessContext lifecycleAccess(AccessContext access, PkiId predecessor) {
         Objects.requireNonNull(access, "access");
         if (access.objectId().filter(value -> !value.equals(predecessor)).isPresent()

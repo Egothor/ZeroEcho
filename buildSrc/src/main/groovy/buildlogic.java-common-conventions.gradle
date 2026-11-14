@@ -144,11 +144,12 @@ tasks.withType(JavaCompile).configureEach {
 }
 // Every existing archive carries its applicable canonical redistribution terms.
 // Source classifiers retain the source terms; compiled/documentation artifacts use binary terms.
+def sourceLicense = rootProject.layout.projectDirectory.file('LICENSE-source.txt')
+def binaryLicense = rootProject.layout.projectDirectory.file('LICENSE-binary.txt')
 tasks.withType(Jar).configureEach {
-    from(provider {
-        rootProject.file(archiveClassifier.getOrElse('') == 'sources'
-                ? 'LICENSE-source.txt' : 'LICENSE-binary.txt')
-    }) {
+    from(archiveClassifier.map { classifier ->
+        classifier == 'sources' ? sourceLicense : binaryLicense
+    }.orElse(binaryLicense)) {
         into 'META-INF'
     }
 }
@@ -270,34 +271,17 @@ if (project.name != 'api-spec') {
         }
     }
 
+    def releaseSigningRequired = providers.gradleProperty('releaseVersion').isPresent()
     signing {
         def key = providers.environmentVariable('MAVEN_SIGNING_KEY')
         if (key.isPresent()) {
             useInMemoryPgpKeys(key.get(), providers.environmentVariable('MAVEN_SIGNING_PASSWORD').getOrElse(''))
         }
-        required = { providers.gradleProperty('releaseVersion').isPresent() }
+        required = releaseSigningRequired
         sign publishing.publications.mavenJava
     }
 
 }
 
-gradle.taskGraph.whenReady { taskGraph ->
-    def banner = """
-\u001B[34m
-
-8888888888 .d8888b.   .d88888b. 88888888888 888    888  .d88888b.  8888888b.  
-888       d88P  Y88b d88P" "Y88b    888     888    888 d88P" "Y88b 888   Y88b 
-888       888    888 888     888    888     888    888 888     888 888    888 
-8888888   888        888     888    888     8888888888 888     888 888   d88P 
-888       888  88888 888     888    888     888    888 888     888 8888888P"  
-888       888    888 888     888    888     888    888 888     888 888 T88b   
-888       Y88b  d88P Y88b. .d88P    888     888    888 Y88b. .d88P 888  T88b  
-8888888888 "Y8888P88  "Y88888P"     888     888    888  "Y88888P"  888   T88b 
-
-\u001B[36m
- Project : ${project.name}
- Version : ${project.version}
-\u001B[0m
-"""
-    println banner
-}
+// Configuration-only reporting avoids a task-graph listener retaining the Project model.
+logger.lifecycle('ZeroEcho module {} version {}', project.name, project.version)

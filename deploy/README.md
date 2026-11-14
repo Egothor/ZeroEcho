@@ -1,7 +1,14 @@
 # ZeroEcho PKI — deployment artifacts
 
+For a fresh Linux installation with one TUI form, initial administrator
+certificates and rootless Podman user services, see the
+[rootless installer](../documentation/deployment/rootless-podman.md). Its permanent `update`
+command deploys current server and frontend images without reinitializing PKI
+state; `update --root-admin` explicitly adds own-request approval permission to
+the original initial administrator.
+
 Remote backup transfer is opt-in. Mount an administrator-selected
-[transfer configuration](../docs/pki-backup-transfer-example.json), provision its
+[transfer configuration](../documentation/examples/configuration/pki-backup-transfer-example.json), provision its
 private persistent artifact directory outside the PKI root, and set
 `ZEROECHO_BACKUP_TRANSFER_CONFIG` to the in-container configuration path.
 See [backup and restore](../documentation/admin/backup-restore.md#opt-in-http-transfer)
@@ -11,8 +18,8 @@ examples leave this feature disabled.
 Packaging and deployment examples for the permanent backend and asynchronous web
 frontend (mode a), remote mTLS CLI (mode b), and synchronous standalone CLI
 (mode c). The application, server and web artifacts use the existing Gradle/npm
-toolchain. See [CLI configuration and recovery](../docs/pki-cli.md) and
-[local worked examples](../docs/examples/pki-cli/README.md).
+toolchain. See [CLI configuration and recovery](../documentation/reference/pki-cli.md) and
+[local worked examples](../documentation/examples/pki-cli/README.md).
 
 The [packaged deployment gate](../pki-frontend/e2e/packaged/README.md) verifies
 container execution, nginx/mTLS forwarding and the deployed web/remote CLI flow.
@@ -71,7 +78,7 @@ deploy/
 ZeroEcho's filesystem store and keyring depend on POSIX semantics: **0700/0600**
 permission enforcement, **atomic rename** at the commit point, **directory
 fsync** for crash-consistency, and **advisory `flock`** for the single-writer
-fence. See [`docs/windows-portability-analysis.md`](../docs/windows-portability-analysis.md).
+fence. See the [deployment requirements](../documentation/deployment/requirements.md).
 The `store` and `keyring` volumes **must** be POSIX filesystems. A non-POSIX
 bind mount (e.g. an SMB/CIFS share, or a Windows host path) will silently drop
 durability and permission guarantees. The keyring additionally **hard-refuses**
@@ -114,7 +121,7 @@ user.
 
 | Mount | Source | Notes |
 |---|---|---|
-| `/etc/zeroecho/server-config.json` | operator file / ConfigMap | Strict versioned JSON, **schema version 8**. Start from [`docs/pki-server-trusted-proxy-rfc9440-example.json`](../docs/pki-server-trusted-proxy-rfc9440-example.json) for this topology. Validated by `--validate-config` at start-up (fail-fast). |
+| `/etc/zeroecho/server-config.json` | operator file / ConfigMap | Strict versioned JSON, **schema version 8**. Start from [`documentation/examples/configuration/pki-server-trusted-proxy-rfc9440-example.json`](../documentation/examples/configuration/pki-server-trusted-proxy-rfc9440-example.json) for this topology. Validated by `--validate-config` at start-up (fail-fast). |
 | `/etc/zeroecho/profile-bootstrap.json` | operator file / ConfigMap | Local schema v1, explicit `operatorId`, matching filesystem store and audit sink; no signer or publishers. |
 | `/etc/zeroecho/profiles/` | operator dir / ConfigMap | One `*.json` certificate-profile document (**schemaVersion 5**) per file. Reconciled at start-up (see below). |
 | `/var/lib/zeroecho/tls/` (compose) or `/etc/zeroecho/tls/` (k8s) | operator dir / Secret | pki-server's own PKCS#12 stores referenced by `server-config.json`. In Compose the server working dir is `/var/lib/zeroecho`, so config paths like `tls/server-identity.p12` resolve there; the k8s ConfigMap uses absolute `/etc/zeroecho/tls/...` paths. |
@@ -269,7 +276,7 @@ well as the command's exit: a completed publication attempt can report a definit
 failure. Use `publication.retry` for a reported retryable failure and
 `publication.reconcile` for an unknown external outcome as applicable, after
 resolving the underlying problem. Export or downstream use requires confirmed
-publication success. The [CLI guide](../docs/pki-cli.md) describes receipt and
+publication success. The [CLI guide](../documentation/reference/pki-cli.md) describes receipt and
 exit semantics.
 
 ## Pointing the store at a persistent volume without rebuilding
@@ -457,3 +464,44 @@ Source headers retain the complete `LICENSE-source.txt` terms and existing
 copyright notices. Third-party components retain their own licenses. The shared
 JAR configuration selects `LICENSE-source.txt` for an existing `sources` classifier;
 it does not introduce additional publication variants.
+
+The nginx public repository route uses the independent `PKI_PUBLIC_UPSTREAM`
+setting. It defaults to `127.0.0.1:9` (unpublished), and never falls back to the
+administrative upstream. To publish an existing public listener, provision its TLS
+and trusted-proxy configuration, set its `consoleBasePath` to `/public/v1`, and set
+`PKI_PUBLIC_UPSTREAM` to the matching host:port. Public listing additionally requires
+`authorityListExposed`; no disclosure policy is widened by these routing settings.
+Rootless installations keep this surface disabled and use authenticated certificate
+downloads instead. Existing initial administrator pairs can receive the dedicated
+content permissions through `rootless-pki.sh update --certificate-access`.
+
+
+### Private CRL and status downloads
+
+Status & CRLs rows, inspection results and completed `status.generate` requests offer
+native download links. Representations come from the configured format provider:
+X.509 full and delta CRLs offer DER and PEM; other formats offer their native
+original bytes. Downloading does not publish the object anonymously.
+
+Fresh installations give the initial administrator pair explicit status content
+access. Existing installations require a deliberate migration:
+
+```sh
+./deploy/rootless-pki.sh update --status-access
+```
+
+This flag adds only `CRL_DOWNLOAD` with `CONTENT_FULL` on status objects to the
+validated original administrator pair. It is independent of `--certificate-access`
+and `--root-admin`. A retained update must be resumed with the same explicit flags;
+configuration, keys, policies and existing grants are preserved. Revoked or changed
+initial permissions cause refusal rather than restoration.
+
+The authenticated metadata route is `GET /admin/v1/status-artifacts/{id}` and its
+server-owned attachment links select `original` or a provider-supported representation
+at `/content?representation=...`. Metadata access alone gives no content links.
+Authorization uses the exact stored status-object identifier and its stored logical
+CA authority; historical issuer/profile scope is never guessed from today's issuer.
+Downloads prevalidate immutable content length/hash, send an exact length and SHA-256
+Content-Digest, stream with bounded memory, and honor the configured maximum execution
+deadline and cancellation. Native objects are limited to 256 MiB and encoded output
+to 368 MiB. No public listener or disclosure rule is enabled by this migration.

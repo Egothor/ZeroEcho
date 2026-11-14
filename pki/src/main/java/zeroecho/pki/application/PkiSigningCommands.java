@@ -51,6 +51,26 @@ import zeroecho.pki.api.signing.SemanticSigningOperation;
  */
 public interface PkiSigningCommands {
     /**
+     * Checks known CA creation, CA lifecycle and ordinary leaf issuance/lifecycle
+     * inputs without staging content, allocating a serial, signing, accepting work
+     * or publishing metadata. Status-generation commands fail explicitly.
+     * Execution repeats checks because profiles, keys and issuer state may change.
+     *
+     * @param operation immutable CA or leaf issuance/lifecycle command
+     * @param access separately authenticated and authorized caller context
+     * @param evidence optional trusted issuance evidence, never inferred
+     * @param cancellation cooperative validation cancellation
+     * @throws UnsupportedOperationException if this command has no pure validator
+     * @throws NullPointerException if an argument is null
+     * @throws zeroecho.pki.api.PkiException if known profile, subject or key policy rejects input
+     * @throws IllegalArgumentException if a binding or input encoding is invalid
+     */
+    default void validate(PkiSigningOperation operation, AccessContext access,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Pure signing input validation unavailable");
+    }
+
+    /**
      * Prepares a command using the existing semantic signing service.
      *
      * <p>This may stage durable content but does not accept the operation or dispatch

@@ -50,14 +50,25 @@ import zeroecho.pki.server.ServerControlOperationOutcome;
 @SuppressWarnings("PMD")
 final class HttpResponses {
     record Response(int statusCode, byte[] body, boolean oneTimeSensitive,
-            java.util.Optional<String> capabilityId, java.util.Optional<String> statusLocation) {
+            java.util.Optional<String> capabilityId, java.util.Optional<String> statusLocation,
+            String contentType,java.util.Optional<String> attachmentFileName) {
         Response { body = Objects.requireNonNull(body, "body").clone();
             capabilityId = Objects.requireNonNull(capabilityId, "capabilityId");
-            statusLocation = Objects.requireNonNull(statusLocation, "statusLocation"); }
+            statusLocation = Objects.requireNonNull(statusLocation, "statusLocation");
+            contentType=Objects.requireNonNull(contentType,"contentType");attachmentFileName=Objects.requireNonNull(attachmentFileName,"attachmentFileName");
+            if(!contentType.matches("[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+(?:; charset=utf-8)?")
+                    ||attachmentFileName.filter(value -> !value.matches("[a-zA-Z0-9._-]{1,96}")).isPresent())throw new IllegalArgumentException("Invalid response metadata"); }
+        Response(int statusCode,byte[] body,boolean sensitive,java.util.Optional<String> capabilityId,java.util.Optional<String> location) {
+            this(statusCode,body,sensitive,capabilityId,location,"application/json; charset=utf-8",java.util.Optional.empty());
+        }
         Response(int statusCode, byte[] body) { this(statusCode, body, false,
                 java.util.Optional.empty(), java.util.Optional.empty()); }
         @Override public byte[] body() { return body.clone(); }
         void clearSensitiveBody() { if (oneTimeSensitive) java.util.Arrays.fill(body, (byte) 0); }
+    }
+
+    static Response attachment(byte[] content,String mediaType,String fileName) {
+        return new Response(200,content,false,java.util.Optional.empty(),java.util.Optional.empty(),mediaType,java.util.Optional.of(fileName));
     }
 
     private static final JsonFactory JSON = JsonFactory.builder().build();
@@ -110,6 +121,10 @@ final class HttpResponses {
         return encode(status, requestId, operation, "SUCCEEDED",
                 new PkiOperationValue.ObjectValue(java.util.Map.of("state", new PkiOperationValue.Text(state))),
                 null);
+    }
+
+    static Response administrativeAccepted(String trace, PkiOperationValue.ObjectValue result) {
+        return encode(202,trace,"administrative.request.submit","PENDING",result,null);
     }
 
     static Response success(String requestId, String operation, PkiOperationValue.ObjectValue result) {

@@ -142,29 +142,34 @@ The lifecycle of an approval:
 
 Manage approvals under **Approvals** (`security.approval.list`):
 
-- **Request approval** (`security.approval.request`) — create a pending approval.
-  Supply the `approvalId`, the `targetOperation` id, the `targetArguments` (a JSON
-  object of the exact arguments), and, for an authority-scoped target, the
-  `targetAuthorityId`. In the console, a high-risk operation form can create this
-  for you from the *approval required* outcome.
+- Business forms submit one durable administrative request. The server decides
+  whether approval is needed and creates its linked approval automatically.
 - **Approve** (`security.approval.approve`) and **Reject**
-  (`security.approval.reject`) — record a decision with a `justification`.
-- **Cancel approval** (`security.approval.cancel`) — the requester withdraws a
-  pending request.
-- **Inspect approval** (`security.approval.inspect`).
+  (`security.approval.reject`) record an explicit human decision with justification.
+  Linked approvals point back to the retained administrative request.
+- **Cancel approval** (`security.approval.cancel`) withdraws a pending approval.
+- **Inspect approval** (`security.approval.inspect`) reads its current state.
 
-Once an approval reaches `APPROVED`, re-run the target operation citing the
-approval id; the server claims the approval, executes the operation, and links the
-result.
+For linked requests, reaching the approval threshold lets the server execute the
+retained operation automatically; the browser never replays the target. Track the
+result under **Requests**. Legacy low-level `security.approval.request` records
+contain a target commitment but no executable intent: the console labels these
+**Legacy approval-only**. Existing API clients still explicitly execute their exact
+target with that approval ID; such records are not queued business operations.
 
 ### Requester/approver separation
 
 An approval policy defines a **threshold** of distinct approvals and the set of
 eligible approvers (named principals and/or required role templates), a lifetime,
 and whether a **justification** is mandatory. Crucially, a policy can require
-**requester separation**: the principal who requested the approval is barred from
-approving it, and no principal may record more than one decision. This enforces
-genuine dual control rather than self-approval.
+**requester separation**: ordinary administrators cannot approve their own
+requests, and no principal may record more than one decision. An explicitly
+designated root administrator can receive the dedicated realm-scoped
+`APPROVAL_DECIDE_OWN` capability for its own approval requests. This designation
+does not change the realm policy or grant the capability to other administrators.
+Thresholds, eligibility, justification, expiry and exact-operation binding still
+apply. See the [rootless deployment guide](../deployment/rootless-podman.md)
+for initial-administrator designation and source updates.
 
 !!! note "Approvals expire"
     A pending or approved approval that is not acted on within its policy lifetime

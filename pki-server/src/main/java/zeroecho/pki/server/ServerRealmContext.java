@@ -109,6 +109,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     private final java.util.List<AuditEvidenceProjector> evidenceProjectors = new java.util.ArrayList<>();
     private final RealmReconciliationWakeSignal reconciliationWake = new RealmReconciliationWakeSignal();
     private final SafeAudit audit;
+    private final AdministrativeRequestCoordinator administrativeRequests;
     private final AtomicReference<State> state = new AtomicReference<>(State.OPEN);
     private final RetryableCloseGate closeGate = new RetryableCloseGate();
     private final AtomicBoolean closeAuditAttempted = new AtomicBoolean();
@@ -180,6 +181,8 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 clock, auditSink, reconciliationWake::signal, this::requireOpen);
         this.gateway.installOcsp(ocspResponders);
         this.gateway.installEnrollmentProfiles(enrollmentProfiles);
+        this.administrativeRequests = new AdministrativeRequestCoordinator(this, control, clock);
+        this.approvals.onDecision(this.administrativeRequests::wake);
     }
 
     /**
@@ -225,8 +228,25 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
             session = PkiSession.open(exact.pkiSessionConfiguration(), runtime.withAuditSink(audit), clock);
             validateExposure(exact.authorityExposure(), session);
             AuthorizationEngine authorization = new AuthorizationEngine(clock);
-            ApprovalService approvals = new ApprovalService(control, clock, audit);
             BreakGlassService breakGlass = new BreakGlassService(control, clock, audit);
+            ServerControlStore ownedControl = control;
+            ApprovalService approvals = new ApprovalService(control, clock, audit, (request, principal, justification) -> {
+                java.util.List<Permission.Grant> grants = new java.util.ArrayList<>(ownedControl.grantsFor(principal.principalId()));
+                for (RoleTemplateCatalog.Assignment assignment : ownedControl.assignmentsFor(principal.principalId())) {
+                    grants.addAll(roles.instantiate(assignment));
+                }
+                BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principal.principalId());
+                grants.addAll(emergency.grants());
+                Permission.Resource resource = new Permission.Resource(Permission.ResourceType.APPROVAL, request.scope(),
+                        Optional.of(new zeroecho.pki.api.PkiId(request.approvalId())), Optional.of(request.requesterPrincipalId()));
+                Optional<String> reason = Optional.ofNullable(justification).filter(value -> !value.isBlank())
+                        .map(value -> value.substring(0, Math.min(1024, value.length())));
+                Permission.Context conditions = new Permission.Context(reason, false, false,
+                        Map.of("requester", request.requesterPrincipalId()));
+                return authorization.authorize(new AuthorizationEngine.Request(exact.realmId(), exact.authorityExposure(),
+                        principal, Permission.Action.APPROVAL_DECIDE_OWN, resource, Permission.Relationship.OWN,
+                        Permission.DataView.METADATA_REDACTED, conditions, grants, emergency.grantIds())).allowed();
+            });
             DisclosureService disclosure = new DisclosureService(exact.realmId(), control,
                     exact.disclosureDefaults(), clock, random, audit);
             RepositoryAliasService aliases = new RepositoryAliasService(exact.realmId(), control,
@@ -362,6 +382,12 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         return runtime.withKeyPossessionProofProviders(java.util.List.of(provider))
                 .withCredentialConfirmationProofPolicy(policy);
     }
+
+    /**
+     * Returns the realm-owned retained administrative workflow.
+     * @return coordinator whose worker starts only for a permanent server
+     */
+    public AdministrativeRequestCoordinator administrativeRequests() { requireOpen(); return administrativeRequests; }
 
     /**
      * Returns exact realm configuration without rendering provider values.
@@ -529,6 +555,17 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     public SecurityPrincipal principal(String principalId) {
         requireOpen();
         return control.requirePrincipal(principalId);
+    }
+
+    /**
+     * Returns immutable direct grants while the offline context owns its control-store lock.
+     *
+     * @param principalId exact identity being checked before explicit local root designation
+     * @return direct grants without role or emergency permissions
+     */
+    /* default */ java.util.List<Permission.Grant> directGrants(String principalId) {
+        requireOpen();
+        return control.grantsFor(principalId);
     }
 
     /**
@@ -748,6 +785,8 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     private Throwable closeAttempt() {
         quiesce();
         Throwable primary = null;
+        try { administrativeRequests.close(); }
+        catch (Throwable failure) { return failure; }
         if (closeAuditAttempted.compareAndSet(false, true)) {
             try {
                 audit.record("REALM_CLOSE", "system", Optional.empty(),

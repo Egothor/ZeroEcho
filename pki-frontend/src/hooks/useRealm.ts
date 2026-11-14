@@ -32,6 +32,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 
@@ -41,12 +42,25 @@ export interface RealmInfo {
   readonly displayName: string;
   readonly authorityExposure: string;
   readonly authorityCreationPermitted: boolean;
+  readonly publicRepository?: { readonly available: boolean; readonly authorityListAvailable?: boolean; readonly basePath?: string };
 }
 
+const realmResponse = z.object({
+  version: z.literal(1), requestId: z.string().min(1), operation: z.literal('realm.inspect'),
+  status: z.literal('SUCCEEDED'), failure: z.null(),
+  result: z.object({ realmId: z.string().min(1), displayName: z.string().min(1),
+    authorityExposure: z.string().min(1), authorityCreationPermitted: z.boolean(),
+    publicRepository: z.object({ available: z.boolean(), authorityListAvailable: z.boolean().optional(), basePath: z.literal('/public/v1').optional() }).optional() }),
+});
+
+/**
+ * Reads validated realm metadata from the administrative success envelope.
+ * @returns Query state with the decoded realm result; malformed responses become query errors.
+ */
 export function useRealm() {
   return useQuery({
     queryKey: ['realm'],
-    queryFn: ({ signal }) => api.get<RealmInfo>('/admin/v1/realm', { signal }),
+    queryFn: async ({ signal }): Promise<RealmInfo> => realmResponse.parse(await api.get<unknown>('/admin/v1/realm', { signal })).result,
     staleTime: 5 * 60_000,
     retry: false,
   });

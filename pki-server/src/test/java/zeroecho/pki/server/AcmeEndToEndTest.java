@@ -152,19 +152,23 @@ class AcmeEndToEndTest {
         KeyPair rootKey = rsa((byte) 101);
         KeyPair requesterKey = rsa((byte) 102);
         KeyPair issuedKey = rsa((byte) 103);
-        Fixture base = fixture(tls, reservePort(), reservePort(), reservePort(), rootKey);
+        Fixture base = fixture(tls, 0, 0, 0, rootKey);
         seed(base);
-        int port = reservePort();
         PkiServerConfiguration source = base.configuration();
         PkiServerConfiguration.CmpListener listener = new PkiServerConfiguration.CmpListener("cmp-test",
-                InetAddress.getLoopbackAddress(), port, new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 8192);
+                InetAddress.getLoopbackAddress(), 0, new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 8192);
+        PkiServerConfiguration.Listener admin = source.listener();
+        PkiServerConfiguration.Listener ephemeralAdmin = new PkiServerConfiguration.Listener(admin.address(), 0,
+                admin.tlsProvider(), admin.clientCertificateRequired(), admin.maximumHeaderBytes(), admin.maximumBodyBytes());
         Fixture fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(),
-                source.listener(), source.authentication(), source.execution(), source.runtime(), source.publicListener(),
-                source.acmeListener(), source.estListener(), source.scepListener(), Optional.of(listener), source.auditProjection()),
+                ephemeralAdmin, source.authentication(), source.execution(), source.runtime(), Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(listener), source.auditProjection()),
                 base.dependencies(), base.http01());
+        assertEquals(0, fixture.configuration().listener().port());
+        assertTrue(fixture.configuration().publicListener().isEmpty());
+        assertTrue(fixture.configuration().acmeListener().isEmpty());
         CmpProvisioned provisioned = provisionCmp(fixture, rootKey, requesterKey);
         HttpClient wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
-        URI endpoint = URI.create("https://localhost:" + port + "/pkix/managed");
         byte[] transaction = CmpTestClient.nonce(1);
         byte[] initialNonce = CmpTestClient.nonce(2);
         org.bouncycastle.asn1.cmp.PKIBody originalCrmf = CmpTestClient.enrollment(issuedKey, null);
@@ -173,6 +177,9 @@ class AcmeEndToEndTest {
         byte[] waiting;
         String enrollmentId;
         try (PkiHttpsServer server = startScep(fixture, provisioned.runtime())) {
+            int port = server.cmpAddress().orElseThrow().getPort();
+            assertTrue(port > 0);
+            URI endpoint = URI.create("https://localhost:" + port + "/pkix/managed");
             HttpResponse<byte[]> result = cmpPost(wire, endpoint, original);
             assertEquals(200, result.statusCode(), new String(result.body(), StandardCharsets.UTF_8));
             waiting = result.body();
@@ -200,6 +207,9 @@ class AcmeEndToEndTest {
                 Optional.empty());
         CmpCompletion completed;
         try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            int port = server.cmpAddress().orElseThrow().getPort();
+            assertTrue(port > 0);
+            URI endpoint = URI.create("https://localhost:" + port + "/pkix/managed");
             assertArrayEquals(waiting, cmpPost(wire, endpoint, original).body());
             approveEnrollment(server, enrollmentId, tls.forwardedCertificate());
             completed = awaitCmp(wire, endpoint, transaction,
@@ -212,6 +222,9 @@ class AcmeEndToEndTest {
                     cmpTransaction(server, "managed", transaction).response().orElseThrow().confirmation());
         }
         try (PkiHttpsServer server = startScep(fixture, rotated)) {
+            int port = server.cmpAddress().orElseThrow().getPort();
+            assertTrue(port > 0);
+            URI endpoint = URI.create("https://localhost:" + port + "/pkix/managed");
             assertArrayEquals(completed.response(), cmpPost(wire, endpoint, completed.request()).body());
             byte[] confirmationNonce = CmpTestClient.nonce(71);
             byte[] confirmation = CmpTestClient.signed(CmpTestClient.confirmation(completed.certificate(), true), transaction,

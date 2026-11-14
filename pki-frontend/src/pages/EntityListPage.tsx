@@ -32,9 +32,11 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import { Link as RouterLink } from 'react-router-dom';
+import { administrativeRequestPath } from '@/api/administrativeRequests';
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Box, Button, Menu, MenuItem, Paper, Skeleton, Stack, Tab, Tabs, Typography } from '@mui/material';
+import { Alert, Box, Button, Link, Menu, MenuItem, Paper, Skeleton, Stack, Tab, Tabs, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import {
@@ -44,6 +46,8 @@ import {
   type GridColDef,
   type GridRowParams,
 } from '@mui/x-data-grid';
+import { InProgressRequests } from '@/components/InProgressRequests';
+import { CertificateDownloads } from '@/components/CertificateDownloads';
 import { PageHeader } from '@/components/PageHeader';
 import { OperationBrowser } from '@/components/operation/OperationBrowser';
 import { OperationDialog } from '@/components/operation/OperationDialog';
@@ -79,7 +83,7 @@ interface DialogState {
  * pre-filled with the row id and the active filter — the operator never copies an
  * identifier) and a Create menu. List and actions are one integrated surface.
  */
-function EntityTable({ navId, listing }: { readonly navId: string; readonly listing: DomainListing }) {
+function EntityTable({ navId, listing, initialAuthorityId }: { readonly navId: string; readonly listing: DomainListing; readonly initialAuthorityId?: string }) {
   const queryClient = useQueryClient();
   const listSpec = operationSpec(listing.listOperationId);
   const discovery = useOperationDescriptors();
@@ -99,13 +103,14 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
     return needsAuthority ? [authorityField, ...params] : params;
   }, [listSpec, listing.args]);
 
-  const [draft, setDraft] = useState<Record<string, FieldValue>>({});
+  const initialFilters: Record<string, FieldValue> = initialAuthorityId ? { [listSpec?.fields.some(field => field.name === 'authorityId') ? 'authorityId' : '__authorityId']: initialAuthorityId } : {};
+  const [draft, setDraft] = useState<Record<string, FieldValue>>(initialFilters);
   const filterFields = [...(listSpec ? selectionFields(listSpec, draft) : []), ...baseFilterFields];
   const requiredFilters = filterFields.filter((f) => f.required);
   const hasRequired = requiredFilters.length > 0;
 
   const [cursor, setCursor] = useState<string | number | undefined>();
-  const [applied, setApplied] = useState<Record<string, FieldValue> | null>(hasRequired ? null : {});
+  const [applied, setApplied] = useState<Record<string, FieldValue> | null>(hasRequired && !requiredFilters.every(field => notEmpty(initialFilters[field.name])) ? null : initialFilters);
 
   const rowActions = useMemo(() => rowActionOps(navId, listing), [navId, listing]);
   const creates = useMemo(() => createOps(listing), [listing]);
@@ -124,7 +129,7 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
       const rows = resultAt(result, listing.resultKey);
       if (!Array.isArray(rows)) throw new Error('The server returned an invalid list.');
       const page = (listing.resultKey.startsWith('value.') ? resultAt(result, 'value') : result) as Record<string, unknown> | undefined;
-      const next = page?.truncated === true ? page.nextCursor : page?.hasMore === true ? page.nextOffset : undefined;
+      const next = page?.truncated === true ? page.nextCursor : page?.hasMore === true ? page.nextCursor ?? page.nextOffset : undefined;
       if (next !== undefined && (typeof next !== 'number' && typeof next !== 'string' || next === cursor)) throw new Error('Invalid list continuation.');
       return { rows: rows as Record<string, unknown>[], next: next as string | number | undefined };
     },
@@ -136,13 +141,30 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
   const columns = useMemo<GridColDef[]>(() => {
     const keys = new Set<string>();
     rows.slice(0, 50).forEach((r) => Object.keys(r).forEach((k) => keys.add(k)));
-    const dataColumns: GridColDef[] = Array.from(keys).map((k) => ({
+    const dataColumns: GridColDef[] = Array.from(keys).filter(k => navId !== 'approvals' || k !== 'administrativeRequestId').map((k) => ({
       field: k,
       headerName: displayLabel(k),
       flex: 1,
       minWidth: 130,
       valueGetter: (_v, row) => cell((row as Record<string, unknown>)[k]),
     }));
+    if (listing.listOperationId === 'ca.list') dataColumns.push({ field: '__certificate', headerName: 'CA certificate', minWidth: 300, flex: 1,
+      renderCell: params => <Stack spacing={0.5}>
+        <CertificateDownloads authorityId={String(params.row.caId)} compact />
+        <Link component={RouterLink} to={`/issuance?authorityId=${encodeURIComponent(String(params.row.caId))}`}>View certificates</Link>
+      </Stack>,
+    });
+    else if (rows.some(row => typeof row.credentialId === 'string')) dataColumns.push({ field: '__certificate', headerName: 'Certificate download', minWidth: 240, flex: 1,
+      renderCell: params => typeof params.row.credentialId === 'string' ? <CertificateDownloads credentialId={params.row.credentialId} compact /> : null,
+    });
+    if (rows.some(row => typeof row.statusObjectId === 'string')) dataColumns.push({ field: '__statusArtifact', headerName: 'Status download', minWidth: 240, flex: 1,
+      renderCell: params => typeof params.row.statusObjectId === 'string' ? <CertificateDownloads statusObjectId={params.row.statusObjectId} compact /> : null,
+    });
+    if (navId === 'approvals') dataColumns.push({ field: '__administrativeRequest', headerName: 'Execution request', minWidth: 220, flex: 1,
+      renderCell: params => typeof params.row.administrativeRequestId === 'string'
+        ? <Link component={RouterLink} to={administrativeRequestPath(params.row.administrativeRequestId)}>Open request</Link>
+        : <Typography variant="caption">Legacy approval-only · no queued operation</Typography>,
+    });
     if (rowActions.length > 0) {
       dataColumns.push({
         field: '__actions',
@@ -171,7 +193,7 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
       });
     }
     return dataColumns;
-  }, [rows, rowActions, applied]);
+  }, [rows, rowActions, applied, navId, listing.listOperationId]);
 
   // Index-based grid id: robust for composite-key entities (e.g. repository
   // aliases keyed by authorityId + type) where no single field is unique.
@@ -189,7 +211,7 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
             {hasRequired ? `Choose a ${listing.entity === 'status object' ? 'issuer' : 'filter'} to load` : 'Filters'}
           </Typography>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'flex-end' }}>
+          <Stack role="group" aria-label="Entity filters" direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'flex-start' }}>
             {filterFields.map((f) => (
               <Box key={`${f.name}:${selectionContextKey(f, draft)}`} sx={{ minWidth: 220, flex: 1 }}>
                 <OperationField field={f} context={draft} value={draft[f.name]} onChange={(v) => setDraft((d) => changeFormValue(listSpec, d, f.name, v))} />
@@ -243,12 +265,13 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
               columns={columns}
               density="compact"
               autoHeight
+              getRowHeight={() => 'auto'}
               loading={query.isFetching}
               pageSizeOptions={[10, 25, 50, 100]}
               initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
               slots={{ toolbar: GridToolbar }}
               slotProps={{ toolbar: { showQuickFilter: true } }}
-              sx={{ '& .MuiDataGrid-cell': { fontFamily: 'Roboto Mono, monospace', fontSize: 12 } }}
+              sx={{ '& .MuiDataGrid-cell': { fontFamily: 'Roboto Mono, monospace', fontSize: 12, py: 1 } }}
             />
           )}
         </Paper>
@@ -275,10 +298,11 @@ interface Props {
   readonly title: string;
   readonly description?: string;
   readonly listings: readonly DomainListing[];
+  readonly initialAuthorityId?: string;
 }
 
 /** Domain screen: one entity table, or a tab per entity for multi-entity areas. */
-export function EntityListPage({ navId, title, description, listings }: Props) {
+export function EntityListPage({ navId, title, description, listings, initialAuthorityId }: Props) {
   const [tab, setTab] = useState(0);
   const active = listings[tab] ?? listings[0]!;
 
@@ -292,7 +316,8 @@ export function EntityListPage({ navId, title, description, listings }: Props) {
           ))}
         </Tabs>
       )}
-      <EntityTable key={active.listOperationId} navId={navId} listing={active} />
+      <InProgressRequests navId={navId} />
+      <EntityTable key={`${active.listOperationId}:${initialAuthorityId ?? ''}`} navId={navId} listing={active} initialAuthorityId={initialAuthorityId} />
     </>
   );
 }

@@ -160,6 +160,32 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     }
 
     @Override
+    public void validate(PkiOperation operation, CancellationSignal cancellation) {
+        openCheck.run();
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(cancellation, "cancellation");
+        if (cancellation.isCancelled()) throw new java.util.concurrent.CancellationException("Validation cancelled");
+        var empty = zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build();
+        switch (operation) {
+            case PkiOperation.ActivateProfile input -> profiles.validateActivation(input.profileId(), input.profileVersion());
+            case PkiOperation.TransitionAuthority input -> {
+                CaRecord current = store.getCa(input.caId()).orElseThrow(Missing::new);
+                new CaRecord(current.caId(), current.kind(), input.state(), current.issuerKeyRef(), current.subjectRef(),
+                        current.issuerIds(), current.currentIssuanceIssuerId(), current.issuanceChainPathId());
+            }
+            case PkiOperation.SelectIssuancePath input -> validateSelection(input);
+            case PkiOperation.RevokeCredential input -> store.validateRevocation(
+                    new RevocationCommand.RevokePermanently(input.credentialId(), input.reason(), empty), false);
+            case PkiOperation.HoldCredential input -> store.validateRevocation(new RevocationCommand.Hold(input.credentialId(), empty), false);
+            case PkiOperation.UnholdCredential input -> store.validateRevocation(new RevocationCommand.Unhold(input.credentialId(), empty), false);
+            case PkiOperation.RevokePendingCredentialConfirmation input -> store.validateRevocation(
+                    new RevocationCommand.RevokePermanently(input.credentialId(), zeroecho.pki.api.revocation.RevocationReason.UNSPECIFIED, empty), true);
+            default -> throw new UnsupportedOperationException("Pure operation validation unavailable");
+        }
+        if (cancellation.isCancelled()) throw new java.util.concurrent.CancellationException("Validation cancelled");
+    }
+
+    @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
         openCheck.run();
@@ -266,6 +292,10 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                     store.listRequestsPage(query.after(), query.limit() + 1,
                             value -> include.test(requestSelection(value)), cancellation).stream()
                             .map(DefaultPkiOperationExecutor::requestSelection).toList());
+            case PkiOperation.ListCredentials query -> page(query.name(), "credentials", CREDENTIAL_ID, query.limit(),
+                    store.listCredentialsPage(query.authorityId(), query.after(), query.limit() + 1,
+                            value -> include.test(object(credentialFields(value))), cancellation).stream()
+                            .map(value -> object(credentialFields(value))).toList());
             case PkiOperation.SearchCredentials query -> page(query.name(), "credentials", "credentialId", query.limit(),
                     store.searchCredentials(new zeroecho.pki.api.credential.CredentialSearchQuery(query.authorityId(),
                             query.subjectFilter(), query.serialFilter(), query.fingerprintFilter(), query.statusFilter(),
@@ -566,7 +596,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return result(request.name(), authorityFields(store.getCa(request.caId()).orElseThrow(Missing::new)));
     }
 
-    private PkiOperationResult selectIssuancePath(PkiOperation.SelectIssuancePath request) {
+    private Selection validateSelection(PkiOperation.SelectIssuancePath request) {
         CaRecord current = store.getCa(request.caId()).orElseThrow(Missing::new);
         IssuerGeneration generation = store.getIssuerGeneration(request.issuerId()).orElseThrow(Missing::new);
         IssuerChainPath path = store.getIssuerChainPath(request.pathId()).orElseThrow(Missing::new);
@@ -575,6 +605,13 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 || !generation.issuerId().equals(path.issuerId())) {
             throw new PkiException("Issuance selection is outside the authority");
         }
+        return new Selection(current, generation, path);
+    }
+    private record Selection(CaRecord current, IssuerGeneration generation, IssuerChainPath path) { }
+
+    private PkiOperationResult selectIssuancePath(PkiOperation.SelectIssuancePath request) {
+        Selection selection = validateSelection(request);
+        CaRecord current = selection.current(); IssuerGeneration generation = selection.generation(); IssuerChainPath path = selection.path();
         CaRecord replacement = new CaRecord(current.caId(), current.kind(), current.state(), generation.signingKeyRef(),
                 current.subjectRef(), current.issuerIds(), generation.issuerId(), path.pathId());
         if (!store.replaceCa(current, replacement)) { throw new Conflict(); }
@@ -937,6 +974,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
             case PkiOperation.ListAlgorithmBindings request -> selection(request, row -> true, signal);
             case PkiOperation.ListProfiles request -> selection(request, row -> true, signal);
             case PkiOperation.ListRequests request -> selection(request, row -> true, signal);
+            case PkiOperation.ListCredentials request -> selection(request, row -> true, signal);
             case PkiOperation.SearchCredentials request -> selection(request, row -> true, signal);
             case PkiOperation.ListIssuerGenerations request -> selection(request, row -> true, signal);
             case PkiOperation.InspectAlgorithmBinding request -> inspectAlgorithmBinding(request);

@@ -132,6 +132,14 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
     }
 
     private static String txt(String value) {
+        // JNDI leaves a simple single character-string unquoted; quoted chunks retain their existing parser.
+        if (value.indexOf('"') < 0) {
+            for (int index = 0; index < value.length(); index++) {
+                char character = value.charAt(index);
+                if (character == '\\' || character < 0x21 || character > 0x7e) throw new IllegalArgumentException("DNS TXT value invalid");
+            }
+            return value;
+        }
         StringBuilder result = new StringBuilder(); int index = 0;
         while (index < value.length()) {
             while (index < value.length() && value.charAt(index) == ' ') index++;

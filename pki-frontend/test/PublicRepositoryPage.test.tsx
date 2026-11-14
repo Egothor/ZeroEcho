@@ -32,12 +32,15 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
+import { MemoryRouter } from 'react-router-dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiRequestError } from '@/api/client';
 import { PublicRepositoryPage } from '@/pages/PublicRepositoryPage';
 import type * as Results from '@/components/ResultView';
+
+vi.mock('@/hooks/useRealm', () => ({ useRealm: () => ({ data: { publicRepository: { available: true, authorityListAvailable: true, basePath: '/public/v1' } }, isLoading: false }) }));
 
 const renderer = vi.hoisted(() => {
   let release!: () => void;
@@ -56,7 +59,7 @@ afterEach(() => get.mockReset());
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><PublicRepositoryPage /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><MemoryRouter><PublicRepositoryPage /></MemoryRouter></QueryClientProvider>);
 }
 
 describe('public repository authority results', () => {

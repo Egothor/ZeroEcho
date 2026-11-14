@@ -268,7 +268,6 @@ class DocumentationExamplesTest {
     private static List<Path> pages(Path root) throws IOException {
         List<Path> pages = new ArrayList<>();
         pages.add(root.resolve("README.md"));
-        pages.add(root.resolve("docs/pki-cli.md"));
         try (Stream<Path> files = Files.walk(root.resolve("documentation"))) {
             pages.addAll(files.filter(path -> path.toString().endsWith(".md")).sorted().toList());
         }

@@ -228,6 +228,7 @@ public final class RoleTemplateCatalog {
 
     private static Permission.ResourceType resourceType(Permission.Action action) {
         String name = action.name();
+        if (action == Permission.Action.APPROVAL_DECIDE_OWN) return Permission.ResourceType.APPROVAL;
         if (name.startsWith("AUTHORITY")) return Permission.ResourceType.AUTHORITY;
         if (name.startsWith("ISSUER") || name.startsWith("CA_CHAIN")) return Permission.ResourceType.ISSUER;
         if (name.startsWith("PROFILE")) return Permission.ResourceType.PROFILE;
