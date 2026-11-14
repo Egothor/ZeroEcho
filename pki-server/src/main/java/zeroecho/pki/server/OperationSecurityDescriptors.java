@@ -249,6 +249,7 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.ListBreakGlass.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, false, false),
                 control(ServerControlOperation.RevokeBreakGlass.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, true, false),
                 control(ServerControlOperation.ConfigurationChoices.NAME, Permission.Action.SERVER_CONFIGURATION_READ, Permission.ResourceType.SERVER_CONFIGURATION, false, false),
+                control(ServerControlOperation.GenerateManagedKey.NAME, Permission.Action.MANAGED_KEY_GENERATE, Permission.ResourceType.MANAGED_KEY, true, true),
                 control(ServerControlOperation.ListCapabilities.NAME, Permission.Action.DISCLOSURE_READ, Permission.ResourceType.DISCLOSURE, false, false),
                 control(ServerControlOperation.InspectDisclosure.NAME, Permission.Action.DISCLOSURE_READ, Permission.ResourceType.DISCLOSURE, false, false),
                 control(ServerControlOperation.SetDisclosure.NAME, Permission.Action.DISCLOSURE_CHANGE, Permission.ResourceType.DISCLOSURE, true, true),
@@ -916,6 +917,7 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.ListBreakGlass value -> "offset=" + value.offset() + ";limit=" + value.limit();
             case ServerControlOperation.RevokeBreakGlass value -> "breakGlass=" + atom(value.breakGlassId());
             case ServerControlOperation.ConfigurationChoices value -> "limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
+            case ServerControlOperation.GenerateManagedKey value -> "generation=" + atom(value.generationId()) + ";parameters=" + value.parameters().name();
             case ServerControlOperation.ListCapabilities value -> "object=" + atom(value.objectId().value()) + ";limit=" + value.limit() + ";after=" + atom(value.after().orElse(""));
             case ServerControlOperation.InspectDisclosure value -> "object=" + atom(value.objectId().value());
             case ServerControlOperation.SetDisclosure value -> "object=" + atom(value.objectId().value())

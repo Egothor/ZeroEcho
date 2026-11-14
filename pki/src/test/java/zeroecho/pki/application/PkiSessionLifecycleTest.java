@@ -107,6 +107,7 @@ final class PkiSessionLifecycleTest {
         assertTrue(session.requests().isPresent());
         assertTrue(session.publications().isEmpty());
         assertTrue(session.signing().isEmpty());
+        assertTrue(session.managedKeyGeneration().isEmpty());
         assertTrue(session.semanticSigning().isEmpty());
         assertTrue(session.signingCommands().isEmpty());
         assertTrue(session.algorithmBindings() == session.algorithmBindings());
@@ -120,6 +121,7 @@ final class PkiSessionLifecycleTest {
         session.close();
         session.close();
         assertThrows(IllegalStateException.class, session::operations);
+        assertThrows(IllegalStateException.class, session::managedKeyGeneration);
         assertThrows(IllegalStateException.class, session::repository);
         assertThrows(IllegalStateException.class, session::requests);
         assertThrows(IllegalStateException.class, session::semanticSigning);

@@ -1035,7 +1035,7 @@ class ServerOperationGatewayTest {
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
-        assertEquals(151, descriptors.descriptors().size());
+        assertEquals(152, descriptors.descriptors().size());
         assertEquals(Permission.Action.CERTIFICATE_SEARCH, descriptors.descriptors().get("credential.list").action());
         assertEquals(Permission.ResourceType.CERTIFICATE, descriptors.descriptors().get("credential.list").resourceType());
         assertEquals(Permission.DataView.METADATA_REDACTED, descriptors.descriptors().get("credential.list").dataView());

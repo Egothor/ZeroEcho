@@ -117,6 +117,10 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AFTER, new FieldSemantics(TEXT_TEXT, "", false, true, false, "", "", ""))
                         ))),
+                new Presentation("key.generate", "Generate managed signing key", "Generate a non-exported signing key; only the first deployment administrator is eligible.", "configuration",
+                        new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
+                                Map.entry("generationId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
+                                Map.entry("parameters", new FieldSemantics("enum", "", false, false, false, "", "", ""))))),
                 new Presentation("configuration.choices", "Available configuration choices", "Inspect available formats, signing keys and providers.", "configuration",
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),

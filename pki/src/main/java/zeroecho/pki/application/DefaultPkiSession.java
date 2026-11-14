@@ -576,6 +576,12 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         return localSigning;
     }
 
+    @Override public Optional<zeroecho.pki.spi.crypto.ManagedKeyGeneration> managedKeyGeneration() {
+        requireOpen();
+        return signingGraph.provider() instanceof zeroecho.pki.spi.crypto.ManagedKeyGeneration capability
+                ? Optional.of(capability) : Optional.empty();
+    }
+
     @Override public Optional<zeroecho.pki.api.schedule.StatusScheduleCoordinator> statusSchedules() {
         requireOpen();
         return statusSchedules;

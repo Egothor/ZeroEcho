@@ -698,6 +698,11 @@ public final class HttpOperationCodec {
                 fields.allowed(Set.of("limit", "after"));
                 yield new ServerControlOperation.ConfigurationChoices(fields.integer("limit"), fields.optionalText("after"));
             }
+            case ServerControlOperation.GenerateManagedKey.NAME -> {
+                fields.exact("generationId", "parameters");
+                yield new ServerControlOperation.GenerateManagedKey(fields.text("generationId"),
+                        zeroecho.pki.spi.crypto.ManagedKeyGeneration.Parameters.valueOf(fields.text("parameters")));
+            }
             case ServerControlOperation.ListCapabilities.NAME -> {
                 fields.allowed(Set.of("objectId", "limit", "after"));
                 yield new ServerControlOperation.ListCapabilities(fields.pkiId("objectId"), fields.integer("limit"), fields.optionalText("after"));
@@ -1048,6 +1053,10 @@ public final class HttpOperationCodec {
         return switch (operation) {
             case ServerControlOperation.ConfigurationChoices ignored -> {
                 if (authority.isPresent()) { throw new IllegalArgumentException("Configuration choices require realm scope"); }
+                yield new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
+            }
+            case ServerControlOperation.GenerateManagedKey ignored -> {
+                if (authority.isPresent()) throw new IllegalArgumentException("Managed keys require realm scope");
                 yield new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
             }
             case ServerControlOperation.ListCapabilities ignored -> {

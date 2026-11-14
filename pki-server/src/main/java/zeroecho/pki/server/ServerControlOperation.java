@@ -89,7 +89,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.VerifyBackup, ServerControlOperation.ExecuteRestore,
         ServerControlOperation.ReserveBackupUpload, ServerControlOperation.ExportBackupStream,
         ServerControlOperation.BackupArtifactCommand,
-        ServerControlOperation.ConfigurationChoices,
+        ServerControlOperation.ConfigurationChoices, ServerControlOperation.GenerateManagedKey,
         ServerControlOperation.ListCapabilities {
 
     /**
@@ -104,6 +104,23 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         public ConfigurationChoices {
             requireSelectionLimit(limit);
             Objects.requireNonNull(after, "after").ifPresent(zeroecho.pki.api.KeyRef::new);
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Generates a server-owned signing key without exporting private material.
+     * @param generationId stable caller-selected idempotency identity
+     * @param parameters explicit closed generation parameters
+     */
+    record GenerateManagedKey(String generationId, zeroecho.pki.spi.crypto.ManagedKeyGeneration.Parameters parameters)
+            implements ServerControlOperation {
+        /** Stable generate-only operation identity. */
+        public static final String NAME = "key.generate";
+        /** Validates immutable reservation input. */
+        public GenerateManagedKey {
+            Permission.requireId(generationId, "generation identity");
+            Objects.requireNonNull(parameters, "parameters");
         }
         @Override public String name() { return NAME; }
     }

@@ -173,6 +173,15 @@ public interface PkiSession extends AutoCloseable {
     }
 
     /**
+     * Returns the provider-owned generate-only managed-key capability.
+     * @return borrowed capability, empty when the provider cannot generate keys
+     * @throws IllegalStateException if the session is closed
+     */
+    default Optional<zeroecho.pki.spi.crypto.ManagedKeyGeneration> managedKeyGeneration() {
+        return Optional.empty();
+    }
+
+    /**
      * Returns the semantic lifecycle facade sharing the configured signing runtime.
      *
      * @return session-owned semantic service, or empty when signing is unconfigured

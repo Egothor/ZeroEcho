@@ -137,7 +137,8 @@ public final class Permission {
         /** Reads a CMP endpoint. */ CMP_ENDPOINT_READ(195),
         /** Administers an enrollment profile. */ ENROLLMENT_PROFILE_ADMINISTER(196),
         /** Reads an enrollment profile. */ ENROLLMENT_PROFILE_READ(197),
-        /** Manages automatic status-generation schedules. */ STATUS_SCHEDULE_MANAGE(198);
+        /** Manages automatic status-generation schedules. */ STATUS_SCHEDULE_MANAGE(198),
+        /** Generates a new server-owned signing key; protected initial-administrator identity is additionally required. */ MANAGED_KEY_GENERATE(199);
 
         private final int code;
 
@@ -227,7 +228,8 @@ public final class Permission {
         /** CMP endpoint configuration. */ CMP_ENDPOINT(43),
         /** Enrollment profile configuration. */ ENROLLMENT_PROFILE(44),
         /** Status-generation schedule configuration. */ STATUS_SCHEDULE(45),
-        /** Durable protocol enrollment transaction and independent approval. */ ENROLLMENT_REQUEST(46);
+        /** Durable protocol enrollment transaction and independent approval. */ ENROLLMENT_REQUEST(46),
+        /** Server-owned managed signing-key generation reservation. */ MANAGED_KEY(47);
         private final int code;
         ResourceType(int code) { this.code = code; }
         /**

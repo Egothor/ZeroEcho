@@ -395,6 +395,8 @@ public final class OperationParameterSchemas {
                         FieldSpec.text("breakGlassId", true)),
                 op("configuration.choices",
                         FieldSpec.integer("limit", true), FieldSpec.text("after", false)),
+                op("key.generate", FieldSpec.text("generationId", true),
+                        FieldSpec.enum_("parameters", true, java.util.List.of("ECDSA_P384", "RSA_4096", "ML_DSA_87"))),
                 op("security.disclosure.capability.list",
                         FieldSpec.text("objectId", true),
                         FieldSpec.integer("limit", true),

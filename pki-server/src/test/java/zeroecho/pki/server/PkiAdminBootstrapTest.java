@@ -104,7 +104,7 @@ class PkiAdminBootstrapTest {
             var descriptors = new OperationSecurityDescriptors().descriptors();
             for (String principal : List.of("administrator", "approver")) {
                 // The mandatory inventory aliases search authority; the three content grants have stable additive IDs.
-                assertEquals(descriptors.size() - 1 + 3 + (principal.equals("administrator") ? 2 : 1), control.grantsFor(principal).size());
+                assertEquals(descriptors.size() - 2 + 3 + (principal.equals("administrator") ? 2 : 1), control.grantsFor(principal).size());
                 for(Permission.Action action:List.of(Permission.Action.CERTIFICATE_READ_CONTENT,Permission.Action.CERTIFICATE_DOWNLOAD)) {
                     assertTrue(control.grantsFor(principal).stream().anyMatch(value -> value.action()==action
                             &&value.dataView()==Permission.DataView.CONTENT_FULL&&value.enabled()));
@@ -112,6 +112,10 @@ class PkiAdminBootstrapTest {
                 assertTrue(control.grantsFor(principal).stream().anyMatch(value -> value.action()==Permission.Action.CRL_DOWNLOAD
                         &&value.resourceType()==Permission.ResourceType.STATUS_OBJECT&&value.dataView()==Permission.DataView.CONTENT_FULL&&value.enabled()));
                 for (var descriptor : descriptors.values()) {
+                    if (descriptor.operationId().equals(ServerControlOperation.GenerateManagedKey.NAME)) {
+                        assertTrue(control.grantsFor(principal).stream().noneMatch(value -> value.action() == Permission.Action.MANAGED_KEY_GENERATE));
+                        continue;
+                    }
                     assertTrue(control.grantsFor(principal).stream().anyMatch(grant ->
                             grant.action() == descriptor.action() && grant.resourceType() == descriptor.resourceType()
                             && grant.dataView() == descriptor.dataView() && grant.enabled()

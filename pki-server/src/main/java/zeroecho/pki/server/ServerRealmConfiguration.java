@@ -63,6 +63,7 @@ import zeroecho.pki.spi.store.MetadataStoreId;
  * @param controlLogPath dedicated server-control metadata log
  * @param controlStoreId explicit durable server-control identity
  * @param approvalPolicies closed approval policies by operation category
+ * @param initialAdministratorPrincipalId protected identity of the first deployment administrator; empty disables managed generation
  */
 public record ServerRealmConfiguration(RealmId realmId, String displayName,
         CredentialConfirmationProofPolicy confirmationProofPolicy,
@@ -70,11 +71,15 @@ public record ServerRealmConfiguration(RealmId realmId, String displayName,
         String authorizationCommitment, String approvalCommitment, String extendedApprovalCommitment,
         String disclosureCommitment,
         DisclosureService.Defaults disclosureDefaults, Path controlLogPath, MetadataStoreId controlStoreId,
-        Map<ApprovalCategory, ApprovalService.Policy> approvalPolicies) {
+        Map<ApprovalCategory, ApprovalService.Policy> approvalPolicies,
+        java.util.Optional<String> initialAdministratorPrincipalId) {
 
     /** Validates and snapshots the complete configuration before allocation. */
     public ServerRealmConfiguration {
         Objects.requireNonNull(realmId, "realmId");
+        initialAdministratorPrincipalId = Objects.requireNonNull(initialAdministratorPrincipalId,
+                "initialAdministratorPrincipalId");
+        initialAdministratorPrincipalId.ifPresent(Permission::requirePrincipal);
         Permission.requireBounded(displayName, 256, "realm display name");
         Objects.requireNonNull(confirmationProofPolicy, "confirmationProofPolicy");
         Objects.requireNonNull(pkiSessionConfiguration, "pkiSessionConfiguration");
@@ -109,6 +114,33 @@ public record ServerRealmConfiguration(RealmId realmId, String displayName,
         if (!extendedApprovalCommitment(approvalPolicies).equals(extendedApprovalCommitment)) {
             throw new IllegalArgumentException("Extended approval policy commitment is inconsistent");
         }
+    }
+
+    /**
+     * Preserves the existing configuration contract with managed generation disabled.
+     * @param realmId realm identity
+     * @param displayName administrative display name
+     * @param confirmationProofPolicy confirmation policy
+     * @param pkiSessionConfiguration session configuration
+     * @param authorityExposure authority exposure
+     * @param authorizationCommitment authorization commitment
+     * @param approvalCommitment approval commitment
+     * @param extendedApprovalCommitment additional approval commitment
+     * @param disclosureCommitment disclosure commitment
+     * @param disclosureDefaults disclosure defaults
+     * @param controlLogPath control log path
+     * @param controlStoreId control store identity
+     * @param approvalPolicies configured approval policies
+     */
+    public ServerRealmConfiguration(RealmId realmId, String displayName,
+            CredentialConfirmationProofPolicy confirmationProofPolicy,
+            PkiSessionConfiguration pkiSessionConfiguration, AuthorityExposurePolicy authorityExposure,
+            String authorizationCommitment, String approvalCommitment, String extendedApprovalCommitment,
+            String disclosureCommitment, DisclosureService.Defaults disclosureDefaults, Path controlLogPath,
+            MetadataStoreId controlStoreId, Map<ApprovalCategory, ApprovalService.Policy> approvalPolicies) {
+        this(realmId, displayName, confirmationProofPolicy, pkiSessionConfiguration, authorityExposure,
+                authorizationCommitment, approvalCommitment, extendedApprovalCommitment, disclosureCommitment,
+                disclosureDefaults, controlLogPath, controlStoreId, approvalPolicies, java.util.Optional.empty());
     }
 
     /**

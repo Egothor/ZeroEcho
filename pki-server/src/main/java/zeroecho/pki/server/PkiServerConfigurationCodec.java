@@ -116,7 +116,7 @@ public final class PkiServerConfigurationCodec {
         value.allowed(Set.of("realmId", "displayName", "confirmationProof", "authorityExposure",
                 "authorizationCommitment", "approvalCommitment", "extendedApprovalCommitment",
                 "disclosureCommitment", "disclosureDefaults", "controlLog", "controlStoreId", "approvalPolicy",
-                "issuanceSingleApprovalPolicy", "issuanceThresholdApprovalPolicy", "pkiSession"));
+                "issuanceSingleApprovalPolicy", "issuanceThresholdApprovalPolicy", "pkiSession", "initialAdministratorPrincipalId"));
         AuthorityExposurePolicy exposure = exposure(value.object("authorityExposure"));
         ApprovalService.Policy approval = approval(value.object("approvalPolicy"));
         String approvalCommitment = value.text("approvalCommitment");
@@ -144,7 +144,8 @@ public final class PkiServerConfigurationCodec {
                 value.text("authorizationCommitment"), approvalCommitment, extendedCommitment,
                 value.text("disclosureCommitment"),
                 disclosure(value.object("disclosureDefaults")), Path.of(value.text("controlLog")),
-                new MetadataStoreId(value.text("controlStoreId")), Map.copyOf(approvalPolicies));
+                new MetadataStoreId(value.text("controlStoreId")), Map.copyOf(approvalPolicies),
+                value.optionalText("initialAdministratorPrincipalId"));
         value.complete();
         return result;
     }

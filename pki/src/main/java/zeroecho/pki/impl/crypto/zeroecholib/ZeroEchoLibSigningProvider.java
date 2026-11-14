@@ -90,7 +90,8 @@ import zeroecho.sdk.ZeroEchoSession;
  * observation and never repeats cryptography.</p>
  */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidCatchingGenericException" })
-public final class ZeroEchoLibSigningProvider implements SigningProvider, PublicKeyInfoSource, AltSigningCapability {
+public final class ZeroEchoLibSigningProvider implements SigningProvider, PublicKeyInfoSource, AltSigningCapability,
+        zeroecho.pki.spi.crypto.ManagedKeyGeneration {
     private static final long NO_FENCE = 0L;
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSigningProvider.class.getName());
 
@@ -307,6 +308,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             KeyringStore keyring = requireKeyring();
             for (String alias : keyring.aliases()) {
                 if (keyring.contains(alias + ".prv")) { visitor.accept(new KeyRef(keyRefPrefix + alias + ".prv")); }
+                if (alias.startsWith("managed-") && keyring.contains(alias + ".priv")) {
+                    visitor.accept(new KeyRef(keyRefPrefix + alias + ".priv"));
+                }
             }
         } catch (IOException | GeneralSecurityException failure) {
             throw new IllegalStateException("Local key metadata is unavailable");
@@ -319,8 +323,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         try {
             KeyRefParts parts = parseKeyRef(keyRef);
             String privateAlias = parts.privateAlias;
-            String logicalAlias = privateAlias.endsWith(".prv")
-                    ? privateAlias.substring(0, privateAlias.length() - 4) : privateAlias;
+            String logicalAlias = privateAlias.endsWith(".priv")
+                    ? privateAlias.substring(0, privateAlias.length() - 5)
+                    : privateAlias.endsWith(".prv") ? privateAlias.substring(0, privateAlias.length() - 4) : privateAlias;
             PublicKey publicKey = requireKeyring().getPublic(logicalAlias);
             return new EncodedObject(Encoding.DER, publicKey.getEncoded());
         } catch (InvalidRequestException | IOException | GeneralSecurityException failure) {
@@ -440,13 +445,98 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         return password;
     }
 
+    @Override
+    public Result generate(String reservationId, Parameters parameters) {
+        String alias = generationAlias(reservationId);
+        Objects.requireNonNull(parameters, "parameters");
+        lifecycleLock.lock();
+        try {
+            KeyringStore keys = requireKeyring();
+            if (keys.contains(alias)) throw new IllegalStateException("Managed key slot is occupied");
+            java.security.KeyPair pair = switch (parameters) {
+                case ECDSA_P384 -> session.keyBuilders().asymmetric().generateKeyPair("ECDSA",
+                        zeroecho.core.alg.ecdsa.EcdsaCurveSpec.P384);
+                case RSA_4096 -> session.keyBuilders().asymmetric().generateKeyPair("RSA",
+                        zeroecho.core.alg.rsa.RsaKeyGenSpec.rsa4096());
+                case ML_DSA_87 -> {
+                    zeroecho.sdk.util.BouncyCastleActivator.init();
+                    yield session.keyBuilders().asymmetric().generateKeyPair("ML-DSA",
+                        zeroecho.core.alg.mldsa.MldsaKeyGenSpec.of("BC",
+                                zeroecho.core.alg.mldsa.MldsaKeyGenSpec.ParameterSet.ML_DSA_87,
+                                zeroecho.core.alg.mldsa.MldsaKeyGenSpec.PreHash.NONE));
+                }
+            };
+            String algorithm = switch (parameters) {
+                case ECDSA_P384 -> "ECDSA";
+                case RSA_4096 -> "RSA";
+                case ML_DSA_87 -> "ML-DSA";
+            };
+            try {
+                keys.putKeyPairIfAbsent(alias, algorithm, pair);
+                return observe(reservationId, parameters).orElseThrow();
+            } finally {
+                try { pair.getPrivate().destroy(); }
+                catch (javax.security.auth.DestroyFailedException ignored) {
+                    // Some JCA providers own non-destroyable key objects; no private encoding escapes this call.
+                }
+            }
+        } catch (IOException | GeneralSecurityException failure) {
+            throw new IllegalStateException("Managed key publication requires reconciliation", failure);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public Optional<Result> observe(String reservationId, Parameters parameters) {
+        String alias = generationAlias(reservationId);
+        Objects.requireNonNull(parameters, "parameters");
+        lifecycleLock.lock();
+        try {
+            KeyringStore keys = requireKeyring();
+            if (!keys.contains(alias)) return Optional.empty();
+            if (!keys.contains(alias + ".pub") || !keys.contains(alias + ".priv")) {
+                throw new IllegalStateException("Managed key pair is incomplete");
+            }
+            PublicKey publicKey = keys.getPublic(alias);
+            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo info =
+                    org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(publicKey.getEncoded());
+            String oid = info.getAlgorithm().getAlgorithm().getId();
+            boolean matches = switch (parameters) {
+                case ECDSA_P384 -> "1.2.840.10045.2.1".equals(oid)
+                        && org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(info.getAlgorithm().getParameters())
+                                .getId().equals("1.3.132.0.34");
+                case RSA_4096 -> "1.2.840.113549.1.1.1".equals(oid)
+                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(info.parsePublicKey()).getModulus().bitLength() == 4096
+                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(info.parsePublicKey()).getPublicExponent()
+                                .equals(java.math.BigInteger.valueOf(65537));
+                case ML_DSA_87 -> "2.16.840.1.101.3.4.3.19".equals(oid)
+                        && info.getAlgorithm().getParameters() == null;
+            };
+            if (!matches) throw new IllegalStateException("Managed key parameters conflict");
+            return Optional.of(new Result(new KeyRef(keyRefPrefix + alias + ".priv"), parameters,
+                    new EncodedObject(Encoding.DER, publicKey.getEncoded())));
+        } catch (IOException | GeneralSecurityException failure) {
+            throw new IllegalStateException("Managed key observation is unavailable");
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private static String generationAlias(String reservationId) {
+        if (reservationId == null || !reservationId.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Managed key reservation identity is invalid");
+        }
+        return "managed-" + reservationId;
+    }
+
     private KeyRefParts parseKeyRef(KeyRef keyRef) throws InvalidRequestException {
         String raw = keyRef.value();
         if (!raw.startsWith(keyRefPrefix)) {
             throw new InvalidRequestException(DetailCode.INVALID_KEY_REFERENCE);
         }
         String suffix = raw.substring(keyRefPrefix.length());
-        boolean privateSuffix = suffix.endsWith(".prv");
+        boolean privateSuffix = suffix.endsWith(".prv") || suffix.endsWith(".priv");
         if (requireComponentSuffix && !privateSuffix) {
             throw new InvalidRequestException(DetailCode.INVALID_KEY_REFERENCE);
         }

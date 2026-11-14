@@ -180,6 +180,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 profileId -> session.profiles().requireActiveProfile(profileId).definition().approvalRequirement(),
                 clock, auditSink, reconciliationWake::signal, this::requireOpen);
         this.gateway.installOcsp(ocspResponders);
+        this.gateway.installManagedKeys(new ManagedKeyGenerationService(configuration, control, session.managedKeyGeneration()));
         this.gateway.installEnrollmentProfiles(enrollmentProfiles);
         this.administrativeRequests = new AdministrativeRequestCoordinator(this, control, clock);
         this.approvals.onDecision(this.administrativeRequests::wake);
@@ -401,6 +402,11 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @return the one long-lived PKI session
      */
     public PkiSession session() { requireOpen(); return session; }
+
+    void recordInitialAdministrator(String administrator) {
+        requireOpen();
+        ManagedKeyGenerationService.pinInitialAdministrator(configuration, control, administrator);
+    }
     /**
      * Returns immutable built-in role template catalog.
      *

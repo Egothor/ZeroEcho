@@ -691,6 +691,13 @@ operations:
     summary: "Retrieve the set of supported configuration choices for the server"
     description: "Returns the closed set of allowed values for configurable server parameters such as key types, signature algorithms, and supported formats."
 
+  key.generate:
+    summary: "Generate a server-owned signing key (initial administrator only)"
+    description: "Creates a managed key with explicit parameters after approval. Only the first deployment administrator may request and execute it. A stable generationId retains a public result across retries; private key material never leaves the provider."
+    arguments:
+      generationId: "Stable idempotency identity; reuse only with identical parameters"
+      parameters: "Explicit ECDSA_P384, RSA_4096, or ML_DSA_87 generation parameters"
+
   security.disclosure.capability.list:
     summary: "List capability tokens available to the authenticated principal"
 

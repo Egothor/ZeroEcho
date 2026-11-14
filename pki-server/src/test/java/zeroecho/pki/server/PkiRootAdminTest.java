@@ -171,6 +171,7 @@ class PkiRootAdminTest {
                     Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY, Permission.ResourceType.REALM, scope,
                     Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true), "system");
             var historical = new OperationSecurityDescriptors().descriptors().values().stream()
+                    .filter(descriptor -> !descriptor.operationId().equals(ServerControlOperation.GenerateManagedKey.NAME))
                     .filter(descriptor -> !descriptor.operationId().equals(zeroecho.pki.application.PkiOperation.ListCredentials.NAME))
                     .sorted(java.util.Comparator.comparing(OperationSecurityDescriptors.Descriptor::operationId)).toList();
             assertEquals(150, historical.size());

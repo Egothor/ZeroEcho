@@ -73,6 +73,7 @@ public final class ServerControlOperationExecutor {
 
     private final zeroecho.pki.application.PkiOperationExecutor pkiExecutor;
     private final RealmId realmId;
+    private ManagedKeyGenerationService managedKeys;
     private final AuthorityExposurePolicy exposure;
     private final ServerControlStore store;
     private final RoleTemplateCatalog roles;
@@ -141,6 +142,16 @@ public final class ServerControlOperationExecutor {
         this.approvalPolicies = Map.copyOf(Objects.requireNonNull(approvalPolicies, "approvalPolicies"));
     }
 
+    void installManagedKeys(ManagedKeyGenerationService service) {
+        if (managedKeys != null) throw new IllegalStateException("Managed key service already installed");
+        managedKeys = Objects.requireNonNull(service, "service");
+    }
+
+    private ManagedKeyGenerationService managedKeys() {
+        if (managedKeys == null) throw new IllegalStateException("Managed key generation is unavailable");
+        return managedKeys;
+    }
+
     /**
      * Executes exactly one already-authorized control operation synchronously.
      *
@@ -204,6 +215,10 @@ public final class ServerControlOperationExecutor {
         } catch (SecurityException denied) {
             return failure(operation, PkiOperationFailure.POLICY_REJECTION, "CONTROL_POLICY_REJECTED");
         } catch (IllegalStateException conflict) {
+            if (operation instanceof ServerControlOperation.GenerateManagedKey
+                    && conflict.getMessage() != null && conflict.getMessage().matches("MANAGED_KEY_[A-Z_]+")) {
+                return failure(operation, PkiOperationFailure.CONFLICT, conflict.getMessage());
+            }
             return failure(operation, PkiOperationFailure.CONFLICT,
                     "BACKUP_LEGACY_LIMIT".equals(conflict.getMessage())
                             ? "BACKUP_LEGACY_LIMIT_USE_STREAMING" : "CONTROL_STATE_CONFLICT");
@@ -272,6 +287,9 @@ public final class ServerControlOperationExecutor {
 
     /** Whether the configured service for a protocol operation is installed. */
     /* default */ boolean protocolAvailable(String operationId) {
+        if (ServerControlOperation.GenerateManagedKey.NAME.equals(operationId)) {
+            return managedKeys != null && managedKeys.available();
+        }
         if (operationId.startsWith("acme.")) return acme.get() != null;
         if (operationId.startsWith("enrollment.request.")) return enrollment.get() != null;
         if (operationId.startsWith("est.")) return est.get() != null;
@@ -403,7 +421,7 @@ public final class ServerControlOperationExecutor {
 
     /** Reports high-risk control operations with a shared pure admission validator. */
     static boolean administrativeValidationAvailable(String operation) {
-        return Set.of(ServerControlOperation.SetPrincipalEnabled.DISABLE,
+        return Set.of(ServerControlOperation.GenerateManagedKey.NAME, ServerControlOperation.SetPrincipalEnabled.DISABLE,
                 ServerControlOperation.CreateRoleAssignment.NAME,ServerControlOperation.CreateGrant.NAME,
                 ServerControlOperation.CreateBreakGlass.CREATE,ServerControlOperation.ActivateBreakGlass.ACTIVATE,
                 ServerControlOperation.SetDisclosure.NAME,ServerControlOperation.RegisterAcmeDirectory.NAME,
@@ -418,6 +436,7 @@ public final class ServerControlOperationExecutor {
     /** Checks current control preconditions without creating approvals or changing metadata. */
     void validateAdministrative(ServerControlOperation operation,String actor) {
         switch(operation) {
+            case ServerControlOperation.GenerateManagedKey ignored -> managedKeys().requireAdministrator(actor);
             case ServerControlOperation.SetPrincipalEnabled value -> store.requirePrincipal(value.principalId());
             case ServerControlOperation.CreateRoleAssignment value -> {
                 var assignment=value.assignment();
@@ -476,6 +495,12 @@ public final class ServerControlOperationExecutor {
         if(administrativeValidationAvailable(operation.name()))validateAdministrative(operation,actor);
         return switch (operation) {
             case ServerControlOperation.ConfigurationChoices value -> ordinary(operation, configurationChoices(value, cancellation));
+            case ServerControlOperation.GenerateManagedKey value -> {
+                var generated = managedKeys().generate(value.generationId(), value.parameters(), actor);
+                yield ordinary(operation, object("generationId", text(value.generationId()),
+                        "keyRef", text(generated.keyRef().value()), "parameters", text(generated.parameters().name()),
+                        "subjectPublicKeyInfo", text(java.util.Base64.getEncoder().encodeToString(generated.subjectPublicKeyInfo().bytes()))));
+            }
             case ServerControlOperation.ListCapabilities value -> ordinary(operation, capabilities(value, cancellation));
             case ServerControlOperation.RegisterPrincipal value -> ordinary(operation, register(value));
             case ServerControlOperation.InspectPrincipal value -> ordinary(operation,

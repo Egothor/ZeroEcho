@@ -119,6 +119,8 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String CMP_RESPONSE = "io.zeroecho.server.cmp-response";
     /** Immutable server-keygen reservations and encrypted delivery lifecycle. */
     public static final String ENROLLMENT_KEYGEN = "io.zeroecho.server.enrollment-keygen";
+    /** Durable generate-only managed signing-key reservations and public receipts. */
+    public static final String MANAGED_KEY_GENERATION = "io.zeroecho.server.managed-key-generation";
     /** Stable namespace for non-authoritative revocation-audit projection state. */
     public static final String REVOCATION_AUDIT_PROJECTION =
             "io.zeroecho.server.revocation-audit-projection";
@@ -182,7 +184,8 @@ public final class ServerControlStore implements AutoCloseable {
     private static final Set<String> PROTOCOL_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
             ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER,
             REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, ADMINISTRATIVE_REQUEST, AUDIT_EVIDENCE_PROJECTION, ENROLLMENT_PROFILE,
-            ENROLLMENT_ENDPOINT, ENROLLMENT_CREDENTIAL, ENROLLMENT_REQUEST, CMP_TRANSACTION, CMP_RESPONSE, ENROLLMENT_KEYGEN);
+            ENROLLMENT_ENDPOINT, ENROLLMENT_CREDENTIAL, ENROLLMENT_REQUEST, CMP_TRANSACTION, CMP_RESPONSE, ENROLLMENT_KEYGEN,
+            MANAGED_KEY_GENERATION);
 
     /**
      * Durable realm-control identity and commitments.

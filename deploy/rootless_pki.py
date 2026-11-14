@@ -287,6 +287,7 @@ def _tls(root, values, tls_password):
 def _configuration(root, values, fingerprints):
     document = json.loads((REPOSITORY / "documentation/examples/configuration/pki-server-trusted-proxy-rfc9440-example.json").read_text())
     realm = document["realm"]
+    realm["initialAdministratorPrincipalId"] = values["admin"]
     realm.update(realmId=values["realm"], displayName=values["realm"],
                  controlLog="/deployment/store-container/server-control/server-control.log",
                  controlStoreId=secrets.token_hex(16), authorizationCommitment=secrets.token_hex(32),

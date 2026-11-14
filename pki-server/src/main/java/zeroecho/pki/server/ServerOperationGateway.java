@@ -373,6 +373,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      */
     public void installOcsp(OcspResponderService service) { controlExecutor.installOcsp(service); }
 
+    void installManagedKeys(ManagedKeyGenerationService service) { controlExecutor.installManagedKeys(service); }
+
     /**
      * Installs the queryable/verifiable audit capability when the configured sink supports it.
      *
@@ -555,6 +557,13 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             principal = control.requirePrincipal(exact.principalId());
         } catch (IllegalArgumentException unavailable) {
             return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
+        }
+        if (exact.operation() instanceof AdministrativeOperation.Control selected
+                && selected.operation() instanceof ServerControlOperation.GenerateManagedKey) {
+            try { controlExecutor.validateAdministrative(selected.operation(), principal.principalId()); }
+            catch (SecurityException | IllegalStateException denied) {
+                return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
+            }
         }
         List<Permission.Grant> grants = new ArrayList<>(control.grantsFor(principal.principalId()));
         for (RoleTemplateCatalog.Assignment assignment : control.assignmentsFor(principal.principalId())) {
