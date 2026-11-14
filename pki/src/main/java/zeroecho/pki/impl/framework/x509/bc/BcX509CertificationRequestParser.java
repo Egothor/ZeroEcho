@@ -79,8 +79,9 @@ import zeroecho.pki.spi.framework.CertificationRequestParser;
  * </p>
  *
  * <p>
- * This class does not verify proof of possession and does not evaluate issuance
- * policy. Those responsibilities are delegated to other framework components.
+ * Ordinary parsing does not verify proof of possession or issuance policy.
+ * The explicit SDK method additionally verifies the original primary CSR proof;
+ * fresh dual-key proofs and issuance policy remain separate responsibilities.
  * </p>
  *
  * <h2>Thread-safety</h2>
@@ -156,6 +157,35 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      */
     @Override
     public ParsedCertificationRequest parse(CertificationRequest request) {
+        return parse(request, null);
+    }
+
+    /**
+     * Parses the explicit v1 PKCS#10 SDK variant and verifies its original primary signature.
+     * Ordinary parsing retains its closed extension policy.
+     * @param request exact DER PKCS#10 carrying one alternative subject SPKI request
+     * @return separate normalized two-subject-key view
+     * @throws PkiException for malformed DER, unsupported keys or an invalid primary proof
+     */
+    public zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parseHybridSdk(CertificationRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (request.encoded().encoding() != Encoding.DER) throw new PkiException("SDK_REQUEST_DER_REQUIRED");
+        byte[] der = request.encoded().bytes();
+        try {
+            new StreamingDerReader().validate(der, MAXIMUM_CSR_DER_BYTES);
+            if (!java.util.Arrays.equals(der, org.bouncycastle.asn1.ASN1Primitive.fromByteArray(der).getEncoded("DER"))) {
+                throw new PkiException("SDK_REQUEST_NONCANONICAL");
+            }
+            var alternative = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+            ParsedCertificationRequest parsed = parse(request, alternative::set);
+            if (alternative.get() == null) throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+            var result = new zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest(parsed, new EncodedObject(Encoding.DER, alternative.get()));
+            BcHybridSdkProofVerifier.requireRequest(result);
+            return result;
+        } catch (java.io.IOException malformed) { throw new PkiException("SDK_REQUEST_INVALID"); }
+    }
+
+    private ParsedCertificationRequest parse(CertificationRequest request, java.util.function.Consumer<byte[]> alternative) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
@@ -185,7 +215,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
 
             List<SubjectRdn> subjectRdns = parseSubject(csr.subject());
             SubjectRef subjectRef = subjectReference(subjectRdns);
-            List<SubjectAlternativeName> subjectAlternativeNames = parseSubjectAlternativeNames(csr);
+            List<SubjectAlternativeName> subjectAlternativeNames = parseSubjectAlternativeNames(csr, alternative);
 
             try {
                 spki = csr.subjectPublicKeyInfo();
@@ -312,7 +342,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     // The branches enforce the closed PKCS#10 extensionRequest grammar.
     @SuppressWarnings("PMD.CyclomaticComplexity")
     private static List<SubjectAlternativeName> parseSubjectAlternativeNames(
-            zeroecho.pkix.csr.CertificationRequest csr) {
+            zeroecho.pkix.csr.CertificationRequest csr, java.util.function.Consumer<byte[]> alternative) {
         List<zeroecho.pkix.csr.CsrAttribute> extensionRequests = new ArrayList<>();
         boolean otherAttributePresent = false;
         boolean challengePresent = false;
@@ -354,7 +384,20 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         if (extensions.isEmpty()) {
             throw new PkiException("CSR extensions rejected: code=EXTENSION_UNSUPPORTED");
         }
-        return parseRequestedExtensions(extensions);
+        if (alternative == null) return parseRequestedExtensions(extensions);
+        var standard = new java.util.ArrayList<zeroecho.pkix.CertificateExtension>();
+        var seen = new java.util.HashSet<String>(); boolean alternativePresent = false;
+        for (var extension : extensions) {
+            if (!seen.add(extension.oid())) throw new PkiException("SDK_REQUEST_DUPLICATE_EXTENSION");
+            if (extension.oid().equals("2.5.29.72")) {
+                if (extension.critical() || extension.derValue().length > 8192) throw new PkiException("SDK_SUBJECT_KEY_INVALID");
+                alternative.accept(extension.derValue()); alternativePresent = true;
+            } else {
+                standard.add(extension);
+            }
+        }
+        if (!alternativePresent) throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+        return parseRequestedExtensions(standard);
     }
 
     private static List<SubjectAlternativeName> parseRequestedExtensions(List<zeroecho.pkix.CertificateExtension> extensions) {

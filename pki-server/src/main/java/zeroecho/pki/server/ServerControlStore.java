@@ -128,6 +128,8 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String AUDIT_ANCHOR = "io.zeroecho.server.audit-anchor";
     /** Closed private namespace for retained administrative execution intents. */
     public static final String ADMINISTRATIVE_REQUEST = "io.zeroecho.server.administrative-request";
+    /** Private retained dual-subject-key challenges and consumed proof tombstones. */
+    public static final String HYBRID_SDK_INTENT = "io.zeroecho.server.hybrid-sdk-intent";
     /** Stable namespace for per-family success-evidence audit-projection cursors. */
     public static final String AUDIT_EVIDENCE_PROJECTION = "io.zeroecho.server.audit-evidence-projection";
 
@@ -185,7 +187,7 @@ public final class ServerControlStore implements AutoCloseable {
             ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER,
             REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, ADMINISTRATIVE_REQUEST, AUDIT_EVIDENCE_PROJECTION, ENROLLMENT_PROFILE,
             ENROLLMENT_ENDPOINT, ENROLLMENT_CREDENTIAL, ENROLLMENT_REQUEST, CMP_TRANSACTION, CMP_RESPONSE, ENROLLMENT_KEYGEN,
-            MANAGED_KEY_GENERATION);
+            MANAGED_KEY_GENERATION, HYBRID_SDK_INTENT);
 
     /**
      * Durable realm-control identity and commitments.
@@ -796,11 +798,33 @@ public final class ServerControlStore implements AutoCloseable {
      */
     public synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
             Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval) {
+        mutateAdministrativeRequest(request, expectedRequest, expectedApproval, approval, Optional.empty());
+    }
+
+    /**
+     * Atomically publishes an SDK consumption alongside its request and approval.
+     * @param request next request record @param expectedRequest previous request commitment or empty for create
+     * @param expectedApproval previous approval or empty for create
+     * @param approval next approval or empty for no transition
+     * @param sdkConsumption exact OPEN-to-CONSUMED SDK mutation, absent on ordinary transitions
+     */
+    synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
+            Optional<ProtocolMutation> sdkConsumption) {
         requireOpen();
         if (!request.namespace().equals(ADMINISTRATIVE_REQUEST) || expectedApproval.isPresent() && approval.isEmpty()) {
             throw new IllegalArgumentException("Administrative request transition is invalid");
         }
         AdministrativeRequest retained = AdministrativeRequestCodec.decode(request);
+        if (expectedRequest.isEmpty() && retained.sdkProof().isPresent() != sdkConsumption.isPresent()) {
+            throw new IllegalArgumentException("SDK admission requires atomic consumption");
+        }
+        sdkConsumption.ifPresent(mutation -> {
+            if (!mutation.record().namespace().equals(HYBRID_SDK_INTENT) || mutation.expectedCommitment().isEmpty()
+                    || retained.sdkProof().isEmpty() || !retained.sdkProof().orElseThrow().intentId().equals(mutation.record().recordId())) {
+                throw new IllegalArgumentException("SDK consumption does not bind administrative request");
+            }
+        });
         approval.ifPresent(value -> {
             if (!retained.approvalId().equals(Optional.of(value.approvalId()))
                     || !retained.policyCommitment().equals(Optional.of(value.policyCommitment()))
@@ -812,6 +836,13 @@ public final class ServerControlStore implements AutoCloseable {
                 throw new IllegalArgumentException("Approval does not bind administrative request");
             }
         });
+        if (sdkConsumption.isPresent()) {
+            // Reserve half the transaction ceiling for framing/keys; measure actual private payloads before staging.
+            long combined = encode(output -> writeProtocol(output, request)).length
+                    + encode(output -> writeProtocol(output, sdkConsumption.orElseThrow().record())).length;
+            if (approval.isPresent()) combined += encode(output -> writeApproval(output, approval.orElseThrow())).length;
+            if (combined > MAXIMUM_RECORD_BYTES / 2) throw new IllegalArgumentException("SDK_TOO_LARGE");
+        }
         try (MetadataSnapshot snapshot = metadata.snapshot(); MetadataTransaction transaction = metadata.beginTransaction()) {
             MetadataKey requestKey = key(ADMINISTRATIVE_REQUEST, request.recordId());
             Optional<MetadataSnapshot.Record> previous = snapshot.get(requestKey);
@@ -823,6 +854,7 @@ public final class ServerControlStore implements AutoCloseable {
                 MetadataSnapshot.Record existing = previous.orElseThrow(() -> new IllegalStateException("Administrative request unavailable"));
                 ProtocolRecord decoded = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, ADMINISTRATIVE_REQUEST));
                 if (!decoded.commitment().equals(expectedRequest.orElseThrow())) throw new IllegalStateException("Administrative request changed");
+                if (!AdministrativeRequestCodec.decode(decoded).sdkProof().equals(retained.sdkProof())) throw new IllegalStateException("SDK_REFERENCE_CHANGED");
                 transaction.replace(requestKey, existing.recordRevision(), next, CancellationSignal.NONE);
             }
             if (approval.isPresent()) {
@@ -839,6 +871,18 @@ public final class ServerControlStore implements AutoCloseable {
                     }
                     transaction.replace(approvalKey, observed.recordRevision(), encoded, CancellationSignal.NONE);
                 }
+            }
+            if (sdkConsumption.isPresent()) {
+                ProtocolMutation mutation = sdkConsumption.orElseThrow();
+                ProtocolRecord value = mutation.record();
+                MetadataKey intentKey = key(HYBRID_SDK_INTENT, value.recordId());
+                var existing = snapshot.get(intentKey).orElseThrow(() -> new IllegalStateException("SDK intent unavailable"));
+                ProtocolRecord previousIntent = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, HYBRID_SDK_INTENT));
+                if (!previousIntent.commitment().equals(mutation.expectedCommitment().orElseThrow())) {
+                    throw new IllegalStateException("SDK intent changed");
+                }
+                HybridSdkAdmissionService.requireConsumption(previousIntent, value, retained);
+                transaction.replace(intentKey, existing.recordRevision(), new ByteContent(encode(output -> writeProtocol(output, value))), CancellationSignal.NONE);
             }
             if (transaction.commit().outcome() != MetadataCommitResult.Outcome.COMMITTED) throw new IllegalStateException("Administrative transition requires reconciliation");
         } catch (IOException failure) { throw new IllegalStateException("Administrative transition failed"); }

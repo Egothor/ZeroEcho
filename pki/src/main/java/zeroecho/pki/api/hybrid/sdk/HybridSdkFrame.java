@@ -1,0 +1,247 @@
+/* *****************************************************************************
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+package zeroecho.pki.api.hybrid.sdk;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+
+/** Strict immutable F1/F2/F3/F6/F7/F8/F9 registry of zeroecho-hybrid-sdk-v1. */
+public final class HybridSdkFrame {
+    private static final byte[] DOMAIN = "ZeroEcho-Hybrid-SDK".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] PRIMARY_ALGORITHM = HexFormat.of().parseHex("300a06082a8648ce3d040303");
+    private static final byte[] ALTERNATIVE_ALGORITHM = HexFormat.of().parseHex("300b0609608648016503040313");
+    private static final int MAX_BYTES = 1048576;
+    private static final int MAX_FIELD = 262144;
+    private final int kind;
+    private final Map<Integer, byte[]> fields;
+
+    /**
+     * Creates one validated canonical frame.
+     * @param kind registered frame kind (1, 2, 3, 6, 7, 8 or 9)
+     * @param fields exact contiguous tag registry with borrowed values
+     * @throws IllegalArgumentException for malformed values or exceeded bounds
+     */
+    public HybridSdkFrame(int kind, Map<Integer, byte[]> fields) {
+        int count = count(kind); Objects.requireNonNull(fields, "fields");
+        if (fields.size() != count) throw invalid();
+        var copy = new TreeMap<Integer, byte[]>(); long length = DOMAIN.length + 7L;
+        for (int tag = 1; tag <= count; tag++) {
+            byte[] value = fields.get(tag); if (value == null) throw invalid();
+            if (value.length > MAX_FIELD) throw invalid();
+            length += 6L + value.length; if (length > MAX_BYTES) throw invalid();
+            copy.put(tag, value.clone());
+        }
+        this.kind = kind; this.fields = java.util.Collections.unmodifiableMap(copy); validate();
+    }
+
+    /** @return registered domain-separation kind */
+    public int kind() { return kind; }
+    /** @param tag required registry tag @return independent field bytes @throws IllegalArgumentException if the tag does not exist */
+    public byte[] field(int tag) {
+        byte[] value = fields.get(tag); if (value == null) throw invalid(); return value.clone();
+    }
+    /** @return independent field map and field bytes */
+    public Map<Integer, byte[]> fields() {
+        var copy = new TreeMap<Integer, byte[]>(); fields.forEach((tag, bytes) -> copy.put(tag, bytes.clone())); return copy;
+    }
+    /** @return complete exact canonical signed bytes */
+    public byte[] encode() {
+        try {
+            var bytes = new ByteArrayOutputStream(); var out = new DataOutputStream(bytes);
+            out.write(DOMAIN); out.writeByte(0); out.writeShort(1); out.writeShort(kind); out.writeShort(fields.size());
+            for (var entry : fields.entrySet()) { out.writeShort(entry.getKey()); out.writeInt(entry.getValue().length); out.write(entry.getValue()); }
+            return bytes.toByteArray();
+        } catch (IOException impossible) { throw new IllegalStateException(impossible); }
+    }
+    /** @param bytes borrowed complete frame @return validated independent frame @throws IllegalArgumentException for unsupported or malformed input */
+    public static HybridSdkFrame decode(byte[] bytes) {
+        Objects.requireNonNull(bytes, "bytes"); if (bytes.length > MAX_BYTES) throw invalid(); bytes = bytes.clone();
+        try (var input = new DataInputStream(new ByteArrayInputStream(bytes))) {
+            if (!Arrays.equals(DOMAIN, input.readNBytes(DOMAIN.length)) || input.readUnsignedByte() != 0 || input.readUnsignedShort() != 1) throw invalid();
+            int kind = input.readUnsignedShort(); int count = input.readUnsignedShort();
+            if (count != count(kind)) throw invalid(); var fields = new TreeMap<Integer, byte[]>();
+            for (int expected = 1; expected <= count; expected++) {
+                int tag = input.readUnsignedShort(); int length = input.readInt();
+                if (tag != expected || length < 0 || length > MAX_FIELD || length > input.available()) throw invalid();
+                fields.put(tag, input.readNBytes(length));
+            }
+            if (input.available() != 0) throw invalid(); return new HybridSdkFrame(kind, fields);
+        } catch (IOException malformed) { throw invalid(); }
+    }
+    /** @param value borrowed public framed or DER bytes @return SHA-512 commitment bytes */
+    public static byte[] hash(byte[] value) {
+        try { return MessageDigest.getInstance("SHA-512").digest(Objects.requireNonNull(value)); }
+        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+    /** @return exact absent-parameters ECDSA-with-SHA384 AlgorithmIdentifier DER */
+    public static byte[] primaryAlgorithm() { return PRIMARY_ALGORITHM.clone(); }
+    /** @return exact absent-parameters pure ML-DSA-87 AlgorithmIdentifier DER */
+    public static byte[] alternativeAlgorithm() { return ALTERNATIVE_ALGORITHM.clone(); }
+    /** @param value canonical origin with explicit port @throws IllegalArgumentException for a noncanonical origin */
+    public static void requireOrigin(String value) {
+        if (value == null || value.length() > 256 || !value.startsWith("https://") || !value.chars().allMatch(c -> c < 128)) throw invalid();
+        String authority = value.substring(8); int colon = authority.lastIndexOf(':');
+        if (colon < 1) throw invalid(); String host = authority.substring(0, colon); String port = authority.substring(colon + 1);
+        if (!port.matches("[1-9][0-9]{0,4}") || Integer.parseInt(port) > 65535) throw invalid();
+        if (host.startsWith("[")) {
+            if (!host.endsWith("]") || !host.substring(1, host.length() - 1).matches("[0-9a-f:.]+")) throw invalid();
+            if (!canonicalIpv6(host.substring(1, host.length() - 1)).equals(host.substring(1, host.length() - 1))) throw invalid();
+        } else if (host.matches("[0-9.]+")) {
+            String[] parts = host.split("\\.", -1); if (parts.length != 4) throw invalid();
+            for (String part : parts) if (!part.matches("0|[1-9][0-9]{0,2}") || Integer.parseInt(part) > 255) throw invalid();
+        } else {
+            if (host.length() > 253 || !host.equals(host.toLowerCase(java.util.Locale.ROOT))) throw invalid();
+            for (String label : host.split("\\.", -1)) if (!label.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) throw invalid();
+        }
+    }
+    private static String canonicalIpv6(String literal) {
+        try {
+            if (literal.indexOf(':') < 0) throw invalid();
+            byte[] address = java.net.InetAddress.getByName(literal).getAddress();
+            if (address.length == 4) {
+                return "::ffff:" + (address[0] & 255) + "." + (address[1] & 255) + "." + (address[2] & 255) + "." + (address[3] & 255);
+            }
+            int[] groups = new int[8]; int best = -1, bestLength = 1;
+            for (int i = 0; i < 8; i++) groups[i] = (address[2 * i] & 255) * 256 + (address[2 * i + 1] & 255);
+            for (int i = 0; i < 8;) {
+                if (groups[i] != 0) { i++; continue; } int end = i;
+                while (end < 8 && groups[end] == 0) end++;
+                if (end - i > bestLength) { best = i; bestLength = end - i; } i = end;
+            }
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < 8;) {
+                if (i == best) { result.append("::"); i += bestLength; }
+                else { if (!result.isEmpty() && result.charAt(result.length() - 1) != ':') result.append(':'); result.append(Integer.toHexString(groups[i++])); }
+            }
+            return result.toString();
+        } catch (java.net.UnknownHostException malformed) { throw invalid(); }
+    }
+    private void validate() {
+        switch (kind) {
+            case 1, 2 -> {
+                if (!text(1).equals("zeroecho-hybrid-sdk-v1")) throw invalid(); identifier(2);
+                for (int tag = 3; tag <= 6; tag++) length(tag, 32);
+                long issued = time(7), expires = time(8); if (issued > Long.MAX_VALUE - 300 || expires != issued + 300) throw invalid();
+                requireOrigin(text(9));
+                if (!java.util.Set.of("admin-http-v1", "acme-v1", "est-v1", "scep-v1", "cmp-v1").contains(text(10))) throw invalid();
+                for (int tag = 11; tag <= 14; tag++) length(tag, 64); length(17, 64);
+                if (!Arrays.equals(field(15), PRIMARY_ALGORITHM) || !Arrays.equals(field(16), ALTERNATIVE_ALGORITHM)) throw invalid();
+            }
+            case 3 -> { length(1, 64); length(2, 64); length(5, 64); requirePrimaryProofSyntax(field(3)); length(4, 4627); }
+            case 6 -> {
+                identifier(1); if (!java.util.Set.of("direct-mtls-v1", "trusted-proxy-mtls-v1").contains(text(2))) throw invalid();
+                length(3, 64); if (!text(4).equals("admin-http-v1")) throw invalid(); requireAuthenticationValues();
+            }
+            case 7 -> {
+                for (int tag : new int[] {1, 3, 4, 5, 6, 10}) identifier(tag);
+                for (int tag : new int[] {2, 15, 16, 17}) {
+                    byte[] value = HybridSdkValue.decode(field(tag)).encode(); if (value[0] != 6) throw invalid();
+                }
+                if (!text(7).matches("sha512:[0-9a-f]{128}") || unsignedLong(11) == 0) throw invalid();
+                requireNested(8, 8); if (field(9).length != 0) requireNested(9, 9);
+                for (int tag = 12; tag <= 14; tag++) if (!text(tag).matches("sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128}")) throw invalid();
+            }
+            case 8, 9 -> {
+                new zeroecho.pki.api.KeyRef(text(1));
+                if (zeroecho.core.spec.AlgorithmIdentity.parse(text(2), java.util.List.of()).kind() != zeroecho.core.spec.AlgorithmIdentity.Kind.PUBLIC_KEY
+                        || zeroecho.core.spec.AlgorithmIdentity.parse(text(3), java.util.List.of()).kind() != zeroecho.core.spec.AlgorithmIdentity.Kind.SIGNATURE) throw invalid();
+                try {
+                    new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(field(4), 1024);
+                    var algorithm = org.bouncycastle.asn1.x509.AlgorithmIdentifier.getInstance(field(4));
+                    if (!Arrays.equals(algorithm.getEncoded("DER"), field(4))) throw invalid();
+                } catch (IOException malformed) { throw invalid(); }
+                length(5, 64);
+            }
+            default -> throw invalid();
+        }
+    }
+    private void requireAuthenticationValues() {
+        byte[] encoded = HybridSdkValue.decode(field(5)).encode();
+        try (var input = new DataInputStream(new ByteArrayInputStream(encoded))) {
+            if (input.readUnsignedByte() != 6 || input.readInt() != 3) throw invalid();
+            for (String expected : new String[] {"canonicalKeySha256", "issuerSerialSha256", "transportPrincipalId"}) {
+                int length = input.readUnsignedShort();
+                if (length > 128 || !expected.equals(HybridSdkValue.text(input.readNBytes(length))) || input.readUnsignedByte() != 1) throw invalid();
+                int bytes = input.readInt(); if (bytes < 0 || bytes > 128 || bytes > input.available()) throw invalid();
+                String value = HybridSdkValue.text(input.readNBytes(bytes));
+                if (expected.equals("transportPrincipalId")) {
+                    if (text(2).equals("direct-mtls-v1")) { if (!value.isEmpty()) throw invalid(); }
+                    else HybridSdkValue.requireIdentifier(value);
+                } else if (!value.matches("[0-9a-f]{64}")) throw invalid();
+            }
+            if (input.available() != 0) throw invalid();
+        } catch (IOException malformed) { throw invalid(); }
+    }
+    private static void requirePrimaryProofSyntax(byte[] bytes) {
+        if (bytes.length < 8 || bytes.length > 104) throw invalid();
+        try {
+            new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(bytes, 104);
+            var sequence = org.bouncycastle.asn1.ASN1Sequence.getInstance(org.bouncycastle.asn1.ASN1Primitive.fromByteArray(bytes));
+            if (sequence.size() != 2 || !Arrays.equals(bytes, sequence.getEncoded("DER"))) throw invalid();
+            var order = org.bouncycastle.asn1.sec.SECNamedCurves.getByName("secp384r1").getN();
+            for (int i = 0; i < 2; i++) {
+                var scalar = org.bouncycastle.asn1.ASN1Integer.getInstance(sequence.getObjectAt(i)).getValue();
+                if (scalar.signum() <= 0 || scalar.compareTo(order) >= 0) throw invalid();
+            }
+        } catch (IOException malformed) { throw invalid(); }
+    }
+    private void requireNested(int tag, int expectedKind) {
+        byte[] value = field(tag); int offset = DOMAIN.length + 3;
+        if (value.length < offset + 2 || Short.toUnsignedInt(ByteBuffer.wrap(value, offset, 2).getShort()) != expectedKind) throw invalid();
+        if (decode(value).kind() != expectedKind) throw invalid();
+    }
+    private long time(int tag) {
+        long value = unsignedLong(tag);
+        try { java.time.Instant.ofEpochSecond(value); } catch (java.time.DateTimeException unsupported) { throw invalid(); }
+        return value;
+    }
+    private long unsignedLong(int tag) { length(tag, 8); long value = ByteBuffer.wrap(field(tag)).getLong(); if (value < 0) throw invalid(); return value; }
+    private void identifier(int tag) { HybridSdkValue.requireIdentifier(text(tag)); }
+    private String text(int tag) { return HybridSdkValue.text(field(tag)); }
+    private void length(int tag, int required) { if (field(tag).length != required) throw invalid(); }
+    private static int count(int kind) { return switch (kind) { case 1, 2, 7 -> 17; case 3, 6, 8, 9 -> 5; default -> throw invalid(); }; }
+    private static IllegalArgumentException invalid() { return new IllegalArgumentException("SDK_FRAME_INVALID"); }
+}

@@ -82,6 +82,7 @@ final class AdministrativeRequestCoverage {
             "est.endpoint.register",
             "issuer.path.register",
             "issuer.path.select",
+            "key.generate",
             "ocsp.responder.activate",
             "ocsp.responder.deactivate",
             "ocsp.responder.register",

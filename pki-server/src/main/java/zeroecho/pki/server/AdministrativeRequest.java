@@ -60,12 +60,44 @@ import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
  * @param receipt exact prepared signing receipt persisted before acceptance
  * @param result terminal ordinary typed result, never a reusable secret
  * @param failureCode bounded safe machine code
+ * @param sdkProof optional immutable dual-subject proof reference; absent for ordinary requests
  */
 public record AdministrativeRequest(String requestId, long revision, String operation,
         PkiOperationValue.ObjectValue envelope, Actor actor, Permission.Scope scope, String operationCommitment,
         Optional<String> profileCommitment, String targetCommitment, State state, Instant createdAt, Instant updatedAt, long executionTimeoutMillis,
         Optional<String> approvalId, Optional<String> policyCommitment, Optional<SigningAcceptanceReceipt> receipt,
-        Optional<PkiOperationValue.ObjectValue> result, Optional<String> failureCode) {
+        Optional<PkiOperationValue.ObjectValue> result, Optional<String> failureCode, Optional<SdkProof> sdkProof) {
+    /**
+     * Creates an ordinary version-one request without an SDK proof reference.
+     * @param requestId durable identity @param revision revision @param operation operation
+     * @param envelope exact envelope @param actor trusted actor @param scope target scope
+     * @param operationCommitment operation commitment @param profileCommitment profile commitment
+     * @param targetCommitment target commitment @param state state @param createdAt creation time
+     * @param updatedAt transition time @param executionTimeoutMillis budget
+     * @param approvalId approval @param policyCommitment policy @param receipt signing receipt
+     * @param result result @param failureCode safe failure
+     */
+    public AdministrativeRequest(String requestId, long revision, String operation,
+            PkiOperationValue.ObjectValue envelope, Actor actor, Permission.Scope scope, String operationCommitment,
+            Optional<String> profileCommitment, String targetCommitment, State state, Instant createdAt, Instant updatedAt, long executionTimeoutMillis,
+            Optional<String> approvalId, Optional<String> policyCommitment, Optional<SigningAcceptanceReceipt> receipt,
+            Optional<PkiOperationValue.ObjectValue> result, Optional<String> failureCode) {
+        this(requestId, revision, operation, envelope, actor, scope, operationCommitment, profileCommitment,
+                targetCommitment, state, createdAt, updatedAt, executionTimeoutMillis, approvalId, policyCommitment, receipt, result, failureCode, Optional.empty());
+    }
+
+    /**
+     * Reference to the consumed private SDK intent; it is not a bearer credential.
+     * @param intentId server-generated lowercase 32-byte hexadecimal identity
+     * @param proofCommitment complete domain-separated F3 SHA-512 commitment
+     */
+    public record SdkProof(String intentId, String proofCommitment) {
+        /** Rejects partial or noncanonical proof references. */
+        public SdkProof {
+            if (intentId == null || !intentId.matches("[0-9a-f]{64}") || proofCommitment == null
+                    || !proofCommitment.matches("sha512:[0-9a-f]{128}")) throw new IllegalArgumentException("SDK proof reference is invalid");
+        }
+    }
     /** Durable states; admitted signing is always reconciled from its exact receipt. */
     public enum State {
         /** Waiting for an explicit human decision. */ WAITING_APPROVAL,
@@ -112,6 +144,7 @@ public record AdministrativeRequest(String requestId, long revision, String oper
             throw new IllegalArgumentException("Request commitments or execution budget are invalid");
         }
         profileCommitment = Objects.requireNonNull(profileCommitment, "profileCommitment");
+        sdkProof = Objects.requireNonNull(sdkProof, "sdkProof");
         approvalId = Objects.requireNonNull(approvalId, "approvalId"); policyCommitment = Objects.requireNonNull(policyCommitment, "policyCommitment");
         receipt = Objects.requireNonNull(receipt, "receipt"); result = Objects.requireNonNull(result, "result"); failureCode = Objects.requireNonNull(failureCode, "failureCode");
         profileCommitment.ifPresent(value -> {if(!value.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Profile commitment is invalid");});

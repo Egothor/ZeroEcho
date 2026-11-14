@@ -58,6 +58,7 @@ module zeroecho.pki {
     exports zeroecho.pki.api.orch;
     exports zeroecho.pki.api.policy;
     exports zeroecho.pki.api.hybrid;
+    exports zeroecho.pki.api.hybrid.sdk;
     exports zeroecho.pki.api.profile;
     exports zeroecho.pki.api.publication;
     exports zeroecho.pki.api.request;

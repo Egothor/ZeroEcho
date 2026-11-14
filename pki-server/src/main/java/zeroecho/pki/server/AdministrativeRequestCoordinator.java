@@ -76,6 +76,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     private static final String APPROVAL_PREFIX = "admin-request.";
     private final ServerRealmContext realm;
     private final ServerControlStore control;
+    private final HybridSdkAdmissionService sdkAdmission;
     private final Clock clock;
     private final java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService;
     private final Semaphore wake = new Semaphore(0);
@@ -92,9 +93,19 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     /** Composes the signing observation boundary without changing durable request authority. */
     AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock,
             java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService) {
+        this(realm,control,clock,signingService,"https://unconfigured.invalid:443",HybridSdkAdmissionService.unsupported());
+    }
+
+    /** Internal server-owned SDK resolver composition; the default constructor remains unsupported. */
+    AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock,
+            java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService,
+            String sdkOrigin, HybridSdkAdmissionService.Resolver sdkResolver) {
         this.realm=realm; this.control=control; this.clock=clock;
         this.signingService=java.util.Objects.requireNonNull(signingService,"signingService");
+        this.sdkAdmission=new HybridSdkAdmissionService(control,clock,this,sdkOrigin,sdkResolver);
     }
+
+    HybridSdkAdmissionService sdkAdmission() { return sdkAdmission; }
 
     /**
      * Starts bounded startup recovery and decision-driven dispatch for the permanent server.
@@ -120,8 +131,18 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
      */
     public AdministrativeRequest submit(String requestId, ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, Duration executionTimeout) {
+        return submitInternal(requestId,request,envelope,executionTimeout,Optional.empty());
+    }
+
+    AdministrativeRequest submitSdk(String requestId, ServerOperationGateway.Request request,
+            PkiOperationValue.ObjectValue envelope, Duration executionTimeout, HybridSdkAdmissionService.Acceptance proof) {
+        return submitInternal(requestId,request,envelope,executionTimeout,Optional.of(proof));
+    }
+
+    private AdministrativeRequest submitInternal(String requestId, ServerOperationGateway.Request request,
+            PkiOperationValue.ObjectValue envelope, Duration executionTimeout, Optional<HybridSdkAdmissionService.Acceptance> proof) {
         if (requestId == null || !requestId.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")) throw new IllegalArgumentException("Invalid request ID");
-        var admission = realm.gateway().assessAdministrativeRequest(request);
+        var admission = proof.map(value->value.context().admission()).orElseGet(()->realm.gateway().assessAdministrativeRequest(request));
         if (!supports(realm.gateway().descriptor(admission.request().operation()))) throw new IllegalArgumentException("DURABLE_REQUEST_UNSUPPORTED");
         long timeout = executionTimeout.toMillis();
         if (timeout < 1 || timeout > 120000) throw new IllegalArgumentException("Invalid execution budget");
@@ -131,15 +152,15 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             if (old.isPresent()) {
                 var retained=old.orElseThrow();
                 if (!retained.actor().principalId().equals(request.principalId())) throw new SecurityException("Request unavailable");
-                if (!retained.targetCommitment().equals(target)) throw new Conflict();
+                if (!retained.targetCommitment().equals(target) || !retained.sdkProof().equals(proof.map(HybridSdkAdmissionService.Acceptance::proof))) throw new Conflict();
                 return retained;
             }
         }
-        var validatedProfile = profileCommitment(admission.request());
-        try { validateBeforeApproval(admission); }
+        var validatedProfile = proof.map(value->sdkProfileCommitment(value.context().target())).orElseGet(()->profileCommitment(admission.request()));
+        try { if(proof.isEmpty())validateBeforeApproval(admission); }
         catch(UnsupportedOperationException unsupported) { throw new ValidationFailure("PURE_VALIDATION_UNAVAILABLE"); }
         catch(IllegalStateException precondition) { throw new ValidationFailure("OPERATION_PRECONDITION_FAILED"); }
-        if (!validatedProfile.equals(profileCommitment(admission.request()))) {
+        if (proof.isEmpty() && !validatedProfile.equals(profileCommitment(admission.request()))) {
             throw new ValidationFailure("PROFILE_CHANGED");
         }
         Instant now = now();
@@ -147,7 +168,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         Optional<String> approvalId=admission.policy().map(v->APPROVAL_PREFIX+requestId);
         var retained = new AdministrativeRequest(requestId,0,request.operation().name(),envelope,actor,admission.request().resource().scope(),
                 admission.commitment(),validatedProfile,target,approvalId.isPresent()?AdministrativeRequest.State.WAITING_APPROVAL:AdministrativeRequest.State.READY,
-                now,now,timeout,approvalId,admission.policy().map(ApprovalService.Policy::commitment),Optional.empty(),Optional.empty(),Optional.empty());
+                now,now,timeout,approvalId,admission.policy().map(ApprovalService.Policy::commitment),Optional.empty(),Optional.empty(),Optional.empty(),proof.map(HybridSdkAdmissionService.Acceptance::proof));
+        if(proof.isPresent())validateActor(retained);
         Optional<ApprovalService.Request> approval=admission.policy().map(policy->new ApprovalService.Request(approvalId.orElseThrow(),request.operation().name(),
                 admission.commitment(),admission.request().resource().scope(),request.principalId(),now,now.plus(policy.lifetime()),policy,policy.commitment(),
                 ApprovalService.State.PENDING,List.of(),Optional.empty()));
@@ -155,7 +177,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             var raced=find(requestId);
             if (raced.isPresent()) {
                 if (!raced.orElseThrow().actor().principalId().equals(request.principalId())) throw new SecurityException("Request unavailable");
-                if (!raced.orElseThrow().targetCommitment().equals(target)) throw new Conflict();
+                if (!raced.orElseThrow().targetCommitment().equals(target) || !raced.orElseThrow().sdkProof().equals(proof.map(HybridSdkAdmissionService.Acceptance::proof))) throw new Conflict();
                 return raced.orElseThrow();
             }
             int count=0,pending=0;
@@ -166,7 +188,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
                     if(count>=MAXIMUM_RETAINED || pending>=MAXIMUM_PENDING) throw new Capacity();
                 }
             }
-            control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(retained),Optional.empty(),Optional.empty(),approval);
+            control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(retained),Optional.empty(),Optional.empty(),approval,
+                    proof.map(HybridSdkAdmissionService.Acceptance::consumption));
         }
         audit(retained);
         wake(); return retained;
@@ -243,7 +266,11 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         try {
             var current=find(id).orElseThrow();
             if(current.terminal()) return current;
-            if(current.receipt().isPresent()) return reconcile(current);
+            if(current.receipt().isPresent()) {
+                if(current.sdkProof().isPresent())sdkAdmission.validateIntegrity(current);
+                return reconcile(current);
+            }
+            if(current.sdkProof().isPresent())sdkAdmission.validateRetained(current,request(current),current.envelope());
             if(current.state()==AdministrativeRequest.State.DISPATCHING || current.state()==AdministrativeRequest.State.RUNNING) {
                 return finish(current,AdministrativeRequest.State.RECONCILIATION_REQUIRED,Optional.empty(),"SYNCHRONOUS_OUTCOME_UNKNOWN");
             }
@@ -268,6 +295,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
                         var exact=find(id).orElseThrow();
                         if(exact.revision()!=current.revision()) throw new IllegalStateException("Request changed during preparation");
                         var live=realm.gateway().assessAdministrativeRequest(request(exact));requireSameAdmission(exact,live);validateActor(exact);
+                        if(exact.sdkProof().isPresent())sdkAdmission.validateRetained(exact,request(exact),exact.envelope());
                         cancellation.throwIfCancelled();
                         current=claim(exact,Optional.of(prepared.receipt()));
                     }
@@ -381,6 +409,13 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         }
     }
     private AdministrativeRequest failCurrent(String id,String code) { var v=find(id).orElseThrow();return finish(v,AdministrativeRequest.State.FAILED,Optional.empty(),code); }
+    private static Optional<String> sdkProfileCommitment(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame target) {
+        String policy=new String(target.field(12),java.nio.charset.StandardCharsets.UTF_8);
+        if(!policy.matches("sha256:[0-9a-f]{64}"))throw new ValidationFailure("SDK_PROFILE_COMMITMENT_UNSUPPORTED");
+        String id=new String(target.field(10),java.nio.charset.StandardCharsets.UTF_8);
+        long version=java.nio.ByteBuffer.wrap(target.field(11)).getLong();
+        return Optional.of(ApprovalService.digest(id+"|"+version+"|"+policy.substring(7)));
+    }
     private Optional<String> profileCommitment(ServerOperationGateway.Request request) {
         if (!(request.operation() instanceof AdministrativeOperation.Signing signing)) return Optional.empty();
         Optional<String> profile = switch(signing.operation()) {
@@ -431,17 +466,21 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         return new ServerOperationGateway.Request(realm.configuration().realmId(),value.actor().principalId(),value.actor().mode(),value.actor().transportPrincipalId(),value.actor().evidence(),
                 decoded.operation(),decoded.resource(),Permission.Relationship.ANY,decoded.context(),value.approvalId(),value.requestId());
     }
-    private void validateActor(AdministrativeRequest value) {
-        if(!realm.principal(value.actor().principalId()).enabled()) throw new SecurityException("Requester disabled");
+    private void validateActor(AdministrativeRequest value) { validateActor(value.actor()); }
+    void requireSdkActor(ServerOperationGateway.Request request) {
+        validateActor(new AdministrativeRequest.Actor(request.principalId(),request.authenticationMode(),request.transportPrincipalId(),request.credentialEvidence()));
+    }
+    private void validateActor(AdministrativeRequest.Actor actor) {
+        if(!realm.principal(actor.principalId()).enabled()) throw new SecurityException("Requester disabled");
         var active=authentication; if(active==null) return;
-        if(active.mode()!=value.actor().mode()) throw new SecurityException("Authentication policy changed");
+        if(active.mode()!=actor.mode()) throw new SecurityException("Authentication policy changed");
         if(active.mode()==AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) {
-            String proxy=value.actor().transportPrincipalId().orElseThrow(()->new SecurityException("Proxy unavailable"));
+            String proxy=actor.transportPrincipalId().orElseThrow(()->new SecurityException("Proxy unavailable"));
             if(!active.trustedProxyPrincipalIds().contains(proxy)) throw new SecurityException("Proxy unavailable");realm.gateway().validateForwardingPrincipal(proxy);
         }
-        var evidence=value.actor().evidence().orElseThrow(()->new SecurityException("Credential evidence unavailable"));
+        var evidence=actor.evidence().orElseThrow(()->new SecurityException("Credential evidence unavailable"));
         var mappings=active.mode()==AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY?active.forwardedClientMappings():active.directClientMappings();
-        if(mappings.stream().noneMatch(m->m.principalId().equals(value.actor().principalId()) && (m.certificateSha256().filter(evidence.certificateSha256()::equals).isPresent()
+        if(mappings.stream().noneMatch(m->m.principalId().equals(actor.principalId()) && (m.certificateSha256().filter(evidence.certificateSha256()::equals).isPresent()
                 || m.subjectPublicKeyInfoSha256().filter(evidence.legacySpkiSha256()::contains).isPresent() || m.issuerSerialSha256().filter(evidence.issuerSerialSha256()::equals).isPresent()))) throw new SecurityException("Credential mapping removed");
     }
     private boolean canRead(AdministrativeRequest value,String viewer) {
@@ -474,7 +513,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     }
     private AdministrativeRequest update(AdministrativeRequest old,AdministrativeRequest.State state,Optional<SigningAcceptanceReceipt> receipt,
             Optional<PkiOperationValue.ObjectValue> result,Optional<String> code) {
-        return new AdministrativeRequest(old.requestId(),old.revision()+1,old.operation(),old.envelope(),old.actor(),old.scope(),old.operationCommitment(),old.profileCommitment(),old.targetCommitment(),state,old.createdAt(),now(),old.executionTimeoutMillis(),old.approvalId(),old.policyCommitment(),receipt,result,code);
+        return new AdministrativeRequest(old.requestId(),old.revision()+1,old.operation(),old.envelope(),old.actor(),old.scope(),old.operationCommitment(),old.profileCommitment(),old.targetCommitment(),state,old.createdAt(),now(),old.executionTimeoutMillis(),old.approvalId(),old.policyCommitment(),receipt,result,code,old.sdkProof());
     }
     private static ApprovalService.Request approvalState(ApprovalService.Request old,ApprovalService.State state,Optional<String> result) {
         return new ApprovalService.Request(old.approvalId(),old.operationId(),old.operationCommitment(),old.scope(),old.requesterPrincipalId(),old.createdAt(),old.expiresAt(),old.policy(),old.policyCommitment(),state,old.decisions(),result);
