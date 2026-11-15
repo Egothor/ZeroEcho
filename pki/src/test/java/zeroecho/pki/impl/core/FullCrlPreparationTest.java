@@ -152,7 +152,7 @@ class FullCrlPreparationTest {
             for (IssuerGenerationState state : List.of(IssuerGenerationState.ACTIVE, IssuerGenerationState.RETIRED)) {
                 Fixture fixture = new Fixture();
                 fixture.ca = ca(caState, List.of(GENERATION, CURRENT));
-                fixture.generation = generation(state, fixture.commitment(), fixture.commitment());
+                fixture.generation = generation(state, fixture.commitment(), registry().commitment());
                 AtomicInteger clockReads = new AtomicInteger();
                 Instant evaluation = NOW.plusNanos(750_000_000);
                 Clock clock = new Clock() {
@@ -177,7 +177,7 @@ class FullCrlPreparationTest {
                 assertEquals(SIGNATURE, prepared.signatureBinding().algorithmIdentity());
                 assertEquals(X509AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11"), prepared.signatureIdentifier());
                 assertEquals("cn=issuer", prepared.scope().canonicalIssuerName());
-                assertEquals(5, fixture.reads.get());
+                assertEquals(6, fixture.reads.get()); // The exact issuer sidecar adds one bounded public metadata read.
                 byte[] copy = prepared.issuerDer();
                 copy[0] ^= 1;
                 assertArrayEquals(certificate, prepared.issuerDer());
@@ -194,7 +194,7 @@ class FullCrlPreparationTest {
         }
         for (IssuerGenerationState state : List.of(IssuerGenerationState.COMPROMISED, IssuerGenerationState.DISABLED)) {
             Fixture fixture = new Fixture();
-            fixture.generation = generation(state, fixture.commitment(), fixture.commitment());
+            fixture.generation = generation(state, fixture.commitment(), registry().commitment());
             assertRejected(fixture, "ISSUER_UNAVAILABLE");
         }
     }
@@ -269,13 +269,14 @@ class FullCrlPreparationTest {
         for (boolean policy : new boolean[] {false, true}) {
             Fixture fixture = new Fixture();
             fixture.generation = generation(IssuerGenerationState.ACTIVE,
-                    policy ? "00".repeat(32) : fixture.commitment(), policy ? fixture.commitment() : "00".repeat(32));
-            assertRejected(fixture, "PROFILE_BINDING_INCONSISTENT");
+                    policy ? "00".repeat(32) : fixture.commitment(), policy ? registry().commitment() : "00".repeat(32));
+            assertRejected(fixture, policy ? "PROFILE_BINDING_INCONSISTENT" : "ISSUER_CRYPTOGRAPHIC_BINDING_INCONSISTENT");
         }
         Fixture fixture = new Fixture();
         ImportedCertificateProfileVersion original = fixture.profile;
         fixture.profile = new ImportedCertificateProfileVersion(new CertificateProfileRef("root", 1, new byte[32]),
                 CertificateProfileDefinition.SCHEMA_VERSION, original.definition(), original.canonicalJson(), NOW);
+        // The issuer tuple is unchanged; the profile lookup alone returns a different immutable reference.
         assertRejected(fixture, "PROFILE_BINDING_INCONSISTENT");
         fixture.profile = new ImportedCertificateProfileVersion(original.reference(), CertificateProfileDefinition.SCHEMA_VERSION,
                 original.definition(), new byte[] {1}, NOW);
@@ -399,6 +400,7 @@ class FullCrlPreparationTest {
     private static final class Fixture {
         private final AtomicInteger reads = new AtomicInteger();
         private IssuerGeneration generation;
+        private zeroecho.pki.api.ca.IssuerCryptographicBinding binding;
         private CaRecord ca = ca(CaState.ACTIVE, List.of(GENERATION, CURRENT));
         private Credential credential;
         private ImportedCertificateProfileVersion profile;
@@ -420,7 +422,10 @@ class FullCrlPreparationTest {
             profile = new ImportedCertificateProfileVersion(reference, CertificateProfileDefinition.SCHEMA_VERSION,
                     definition, canonical, NOW);
             credential = credential(CREDENTIAL, reference, der);
-            generation = generation(IssuerGenerationState.ACTIVE, commitment(), commitment());
+            generation = generation(IssuerGenerationState.ACTIVE, commitment(), registry().commitment());
+            binding = IssuerBindingResolver.create(generation, der, "x509", SIGNATURE, Optional.empty(),
+                    ignored -> new zeroecho.pki.api.EncodedObject(Encoding.DER, key.getPublic().getEncoded()), runtime(true, true),
+                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, reference, registry().commitment());
         }
 
         private String commitment() { return HexFormat.of().formatHex(profile.reference().canonicalSha256()); }
@@ -447,6 +452,7 @@ class FullCrlPreparationTest {
                         if (method.getName().equals(missing)) { return Optional.empty(); }
                         return switch (method.getName()) {
                             case "getIssuerGeneration" -> Optional.of(generation);
+                            case "getIssuerCryptographicBinding" -> { assertEquals(GENERATION, args[0]); yield Optional.of(binding); }
                             case "getCa" -> { assertEquals(generation.authorityId(), args[0]); yield Optional.of(ca); }
                             case "getCredential" -> { assertEquals(generation.credentialId(), args[0]); yield Optional.of(credential); }
                             case "getRevocation" -> Optional.empty();

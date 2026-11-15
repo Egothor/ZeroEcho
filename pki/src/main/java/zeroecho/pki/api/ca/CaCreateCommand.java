@@ -57,10 +57,11 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param keyRef     existing managed key, nonblank strict UTF-8, at most 1,048,576 bytes
  * @param altKeyRef  optional alternative key reference for hybrid certificate issuance;
  *                   when absent the profile's default alternative key reference is used
+ * @param signatureAlgorithmId exact outgoing primary signature selection, empty for legacy default
  * @param attributes universal attributes (may be empty but not null)
  */
 public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
-        Optional<KeyRef> altKeyRef, AttributeSet attributes) {
+        Optional<KeyRef> altKeyRef, AttributeSet attributes, Optional<String> signatureAlgorithmId) {
 
     /**
      * Creates a CA create command.
@@ -74,6 +75,9 @@ public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String p
         CaCommandInputs.key(keyRef);
         CaCommandInputs.required(altKeyRef);
         CaCommandInputs.required(attributes);
+        if (signatureAlgorithmId == null || signatureAlgorithmId.filter(String::isBlank).isPresent()) {
+            throw new IllegalArgumentException("Invalid outgoing signature selection");
+        }
     }
 
     /**
@@ -90,6 +94,20 @@ public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String p
     public CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
             AttributeSet attributes) {
         this(formatId, subjectRef, profileId, keyRef, Optional.empty(), attributes);
+    }
+
+    /**
+     * Preserves the existing default-algorithm creation input.
+     * @param formatId credential format
+     * @param subjectRef managed CA subject
+     * @param profileId active root profile
+     * @param keyRef existing managed primary subject key
+     * @param altKeyRef optional existing alternative subject key
+     * @param attributes caller attributes
+     */
+    public CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
+            Optional<KeyRef> altKeyRef, AttributeSet attributes) {
+        this(formatId, subjectRef, profileId, keyRef, altKeyRef, attributes, Optional.empty());
     }
 
     /** Returns a diagnostic representation without command coordinates or attributes. */

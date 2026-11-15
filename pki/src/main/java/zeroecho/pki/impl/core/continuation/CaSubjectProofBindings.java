@@ -34,6 +34,8 @@
 
 package zeroecho.pki.impl.core.continuation;
 
+import zeroecho.pki.api.KeyRef;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
@@ -60,14 +62,27 @@ public final class CaSubjectProofBindings {
         DomainCommandEncoding.Decoded proof = IntermediateSigningCommand.validate(command);
         if (!command.field(18).equals(step.operationId().value())
                 || !command.field(6).equals(step.subjectKeyRef().value())
-                || !proof.field(8).equals(step.algorithmId()) || !envelope.algorithmId().equals(step.algorithmId())) { throw invalid(); }
+                || !proof.field(8).equals(step.algorithmId())
+                || command.fields().size() == 23 && !envelope.algorithmId().equals(step.algorithmId())) { throw invalid(); }
+        if (command.fields().size() == 25) {
+            var outgoing = CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+            var incoming = CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14)));
+            if (!incoming.primary().signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())) throw invalid();
+            if (!outgoing.primary().keyRef().equals(step.subjectKeyRef())
+                    || !outgoing.primary().signatureAlgorithm().canonicalForm().equals(step.algorithmId())
+                    || !java.util.HexFormat.of().formatHex(outgoing.primary().signatureAlgorithmIdentifier().bytes()).equals(proof.field(9))) {
+                throw invalid();
+            }
+        }
         ManagedKeyProofBindings.requireCandidate(proof, step.challenge());
         return proof;
     }
 
     /**
      * Reads both bounded live candidates and rejects challenge, intent, algorithm,
-     * SPKI or final-TBS substitution. No signature verification/provider call occurs.
+     * SPKI or final-TBS substitution. Current commands independently bind the
+     * child's outgoing proof and the parent's incoming certificate algorithm.
+     * No signature verification/provider call occurs.
      * @param store owning content store
      * @param envelope accepted/prospective composite envelope
      * @throws IOException if content integrity or canonical DER validation fails
@@ -90,8 +105,9 @@ public final class CaSubjectProofBindings {
         StreamingDerReader.CertificateTbsLayout layout = new StreamingDerReader()
                 .inspectUnsignedCertificateTbs(tbs, 1_048_576);
         byte[] spki = decoded.spki();
-        byte[] algorithm = ManagedKeyProofCommand.hex(proof.field(9), 1,
-                ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
+        byte[] algorithm = command.fields().size() == 25
+                ? CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14))).primary().signatureAlgorithmIdentifier().bytes()
+                : ManagedKeyProofCommand.hex(proof.field(9), 1, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
         if (!Arrays.equals(tbs, layout.subjectPublicKeyInfoOffset(),
                     Math.addExact(layout.subjectPublicKeyInfoOffset(), layout.subjectPublicKeyInfoLength()),
                     spki, 0, spki.length)

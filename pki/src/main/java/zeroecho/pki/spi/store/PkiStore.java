@@ -405,6 +405,21 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
     Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId);
 
     /**
+     * Atomically persists a generation and its complete immutable cryptographic authority.
+     * @param generation exact immutable generation
+     * @param binding verified public signing evidence for that generation
+     */
+    void putIssuerGeneration(IssuerGeneration generation, zeroecho.pki.api.ca.IssuerCryptographicBinding binding);
+
+    /**
+     * Reads the immutable signing authority without inferring a realm default.
+     * @param issuerId exact generation identity
+     * @return complete binding, or empty if absent
+     */
+    Optional<zeroecho.pki.api.ca.IssuerCryptographicBinding> getIssuerCryptographicBinding(PkiId issuerId);
+
+
+    /**
      * Irreversibly reserves the next CRL number for an authoritative issuer generation.
      * The store resolves the generation and its credential, derives the canonical
      * issuer Name/SPKI scope and validates its permanent logical-authority owner.

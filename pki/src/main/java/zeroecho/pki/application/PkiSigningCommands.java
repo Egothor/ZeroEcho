@@ -51,6 +51,16 @@ import zeroecho.pki.api.signing.SemanticSigningOperation;
  */
 public interface PkiSigningCommands {
     /**
+     * Resolves omitted creation selectors before command commitment or approval.
+     * @param operation caller-selected immutable command
+     * @return creation command with explicit configured default, or unchanged other command
+     * @throws UnsupportedOperationException if creation normalization is unavailable
+     */
+    default PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
+        throw new UnsupportedOperationException("Creation normalization unavailable");
+    }
+
+    /**
      * Checks known CA creation, CA lifecycle and ordinary leaf issuance/lifecycle
      * inputs without staging content, allocating a serial, signing, accepting work
      * or publishing metadata. Status-generation commands fail explicitly.
@@ -94,6 +104,42 @@ public interface PkiSigningCommands {
     PreparedSemanticSigningRequest prepare(PkiSigningOperation operation,
             AccessContext access, Optional<IssuanceExecutionEvidence> evidence,
             CancellationSignal cancellation);
+
+    /**
+     * Evaluates a dual-subject SDK request without signing, serial allocation or staging.
+     * @param operation selected logical issuer and active profile
+     * @param access independently authorized invocation context
+     * @param request parsed exact client request; both client keys remain public
+     * @param frozenValidity empty for initial evaluation, exact absolute bounds for revalidation
+     * @param cancellation cooperative cancellation
+     * @return exact public policy and issuer coordinates for F7
+     * @throws UnsupportedOperationException if this service lacks SDK issuance
+     * @throws zeroecho.pki.api.PkiException if input or frozen policy is invalid
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation.IssueCredential operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK preview unavailable");
+    }
+
+    /**
+     * Revalidates retained dual proof and freezes the same absolute validity before staging.
+     * @param operation immutable issuer/profile/request selection
+     * @param access separately authenticated and authorized invocation context
+     * @param request exact parsed SDK request
+     * @param approval trusted retained approval context; independently reverified
+     * @param evidence optional trusted publication evidence
+     * @param cancellation cooperative cancellation
+     * @return caller-owned prepared request awaiting adoption or discard
+     * @throws UnsupportedOperationException if this service lacks SDK issuance
+     * @throws zeroecho.pki.api.PkiException if proof or frozen policy differs
+     */
+    default PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK preparation unavailable");
+    }
 
     /**
      * Projects an authoritative completed semantic observation to stable safe metadata.

@@ -68,7 +68,7 @@ import zeroecho.pkix.cert.CertificateBuilder;
 
 final class AlternativeRootPublicationTest {
     @ParameterizedTest
-    @ValueSource(strings = {"missing", "partial", "empty", "changed-signature", "wrong-key", "changed-algorithm", "changed-spki"})
+    @ValueSource(strings = {"missing", "partial", "empty", "changed-signature", "wrong-key", "changed-algorithm", "changed-spki", "changed-native-algorithm"})
     void validPrimaryCannotPublishInvalidAlternative(String fault, @TempDir Path root) throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         KeyPair primary = KeyPairGenerator.getInstance("Ed25519", "BC").generateKeyPair();
@@ -88,7 +88,7 @@ final class AlternativeRootPublicationTest {
             if (!fault.equals("partial")) {
                 Signature signer = Signature.getInstance("Ed25519", "BC");
                 signer.initSign((fault.equals("wrong-key") || fault.equals("changed-spki") ? other : alternative).getPrivate());
-                signer.update(builder.buildAlternativeSignatureTbs());
+                signer.update(builder.buildAlternativeSignatureTbs(algorithm));
                 byte[] value = signer.sign();
                 if (fault.equals("empty")) { value = new byte[0]; }
                 if (fault.equals("changed-signature") || fault.equals("changed-spki")) { value[0] ^= 1; }
@@ -105,9 +105,19 @@ final class AlternativeRootPublicationTest {
                     base.subjectPolicy(), base.certificatePolicy(), base.algorithmBindingPolicy(), Optional.empty(),
                     new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm(), "alt"));
             CertificateProfileRef profile = RootCreationFixture.install(store, definition);
+            var outgoingPrimary = new zeroecho.pki.api.ca.IssuerKeyBinding(new zeroecho.pki.api.KeyRef("root-key"),
+                    BootstrapAlgorithmIdentities.ED25519_PUBLIC_KEY, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
+                    new EncodedObject(Encoding.DER, Pkix.encodeAlgorithmIdentifier(fault.equals("changed-native-algorithm")
+                            ? AlgorithmIdentifier.absent("1.3.101.113") : algorithm)),
+                    java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(primary.getPublic().getEncoded())));
+            var outgoingAlternative = new zeroecho.pki.api.ca.IssuerKeyBinding(new zeroecho.pki.api.KeyRef("alt"),
+                    BootstrapAlgorithmIdentities.ED25519_PUBLIC_KEY, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
+                    new EncodedObject(Encoding.DER, Pkix.encodeAlgorithmIdentifier(algorithm)),
+                    java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(alternative.getPublic().getEncoded())));
+            String outgoing = new CaOutgoingBinding(outgoingPrimary, Optional.of(outgoingAlternative), "0".repeat(64)).encodeForSubject();
             DomainContinuationTemplate template = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, "CREATE_ROOT",
                     "x509", "CN=Root", "alt-root", "root-key", "alt-root", "1", HexFormat.of().formatHex(profile.canonicalSha256()),
-                    before.toString(), after.toString(), "1", "CN=Root", "policy", "binding", "root-ca");
+                    before.toString(), after.toString(), "1", "CN=Root", "policy", "binding", "root-ca", outgoing);
             CaContinuationPublisher publisher = new CaContinuationPublisher(store, new DomainContinuationPublisher(store));
             assertThrows(DomainContinuationPublisher.PostconditionFailure.class, () -> publisher.publish(
                     DomainCommandEncoding.decode(template.command()), new EncodedObject(Encoding.DER, certificate.getEncoded()), null));

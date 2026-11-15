@@ -437,6 +437,7 @@ class FullCrlEntrySourceTest {
     private static final class Fixture {
         private final Map<PkiId, Credential> credentials = new HashMap<>();
         private final Map<PkiId, IssuerGeneration> generations = new HashMap<>();
+        private final Map<PkiId, zeroecho.pki.api.ca.IssuerCryptographicBinding> bindings = new HashMap<>();
         private final Map<String, byte[]> content = new HashMap<>();
         private final List<RevocationRecord> records = new ArrayList<>();
         private final List<Snapshot> snapshots = new ArrayList<>();
@@ -478,8 +479,17 @@ class FullCrlEntrySourceTest {
                     new IssuerRef(authority, generation, new PkiId("path:" + name)), new SubjectRef(dn),
                     new Validity(BEFORE, AFTER), Integer.toString(serial), new PkiId("key:" + name),
                     new CaProfileBinding(PROFILE), CredentialStatus.ISSUED, reference, new SimpleAttributeSet()));
-            generations.put(generation, new IssuerGeneration(generation, authority, id, new KeyRef("key:" + name),
-                    IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32)));
+            IssuerGeneration exact = new IssuerGeneration(generation, authority, id, new KeyRef("key:" + name),
+                    IssuerGenerationState.ACTIVE, "00".repeat(32),
+                    zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
+            generations.put(generation, exact);
+            byte[] spki = zeroecho.pkix.Pkix.subjectPublicKeyInfo(zeroecho.pkix.Pkix.parseCertificate(der));
+            bindings.put(generation, IssuerBindingResolver.create(exact, der, "x509",
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, Optional.empty(),
+                    referenceKey -> new zeroecho.pki.api.EncodedObject(Encoding.DER, spki),
+                    PkiTestRuntime.signingAuthority(new EndEntityIssuancePreparationTest.CountingProvider()),
+                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, PROFILE,
+                    zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT));
             return generation;
         }
 
@@ -519,6 +529,7 @@ class FullCrlEntrySourceTest {
                         }
                         case "getCredential" -> Optional.ofNullable(credentials.get(args[0]));
                         case "getIssuerGeneration" -> Optional.ofNullable(generations.get(args[0]));
+                        case "getIssuerCryptographicBinding" -> Optional.ofNullable(bindings.get(args[0]));
                         case "getCa" -> { authorityReads++; yield Optional.of(liveAuthority); }
                         case "stagedContent" -> contentStore;
                         case "requireRevocationPrefix" -> {

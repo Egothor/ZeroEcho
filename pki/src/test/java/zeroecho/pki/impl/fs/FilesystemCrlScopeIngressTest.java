@@ -151,7 +151,7 @@ class FilesystemCrlScopeIngressTest {
                     new IssuerRef(AUTHORITY, parent.generation().issuerId(), parent.path().pathId()), true);
             store.putCredential(child);
             IssuerGeneration generation = generation(childId, child);
-            store.putIssuerGeneration(generation);
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
             IssuerChainPath path = IssuerChainPath.create(childId, generation.issuerId(),
                     List.of(child.credentialId(), parent.credential().credentialId()));
             store.putIssuerChainPath(path);
@@ -163,7 +163,7 @@ class FilesystemCrlScopeIngressTest {
             store.putCredential(childLeaf);
             assertEquals(childLeaf.credentialId(), store.getCredentialByIssuerAndSerial(generation.issuerId(),
                     BigInteger.valueOf(17)).orElseThrow().credentialId());
-            assertThrows(IllegalStateException.class, () -> store.putIssuerGeneration(generation(new PkiId("ca:thief"), child)));
+            assertThrows(IllegalStateException.class, () -> zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation(new PkiId("ca:thief"), child), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256));
         }
     }
 
@@ -283,7 +283,7 @@ class FilesystemCrlScopeIngressTest {
                     new IssuerRef(AUTHORITY, parent.generation().issuerId(), parent.path().pathId()), true);
             store.putCredential(child);
             IssuerGeneration generation = generation(childAuthority, child);
-            store.putIssuerGeneration(generation);
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
             IssuerChainPath path = IssuerChainPath.create(childAuthority, generation.issuerId(),
                     List.of(child.credentialId(), parent.credential().credentialId()));
             store.putIssuerChainPath(path);
@@ -368,13 +368,13 @@ class FilesystemCrlScopeIngressTest {
             Credential unrelated = new Credential(new PkiId("unrelated-generation-fixture"), new FormatId("generation-test-binary"),
                     parent.credential().issuerRef(), new SubjectRef("unrelated"), new Validity(BEFORE, AFTER), "1",
                     new PkiId("key:unrelated"), new CaProfileBinding(PROFILE), CredentialStatus.ISSUED,
-                    PkiTestRuntime.stageCredential(store, new byte[] {1, 2}), new SimpleAttributeSet());
+                    PkiTestRuntime.stageCredential(store, PkiTestRuntime.readContent(store, parent.credential().content())), new SimpleAttributeSet());
             store.putCredential(unrelated);
             int populated = 0;
             long baseline = -1;
             for (int population : new int[] {10, 100, 1000}) {
                 while (populated < population) {
-                    store.putIssuerGeneration(generation(new PkiId("ca:population:" + populated++), unrelated));
+                    zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation(new PkiId("ca:population:" + populated++), unrelated), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
                 }
                 Credential leaf = credential(store, "population-leaf-" + population,
                         certificate(subjectKey, child.certificate().getSubject(), rootKey, "CN=Population Leaf", population),
@@ -580,7 +580,7 @@ class FilesystemCrlScopeIngressTest {
                 new IssuerRef(AUTHORITY, parent.generation().issuerId(), parent.path().pathId()), true);
         store.putCredential(credential);
         IssuerGeneration generation = generation(new PkiId("ca:path-child"), credential);
-        store.putIssuerGeneration(generation);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         IssuerChainPath path = IssuerChainPath.create(generation.authorityId(), generation.issuerId(),
                 List.of(credential.credentialId(), parent.credential().credentialId()));
         return new Authority(credential, generation, path, certificate);
@@ -599,7 +599,7 @@ class FilesystemCrlScopeIngressTest {
         Credential credential = credential(store, id, certificate(key, new X500Name(name), key, name, serial),
                 new IssuerRef(authority, issuerId, path.pathId()), true);
         store.putCredential(credential);
-        if (publishGeneration) { store.putIssuerGeneration(generation(authority, credential)); }
+        if (publishGeneration) { zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation(authority, credential), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256); }
         return credential;
     }
 
@@ -703,14 +703,14 @@ class FilesystemCrlScopeIngressTest {
         Credential credential = credential(store, id.value(), certificate, new IssuerRef(authorityId, issuerId, path.pathId()), true);
         store.putCredential(credential);
         IssuerGeneration generation = generation(authorityId, credential);
-        store.putIssuerGeneration(generation);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         store.putIssuerChainPath(path);
         return new Authority(credential, generation, path, certificate);
     }
 
     private static IssuerGeneration generation(PkiId authority, Credential credential) {
         return new IssuerGeneration(IssuerGeneration.idFor(authority, credential.credentialId()), authority, credential.credentialId(),
-                new KeyRef("key:test"), IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32));
+                new KeyRef("key:test"), IssuerGenerationState.ACTIVE, "00".repeat(32), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
     }
 
     private static Credential leaf(FilesystemPkiStore store, Authority authority, String name, int serial) throws Exception {

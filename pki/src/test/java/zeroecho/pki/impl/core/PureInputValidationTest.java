@@ -160,10 +160,10 @@ class PureInputValidationTest {
                 "1", new PkiId("public:issuer"), new CaProfileBinding(new CertificateProfileRef("root", 1, new byte[32])),
                 CredentialStatus.ISSUED, PkiTestRuntime.stageCredential(store, encoded), SimpleAttributeSet.builder().build());
         IssuerGeneration generation = new IssuerGeneration(IssuerGeneration.idFor(CA, credentialId), CA, credentialId,
-                KEY, IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32));
+                KEY, IssuerGenerationState.ACTIVE, "00".repeat(32), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
         IssuerChainPath path = IssuerChainPath.create(CA, generation.issuerId(), List.of(credentialId));
         store.putCredential(credential);
-        store.putIssuerGeneration(generation);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         store.putIssuerChainPath(path);
         store.putCa(new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, KEY, credential.subjectRef(), List.of(generation.issuerId()),
                 generation.issuerId(), path.pathId()));

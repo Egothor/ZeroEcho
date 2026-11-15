@@ -175,6 +175,36 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    @Test void rejectsChildProofAlgorithmDifferentFromCapturedOutgoingBinding(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = open(root)) {
+            IntermediateCreationFixture fixture = new IntermediateCreationFixture();
+            fixture.initialize(store, 1);
+            DomainSigningRequest original = fixture.preparer(store).prepare(IntermediateCreationFixture.ACCESS,
+                    fixture.command("CN=Child"), fixture.submission(store), IntermediateCreationFixture.TTL, CancellationSignal.NONE);
+            var decoded = DomainCommandEncoding.decode(original.domainTemplate().command());
+            var fields = new java.util.ArrayList<>(decoded.fields());
+            var outgoing = zeroecho.pki.impl.core.continuation.CaOutgoingBinding.decodeForSubject(fields.get(23), new zeroecho.pki.api.KeyRef(fields.get(6)));
+            var key = outgoing.primary();
+            var wrong = new zeroecho.pki.api.ca.IssuerKeyBinding(key.keyRef(), key.publicKeyAlgorithm(),
+                    zeroecho.core.alg.BootstrapAlgorithmIdentities.ED448_SIGNATURE,
+                    new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.DER,
+                            zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(zeroecho.pkix.AlgorithmIdentifier.absent("1.3.101.113"))),
+                    key.subjectSpkiSha256());
+            fields.set(23, new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(wrong, outgoing.alternative(),
+                    outgoing.authorityCommitment()).encodeForSubject());
+            var template = DomainCommandEncoding.correlatedTemplate(original.domainTemplate().kind(),
+                    original.domainTemplate().correlationId().orElseThrow(), decoded.operation(), fields.toArray(String[]::new));
+            var substituted = new DomainSigningRequest(original.operationId(), original.accessContext(), original.keyRef(),
+                    original.algorithmId(), original.signatureEncoding(), original.content(), original.ttl(), template, original.proofStep());
+            var failure = assertThrows(IllegalArgumentException.class, () -> semantic(store, fixture).prepare(substituted, IntermediateCreationFixture.CA));
+            assertEquals("CA subject proof binding differs", failure.getMessage());
+            assertTrue(store.getSignWorkflow(original.operationId()).isEmpty());
+            assertEquals(0, fixture.provider.dispatches);
+            store.stagedContent().retireUnownedContent(original.content());
+            store.stagedContent().retireUnownedContent(original.proofStep().orElseThrow().challenge());
+        }
+    }
+
     @Test void substitutedCandidateRejectsAtAdoptionAndAcceptanceBeforeDispatch(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();

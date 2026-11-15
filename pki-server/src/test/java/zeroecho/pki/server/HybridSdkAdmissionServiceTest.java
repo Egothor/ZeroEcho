@@ -53,7 +53,7 @@ class HybridSdkAdmissionServiceTest {
         byte[] primary,alternative;
         try(var realm=ServerRealmContext.open(config.realm(),PkiSessionRuntimeDependencies.none())) {
             var control=AdministrativeWorkflowFixture.control(realm);
-            try(var coordinator=coordinator(realm,control,clock)) {
+            try(var coordinator=conditionalCoordinator(realm,control,clock)) {
                 var request=request(realm); var challenge=coordinator.sdkAdmission().challenge(request,envelope(),keys.csr(),new byte[32]);
                 intent=challenge.intentId();primary=sign(keys.primary(),"SHA384withECDSA",challenge.primary().encode());
                 alternative=sign(keys.alternative(),"ML-DSA-87",new HybridSdkFrame(2,challenge.primary().fields()).encode());
@@ -63,6 +63,8 @@ class HybridSdkAdmissionServiceTest {
                 assertTrue(control.approvals(0,10).values().isEmpty());
                 var retained=coordinator.sdkAdmission().accept(intent,"sdk-one",request,envelope(),Duration.ofSeconds(30),primary,alternative);
                 assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,retained.state());
+                assertTrue(retained.receipt().isEmpty());
+                assertEquals(ApprovalService.State.PENDING,control.approvals(0,10).values().getFirst().state());
                 assertEquals(intent,retained.sdkProof().orElseThrow().intentId());
                 assertEquals(1,control.approvals(0,10).values().size());
                 assertEquals(retained,AdministrativeRequestCodec.decode(AdministrativeRequestCodec.encode(retained)));
@@ -98,6 +100,14 @@ class HybridSdkAdmissionServiceTest {
                 var noEvidence=new ServerOperationGateway.Request(request.realmId(),request.principalId(),request.authenticationMode(),Optional.empty(),Optional.empty(),
                         request.operation(),request.resource(),request.relationship(),request.context(),Optional.empty(),"fixture");
                 assertThrows(SecurityException.class,()->coordinator.sdkAdmission().challenge(noEvidence,envelope(),keys.csr(),new byte[32]));
+                try(var denied=new AdministrativeRequestCoordinator(realm,control,clock,()->{throw new AssertionError("must not sign");},"https://example.invalid:443",(r,e,subject)->{
+                    var value=context(realm,r,e);var admission=value.admission();
+                    return new HybridSdkAdmissionService.Context(new ServerOperationGateway.Admission(admission.request(),admission.commitment(),admission.policy(),
+                            new AuthorizationEngine.Decision(AuthorizationEngine.Code.NO_MATCHING_GRANT,false)),value.target());
+                })) {
+                    assertThrows(IllegalArgumentException.class,()->denied.sdkAdmission().challenge(request,envelope(),keys.csr(),new byte[32]));
+                }
+                assertTrue(control.protocolRecords(ServerControlStore.HYBRID_SDK_INTENT,0,10).values().isEmpty());
                 var challenge=coordinator.sdkAdmission().challenge(request,envelope(),keys.csr(),new byte[32]);
                 byte[] first=sign(keys.primary(),"SHA384withECDSA",challenge.primary().encode());
                 byte[] second=sign(keys.alternative(),"ML-DSA-87",new HybridSdkFrame(2,challenge.primary().fields()).encode());
@@ -227,6 +237,14 @@ class HybridSdkAdmissionServiceTest {
         }
     }
 
+    private static AdministrativeRequestCoordinator conditionalCoordinator(ServerRealmContext realm,ServerControlStore control,Clock clock) {
+        return new AdministrativeRequestCoordinator(realm,control,clock,()->{throw new UnsupportedOperationException("fixture never signs");},
+                "https://example.invalid:443",(request,envelope,subject)->{
+                    var resolved=context(realm,request,envelope);var admitted=resolved.admission();
+                    return new HybridSdkAdmissionService.Context(new ServerOperationGateway.Admission(admitted.request(),admitted.commitment(),admitted.policy(),
+                            new AuthorizationEngine.Decision(AuthorizationEngine.Code.APPROVAL_REQUIRED,false)),resolved.target());
+                });
+    }
     private static AdministrativeRequestCoordinator coordinator(ServerRealmContext realm,ServerControlStore control,Clock clock) {
         return new AdministrativeRequestCoordinator(realm,control,clock,()->{throw new UnsupportedOperationException("fixture never signs");},
                 "https://example.invalid:443",(request,envelope,subject)->context(realm,request,envelope));

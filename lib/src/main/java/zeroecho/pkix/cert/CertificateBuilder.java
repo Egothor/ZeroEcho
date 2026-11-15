@@ -197,13 +197,13 @@ public interface CertificateBuilder {
     byte[] buildTbs(AlgorithmIdentifier signatureAlgorithm);
 
     /**
-     * Encodes the standardized alternative-signature input, omitting both the
+     * Encodes the LEGACY BC pre-TBS alternative-signature input, omitting both the
      * {@code TBSCertificate.signature} field and the {@code AltSignatureValue}
      * extension. Other configured fields and extension order are preserved.
      * The alternative algorithm and subject alternative public key extensions
      * must be supplied by the caller. No signer is invoked.
      * Time and auxiliary memory are linear in the encoded body size.
-     * @return newly allocated canonical DER pre-TBS sequence
+     * @return newly allocated canonical DER legacy BC pre-TBS sequence
      * @throws UnsupportedOperationException if this provider lacks this capability
      * @throws IllegalArgumentException if configured fields or extensions are invalid
      * @throws NullPointerException if a required field is missing
@@ -211,6 +211,20 @@ public interface CertificateBuilder {
      */
     default byte[] buildAlternativeSignatureTbs() {
         throw new UnsupportedOperationException("Alternative-signature pre-TBS is unavailable");
+    }
+
+    /**
+     * Builds the X.509 Cor.3 defect 450 alternative-signature input: a DER
+     * SEQUENCE containing the complete TBS without altSignatureValue, followed
+     * by the native signature AlgorithmIdentifier. The inner algorithm remains.
+     * @param nativeAlgorithm exact native inner and outer signature algorithm
+     * @return independent canonical DER transcript, without outer signature bits
+     * @throws UnsupportedOperationException if the provider lacks this capability
+     * @throws IllegalArgumentException if certificate fields or extensions are invalid
+     * @throws NullPointerException if a required input is absent
+     */
+    default byte[] buildAlternativeSignatureTbs(AlgorithmIdentifier nativeAlgorithm) {
+        throw new UnsupportedOperationException("Cor3 alternative-signature input is unavailable");
     }
 
     /**

@@ -52,10 +52,11 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param subjectRef normalized subject reference for the intermediate
  * @param profileId  nonblank strict UTF-8 profile id, at most 256 bytes
  * @param keyRef     managed subject key, strict UTF-8 at most 1,048,576 bytes
+ * @param signatureAlgorithmId exact outgoing primary signature selection, empty for legacy default
  * @param attributes universal attributes (may be empty but not null)
  */
 public record IntermediateCreateCommand(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
-        KeyRef keyRef, AttributeSet attributes) {
+        KeyRef keyRef, AttributeSet attributes, java.util.Optional<String> signatureAlgorithmId) {
 
     /**
      * Creates an intermediate create command.
@@ -69,6 +70,23 @@ public record IntermediateCreateCommand(FormatId formatId, PkiId issuerCaId, Sub
         CaCommandInputs.profile(profileId);
         CaCommandInputs.key(keyRef);
         CaCommandInputs.required(attributes);
+        if (signatureAlgorithmId == null || signatureAlgorithmId.filter(String::isBlank).isPresent()) {
+            throw new IllegalArgumentException("Invalid outgoing signature selection");
+        }
+    }
+
+    /**
+     * Preserves the existing default-algorithm creation input.
+     * @param formatId credential format
+     * @param issuerCaId selected parent CA
+     * @param subjectRef managed CA subject
+     * @param profileId active intermediate profile
+     * @param keyRef existing managed primary subject key
+     * @param attributes caller attributes
+     */
+    public IntermediateCreateCommand(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
+            KeyRef keyRef, AttributeSet attributes) {
+        this(formatId, issuerCaId, subjectRef, profileId, keyRef, attributes, java.util.Optional.empty());
     }
 
     /** Returns a diagnostic representation without command coordinates or attributes. */

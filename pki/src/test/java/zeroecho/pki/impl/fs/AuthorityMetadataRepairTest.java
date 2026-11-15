@@ -74,7 +74,7 @@ final class AuthorityMetadataRepairTest {
         Credential credential;
         IssuerGeneration generation;
         try (FilesystemPkiStore store = open(root)) {
-            Credential original = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "large-record", "profile");
+            Credential original = FilesystemPkiStoreTest.TestObjects.minimalGenericIssuerCredential(store, "large-record");
             SimpleAttributeSet attributes = new SimpleAttributeSet(List.of(
                     new SimpleAttributeSet.Entry(new AttributeId("first"), List.of(new AttributeValue.StringValue("a".repeat(600_000)))),
                     new SimpleAttributeSet.Entry(new AttributeId("second"), List.of(new AttributeValue.StringValue("b".repeat(600_000))))));
@@ -84,7 +84,7 @@ final class AuthorityMetadataRepairTest {
             store.putCredential(credential);
             generation = generation(new PkiId("authority:" + "a".repeat(100_000)), credential.credentialId(), new KeyRef("k".repeat(1_048_576)));
             requireAboveOldReadCeiling(FsCodec.encode(FsCodec.ISSUER_GENERATION, generation));
-            store.putIssuerGeneration(generation);
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
             assertEquals(generation, store.getIssuerGeneration(generation.issuerId()).orElseThrow());
             assertArrayEquals(FsCodec.encode(FsCodec.CREDENTIAL, credential),
                     FsCodec.encode(FsCodec.CREDENTIAL, store.getCredential(credential.credentialId()).orElseThrow()));
@@ -113,10 +113,10 @@ final class AuthorityMetadataRepairTest {
                 store.putCa(ca);
                 victim = store.getCredential(store.getIssuerGeneration(ca.currentIssuanceIssuerId()).orElseThrow().credentialId()).orElseThrow();
                 if (damage.equals("unselected")) {
-                    victim = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "unselected", "profile");
+                    victim = FilesystemPkiStoreTest.TestObjects.minimalGenericIssuerCredential(store, "unselected");
                     store.putCredential(victim);
                     IssuerGeneration additional = generation(ca.caId(), victim.credentialId(), new KeyRef("additional-key"));
-                    store.putIssuerGeneration(additional);
+                    zeroecho.pki.testkit.IssuerBindingFixture.put(store, additional, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
                     List<PkiId> members = new ArrayList<>(ca.issuerIds());
                     members.add(additional.issuerId());
                     ca = new CaRecord(ca.caId(), ca.kind(), ca.state(), ca.issuerKeyRef(), ca.subjectRef(), members,
@@ -149,11 +149,11 @@ final class AuthorityMetadataRepairTest {
     @Test void startupStreamsLargeKeyReferencesWithinFixedHeap(@TempDir Path temporary) throws Exception {
         Path root = temporary.resolve("store");
         try (FilesystemPkiStore store = open(root)) {
-            Credential credential = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "heap", "profile");
+            Credential credential = FilesystemPkiStoreTest.TestObjects.minimalGenericIssuerCredential(store, "heap");
             store.putCredential(credential);
             KeyRef shared = new KeyRef("k".repeat(1_048_576));
             for (int index = 0; index < 128; index++) {
-                store.putIssuerGeneration(generation(new PkiId("heap-authority:" + index), credential.credentialId(), shared));
+                zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation(new PkiId("heap-authority:" + index), credential.credentialId(), shared), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
             }
         }
         String executable = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win") ? "java.exe" : "java";
@@ -179,7 +179,7 @@ final class AuthorityMetadataRepairTest {
 
     private static IssuerGeneration generation(PkiId authority, PkiId credential, KeyRef key) {
         return new IssuerGeneration(IssuerGeneration.idFor(authority, credential), authority, credential, key,
-                IssuerGenerationState.ACTIVE, "0".repeat(64), "1".repeat(64));
+                IssuerGenerationState.ACTIVE, "0".repeat(64), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
     }
 
     private static FilesystemPkiStore open(Path root) { return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()); }

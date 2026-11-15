@@ -89,8 +89,8 @@ public final class SemanticIssuanceFixture {
                 new PkiId("key:public"), new CaProfileBinding(new CertificateProfileRef("profile", 1, new byte[32])),
                 CredentialStatus.ISSUED, PkiTestRuntime.stageCredential(store, certificate.getEncoded()), new SimpleAttributeSet());
         store.putCredential(credential);
-        store.putIssuerGeneration(new IssuerGeneration(issuerId(generation), AUTHORITY, credential.credentialId(), KEY,
-                IssuerGenerationState.ACTIVE, "1".repeat(64), "1".repeat(64)));
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, new IssuerGeneration(issuerId(generation), AUTHORITY, credential.credentialId(), KEY,
+                IssuerGenerationState.ACTIVE, "0".repeat(64), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         store.putIssuerChainPath(path(generation));
         return credential;
     }

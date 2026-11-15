@@ -1241,9 +1241,9 @@ final class EndEntitySigningLifecycleTest {
                 PkiTestRuntime.stageCredential(store, certificate.getEncoded()), SimpleAttributeSet.builder().build());
         store.putCredential(credential);
         IssuerGeneration generation = new IssuerGeneration(IssuerGeneration.idFor(CA, id), CA, id, keyRef,
-                IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32));
+                IssuerGenerationState.ACTIVE, "00".repeat(32), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
         IssuerChainPath path = IssuerChainPath.create(CA, generation.issuerId(), List.of(id));
-        store.putIssuerGeneration(generation);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         store.putIssuerChainPath(path);
         List<PkiId> generations = store.getCa(CA).map(previous -> {
             java.util.ArrayList<PkiId> ids = new java.util.ArrayList<>(previous.issuerIds());

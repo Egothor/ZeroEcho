@@ -384,7 +384,7 @@ final class EndEntityIssuancePreparationTest {
     }
 
     @Test
-    void rejectsInactiveIssuerInconsistentKeyAndIncompatibleAlgorithm(@TempDir Path root) throws Exception {
+    void rejectsInactiveIssuerAndInconsistentKeyWhileRetainingBoundAlgorithm(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             CaRecord original = store.getCa(CA).orElseThrow();
             store.putCa(new CaRecord(CA, original.kind(), CaState.DISABLED, KEY, original.subjectRef(),
@@ -401,7 +401,10 @@ final class EndEntityIssuancePreparationTest {
                     });
             assertRejected(altered, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
             store.putCa(original);
-            assertRejected(store, BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm());
+            var frozen = preparer(readOnly(store), CLOCK, BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm())
+                    .prepare(ACCESS, request(csr), CancellationSignal.NONE);
+            assertEquals(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, frozen.signature());
+            assertEquals(KEY, frozen.keyRef());
         }
     }
 
@@ -543,7 +546,8 @@ final class EndEntityIssuancePreparationTest {
             assertEquals(CA, workflow.envelope().fairnessAuthorityId());
             assertEquals(KEY, workflow.envelope().keyRef());
             DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(workflow.envelope().outer().orElseThrow().command());
-            command.requireFields(23);
+            command.requireFields(24);
+            assertEquals(store.getIssuerCryptographicBinding(new PkiId(command.field(1))).orElseThrow().commitment(), command.field(23));
             assertEquals("", command.field(15));
             assertEquals("", command.field(16));
             assertTrue(IssuanceExecutionEvidence.decode(DomainAttributeEncoding.decode(command.field(22))).isEmpty());
@@ -698,7 +702,8 @@ final class EndEntityIssuancePreparationTest {
             service.accept(prepared);
             SignWorkflowStore.OuterCommand outer = store.getSignWorkflow(prepared.receipt().operationId()).orElseThrow()
                     .envelope().outer().orElseThrow();
-            DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command()).requireFields(23);
+            DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command()).requireFields(24);
+            assertEquals(store.getIssuerCryptographicBinding(new PkiId(command.field(1))).orElseThrow().commitment(), command.field(23));
             assertEquals("ISSUE_END_ENTITY", command.operation());
             assertEquals("1", command.field(5));
             assertEquals(java.util.HexFormat.of().formatHex(input.intent().expectedProfile().canonicalSha256()), command.field(6));
@@ -829,8 +834,7 @@ final class EndEntityIssuancePreparationTest {
     @Test
     void configuredPrivateAndParameterizedBindingsPassRealPreparationAndAcceptance(@TempDir Path root) throws Exception {
         for (boolean privateBinding : new boolean[] {true, false}) {
-            try (FilesystemPkiStore store = fixture(root.resolve(privateBinding ? "private" : "pss"))) {
-                String signature = (privateBinding ? BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256
+            String signature = (privateBinding ? BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256
                         : BootstrapAlgorithmIdentities.RSA_PSS_SHA256).canonicalForm();
                 BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
                 zeroecho.pki.testkit.AcceptancePrivateBinding extension = new zeroecho.pki.testkit.AcceptancePrivateBinding();
@@ -843,6 +847,11 @@ final class EndEntityIssuancePreparationTest {
                 List<zeroecho.pki.api.algorithm.X509AlgorithmBinding> descriptors = new java.util.ArrayList<>(StandardX509Bindings.descriptors());
                 if (privateBinding) { descriptors.add(zeroecho.pki.testkit.AcceptancePrivateBinding.DESCRIPTOR); }
                 zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry registry = ImmutableX509AlgorithmBindingRegistry.create(descriptors);
+            var presentation = privateBinding ? zeroecho.pkix.AlgorithmIdentifier.absent(extension.oid())
+                    : new zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter(authority.bindings())
+                            .encode(authority.resolveIdentity(signature), zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            try (FilesystemPkiStore store = fixture(root.resolve(privateBinding ? "private" : "pss"),
+                    authority, registry, signature, presentation)) {
                 String profileId = PROFILE;
                 if (privateBinding) {
                     zeroecho.pki.api.profile.CertificateProfileDefinition base = store.requireActiveProfile(PROFILE).definition();
@@ -860,6 +869,11 @@ final class EndEntityIssuancePreparationTest {
                     profiles.activateProfile(profileId, 1);
                     EndEntityIssuanceRequest rejected = new EndEntityIssuanceRequest(CA, csr, profileId, Optional.empty());
                     assertThrows(PkiException.class, () -> preparer(store, CLOCK, signature).prepare(ACCESS, rejected, CancellationSignal.NONE));
+                }
+                if (privateBinding) {
+                    // The issuer was created with this presentation; another leaf profile cannot retarget it to standard RSA.
+                    assertThrows(PkiException.class, () -> new EndEntitySigningPreparation(store, CLOCK, authority, verifier, registry, signature)
+                            .validate(ACCESS, new EndEntityIssuanceRequest(CA, csr, PROFILE, Optional.empty()), Optional.empty(), CancellationSignal.NONE));
                 }
                 EndEntitySigningPreparation preparation = new EndEntitySigningPreparation(store, CLOCK, authority, verifier, registry, signature);
                 CountingProvider provider = new CountingProvider(signature);
@@ -913,7 +927,15 @@ final class EndEntityIssuancePreparationTest {
     }
 
     private static FilesystemPkiStore fixture(Path root) throws Exception {
-        FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK);
+        return fixture(root, null, null, null, null);
+    }
+
+    private static FilesystemPkiStore fixture(Path root, X509AuthoritySnapshot authority,
+            zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry registry, String signature,
+            zeroecho.pkix.AlgorithmIdentifier presentation) throws Exception {
+        var options = authority == null ? FsPkiStoreOptions.defaults() : FsPkiStoreOptions.defaults()
+                .withIssuerAlgorithmEvidenceVerifier(IssuerBindingResolver.publicEvidenceVerifier(authority));
+        FilesystemPkiStore store = new FilesystemPkiStore(root, options, CLOCK);
         DefaultProfileService profiles = new DefaultProfileService(store, CLOCK, new InMemoryAuditSink());
         profiles.importProfile(H7ProfileDocuments.noSanOrEkuProfile());
         profiles.activateProfile(PROFILE, 1L);
@@ -931,10 +953,21 @@ final class EndEntityIssuancePreparationTest {
                 "1", new PkiId("public:issuer"), new CaProfileBinding(new CertificateProfileRef("root", 1, new byte[32])),
                 CredentialStatus.ISSUED, PkiTestRuntime.stageCredential(store, encoded), SimpleAttributeSet.builder().build());
         IssuerGeneration generation = new IssuerGeneration(IssuerGeneration.idFor(CA, credentialId), CA, credentialId,
-                KEY, IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32));
+                KEY, IssuerGenerationState.ACTIVE, "00".repeat(32), registry == null
+                        ? zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT : registry.commitment());
         IssuerChainPath path = IssuerChainPath.create(CA, generation.issuerId(), List.of(credentialId));
         store.putCredential(credential);
-        store.putIssuerGeneration(generation);
+        if (authority == null) {
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
+        } else {
+            var primary = new zeroecho.pki.api.ca.IssuerKeyBinding(KEY, BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY,
+                    authority.resolveIdentity(signature), new zeroecho.pki.api.EncodedObject(Encoding.DER, zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(presentation)),
+                    java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(key.getPublic().getEncoded())));
+            var binding = IssuerBindingResolver.createCaptured(generation, encoded, "x509", primary, Optional.empty(),
+                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE,
+                    ((CaProfileBinding) credential.profileBinding()).reference(), registry.commitment());
+            store.putIssuerGeneration(generation, binding);
+        }
         store.putIssuerChainPath(path);
         store.putCa(new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, KEY, credential.subjectRef(), List.of(generation.issuerId()),
                 generation.issuerId(), path.pathId()));

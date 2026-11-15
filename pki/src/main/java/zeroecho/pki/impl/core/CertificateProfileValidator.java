@@ -96,6 +96,13 @@ final class CertificateProfileValidator {
         return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority, false);
     }
 
+    /* package */ static ValidatedCertificateRequest validateFrozen(VerifiedIssuanceCandidate candidate,
+            CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
+            Instant evaluationTime, X509AuthoritySnapshot authority, Optional<Validity> exactValidity) {
+        requireCanonicalRequestAttributes(candidate.request());
+        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority, false, exactValidity);
+    }
+
     /**
      * Validates a request reconstructed from an already-issued certificate for
      * renewal or reissue. Applies the identical deny-by-default subject, SAN,
@@ -111,12 +118,20 @@ final class CertificateProfileValidator {
     private static ValidatedCertificateRequest validatePolicy(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority, boolean reconstructed) {
+        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority,
+                reconstructed, Optional.empty());
+    }
+
+    private static ValidatedCertificateRequest validatePolicy(VerifiedIssuanceCandidate candidate,
+            CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
+            Instant evaluationTime, X509AuthoritySnapshot authority, boolean reconstructed, Optional<Validity> exactValidity) {
         ParsedCertificationRequest request = candidate.request();
         LeafCertificatePolicy policy = profile.leafPolicy();
         List<SubjectRdn> approvedSubject = validateSubject(request, profile, reconstructed);
         List<SubjectAlternativeName> approvedSans = validateSans(request, policy, approvedSubject.isEmpty());
         requireSubjectKeyAllowed(candidate.exactPublicKey(), policy.allowedSubjectKeyAlgorithmIds(), authority);
-        Validity validity = approvedValidity(candidate, request, profile, issuerCredential, evaluationTime);
+        Validity validity = exactValidity.map(value -> approvedFrozenValidity(value, profile, issuerCredential, evaluationTime))
+                .orElseGet(() -> approvedValidity(candidate, request, profile, issuerCredential, evaluationTime));
         boolean sanCritical = approvedSubject.isEmpty()
                 || policy.subjectAlternativeNamePolicy().criticalWithNonemptySubject();
         SubjectRef approvedSubjectRef = new SubjectRef(approvedSubject.isEmpty() ? "x509:empty-subject"
@@ -321,6 +336,19 @@ final class CertificateProfileValidator {
             return new SubjectKeyAlgorithm("SLH-DSA", "SLH-DSA");
         }
         throw reject("SUBJECT_KEY_ALGORITHM_UNKNOWN");
+    }
+
+    private static Validity approvedFrozenValidity(Validity exact, CertificateProfile profile,
+            Credential issuer, Instant now) {
+        Duration duration = Duration.between(exact.notBefore(), exact.notAfter());
+        if (!exact.notBefore().equals(exact.notBefore().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
+                || !exact.notAfter().equals(exact.notAfter().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
+                || duration.isZero() || duration.isNegative() || duration.compareTo(profile.maximumValidity()) > 0
+                || !exact.notAfter().isAfter(now) || exact.notBefore().isBefore(issuer.validity().notBefore())
+                || exact.notAfter().isAfter(issuer.validity().notAfter())) {
+            throw reject("FROZEN_VALIDITY_INVALID");
+        }
+        return exact;
     }
 
     // The public exception deliberately redacts temporal arithmetic details.

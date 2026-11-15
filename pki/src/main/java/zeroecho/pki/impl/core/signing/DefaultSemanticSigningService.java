@@ -552,6 +552,29 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         }
     }
 
+    @Override public String creationSignatureAlgorithm() {
+        return root.orElseThrow(() -> new UnsupportedOperationException("Root creation unavailable")).creationSignatureAlgorithm();
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            EndEntityIssuanceRequest request, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdk(access, request, parsed, frozenValidity, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK preview failed", failure); }
+    }
+
+    @Override public PreparedSemanticSigningRequest prepareSdk(AccessContext access, EndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try {
+            return adoptLeaf(endEntity.prepareSdk(access, request, parsed, approval, signing.newSubmissionId(),
+                    signing.signingTtl(), evidence, cancellation), cancellation);
+        } catch (IOException failure) { throw new PkiException("SDK preparation failed", failure); }
+    }
+
     @Override public PreparedSemanticSigningRequest prepareEndEntity(AccessContext access,
             EndEntityIssuanceRequest request, Optional<IssuanceExecutionEvidence> evidence,
             CancellationSignal cancellation) {
@@ -714,7 +737,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
      * This method does not restage content or invoke the provider. Domain-specific
      * CSR, profile and issuer policy validation must have finished beforehand.
      *
-     * @param request exact typed internal preparation, using the session algorithm and TTL
+     * @param request exact typed internal preparation, retaining its selected algorithm and the session TTL
      * @param fairnessAuthorityId trusted scheduling coordinate, never authorization scope
      * @return opaque single-use preparation
      * @throws IllegalArgumentException if signing configuration or key binding differs

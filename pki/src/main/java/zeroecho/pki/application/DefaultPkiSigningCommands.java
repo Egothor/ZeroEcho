@@ -96,6 +96,46 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         this.requireOpen = Objects.requireNonNull(requireOpen, "requireOpen");
     }
 
+    @Override public PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
+        requireOpen.run(); Objects.requireNonNull(operation, "operation");
+        if (operation instanceof PkiSigningOperation.CreateAuthority value && value.signatureAlgorithmId().isEmpty()) {
+            return new PkiSigningOperation.CreateAuthority(value.formatId(), value.subjectRef(), value.profileId(),
+                    value.keyRef(), Optional.of(service.creationSignatureAlgorithm()));
+        }
+        if (operation instanceof PkiSigningOperation.CreateIntermediate value && value.signatureAlgorithmId().isEmpty()) {
+            return new PkiSigningOperation.CreateIntermediate(value.formatId(), value.issuerCaId(), value.subjectRef(), value.profileId(),
+                    value.keyRef(), Optional.of(service.creationSignatureAlgorithm()));
+        }
+        return operation;
+    }
+
+    @Override
+    public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation.IssueCredential operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+        requireOpen.run();
+        return service.previewSdk(access, sdkRequest(operation, request), request, frozenValidity, cancellation);
+    }
+
+    @Override
+    public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        requireOpen.run();
+        return service.prepareSdk(access, sdkRequest(operation, request), request, approval, evidence, cancellation);
+    }
+
+    private static EndEntityIssuanceRequest sdkRequest(PkiSigningOperation.IssueCredential operation,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request) {
+        if (!operation.requestId().equals(request.primary().requestId())) {
+            throw new IllegalArgumentException("SDK request selection differs from its original signed request");
+        }
+        return new EndEntityIssuanceRequest(operation.issuerCaId(),
+                zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(request.primary()),
+                operation.profileId(), Optional.empty());
+    }
+
     @Override
     public void validate(PkiSigningOperation operation, AccessContext access,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
@@ -107,10 +147,10 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         switch (operation) {
             case PkiSigningOperation.CreateAuthority value -> service.validateRootCreation(access,
                     new CaCreateCommand(value.formatId(), value.subjectRef(), value.profileId(), value.keyRef(),
-                            EMPTY_ATTRIBUTES), cancellation);
+                            Optional.empty(), EMPTY_ATTRIBUTES, value.signatureAlgorithmId()), cancellation);
             case PkiSigningOperation.CreateIntermediate value -> service.validateIntermediateCreation(access,
                     new IntermediateCreateCommand(value.formatId(), value.issuerCaId(), value.subjectRef(),
-                            value.profileId(), value.keyRef().orElseThrow(), EMPTY_ATTRIBUTES), cancellation);
+                            value.profileId(), value.keyRef().orElseThrow(), EMPTY_ATTRIBUTES, value.signatureAlgorithmId()), cancellation);
             case PkiSigningOperation.IssueIntermediateCertificate value -> service.validateIntermediateIssuance(access,
                     new IntermediateCertIssueCommand(value.formatId(), value.issuerCaId(), value.subjectCaId(),
                             value.profileId(), authority(value.subjectCaId()).issuerKeyRef(),
@@ -164,10 +204,10 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         return switch (operation) {
             case PkiSigningOperation.CreateAuthority value -> service.prepareRootCreation(access,
                     new CaCreateCommand(value.formatId(), value.subjectRef(), value.profileId(), value.keyRef(),
-                            EMPTY_ATTRIBUTES), cancellation);
+                            Optional.empty(), EMPTY_ATTRIBUTES, value.signatureAlgorithmId()), cancellation);
             case PkiSigningOperation.CreateIntermediate value -> service.prepareIntermediateCreation(access,
                     new IntermediateCreateCommand(value.formatId(), value.issuerCaId(), value.subjectRef(),
-                            value.profileId(), value.keyRef().orElseThrow(), EMPTY_ATTRIBUTES), cancellation);
+                            value.profileId(), value.keyRef().orElseThrow(), EMPTY_ATTRIBUTES, value.signatureAlgorithmId()), cancellation);
             case PkiSigningOperation.IssueIntermediateCertificate value -> service.prepareIntermediateIssuance(access,
                     new IntermediateCertIssueCommand(value.formatId(), value.issuerCaId(), value.subjectCaId(),
                             value.profileId(), authority(value.subjectCaId()).issuerKeyRef(),

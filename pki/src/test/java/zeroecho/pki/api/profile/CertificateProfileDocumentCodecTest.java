@@ -571,6 +571,34 @@ final class CertificateProfileDocumentCodecTest {
         assertTrue(records.isEmpty());
     }
 
+    @Test
+    void preservesManagedCanonicalBytesAndSeparatesRequestedSubjectKeySource() {
+        var managed = withHybrid(caDefinition("managed-alt", CertificateProfileKind.ROOT_CA, 1),
+                new zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature("selected-alt", "managed-subject"));
+        String oldCanonical = canonical(managed);
+        String legacyMode = "\"hybridMode\":{\"type\":\"ALT_SIGNATURE\",\"altSignatureAlgorithmId\":\"selected-alt\",\"altKeyRef\":\"managed-subject\"}";
+        assertTrue(oldCanonical.contains(legacyMode));
+        assertFalse(oldCanonical.contains("subjectKeySource"));
+        assertEquals(oldCanonical, canonical(parse(oldCanonical.replace("\"altKeyRef\":\"managed-subject\"",
+                "\"altKeyRef\":\"managed-subject\",\"subjectKeySource\":\"MANAGED\""))));
+        var requested = withHybrid(parse(VALID_DOCUMENT),
+                zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature.requested("selected-alt"));
+        String requestJson = canonical(requested);
+        assertTrue(requestJson.contains("\"subjectKeySource\":\"REQUEST\""));
+        assertFalse(requestJson.contains("altKeyRef"));
+        assertEquals(requestJson, canonical(parse(requestJson)));
+        assertCode(requestJson.replace("\"subjectKeySource\":\"REQUEST\"", "\"subjectKeySource\":\"UNKNOWN\""), "SEMANTIC_INVALID");
+        assertCode(requestJson.replace("\"subjectKeySource\":\"REQUEST\"", "\"subjectKeySource\":\"REQUEST\",\"altKeyRef\":\"issuer-key\""), "SEMANTIC_INVALID");
+        assertCode(requestJson.replace("\"type\":\"ALT_SIGNATURE\"", "\"type\":\"TWIN_CERTIFICATE\""), "SEMANTIC_INVALID");
+    }
+
+    private static CertificateProfileDefinition withHybrid(CertificateProfileDefinition base,
+            zeroecho.pki.api.hybrid.HybridCertificateMode mode) {
+        return new CertificateProfileDefinition(base.certificateType(), base.profileId(), base.profileVersion(),
+                base.formatId(), base.displayName(), base.maximumValidity(), base.approvalRequirement(), base.subjectPolicy(),
+                base.certificatePolicy(), base.algorithmBindingPolicy(), base.confirmationPolicy(), mode);
+    }
+
     private static CertificateProfileDefinition parse(String document) {
         return CertificateProfileDocumentCodec.parse(bytes(document));
     }

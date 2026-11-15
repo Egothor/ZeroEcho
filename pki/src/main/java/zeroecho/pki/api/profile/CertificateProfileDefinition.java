@@ -258,8 +258,11 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
      * @throws IllegalArgumentException if the requested hybrid lifecycle is unsupported
      */
     public void requireSupportedIssuance() {
-        if (hybridMode instanceof HybridCertificateMode.AltSignature && certificateType != CertificateProfileKind.ROOT_CA) {
-            throw new IllegalArgumentException("AltSignature is supported only for ROOT_CA profiles");
+        if (hybridMode instanceof HybridCertificateMode.AltSignature alternative) {
+            boolean requested = alternative.subjectKeySource() == HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
+            if (requested != (certificateType == CertificateProfileKind.END_ENTITY)) {
+                throw new IllegalArgumentException("Alternative subject key source does not match certificate kind");
+            }
         }
     }
 }

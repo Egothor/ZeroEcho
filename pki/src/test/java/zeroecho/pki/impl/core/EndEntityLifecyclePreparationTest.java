@@ -450,10 +450,10 @@ final class EndEntityLifecyclePreparationTest {
                 CredentialStatus.ISSUED, PkiTestRuntime.stageCredential(store, encoded), new SimpleAttributeSet());
         KeyRef signingKey = new KeyRef("key:issuer");
         IssuerGeneration generation = new IssuerGeneration(IssuerGeneration.idFor(CA, id), CA, id, signingKey,
-                IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32));
+                IssuerGenerationState.ACTIVE, "00".repeat(32), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
         IssuerChainPath path = IssuerChainPath.create(CA, generation.issuerId(), List.of(id));
         store.putCredential(credential);
-        store.putIssuerGeneration(generation);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         store.putIssuerChainPath(path);
         store.putCa(new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, signingKey, credential.subjectRef(), List.of(generation.issuerId()),
                 generation.issuerId(), path.pathId()));

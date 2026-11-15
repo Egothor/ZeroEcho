@@ -128,6 +128,51 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /* default */ void createGeneration(IssuerGeneration generation,
+            zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException {
+        requireBinding(generation, binding);
+        byte[] encoded = IssuerBindingStorageCodec.encode(binding, generation);
+        try (MetadataTransaction transaction = metadata.beginTransaction()) {
+            create(transaction, AuthorityMetadataCodec.generationKey(generation.issuerId()), FsCodec.encode(FsCodec.ISSUER_GENERATION, generation));
+            create(transaction, AuthorityMetadataCodec.bindingKey(generation.issuerId()), encoded);
+            committed(transaction.commit());
+        }
+    }
+
+    /* default */ static Optional<zeroecho.pki.api.ca.IssuerCryptographicBinding> findBinding(MetadataSnapshot snapshot, PkiId issuerId) throws IOException {
+        try (var record = snapshot.get(AuthorityMetadataCodec.bindingKey(issuerId)).orElse(null)) {
+            return record == null ? Optional.empty() : Optional.of(decodeBinding(snapshot, record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES)));
+        }
+    }
+
+    private static void visitBindings(MetadataSnapshot snapshot, Visitor<zeroecho.pki.api.ca.IssuerCryptographicBinding> visitor) throws IOException {
+        try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.ISSUER_CRYPTO_BINDING), CancellationSignal.NONE)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                try (var record = next.orElseThrow()) {
+                    visitor.accept(decodeBinding(snapshot, record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES)));
+                }
+            }
+        }
+    }
+
+    private static zeroecho.pki.api.ca.IssuerCryptographicBinding decodeBinding(MetadataSnapshot snapshot, MetadataKey key, byte[] bytes) throws IOException {
+        PkiId issuer = IssuerBindingStorageCodec.issuerId(bytes);
+        IssuerGeneration generation = find(snapshot, AuthorityMetadataCodec.generationKey(issuer), AuthorityMetadataCodec::generation)
+                .orElseThrow(AuthorityMetadataStore::invalid);
+        var binding = AuthorityMetadataCodec.binding(key, bytes, generation);
+        return binding;
+    }
+
+    private static void requireBinding(IssuerGeneration generation, zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException {
+        if (!generation.issuerId().equals(binding.issuerId()) || !generation.authorityId().equals(binding.authorityId())
+                || !generation.credentialId().equals(binding.credentialId()) || !generation.signingKeyRef().equals(binding.primary().keyRef())
+                || !generation.profilePolicyCommitment().equals(java.util.HexFormat.of().formatHex(binding.profile().canonicalSha256()))
+                || !generation.x509BindingCommitment().equals(binding.bindingSetCommitment())) {
+            throw invalid();
+        }
+    }
+
     /* default */ void putCa(CaRecord ca, FsHistoryPolicy policy) throws IOException {
         // Each definite retry, if requested by the caller, gets a fresh issued
         // transaction and wall-clock sample. An UNKNOWN attempt is never replayed here.
@@ -333,6 +378,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         IssuerGeneration generation = find(snapshot, AuthorityMetadataCodec.generationKey(generationId), AuthorityMetadataCodec::generation)
                 .orElseThrow(AuthorityMetadataStore::invalid);
         if (!generation.authorityId().equals(authority) || !generation.issuerId().equals(generationId)) { throw invalid(); }
+        requireBinding(generation, findBinding(snapshot, generationId).orElseThrow(() -> new IOException(
+                "Required issuer cryptographic binding is missing; initialize a fresh empty PKI store")));
         return generation;
     }
 
@@ -353,6 +400,9 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
     }
 
     /* default */ static void validateAll(MetadataSnapshot snapshot) throws IOException {
+        visit(snapshot, AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec::generation,
+                generation -> requireGeneration(snapshot, generation.authorityId(), generation.issuerId()));
+        visitBindings(snapshot, binding -> requireGeneration(snapshot, binding.authorityId(), binding.issuerId()));
         // Validate each current prefix once. History only checks count and exact selection.
         for (AuthorityMetadataCodec.Head head : list(snapshot, AuthorityMetadataCodec.CA_CURRENT, AuthorityMetadataCodec::head)) {
             reconstruct(snapshot, head);

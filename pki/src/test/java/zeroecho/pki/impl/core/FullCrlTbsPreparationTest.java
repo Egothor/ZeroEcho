@@ -337,11 +337,18 @@ class FullCrlTbsPreparationTest {
             PkiId credentialId = new PkiId("issuer");
             PkiId generationId = IssuerGeneration.idFor(caId, credentialId);
             IssuerGeneration generation = new IssuerGeneration(generationId, caId, credentialId, new KeyRef("key"),
-                    IssuerGenerationState.ACTIVE, "00".repeat(32), "00".repeat(32));
+                    IssuerGenerationState.ACTIVE, "00".repeat(32),
+                    zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
             issuer = new Credential(credentialId, new FormatId("x509"), new IssuerRef(caId, generationId, new PkiId("path")),
                     new SubjectRef("CN=Issuer"), new Validity(BEFORE, AFTER), "1", new PkiId("key"),
                     new CaProfileBinding(PROFILE), CredentialStatus.ISSUED, content("issuer", exactIssuerDer, DurableContentReference.Lifecycle.PERSISTED),
                     new SimpleAttributeSet());
+            byte[] spki = zeroecho.pkix.Pkix.subjectPublicKeyInfo(zeroecho.pkix.Pkix.parseCertificate(exactIssuerDer));
+            var issuerBinding = IssuerBindingResolver.create(generation, exactIssuerDer, "x509",
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, Optional.empty(),
+                    referenceKey -> new zeroecho.pki.api.EncodedObject(Encoding.DER, spki), authority,
+                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, PROFILE,
+                    zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
             CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, generation.signingKeyRef(), issuer.subjectRef(),
                     List.of(generationId), generationId, new PkiId("path"));
             X509AlgorithmBinding binding = ImmutableX509AlgorithmBindingRegistry.create(StandardX509Bindings.descriptors())
@@ -383,6 +390,7 @@ class FullCrlTbsPreparationTest {
                         case "stagedContent" -> staging;
                         case "getCredential" -> Optional.of(args[0].equals(credentialId) ? issuer : leaf((PkiId) args[0]));
                         case "getIssuerGeneration" -> { assertEquals(generationId, args[0]); yield Optional.of(generation); }
+                        case "getIssuerCryptographicBinding" -> { assertEquals(generationId, args[0]); yield Optional.of(issuerBinding); }
                         case "openRevocationSnapshot" -> { snapshotOpens++; yield snapshot(); }
                         case "reserveCrlNumber" -> {
                             assertEquals(generationId, args[0]);

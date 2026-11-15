@@ -39,6 +39,7 @@ import java.util.Objects;
 /** Immutable process-local runtime dependencies supplied when opening a PKI store. */
 public final class PkiStoreRuntimeDependencies {
     private final Clock clock;
+    private final java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier;
 
     /**
      * Creates dependencies with one authoritative store clock.
@@ -48,6 +49,22 @@ public final class PkiStoreRuntimeDependencies {
      */
     public PkiStoreRuntimeDependencies(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.issuerAlgorithmEvidenceVerifier = java.util.Optional.empty();
+    }
+
+    /**
+     * Creates process-local dependencies with immutable public issuer validation.
+     * @param clock authoritative store clock
+     * @param verifier trusted configured public algorithm verifier; never a private-key resolver
+     */
+    public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier) {
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.issuerAlgorithmEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
+    }
+
+    /** @return optional configured public issuer validation, with no private-key capability */
+    public java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier() {
+        return issuerAlgorithmEvidenceVerifier;
     }
 
     /**

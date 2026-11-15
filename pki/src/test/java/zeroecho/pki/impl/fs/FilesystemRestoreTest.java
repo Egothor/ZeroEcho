@@ -268,13 +268,18 @@ class FilesystemRestoreTest {
     }
 
     @Test void populatedWorkflowAndMetadataArePreserved() throws Exception {
+        zeroecho.pki.api.ca.IssuerGeneration expectedGeneration;
+        zeroecho.pki.api.ca.IssuerCryptographicBinding expectedBinding;
         WorkflowStateRecord workflow = new WorkflowStateRecord(new PkiId("workflow"), "ISSUANCE",
                 new Principal("TEST", "owner"), OrchestrationDurabilityPolicy.DURABLE_MIN_STATE,
                 CLOCK.instant(), CLOCK.instant(), CLOCK.instant().plusSeconds(60), Encoding.BINARY,
                 Optional.of(new EncodedObject(Encoding.BINARY, new byte[] {9})));
         try (FilesystemPkiStore store = open()) {
             store.putWorkflowState(workflow);
-            store.putCa(FilesystemPkiStoreTest.TestObjects.minimalCaRecord(store, "preserved-ca", zeroecho.pki.api.ca.CaState.ACTIVE));
+            var ca = FilesystemPkiStoreTest.TestObjects.minimalCaRecord(store, "preserved-ca", zeroecho.pki.api.ca.CaState.ACTIVE);
+            store.putCa(ca);
+            expectedGeneration = store.getIssuerGeneration(ca.currentIssuanceIssuerId()).orElseThrow();
+            expectedBinding = store.getIssuerCryptographicBinding(ca.currentIssuanceIssuerId()).orElseThrow();
             try (BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         }
         try (FilesystemPkiStore store = open()) {
@@ -285,6 +290,8 @@ class FilesystemRestoreTest {
             assertEquals(workflow.expiresAt(), restored.expiresAt());
             org.junit.jupiter.api.Assertions.assertArrayEquals(workflow.payload().orElseThrow().bytes(), restored.payload().orElseThrow().bytes());
             assertTrue(store.getCa(new PkiId("preserved-ca")).isPresent());
+            assertEquals(expectedGeneration, store.getIssuerGeneration(expectedGeneration.issuerId()).orElseThrow());
+            assertEquals(expectedBinding, store.getIssuerCryptographicBinding(expectedGeneration.issuerId()).orElseThrow());
         }
     }
 

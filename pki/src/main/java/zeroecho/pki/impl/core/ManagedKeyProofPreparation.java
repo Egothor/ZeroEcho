@@ -171,6 +171,11 @@ public final class ManagedKeyProofPreparation {
         return stage(access, request, exact, ttl, cancellation, challenge, template);
     }
 
+    /* default */ ManagedKeyProofPreparation withSignature(String algorithm) {
+        return new ManagedKeyProofPreparation(store, provider, signingAuthority, verificationAuthority, verifier,
+                algorithm, random, pureEdDsaMaximum);
+    }
+
     /** Resolves the exact subject SPKI once and authorizes the shared SIGN/VERIFY binding. */
     /* default */ ProofPlan plan(ManagedKeyProofRequest request, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(request, "request");
@@ -217,6 +222,7 @@ public final class ManagedKeyProofPreparation {
         Objects.requireNonNull(step, "step");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         List<String> metadata = plan.metadata();
+        AlgorithmIdentity signature = signingAuthority.resolveIdentity(metadata.get(8));
         byte[] spki = plan.publicKeyInfo().bytes();
         byte[] nonce = new byte[ManagedKeyProofChallenge.NONCE_BYTES];
         random.nextBytes(nonce);

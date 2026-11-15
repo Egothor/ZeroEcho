@@ -166,7 +166,8 @@ final class RootLifecyclePreparationTest {
             assertEquals(RootCreationFixture.KEY, same.keyRef());
             assertArrayEquals(fixture.otherKey.getPublic().getEncoded(), certificate(store, replacement).getPublicKey().getEncoded());
             assertArrayEquals(fixture.key.getPublic().getEncoded(), certificate(store, same).getPublicKey().getEncoded());
-            assertEquals(lookups + 2, fixture.provider.lookups.get());
+            // Two subject-key reads plus one distinct retained issuer-key validation during replacement.
+            assertEquals(lookups + 3, fixture.provider.lookups.get());
             assertEquals(0, fixture.provider.dispatches.get());
             assertEquals(existing, store.getCa(existing.caId()).orElseThrow());
             store.stagedContent().retireUnownedContent(replacement.content());
@@ -213,7 +214,8 @@ final class RootLifecyclePreparationTest {
                 assertEquals(new X500Principal(existing.subjectRef().value()), certificate.getSubjectX500Principal());
                 assertEquals(certificate.getSubjectX500Principal(), new X500Principal(issued.subjectRef().value()));
             }
-            assertEquals(2, fixture.provider.lookups.get());
+            // Initial root, retained issuer, and replacement each require one public-key read; recovery requires none.
+            assertEquals(3, fixture.provider.lookups.get());
             assertEquals(0, fixture.provider.dispatches.get());
         }
     }

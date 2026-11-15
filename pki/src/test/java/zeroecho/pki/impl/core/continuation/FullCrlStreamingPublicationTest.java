@@ -385,8 +385,8 @@ class FullCrlStreamingPublicationTest {
                 new SubjectRef("CN=Full CRL Issuer"), new Validity(NOW.minusSeconds(60), NOW.plusSeconds(86400)), "1",
                 new PkiId("spki:test"), new CaProfileBinding(PROFILE), CredentialStatus.ISSUED, issuer,
                 SimpleAttributeSet.builder().build()));
-        store.putIssuerGeneration(new IssuerGeneration(generationId, CA, credentialId, KEY,
-                IssuerGenerationState.ACTIVE, HASH, HASH));
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, new IssuerGeneration(generationId, CA, credentialId, KEY,
+                IssuerGenerationState.ACTIVE, HASH, zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), identity);
         X509v2CRLBuilder builder = new X509v2CRLBuilder(name, Date.from(NOW));
         builder.setNextUpdate(Date.from(NOW.plusSeconds(3600)));
         Optional<zeroecho.pki.impl.core.DeltaCrlBase> base = Optional.empty();
@@ -425,7 +425,7 @@ class FullCrlStreamingPublicationTest {
         DurableContentReference tbs = PkiTestRuntime.operationReference(store.stagedContent(), Encoding.DER,
                 crl.toASN1Structure().getTBSCertList().getEncoded());
         PreparedFullCrlTbs prepared = new PreparedFullCrlTbs(CA, generationId, credentialId, PROFILE, issuer, HASH,
-                HASH, HASH, KEY, identity.canonicalForm(), StandardX509Bindings.descriptors().stream()
+                HASH, zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT, KEY, identity.canonicalForm(), StandardX509Bindings.descriptors().stream()
                         .filter(binding -> binding.algorithmIdentity().equals(identity)).findFirst().orElseThrow(),
                 StandardX509Bindings.catalog().resolve(identity, X509AlgorithmRole.SIGNATURE_ALGORITHM), delta ? BigInteger.TWO : BigInteger.ONE,
                 NOW, NOW, NOW.plusSeconds(3600), snapshotId, sourceId, revision, boundary, commitment,

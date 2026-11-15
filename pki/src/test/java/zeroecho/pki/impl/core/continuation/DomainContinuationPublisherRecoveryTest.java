@@ -359,6 +359,29 @@ final class DomainContinuationPublisherRecoveryTest {
     }
 
     @Test
+    void oldCaCommandWithoutCapturedBindingIsRejectedBeforePublication(@TempDir Path root) throws Exception {
+        KeyPair key = rsa();
+        X509CertificateHolder certificate = certificate(key, "CN=Incomplete Frozen Root", BigInteger.TWO);
+        var template = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, "CREATE_ROOT", "x509", "CN=Incomplete Frozen Root",
+                "root", "key:root", "root", "1", DIGEST, NOT_BEFORE.toString(), NOT_AFTER.toString(), "2",
+                "CN=Incomplete Frozen Root", "policy:test", "binding:test");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            var current = publishingCertificate(store, template, "incomplete-frozen-root", certificate);
+            var command = DomainCommandEncoding.decode(current.command());
+            var old = DomainCommandEncoding.template(current.kind(), command.operation(), command.fields().subList(0, 14).toArray(String[]::new));
+            var retained = new DomainContinuationStore.Record(current.operationId(), current.version(), current.kind(), current.correlationId(),
+                    current.state(), current.revision(), current.createdAt(), current.deadline(), old.command(), old.commandCommitment(),
+                    current.signingContent(), current.result(), current.detailCode());
+            var failure = assertThrows(DomainContinuationPublisher.PostconditionFailure.class,
+                    () -> new DomainContinuationPublisher(store).publish(retained, new EncodedObject(Encoding.DER, certificate.getEncoded())));
+            assertEquals("LEGACY_CA_BINDING_RECONCILIATION_REQUIRED", failure.getMessage());
+            assertTrue(store.listCas().isEmpty());
+            assertTrue(store.getIssuerGeneration(zeroecho.pki.api.ca.IssuerGeneration.idFor(
+                    new PkiId(command.field(13)), new PkiId("x509:" + DomainContinuationPublisher.sha256(certificate.getEncoded())))).isEmpty());
+        }
+    }
+
+    @Test
     void signedReservationSurvivesPurgeSnapshotRemintingAndReexport(@TempDir Path root) throws Exception {
         java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(NOT_BEFORE);
         java.time.Clock clock = new java.time.Clock() {
@@ -440,6 +463,28 @@ final class DomainContinuationPublisherRecoveryTest {
         if ("CREATE_ROOT".equals(decoded.operation())) {
             java.util.List<String> fields = new java.util.ArrayList<>(decoded.fields());
             fields.add(DomainCommandEncoding.rootAuthorityId(operation).value());
+            template = DomainCommandEncoding.template(template.kind(), decoded.operation(), fields.toArray(String[]::new));
+            decoded = DomainCommandEncoding.decode(template.command());
+        }
+        if (template.kind() == DomainContinuationStore.Kind.CA) {
+            var fields = new java.util.ArrayList<>(decoded.fields());
+            var adapter = new zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter(zeroecho.pki.impl.framework.x509.StandardX509Bindings.catalog());
+            byte[] spki = certificate.getSubjectPublicKeyInfo().getEncoded();
+            var keyIdentity = adapter.decode(zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(spki),
+                    zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            var outgoingSignature = root ? adapter.decode(zeroecho.pkix.Pkix.parseAlgorithmIdentifier(certificate.getSignatureAlgorithm().getEncoded()),
+                    zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SIGNATURE_ALGORITHM)
+                    : zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE; // These manual intermediate fixtures explicitly use Ed25519 subject keys.
+            var key = new zeroecho.pki.api.ca.IssuerKeyBinding(new zeroecho.pki.api.KeyRef(decoded.field(root ? 3 : 6)),
+                    keyIdentity, outgoingSignature, new EncodedObject(Encoding.DER,
+                            zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(adapter.encode(outgoingSignature,
+                                    zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SIGNATURE_ALGORITHM))),
+                    java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(spki)));
+            fields.add(new CaOutgoingBinding(key, Optional.empty(), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT).encodeForSubject());
+            if (!root) {
+                var incoming = store.getIssuerCryptographicBinding(new PkiId(decoded.field(3))).orElseThrow();
+                fields.add(new CaOutgoingBinding(incoming.primary(), Optional.empty(), incoming.bindingSetCommitment()).encodeForSubject());
+            }
             template = DomainCommandEncoding.template(template.kind(), decoded.operation(), fields.toArray(String[]::new));
             decoded = DomainCommandEncoding.decode(template.command());
         }

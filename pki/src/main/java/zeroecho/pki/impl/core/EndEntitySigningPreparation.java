@@ -122,6 +122,30 @@ public final class EndEntitySigningPreparation {
         this(store, new EndEntityIssuancePreparation(store, clock, authority, verifier, bindings, signatureAlgorithm));
     }
 
+    /**
+     * Binds leaf verification and signing to separate exact authority snapshots.
+     * @param store authoritative session store
+     * @param clock authoritative policy clock
+     * @param authority verification authority for client proof
+     * @param verifier exact verification executor
+     * @param bindings installed representation registry
+     * @param signatureAlgorithm configured legacy creation default
+     * @param signingAuthority signing authority bound to the selected provider
+     * @param provider already-open managed public-key source and signer
+     * Ordinary signing-only providers retain their established behavior; SDK
+     * issuance independently requires managed public-key evidence.
+     */
+    public EndEntitySigningPreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
+            BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm,
+            X509AuthoritySnapshot signingAuthority, zeroecho.pki.spi.crypto.SigningProvider provider) {
+        this(store, new EndEntityIssuancePreparation(store, clock, authority, verifier, bindings, signatureAlgorithm,
+                signingAuthority, publicKeys(provider)));
+    }
+    private static Optional<zeroecho.pki.spi.crypto.PublicKeyInfoSource> publicKeys(zeroecho.pki.spi.crypto.SigningProvider provider) {
+        Objects.requireNonNull(provider, "provider");
+        return provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys ? Optional.of(keys) : Optional.empty();
+    }
+
     /* default */ EndEntitySigningPreparation(PkiStore store, EndEntityIssuancePreparation validation) {
         this.store = Objects.requireNonNull(store, "store");
         this.validation = Objects.requireNonNull(validation, "validation");
@@ -438,6 +462,134 @@ public final class EndEntitySigningPreparation {
      */
     public record Validation(String signatureAlgorithm, int tbsBytes) { }
 
+    /**
+     * Evaluates SDK policy without allocating serials, staging or signing.
+     * @param access authorized invocation context
+     * @param request exact selected issuer/profile/request
+     * @param parsed parsed dual-subject request
+     * @param frozenValidity exact absolute bounds, or empty for initial evaluation
+     * @param cancellation cooperative cancellation
+     * @return complete public policy preview
+     * @throws IOException if public issuer metadata cannot be read
+     */
+    public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            EndEntityIssuanceRequest request, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) throws IOException {
+        var approved = validation.prepareSdk(access, request, parsed, frozenValidity, true, cancellation);
+        return sdkPreview(approved, parsed);
+    }
+
+    private zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview sdkPreview(EndEntityIssuancePreparation.Prepared approved,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed) throws IOException {
+        var frozen = approved.request().frozenIssuance().orElseThrow();
+        var certificate = Pkix.parseCertificate(approved.issuerDer());
+        var profile = approved.profile();
+        var policy = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.of(
+                "profile", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bytes(profile.reference().canonicalSha256()),
+                "confirmation", profile.definition().confirmationPolicy().map(EndEntitySigningPreparation::confirmationPolicyValue)
+                        .orElseGet(() -> zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.of()))));
+        return new zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview(approved.request().issuerCaId(), frozen.issuerId(),
+                frozen.chainPathId(), frozen.chainPathCommitment(), approved.request().profileReference(),
+                approved.request().subjectRef(), approved.request().subjectRdns(), approved.request().subjectAlternativeNames(),
+                approved.request().validity(), approved.request().exactPublicKey(), parsed.alternativeSubjectPublicKeyInfo(),
+                approved.issuerBinding(), new zeroecho.pki.api.EncodedObject(Encoding.DER, Pkix.subjectPublicKeyInfo(certificate)),
+                Optional.of(new zeroecho.pki.api.EncodedObject(Encoding.DER,
+                        zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72"))),
+                java.util.HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(approved.issuerDer())),
+                validation.authority().semanticFingerprint(), policy);
+    }
+
+    private static zeroecho.pki.api.hybrid.sdk.HybridSdkValue confirmationPolicyValue(
+            zeroecho.pki.api.confirmation.CredentialConfirmationPolicy policy) {
+        return zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.of(
+                "disclosure", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(policy.disclosurePolicy().name()),
+                "window", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(policy.confirmationWindow().toString()),
+                "suite", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(policy.proofSuite().suiteId()),
+                "suiteCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(policy.proofSuite().configurationCommitment()),
+                "commitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("sha256:" + policy.configurationCommitment())));
+    }
+
+    /**
+     * Verifies accepted client proofs and revalidates the exact frozen SDK target before staging.
+     * @param access authorized invocation context
+     * @param request selected issuer/profile/request
+     * @param parsed exact parsed client request
+     * @param approval trusted retained proof plus signed target
+     * @param submission fresh submission identifier
+     * @param ttl signing lifetime
+     * @param evidence trusted publication evidence
+     * @param cancellation cooperative cancellation
+     * @return exclusively caller-owned staged request
+     * @throws IOException if public metadata or staging fails
+     * @throws PkiException if proof, target or policy differs
+     */
+    public DomainSigningRequest prepareSdk(AccessContext access, EndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval, SigningSubmissionId submission,
+            Duration ttl, Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) throws IOException {
+        String proof = new zeroecho.pki.impl.framework.x509.bc.BcHybridSdkProofVerifier().verify(parsed,
+                approval.primaryFrame(), approval.primaryProof(), approval.alternativeProof(), approval.proofAcceptedAt());
+        if (!java.security.MessageDigest.isEqual(proof.getBytes(StandardCharsets.US_ASCII),
+                approval.expectedF3().getBytes(StandardCharsets.US_ASCII))) throw new PkiException("SDK_PROOF_COMMITMENT_MISMATCH");
+        var preview = previewSdk(access, request, parsed, Optional.of(approval.preview().validity()), cancellation);
+        requireSdkTarget(preview, approval);
+        var approved = validation.prepareSdk(access, request, parsed, Optional.of(preview.validity()), false, cancellation);
+        // Revalidation may observe a new head or profile. Bind the actual signing
+        // snapshot, including its frozen profile policy, before any signer or stage.
+        preview = sdkPreview(approved, parsed);
+        requireSdkTarget(preview, approval);
+        var builder = leafBuilder(approved);
+        var issuerAlternative = approved.issuerBinding().alternative().orElseThrow(() -> new PkiException("SDK_ISSUER_NOT_HYBRID"));
+        var altAlgorithm = Pkix.parseAlgorithmIdentifier(issuerAlternative.signatureAlgorithmIdentifier().bytes());
+        builder.addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.subjectAltPublicKeyInfo(parsed.alternativeSubjectPublicKeyInfo().bytes()))
+                .addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureAlgorithm(altAlgorithm));
+        byte[] transcript = builder.buildAlternativeSignatureTbs(approved.signatureBinding());
+        var authority = validation.authority();
+        var plan = authority.plan(issuerAlternative.signatureAlgorithm(), issuerAlternative.publicKeyAlgorithm(),
+                zeroecho.core.spi.AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
+                zeroecho.pki.spi.crypto.SigningProvider.class);
+        authority.authorize(plan, plan.executor(), zeroecho.core.spi.AlgorithmExecutionCapability.Direction.SIGN);
+        if (!(plan.executor() instanceof zeroecho.pki.spi.crypto.AltSigningCapability signer)) throw new PkiException("ALT_SIGNING_CAPABILITY_UNAVAILABLE");
+        byte[] signature;
+        try { signature = signer.sign(issuerAlternative.keyRef(), issuerAlternative.signatureAlgorithm().canonicalForm(), transcript); }
+        catch (java.security.GeneralSecurityException failure) { throw new PkiException("ALT_SIGNING_FAILED", failure); }
+        var verifier = Pkix.verifier(preview.issuerAlternativeSpki().orElseThrow().bytes(), altAlgorithm);
+        try (var output = verifier.contentStream()) { output.write(transcript); }
+        if (!verifier.verify(signature)) throw new PkiException("ALT_SIGNATURE_INVALID");
+        byte[] completeTbs = builder.addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureValue(signature))
+                .buildTbs(approved.signatureBinding());
+        return stageSdk(approved, submission, ttl, evidence, cancellation, completeTbs);
+    }
+
+    private static void requireSdkTarget(zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview preview,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval) {
+        var target = approval.targetFrame();
+        if (target.kind() != 7 || !java.security.MessageDigest.isEqual(
+                zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(target.encode()), approval.primaryFrame().field(17))) {
+            throw new PkiException("SDK_FROZEN_TARGET_MISMATCH");
+        }
+        var fields = java.util.Map.ofEntries(
+                java.util.Map.entry(4, utf8(preview.issuerCaId().value())),
+                java.util.Map.entry(5, utf8(preview.issuerId().value())),
+                java.util.Map.entry(6, utf8(preview.chainPathId().value())),
+                java.util.Map.entry(7, utf8("sha512:" + preview.issuerCertificateSha512())),
+                java.util.Map.entry(8, preview.primaryIssuerBindingFrame().encode()),
+                java.util.Map.entry(9, preview.alternativeIssuerBindingFrame().map(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame::encode)
+                        .orElseGet(() -> new byte[0])),
+                java.util.Map.entry(10, utf8(preview.profile().profileId())),
+                java.util.Map.entry(11, java.nio.ByteBuffer.allocate(Long.BYTES).putLong(preview.profile().profileVersion()).array()),
+                java.util.Map.entry(12, utf8("sha256:" + HexFormat.of().formatHex(preview.profile().canonicalSha256()))),
+                java.util.Map.entry(13, utf8(preview.bindingSetCommitment())),
+                java.util.Map.entry(15, preview.effectiveSubjectValue().encode()),
+                java.util.Map.entry(16, preview.disclosurePolicy().encode()));
+        for (var field : fields.entrySet()) {
+            if (!java.security.MessageDigest.isEqual(field.getValue(), target.field(field.getKey()))) {
+                throw new PkiException("SDK_FROZEN_TARGET_MISMATCH");
+            }
+        }
+    }
+    private static byte[] utf8(String text) { return text.getBytes(StandardCharsets.UTF_8); }
+
     private static AccessContext lifecycleAccess(AccessContext access, PkiId predecessor) {
         Objects.requireNonNull(access, "access");
         if (access.objectId().filter(value -> !value.equals(predecessor)).isPresent()
@@ -464,7 +616,20 @@ public final class EndEntitySigningPreparation {
             String correlation) throws IOException {
         validateEvidence(evidence, approved.access(), approved.request().issuerCaId().value(),
                 approved.request().profileId());
-        byte[] tbs = tbs(approved);
+        return stageSdk(approved, submission, ttl, evidence, cancellation, tbs(approved), operation, predecessor, correlation);
+    }
+
+    private DomainSigningRequest stageSdk(EndEntityIssuancePreparation.Prepared approved, SigningSubmissionId submission,
+            Duration ttl, Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation, byte[] tbs) throws IOException {
+        String correlation = "issue." + sha256(submission.id().value().getBytes(StandardCharsets.UTF_8));
+        return stageSdk(approved, submission, ttl, evidence, cancellation, tbs,
+                LeafOperation.ISSUE_END_ENTITY, Optional.empty(), correlation);
+    }
+
+    private DomainSigningRequest stageSdk(EndEntityIssuancePreparation.Prepared approved, SigningSubmissionId submission,
+            Duration ttl, Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation, byte[] tbs,
+            LeafOperation operation, Optional<PkiId> predecessor, String correlation) throws IOException {
+        validateEvidence(evidence, approved.access(), approved.request().issuerCaId().value(), approved.request().profileId());
         if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) {
             throw new PkiException("Certificate body exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
         }
@@ -500,6 +665,10 @@ public final class EndEntitySigningPreparation {
     }
 
     private static byte[] tbs(EndEntityIssuancePreparation.Prepared approved) {
+        return leafBuilder(approved).buildTbs(approved.signatureBinding());
+    }
+
+    private static CertificateBuilder leafBuilder(EndEntityIssuancePreparation.Prepared approved) {
         ValidatedCertificateRequest request = approved.request();
         CertificateBuilder builder = Pkix.certificateBuilder().serialNumber(approved.serial())
                 .issuer(Pkix.parseCertificate(approved.issuerDer()).getSubjectX500Principal())
@@ -518,7 +687,7 @@ public final class EndEntitySigningPreparation {
             builder.subjectAlternativeNames(request.subjectAlternativeNames().stream()
                     .map(EndEntitySigningPreparation::generalName).toList(), request.subjectAlternativeNameCritical());
         }
-        return builder.buildTbs(approved.signatureBinding());
+        return builder;
     }
 
     private static DomainContinuationTemplate continuation(EndEntityIssuancePreparation.Prepared approved,
@@ -539,6 +708,7 @@ public final class EndEntitySigningPreparation {
                         .toList().toString(),
                 request.algorithmBindingPolicy().toString(), DomainAttributeEncoding.encode(request.executionEvidence())));
         predecessor.ifPresent(value -> fields.add(value.value()));
+        fields.add(approved.issuerBinding().commitment());
         return DomainCommandEncoding.correlatedTemplate(DomainContinuationStore.Kind.ISSUANCE, correlation,
                 operation.name(), fields.toArray(String[]::new));
     }

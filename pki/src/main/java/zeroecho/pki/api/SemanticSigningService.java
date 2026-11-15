@@ -78,6 +78,10 @@ import zeroecho.pki.application.IssuanceExecutionEvidence;
  * Implementations retain no per-operation runtime handle.</p>
  */
 public interface SemanticSigningService {
+    /** @return configured canonical creation default, independent of issuer generation selection
+     * @throws UnsupportedOperationException when creation is unavailable */
+    default String creationSignatureAlgorithm() { throw new UnsupportedOperationException("Creation unavailable"); }
+
     /**
      * Validates current input and policy without serial allocation, signing, staging or acceptance.
      * @param access trusted invocation context
@@ -422,6 +426,40 @@ public interface SemanticSigningService {
      */
     PreparedSemanticSigningRequest prepareDeltaCrl(AccessContext access, DeltaCrlRequest request,
             CancellationSignal cancellation);
+
+    /**
+     * Purely evaluates exact SDK subject and issuer coordinates.
+     * @param access authorized invocation context
+     * @param request selected issuer/profile and exact request payload
+     * @param parsed parsed dual-subject request
+     * @param frozenValidity exact absolute bounds for revalidation, or empty initially
+     * @param cancellation cooperative cancellation
+     * @return immutable public preview
+     * @throws UnsupportedOperationException if SDK issuance is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            EndEntityIssuanceRequest request, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK preview unavailable");
+    }
+
+    /**
+     * Prepares SDK issuance using retained proof and frozen absolute policy bounds.
+     * @param access authorized invocation context
+     * @param request selected issuer/profile and exact original payload
+     * @param parsed parsed dual-subject request
+     * @param approval retained independently reverified proof and preview
+     * @param evidence optional trusted publication evidence
+     * @param cancellation cooperative cancellation
+     * @return exclusively caller-owned prepared signing request
+     * @throws UnsupportedOperationException if SDK issuance is unavailable
+     */
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, EndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK preparation unavailable");
+    }
 
     /**
      * Verifies and prepares one end-entity certificate using the current

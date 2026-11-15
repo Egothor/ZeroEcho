@@ -598,7 +598,6 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
                 CaSubjectProofStep proof = proofStep.orElseThrow();
                 proof.requireParent(operationId);
                 if (mode != Mode.NORMAL || outer.filter(value -> value.kind() == DomainContinuationStore.Kind.CA).isEmpty()
-                        || !proof.algorithmId().equals(algorithmId)
                         || !proof.challenge().storeId().equals(candidate.storeId())
                         || proof.challenge().contentId().equals(candidate.contentId())
                         || candidate.encoding() != Encoding.DER || signatureEncoding != Encoding.BINARY) {

@@ -226,6 +226,13 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
     @FunctionalInterface
     public interface SigningExecutor {
         /**
+         * Freezes a creation-only default into an explicit canonical outgoing algorithm.
+         * @param operation exact typed signing command
+         * @return immutable command with every effective creation selector retained
+         */
+        default PkiSigningOperation normalizeCreation(PkiSigningOperation operation) { return operation; }
+
+        /**
          * Admits the authorized operation once, retaining its durable receipt when available.
          *
          * @param request authorized request and trusted actor context
@@ -1176,8 +1183,23 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 : resourceScopes.statusObjectAuthority(sourceId);
     }
 
+    private Request normalizeCreationRequest(Request request) {
+        AdministrativeOperation operation=request.operation();
+        if(operation instanceof AdministrativeOperation.Signing signing) {
+            operation=new AdministrativeOperation.Signing(signingExecutor.normalizeCreation(signing.operation()));
+        } else if(operation instanceof AdministrativeOperation.Control wrapper
+                && wrapper.operation() instanceof ServerControlOperation.RequestApproval approval
+                && approval.targetOperation() instanceof AdministrativeOperation.Signing target) {
+            operation=new AdministrativeOperation.Control(new ServerControlOperation.RequestApproval(approval.approvalId(),
+                    new AdministrativeOperation.Signing(signingExecutor.normalizeCreation(target.operation())),approval.targetResource()));
+        }
+        if(operation.equals(request.operation()))return request;
+        return new Request(request.realmId(),request.principalId(),request.authenticationMode(),request.transportPrincipalId(),
+                request.credentialEvidence(),operation,request.resource(),request.relationship(),request.context(),request.approvalId(),request.correlationId());
+    }
+
     private Request authoritativeRequest(Request request) {
-        Request exact = authoritativeControlRequest(request);
+        Request exact = authoritativeControlRequest(normalizeCreationRequest(request));
         if (exact.operation() instanceof AdministrativeOperation.Control selected
                 && selected.operation() instanceof ServerControlOperation.ListCapabilities query) {
             Permission.Resource supplied = exact.resource();

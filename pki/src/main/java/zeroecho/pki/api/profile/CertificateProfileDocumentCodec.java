@@ -1097,6 +1097,7 @@ public final class CertificateProfileDocumentCodec {
         String type = null;
         String altAlgorithmId = null;
         String altKeyRef = null;
+        String subjectKeySource = "MANAGED";
         while (parser.nextToken() != JsonToken.END_OBJECT) {
             requireToken(parser.currentToken(), JsonToken.PROPERTY_NAME, path);
             String field = parser.currentName();
@@ -1115,6 +1116,10 @@ public final class CertificateProfileDocumentCodec {
                     seen = mark(seen, 2, path + ".altKeyRef");
                     altKeyRef = readBoundedString(parser, path + ".altKeyRef", MAXIMUM_STRING_UTF8_BYTES);
                 }
+                case "subjectKeySource" -> {
+                    seen = mark(seen, 3, path + ".subjectKeySource");
+                    subjectKeySource = readBoundedString(parser, path + ".subjectKeySource", 32);
+                }
                 default -> throw failure("UNKNOWN_FIELD", path + ".?");
             }
         }
@@ -1122,14 +1127,16 @@ public final class CertificateProfileDocumentCodec {
             throw failure("MISSING_FIELD", path + ".type");
         }
         if (TWIN_CERTIFICATE.equals(type)) {
+            if (isSeen(seen, 3)) throw failure("SEMANTIC_INVALID", path + ".subjectKeySource");
             return HybridCertificateMode.TwinCertificate.INSTANCE;
         }
         if (!"ALT_SIGNATURE".equals(type)) {
             throw failure("TOKEN_INVALID", path + ".type");
         }
-        requireAll(seen, 3, path);
+        if (!isSeen(seen, 1)) throw failure("MISSING_FIELD", path + ".altSignatureAlgorithmId");
         try {
-            return new HybridCertificateMode.AltSignature(altAlgorithmId, altKeyRef);
+            return new HybridCertificateMode.AltSignature(altAlgorithmId,
+                    HybridCertificateMode.AlternativeSubjectKeySource.valueOf(subjectKeySource), Optional.ofNullable(altKeyRef));
         } catch (IllegalArgumentException ex) {
             throw failure("SEMANTIC_INVALID", path);
         }
@@ -1143,7 +1150,11 @@ public final class CertificateProfileDocumentCodec {
         } else if (hybridMode instanceof HybridCertificateMode.AltSignature altSig) {
             generator.writeStringProperty("type", "ALT_SIGNATURE");
             generator.writeStringProperty("altSignatureAlgorithmId", altSig.altSignatureAlgorithmId());
-            generator.writeStringProperty("altKeyRef", altSig.altKeyRef());
+            if (altSig.managedKeyRef().isPresent()) {
+                generator.writeStringProperty("altKeyRef", altSig.managedKeyRef().orElseThrow());
+            } else {
+                generator.writeStringProperty("subjectKeySource", altSig.subjectKeySource().name());
+            }
         }
         generator.writeEndObject();
     }

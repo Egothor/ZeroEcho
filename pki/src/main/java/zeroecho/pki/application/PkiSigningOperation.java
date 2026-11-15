@@ -60,20 +60,30 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param subjectRef subject name for the new authority
      * @param profileId nonblank stable certificate-profile identifier
      * @param keyRef managed key reference used by the authority
+     * @param signatureAlgorithmId exact outgoing primary signature identity, or configured creation default
      */
-    record CreateAuthority(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef)
+    record CreateAuthority(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
+            java.util.Optional<String> signatureAlgorithmId)
             implements PkiSigningOperation {
         /** Stable operation name. */
         public static final String NAME = "ca.create";
 
         /** Validates the closed authority-creation input. */
         public CreateAuthority {
+            if (signatureAlgorithmId == null || signatureAlgorithmId.filter(String::isBlank).isPresent()) {
+                throw new IllegalArgumentException("Invalid outgoing signature selection");
+            }
             Objects.requireNonNull(formatId, "formatId");
             Objects.requireNonNull(subjectRef, "subjectRef");
             Objects.requireNonNull(keyRef, "keyRef");
             if (profileId == null || profileId.isBlank()) {
                 throw new IllegalArgumentException(profileIdRequiredMessage());
             }
+        }
+
+        /** @param formatId format @param subjectRef CA subject @param profileId active profile @param keyRef managed primary key */
+        public CreateAuthority(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef) {
+            this(formatId, subjectRef, profileId, keyRef, java.util.Optional.empty());
         }
 
         @Override
@@ -89,15 +99,19 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param issuerCaId issuing certificate-authority identifier
      * @param subjectRef subject name for the new authority
      * @param profileId nonblank stable certificate-profile identifier
+     * @param signatureAlgorithmId exact outgoing primary signature identity, or legacy default
      * @param keyRef optional existing managed key; a managed key must be present
      */
     record CreateIntermediate(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
-            java.util.Optional<KeyRef> keyRef) implements PkiSigningOperation {
+            java.util.Optional<KeyRef> keyRef, java.util.Optional<String> signatureAlgorithmId) implements PkiSigningOperation {
         /** Stable operation name. */
         public static final String NAME = "ca.intermediate.create";
 
         /** Validates the closed intermediate-creation input. */
         public CreateIntermediate {
+            if (signatureAlgorithmId == null || signatureAlgorithmId.filter(String::isBlank).isPresent()) {
+                throw new IllegalArgumentException("Invalid outgoing signature selection");
+            }
             Objects.requireNonNull(formatId, "formatId");
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
             Objects.requireNonNull(subjectRef, "subjectRef");
@@ -106,6 +120,12 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
             if (profileId == null || profileId.isBlank()) {
                 throw new IllegalArgumentException(profileIdRequiredMessage());
             }
+        }
+
+        /** @param formatId format @param issuerCaId parent CA @param subjectRef CA subject @param profileId active profile @param keyRef managed primary key */
+        public CreateIntermediate(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
+                java.util.Optional<KeyRef> keyRef) {
+            this(formatId, issuerCaId, subjectRef, profileId, keyRef, java.util.Optional.empty());
         }
 
         @Override

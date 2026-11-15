@@ -178,7 +178,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         IntermediateInput publicInput = readInput(input, cancellation);
         ValidatedCaCertificateRequest approved = validateProfile(input, publicInput,
                 new PkiId("preflight:intermediate"), BigInteger.ONE);
-        validatedTbs(publicInput.parent(), publicInput.proof(), approved);
+        validatedTbs(publicInput.parent(), publicInput.proof(), approved, false);
         cancellation.throwIfCancelled();
     }
 
@@ -196,8 +196,10 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         if (!profile.reference().profileId().equals(input.profileId())
                 || !input.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) throw reject("PROFILE_BINDING_INVALID");
         CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.INTERMEDIATE_CA, input.formatId());
-        ManagedKeyProofPreparation.ProofPlan proof = proofs.plan(new ManagedKeyProofRequest.CaSubject(
-                ca.caId(), Optional.empty(), input.profileId(), input.keyRef()), cancellation);
+        requireManagedSubjectProfile(profile);
+        ManagedKeyProofPreparation.ProofPlan proof = proofs.withSignature(input.signatureAlgorithmId().orElse(signature.canonicalForm()))
+                .plan(new ManagedKeyProofRequest.CaSubject(
+                        ca.caId(), Optional.empty(), input.profileId(), input.keyRef()), cancellation);
         if (generation.signingKeyRef().equals(input.keyRef())) throw reject("SUBJECT_KEY_IS_PARENT_KEY");
         List<SubjectRdn> subject = CaCertificateProfileValidator.validateSubject(input.subjectRef(), profile.definition());
         X509Certificate parent = path(path, issuer, BcX509ProfileSupport.subject(subject), evaluation.evaluationTime(), cancellation);
@@ -216,18 +218,60 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
     }
 
     private byte[] validatedTbs(X509Certificate parent, ManagedKeyProofPreparation.ProofPlan proof,
-            ValidatedCaCertificateRequest approved) {
+            ValidatedCaCertificateRequest approved, boolean signAlternative) throws IOException {
+        AlgorithmIdentity signature = issuerSignature(approved.issuerCaId());
         AlgorithmIdentifier algorithm = algorithm(parent, approved);
         Validity validity = wholeSecondValidity(approved.validity());
-        byte[] tbs = Pkix.certificateBuilder().serialNumber(approved.serial()).issuer(parent.getSubjectX500Principal())
+        var builder = Pkix.certificateBuilder().serialNumber(approved.serial()).issuer(parent.getSubjectX500Principal())
                 .subject(BcX509ProfileSupport.subject(approved.subjectRdns())).publicKeyInfo(proof.publicKeyInfo().bytes())
                 .validity(validity.notBefore(), validity.notAfter())
                 .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
-                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
-        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
+                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical());
+        ActiveCertificateProfile profile = store.requireActiveProfile(approved.profileReference().profileId());
+        if (profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature mode) {
+            if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)
+                    || !(provider instanceof zeroecho.pki.spi.crypto.AltSigningCapability signer)) throw reject("ALT_SIGNING_CAPABILITY_UNAVAILABLE");
+            var ca = store.getCa(approved.issuerCaId()).orElseThrow(() -> reject("ISSUER_MISSING"));
+            var parentBinding = issuerBinding(IssuerAuthorities.current(store, ca)).alternative()
+                    .orElseThrow(() -> reject("ALT_ISSUER_BINDING_MISSING"));
+            byte[] subjectAlternative = keys.resolvePublicKeyInfo(new KeyRef(mode.altKeyRef())).bytes();
+            var altAlgorithm = Pkix.parseAlgorithmIdentifier(parentBinding.signatureAlgorithmIdentifier().bytes());
+            builder.addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.subjectAltPublicKeyInfo(subjectAlternative))
+                    .addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureAlgorithm(altAlgorithm));
+            byte[] input = builder.buildAlternativeSignatureTbs(algorithm);
+            // Pure validation exercises public policy and capability planning, never a signer.
+            byte[] alternativeSignature = new byte[alternativeSignatureLength(parentBinding.signatureAlgorithm())];
+            if (signAlternative) {
+                var plan = authority.plan(parentBinding.signatureAlgorithm(), parentBinding.publicKeyAlgorithm(), Direction.SIGN,
+                        Optional.empty(), "explicit", SigningProvider.class);
+                authority.authorize(plan, provider, Direction.SIGN);
+                try { alternativeSignature = signer.sign(parentBinding.keyRef(), parentBinding.signatureAlgorithm().canonicalForm(), input); }
+                catch (java.security.GeneralSecurityException failure) { throw new PkiException("ALT_SIGNING_FAILED", failure); }
+                byte[] issuerSpki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(parent, "2.5.29.72");
+                var verifier = Pkix.verifier(issuerSpki, altAlgorithm);
+                try (var output = verifier.contentStream()) { output.write(input); }
+                if (!verifier.verify(alternativeSignature)) throw reject("ALT_SIGNATURE_INVALID");
+            }
+            builder.addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureValue(alternativeSignature));
+        }
+        byte[] tbs = builder.buildTbs(algorithm);
+        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) throw reject("TBS_TOO_LARGE");
         provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
         FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
         return tbs;
+    }
+
+    private String incoming(IssuerGeneration generation) {
+        var binding = issuerBinding(generation);
+        return new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(binding.primary(), Optional.empty(),
+                binding.bindingSetCommitment()).encodeForSubject();
+    }
+
+    private static int alternativeSignatureLength(AlgorithmIdentity algorithm) {
+        if (algorithm.family().name().equals("ml-dsa-87")) return 4627;
+        if (algorithm.family().name().equals("ml-dsa-65")) return 3309;
+        // Size is an admission estimate only; execution checks the actual encoded body.
+        return 512;
     }
 
     private record IntermediateInput(java.time.Instant evaluationTime, CaRecord ca, IssuerGeneration generation,
@@ -269,7 +313,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         BigInteger serial = CertificateSerialAllocator.allocate();
         ValidatedCaCertificateRequest approved = validateProfile(input, publicInput, child, serial);
         X500Principal exactSubject = BcX509ProfileSupport.subject(subject);
-        byte[] tbs = validatedTbs(parent, proof, approved);
+        byte[] tbs = validatedTbs(parent, proof, approved, true);
         List<String> fields = List.of(input.formatId().value(), ca.caId().value(),
                 child.value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
                 profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
@@ -277,7 +321,8 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 approved.validity().notBefore().toString(), approved.validity().notAfter().toString(), serial.toString(),
                 generation.signingKeyRef().value(), issuer.content().contentId(), issuer.content().sha256(),
                 hash(proof.publicKeyInfo().bytes()), "", "",
-                DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs));
+                DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs),
+                outgoing(profile, input.keyRef(), proof).encodeForSubject(), incoming(generation));
         return stage(access, submission, ttl, generation, IntermediateSigningCommand.CREATE, fields, proof, tbs, cancellation);
     }
 
@@ -364,6 +409,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         ExistingIntermediate existing = readExisting(input, CertificateSerialAllocator.allocate(), cancellation);
         CaRecord subject = existing.subject(); CaRecord ca = existing.ca();
         IssuerGeneration generation = existing.generation(); IssuerChainPath path = existing.path();
+        AlgorithmIdentity signature = issuerBinding(generation).primary().signatureAlgorithm();
         Credential issuer = existing.issuer(); ActiveCertificateProfile profile = existing.profile();
         ManagedKeyProofPreparation.ProofPlan proof = existing.proof(); X509Certificate parent = existing.parent();
         X500Principal subjectPrincipal = existing.subjectPrincipal();
@@ -371,14 +417,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         ValidatedCaCertificateRequest approved = existing.approved(); BigInteger serial = approved.serial();
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(parent, approved);
-        byte[] tbs = Pkix.certificateBuilder().serialNumber(serial).issuer(parent.getSubjectX500Principal())
-                .subject(subjectPrincipal).publicKeyInfo(proof.publicKeyInfo().bytes())
-                .validity(validity.notBefore(), validity.notAfter())
-                .basicConstraints(BasicConstraints.ca(approved.policy().pathLengthConstraint()), approved.policy().basicConstraintsCritical())
-                .keyUsage(Set.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN), approved.policy().keyUsageCritical()).buildTbs(algorithm);
-        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
-        provider.inputCapabilities().select(signature.canonicalForm(), tbs.length);
-        FullCrlSigningCommand.requireAdmission(signature.canonicalForm(), tbs.length, pureEdDsaMaximum);
+        byte[] tbs = validatedTbs(parent, proof, approved, true);
         List<String> fields = List.of(formatId.value(), ca.caId().value(),
                 subject.caId().value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
                 profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
@@ -386,7 +425,8 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 validity.notBefore().toString(), validity.notAfter().toString(), serial.toString(),
                 generation.signingKeyRef().value(), issuer.content().contentId(), issuer.content().sha256(),
                 hash(proof.publicKeyInfo().bytes()), "", "",
-                DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs));
+                DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs),
+                outgoing(profile, input.keyRef(), proof).encodeForSubject(), incoming(generation));
         return stage(access, submission, ttl, generation, input.operation().name(), fields, proof, tbs, cancellation);
     }
 
@@ -442,7 +482,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                     Optional.empty(), value.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE);
         } else { throw new UnsupportedOperationException("Unsupported intermediate lifecycle input"); }
         ExistingIntermediate existing = readExisting(input, BigInteger.ONE, cancellation);
-        validatedTbs(existing.parent(), existing.proof(), existing.approved());
+        validatedTbs(existing.parent(), existing.proof(), existing.approved(), false);
         cancellation.throwIfCancelled();
     }
 
@@ -466,8 +506,15 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         if (!profile.reference().profileId().equals(profileId)
                 || !formatId.equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
         CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.INTERMEDIATE_CA, formatId);
-        ManagedKeyProofPreparation.ProofPlan proof = proofs.plan(new ManagedKeyProofRequest.CaSubject(
-                ca.caId(), Optional.of(subject.caId()), profileId, input.keyRef()), cancellation);
+        requireManagedSubjectProfile(profile);
+        var subjectGeneration = IssuerAuthorities.current(store, subject);
+        var subjectBinding = store.getIssuerCryptographicBinding(subjectGeneration.issuerId())
+                .orElseThrow(() -> reject("SUBJECT_BINDING_MISSING"));
+        ManagedKeyProofPreparation.ProofPlan proof = proofs.withSignature(subjectBinding.primary().signatureAlgorithm().canonicalForm())
+                .plan(new ManagedKeyProofRequest.CaSubject(ca.caId(), Optional.of(subject.caId()), profileId, input.keyRef()), cancellation);
+        if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource subjectKeys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
+        IssuerBindingResolver.resolve(store, subjectGeneration,
+                reference -> reference.equals(input.keyRef()) ? proof.publicKeyInfo() : subjectKeys.resolvePublicKeyInfo(reference), authority);
         Credential currentSubject = IssuerAuthorities.currentCredential(store, subject);
         byte[] currentDer = CredentialContent.materializeForBc(store, currentSubject.content());
         if (!hash(currentDer).equals(currentSubject.content().sha256())
@@ -574,7 +621,43 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         }
     }
 
+    private zeroecho.pki.impl.core.continuation.CaOutgoingBinding outgoing(ActiveCertificateProfile profile,
+            KeyRef keyRef, ManagedKeyProofPreparation.ProofPlan proof) throws IOException {
+        if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
+        var primary = IssuerBindingResolver.createKey(keyRef, authority.resolveIdentity(proof.metadata().get(8)),
+                proof.publicKeyInfo().bytes(), reference -> {
+                    if (!keyRef.equals(reference)) throw reject("SUBJECT_KEY_REFERENCE_DIFFERS");
+                    return proof.publicKeyInfo();
+                }, authority);
+        Optional<zeroecho.pki.api.ca.IssuerKeyBinding> alternative = Optional.empty();
+        if (profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature mode) {
+            KeyRef reference = new KeyRef(mode.altKeyRef());
+            alternative = Optional.of(IssuerBindingResolver.createKey(reference, authority.resolveIdentity(mode.altSignatureAlgorithmId()),
+                    keys.resolvePublicKeyInfo(reference).bytes(), keys, authority));
+        }
+        return new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(primary, alternative, bindings.commitment());
+    }
+
+    private static void requireManagedSubjectProfile(ActiveCertificateProfile profile) {
+        if (profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature mode
+                && mode.subjectKeySource() != zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.MANAGED) {
+            throw reject("MANAGED_CA_SUBJECT_REQUIRED");
+        }
+    }
+
+    private zeroecho.pki.api.ca.IssuerCryptographicBinding issuerBinding(IssuerGeneration generation) {
+        if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
+        return IssuerBindingResolver.resolve(store, generation, keys, authority);
+    }
+    private AlgorithmIdentity issuerSignature(PkiId caId) {
+        CaRecord ca = store.getCa(caId).orElseThrow(() -> reject("ISSUER_MISSING"));
+        return issuerBinding(IssuerAuthorities.current(store, ca)).primary().signatureAlgorithm();
+    }
+
     private AlgorithmIdentifier algorithm(X509Certificate parent, ValidatedCaCertificateRequest request) {
+        CaRecord parentAuthority = store.getCa(request.issuerCaId()).orElseThrow(() -> reject("ISSUER_MISSING"));
+        var captured = issuerBinding(IssuerAuthorities.current(store, parentAuthority));
+        AlgorithmIdentity signature = captured.primary().signatureAlgorithm();
         BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
         AlgorithmIdentity parentKey = adapter.decode(Pkix.subjectPublicKeyAlgorithm(Pkix.subjectPublicKeyInfo(parent)),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
@@ -590,7 +673,11 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         AlgorithmIdentifier expected = BcX509AlgorithmAdapter.toLib(authority.bindings().resolve(subjectBinding.bindingId(),
                 subjectKey, X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM));
         if (!subjectAlgorithm.equals(expected)) { throw reject("SUBJECT_BINDING_DIFFERS"); }
-        return BcX509AlgorithmAdapter.toLib(plan.selection().binding());
+        AlgorithmIdentifier exact = BcX509AlgorithmAdapter.toLib(plan.selection().binding());
+        if (!exact.equals(Pkix.parseAlgorithmIdentifier(captured.primary().signatureAlgorithmIdentifier().bytes()))) {
+            throw reject("ISSUER_SIGNATURE_BINDING_DIFFERS");
+        }
+        return exact;
     }
 
     private X509AlgorithmBinding binding(AlgorithmIdentity identity, X509AlgorithmBinding.Role role,
@@ -608,7 +695,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 || !ca.issuerKeyRef().equals(generation.signingKeyRef()) || !ca.subjectRef().equals(credential.subjectRef())
                 || !(credential.profileBinding() instanceof CaProfileBinding profile)
                 || !generation.profilePolicyCommitment().equals(HexFormat.of().formatHex(profile.reference().canonicalSha256()))
-                || !generation.x509BindingCommitment().equals(generation.profilePolicyCommitment())) { throw reject("ISSUER_BINDING_DIFFERS"); }
+                ) { throw reject("ISSUER_BINDING_DIFFERS"); }
     }
 
     // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
@@ -616,6 +703,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
     private DomainSigningRequest stage(AccessContext access, SigningSubmissionId submission, Duration ttl,
             IssuerGeneration parent, String operation, List<String> immutableFields, ManagedKeyProofPreparation.ProofPlan plan,
             byte[] tbs, CancellationSignal cancellation) throws IOException {
+        AlgorithmIdentity signature = issuerBinding(parent).primary().signatureAlgorithm();
         String intent = CaSigningIntent.commitment(new DomainCommandEncoding.Decoded(operation, immutableFields), signature);
         SigningSubmissionId step = proofs.newStep(submission);
         ManagedKeyProofPreparation.FrozenChallenge proof = proofs.challenge(plan, step, submission.createdAt().plus(ttl),

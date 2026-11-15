@@ -145,7 +145,7 @@ class ManagedKeyGenerationIntegrationTest {
         return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> new KeyringPassword("integration-test-key".toCharArray()));
     }
 
-    private static PkiServerConfiguration withoutSigning(PkiServerConfiguration source) {
+    static PkiServerConfiguration withoutSigning(PkiServerConfiguration source) {
         var realm = source.realm(); var session = realm.pkiSessionConfiguration();
         var bootstrap = new PkiSessionConfiguration(session.version(), session.store(), session.audit(), Optional.empty(), session.publishers(), session.bindingProviders());
         var configured = new ServerRealmConfiguration(realm.realmId(), realm.displayName(), realm.confirmationProofPolicy(), bootstrap,
@@ -154,7 +154,7 @@ class ManagedKeyGenerationIntegrationTest {
         return new PkiServerConfiguration(source.version(), source.serverName(), configured, source.listener(), source.authentication(), source.execution(), source.runtime());
     }
 
-    private static PkiServerConfiguration configuration(Path root) throws Exception {
+    static PkiServerConfiguration configuration(Path root) throws Exception {
         var source = PkiAdminBootstrapTest.configuration(root);
         Path keys = root.resolve("keys");
         try (var password = new KeyringPassword("integration-test-key".toCharArray()); var store = KeyringStore.create(keys, password)) {

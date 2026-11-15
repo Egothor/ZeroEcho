@@ -71,6 +71,7 @@ final class AuthorityMetadataCodec {
     /* default */ static final String CA_GENERATION_MEMBER = "io.zeroecho.pki.ca-generation-member";
     /* default */ static final String CA_HISTORY = "io.zeroecho.pki.ca-history";
     /* default */ static final String ISSUER_GENERATION = "io.zeroecho.pki.issuer-generation";
+    /* default */ static final String ISSUER_CRYPTO_BINDING = "io.zeroecho.pki.issuer-crypto-binding";
     /* default */ static final String ISSUER_PATH = "io.zeroecho.pki.issuer-chain-path";
     /* default */ static final String CREDENTIAL_RECORD = "io.zeroecho.pki.credential-record";
     /* default */ static final String CREDENTIAL_OWNER_SET = "io.zeroecho.pki.credential-owner-set";
@@ -94,6 +95,12 @@ final class AuthorityMetadataCodec {
         return new MetadataKey(CA_GENERATION_MEMBER, historyPrefix(id) + digest(generation));
     }
     /* default */ static MetadataKey generationKey(PkiId id) { return identityKey(ISSUER_GENERATION, id); }
+    /* default */ static MetadataKey bindingKey(PkiId id) { return identityKey(ISSUER_CRYPTO_BINDING, id); }
+    /* default */ static zeroecho.pki.api.ca.IssuerCryptographicBinding binding(MetadataKey key, byte[] payload, IssuerGeneration generation) throws java.io.IOException {
+        var value = IssuerBindingStorageCodec.decode(payload, generation);
+        requireKey(key, bindingKey(value.issuerId()));
+        return value;
+    }
     /* default */ static MetadataKey pathKey(PkiId id) { return identityKey(ISSUER_PATH, id); }
     /* default */ static MetadataKey credentialKey(PkiId id) { return identityKey(CREDENTIAL_RECORD, id); }
 

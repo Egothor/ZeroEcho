@@ -59,37 +59,60 @@ public sealed interface HybridCertificateMode
         public static final None INSTANCE = new None();
     }
 
+    /** Alternative subject public-key provenance, independent of the issuer signing key. */
+    enum AlternativeSubjectKeySource {
+        /** Subject public key is read from an existing managed CA key. */
+        MANAGED,
+        /** Subject public key is supplied by the client's dual-proof SDK request. */
+        REQUEST
+    }
+
     /**
-     * X.509 2019 Amendment 2 alternative-signature extension mode.
-     *
-     * <p>
-     * SubjectAltPublicKeyInfo (OID 2.5.29.72), AltSignatureAlgorithm (OID 2.5.29.73),
-     * and AltSignatureValue (OID 2.5.29.74) extensions are added to the certificate.
-     * The alternative key signs the pre-TBS structure omitting both AltSignatureValue
-     * and the TBSCertificate signature field;
-     * the primary key signs the complete TBS that contains the real alternative signature.
-     * Only root creation, rollover and primary-key rotation support this mode.
-     * Alternative-key rotation and AltSignature descendant profiles are unsupported.
-     * CRLs retain the primary signature only.
-     * </p>
-     *
-     * @param altSignatureAlgorithmId canonical algorithm identifier for the alternative signature
-     * @param altKeyRef               key reference for the alternative private key in the keyring
+     * Alternative-signature profile with an explicit subject-key source.
+     * New issuance uses the X.509 Cor.3 signed-wrapper transcript. A managed
+     * reference describes the CA SUBJECT key; an issuer's signing key is resolved
+     * separately from its immutable generation binding.
+     * @param altSignatureAlgorithmId canonical alternative signature identity
+     * @param subjectKeySource source of the alternative subject public key
+     * @param managedKeyRef managed CA subject key, present exactly for MANAGED
      */
-    record AltSignature(String altSignatureAlgorithmId, String altKeyRef)
-            implements HybridCertificateMode {
+    record AltSignature(String altSignatureAlgorithmId, AlternativeSubjectKeySource subjectKeySource,
+            java.util.Optional<String> managedKeyRef) implements HybridCertificateMode {
         /**
-         * Creates an AltSignature mode descriptor.
-         *
-         * @throws IllegalArgumentException if either value is null or blank
+         * Validates the disjoint subject-key sources without generating a key.
+         * @throws IllegalArgumentException for blank algorithms or inconsistent sources
          */
         public AltSignature {
-            if (altSignatureAlgorithmId == null || altSignatureAlgorithmId.isBlank()) {
-                throw new IllegalArgumentException("altSignatureAlgorithmId must not be null or blank");
+            if (altSignatureAlgorithmId == null || altSignatureAlgorithmId.isBlank()
+                    || subjectKeySource == null || managedKeyRef == null
+                    || managedKeyRef.filter(String::isBlank).isPresent()
+                    || (subjectKeySource == AlternativeSubjectKeySource.MANAGED) != managedKeyRef.isPresent()) {
+                throw new IllegalArgumentException("Invalid alternative subject key source");
             }
-            if (altKeyRef == null || altKeyRef.isBlank()) {
-                throw new IllegalArgumentException("altKeyRef must not be null or blank");
-            }
+        }
+        /**
+         * Preserves the established managed-root profile constructor.
+         * @param algorithm canonical alternative signature identity
+         * @param keyRef existing managed alternative subject key reference
+         */
+        public AltSignature(String algorithm, String keyRef) {
+            this(algorithm, AlternativeSubjectKeySource.MANAGED, java.util.Optional.ofNullable(keyRef));
+        }
+        /**
+         * Creates a client-subject profile without any server private-key reference.
+         * @param algorithm canonical alternative issuer signature identity
+         * @return immutable request-sourced descriptor
+         */
+        public static AltSignature requested(String algorithm) {
+            return new AltSignature(algorithm, AlternativeSubjectKeySource.REQUEST, java.util.Optional.empty());
+        }
+        /**
+         * Reads the legacy managed key accessor for CA profiles only.
+         * @return existing managed alternative subject key reference
+         * @throws IllegalStateException when the profile requires a client request
+         */
+        public String altKeyRef() {
+            return managedKeyRef.orElseThrow(() -> new IllegalStateException("Alternative subject key is request-sourced"));
         }
     }
 

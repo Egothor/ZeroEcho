@@ -856,10 +856,26 @@ final class FilesystemCaSubjectProofStoreTest {
         PkiId stepId = fixture.submission(store).id();
         byte[] spki = substitution.equals("SPKI") ? fixture.rotatedKey.getPublic().getEncoded() : fixture.childKey.getPublic().getEncoded();
         List<String> proofMetadata = new ArrayList<>(oldProof.fields().subList(0, 10));
-        if (substitution.equals("SPKI")) { fields.set(17, IntermediateCreationFixture.hash(spki)); }
-        if (substitution.equals("ALGORITHM")) { proofMetadata.set(9, "300d06092a864886f70d01010b0500"); }
-        String intent = CaSigningIntent.commitment(new DomainCommandEncoding.Decoded(decoded.operation(), fields),
-                BootstrapAlgorithmIdentities.ED25519_SIGNATURE);
+        var parentSignature = BootstrapAlgorithmIdentities.ED25519_SIGNATURE;
+        if (substitution.equals("SPKI")) {
+            String fingerprint = IntermediateCreationFixture.hash(spki);
+            fields.set(17, fingerprint);
+            var outgoing = zeroecho.pki.impl.core.continuation.CaOutgoingBinding.decodeForSubject(fields.get(23), IntermediateCreationFixture.CHILD_KEY);
+            var key = outgoing.primary();
+            var changed = new zeroecho.pki.api.ca.IssuerKeyBinding(key.keyRef(), key.publicKeyAlgorithm(), key.signatureAlgorithm(),
+                    key.signatureAlgorithmIdentifier(), fingerprint);
+            fields.set(23, new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(changed, outgoing.alternative(), outgoing.authorityCommitment()).encodeForSubject());
+        }
+        if (substitution.equals("ALGORITHM")) {
+            // The child's Ed25519 proof is independent of the parent's certificate-signing algorithm.
+            parentSignature = BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256;
+            var incoming = zeroecho.pki.impl.core.continuation.CaOutgoingBinding.decodeForSubject(fields.get(24), original.keyRef());
+            var key = incoming.primary();
+            var changed = new zeroecho.pki.api.ca.IssuerKeyBinding(key.keyRef(), BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY, parentSignature,
+                    new EncodedObject(Encoding.DER, java.util.HexFormat.of().parseHex("300d06092a864886f70d01010b0500")), key.subjectSpkiSha256());
+            fields.set(24, new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(changed, incoming.alternative(), incoming.authorityCommitment()).encodeForSubject());
+        }
+        String intent = CaSigningIntent.commitment(new DomainCommandEncoding.Decoded(decoded.operation(), fields), parentSignature);
         byte[] challenge = ManagedKeyProofChallenge.encode(stepId, IntermediateCreationFixture.NOW.plus(IntermediateCreationFixture.TTL),
                 Optional.of(new ManagedKeyProofChallenge.CaContext(original.operationId(), intent)),
                 proofMetadata, new byte[32], spki);
@@ -873,7 +889,7 @@ final class FilesystemCaSubjectProofStoreTest {
         store.stagedContent().retireUnownedContent(original.proofStep().orElseThrow().challenge());
         SignWorkflowStore.AcceptanceCommand command = new SignWorkflowStore.AcceptanceCommand(original.operationId(),
                 store.signingNamespace() + "." + fixture.provider.id(), fixture.provider.configurationCommitment(),
-                original.accessContext(), original.keyRef(), IntermediateCreationFixture.CA, original.algorithmId(),
+                original.accessContext(), original.keyRef(), IntermediateCreationFixture.CA, parentSignature.canonicalForm(),
                 original.signatureEncoding(), IntermediateCreationFixture.NOW, IntermediateCreationFixture.NOW.plus(original.ttl()),
                 original.content(), Optional.of(new SignWorkflowStore.OuterCommand(outer.kind(), outer.correlationId().orElseThrow(),
                         outer.command(), outer.commandCommitment())), SignWorkflowStore.Mode.NORMAL,

@@ -35,6 +35,7 @@ package zeroecho.pki.impl.fs;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -120,15 +121,24 @@ class FilesystemBackupTest {
             for (String id : List.of("intermediate-ca", "server-tls")) {
                 assertEquals(2, store.listProfileVersions(id).size());
                 assertEquals(1L, store.requireActiveProfile(id).reference().profileVersion());
-                assertThrows(IllegalArgumentException.class,
-                        () -> store.requireActiveProfile(id).definition().requireSupportedIssuance());
+                if (id.equals("server-tls")) {
+                    assertThrows(IllegalArgumentException.class, () -> store.requireActiveProfile(id).definition().requireSupportedIssuance());
+                } else {
+                    assertDoesNotThrow(() -> store.requireActiveProfile(id).definition().requireSupportedIssuance());
+                }
                 if (id.equals("server-tls")) {
                     assertThrows(IllegalArgumentException.class, () -> store.requireActiveProfile(id).profile());
                 }
                 zeroecho.pki.impl.core.DefaultProfileService service = new zeroecho.pki.impl.core.DefaultProfileService(
                         store, CLOCK, new zeroecho.pki.impl.audit.InMemoryAuditSink());
-                assertThrows(RuntimeException.class, () -> service.importProfile(store.getProfileVersion(id, 1).orElseThrow().canonicalJson()));
-                assertThrows(RuntimeException.class, () -> service.activateProfile(id, 2));
+                if (id.equals("server-tls")) {
+                    assertThrows(RuntimeException.class, () -> service.importProfile(store.getProfileVersion(id, 1).orElseThrow().canonicalJson()));
+                    assertThrows(RuntimeException.class, () -> service.activateProfile(id, 2));
+                } else {
+                    assertDoesNotThrow(() -> service.importProfile(store.getProfileVersion(id, 1).orElseThrow().canonicalJson()));
+                    assertDoesNotThrow(() -> service.activateProfile(id, 2));
+                    service.activateProfile(id, 1);
+                }
             }
             try (BackupSource source = store.createBackupSource(request())) {
                 assertTrue(store.verifyBackupSource(source).valid());
@@ -221,6 +231,8 @@ class FilesystemBackupTest {
                     BackupPreparation prepared = store.prepareBackup(source);
                     FilesystemPkiStore recovered = new FilesystemPkiStore(prepared.directory(), FsPkiStoreOptions.defaults(), CLOCK)) {
                 assertEquals(retained, recovered.metadataStore().resolve(retained.transactionId()));
+                assertEquals(store.getIssuerGeneration(ca.currentIssuanceIssuerId()), recovered.getIssuerGeneration(ca.currentIssuanceIssuerId()));
+                assertEquals(store.getIssuerCryptographicBinding(ca.currentIssuanceIssuerId()), recovered.getIssuerCryptographicBinding(ca.currentIssuanceIssuerId()));
                 try (MetadataSnapshot snapshot = recovered.metadataStore().snapshot()) {
                     for (int index = 0; index < 30; index++) {
                         try (MetadataSnapshot.Record record = snapshot.get(

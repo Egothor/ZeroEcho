@@ -146,6 +146,51 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    @Override
+    public boolean verifyAlternativeSignatureCor3(X509Certificate certificate, PublicKey issuerAlternativeKey) {
+        java.util.Objects.requireNonNull(certificate, "certificate");
+        java.util.Objects.requireNonNull(issuerAlternativeKey, "issuerAlternativeKey");
+        try {
+            X509CertificateHolder holder = new X509CertificateHolder(certificate.getEncoded());
+            if (holder.getExtension(Extension.subjectAltPublicKeyInfo) == null
+                    || holder.getExtension(Extension.altSignatureAlgorithm) == null
+                    || holder.getExtension(Extension.altSignatureValue) == null
+                    || !holder.getSignatureAlgorithm().equals(holder.toASN1Structure().getTBSCertificate().getSignature())) {
+                return false;
+            }
+            SubjectPublicKeyInfo key = SubjectPublicKeyInfo.getInstance(
+                    holder.getExtension(Extension.subjectAltPublicKeyInfo).getParsedValue());
+            var signature = org.bouncycastle.asn1.ASN1BitString.getInstance(
+                    holder.getExtension(Extension.altSignatureValue).getParsedValue());
+            if (key.getPublicKeyData().getPadBits() != 0 || signature.getPadBits() != 0
+                    || signature.getOctets().length == 0) return false;
+            var original = org.bouncycastle.asn1.ASN1Sequence.getInstance(holder.toASN1Structure().getTBSCertificate());
+            var fields = new org.bouncycastle.asn1.ASN1EncodableVector();
+            for (int index = 0; index < original.size(); index++) {
+                var field = original.getObjectAt(index);
+                if (field instanceof org.bouncycastle.asn1.ASN1TaggedObject tagged && tagged.hasContextTag(3)) {
+                    var extensions = org.bouncycastle.asn1.x509.Extensions.getInstance(tagged.getExplicitBaseObject());
+                    var retained = new org.bouncycastle.asn1.ASN1EncodableVector();
+                    for (var oid : extensions.getExtensionOIDs()) {
+                        if (!oid.equals(Extension.altSignatureValue)) retained.add(extensions.getExtension(oid));
+                    }
+                    fields.add(new org.bouncycastle.asn1.DERTaggedObject(true, 3,
+                            new org.bouncycastle.asn1.DERSequence(retained)));
+                } else fields.add(field);
+            }
+            byte[] transcript = new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
+                    new org.bouncycastle.asn1.DERSequence(fields), holder.getSignatureAlgorithm()}).getEncoded("DER");
+            var algorithm = org.bouncycastle.asn1.x509.AlgorithmIdentifier.getInstance(
+                    holder.getExtension(Extension.altSignatureAlgorithm).getParsedValue());
+            var verifier = new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
+                    .setProvider("BC").build(issuerAlternativeKey).get(algorithm);
+            try (var output = verifier.getOutputStream()) { output.write(transcript); }
+            return verifier.verify(signature.getOctets());
+        } catch (IOException | GeneralSecurityException | OperatorCreationException | IllegalArgumentException malformed) {
+            return false;
+        }
+    }
+
     /** Creates the provider, ensuring the BouncyCastle security providers are registered. */
     public BcPkixProvider() {
         zeroecho.sdk.util.BouncyCastleActivator.init();

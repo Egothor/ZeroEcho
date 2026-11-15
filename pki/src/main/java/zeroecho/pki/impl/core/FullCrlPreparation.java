@@ -284,10 +284,17 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         ImportedCertificateProfileVersion imported = store.getProfileVersion(expected.profileId(), expected.profileVersion())
                 .orElseThrow(() -> reject("PROFILE_MISSING"));
         String commitment = HexFormat.of().formatHex(expected.canonicalSha256());
+        var binding = store.getIssuerCryptographicBinding(generation.issuerId())
+                .orElseThrow(() -> reject("ISSUER_CRYPTOGRAPHIC_BINDING_MISSING"));
+        if (!binding.issuerId().equals(generation.issuerId()) || !binding.authorityId().equals(generation.authorityId())
+                || !binding.credentialId().equals(generation.credentialId()) || !binding.profile().equals(expected)
+                || !binding.primary().keyRef().equals(generation.signingKeyRef())
+                || !generation.x509BindingCommitment().equals(binding.bindingSetCommitment())) {
+            throw reject("ISSUER_CRYPTOGRAPHIC_BINDING_INCONSISTENT");
+        }
         CertificateProfileDefinition definition = imported.definition();
         if (!expected.equals(imported.reference())
                 || !generation.profilePolicyCommitment().equals(commitment)
-                || !generation.x509BindingCommitment().equals(commitment)
                 || definition.certificateType() == CertificateProfileKind.END_ENTITY
                 || !definition.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) {
             throw reject("PROFILE_BINDING_INCONSISTENT");

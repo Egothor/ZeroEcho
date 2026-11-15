@@ -104,9 +104,16 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
     final KeyPair altKey;
     PkiStore store;
     String alternativeFault;
+    java.util.function.UnaryOperator<PkiStore> storeDecorator = java.util.function.UnaryOperator.identity();
+    java.util.function.UnaryOperator<zeroecho.pki.spi.crypto.SigningProvider> signingDecorator = java.util.function.UnaryOperator.identity();
 
     HybridIssuanceFixture(Path root, String jcaAlgorithm, String family, String signature,
             HybridCertificateMode mode) throws Exception {
+        this(root, jcaAlgorithm, family, signature, mode, jcaAlgorithm, "ML-DSA-65");
+    }
+
+    HybridIssuanceFixture(Path root, String jcaAlgorithm, String family, String signature,
+            HybridCertificateMode mode, String childAlgorithm, String alternativeAlgorithm) throws Exception {
         BouncyCastleActivator.init();
         this.root = root;
         this.family = family;
@@ -115,23 +122,32 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         keyring = root.resolve("keys.bin");
         rootKey = pair(jcaAlgorithm);
         rotatedKey = pair(jcaAlgorithm);
-        childKey = pair(jcaAlgorithm);
-        altKey = pair("ML-DSA-65");
+        childKey = pair(childAlgorithm);
+        altKey = pair(alternativeAlgorithm);
         try (KeyringPassword password = TestKeyringUnlocks.provider().acquire();
                 KeyringStore keys = KeyringStore.create(keyring, password)) {
             put(keys, "root", family, rootKey);
             put(keys, "rotated", family, rotatedKey);
-            put(keys, "child", family, childKey);
+            put(keys, "child", familyOf(childAlgorithm), childKey);
             put(keys, "alt", "ML-DSA", altKey);
-            put(keys, "other-alt", "ML-DSA", pair("ML-DSA-65"));
+            put(keys, "other-alt", "ML-DSA", pair(alternativeAlgorithm));
         }
     }
 
     static KeyPair pair(String algorithm) throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance(algorithm, "BC");
-        if (algorithm.equals("EC")) { generator.initialize(new ECGenParameterSpec("secp256r1")); }
-        if (algorithm.equals("RSA")) { generator.initialize(2048); }
+        String jca = algorithm.equals("EC384") ? "EC" : algorithm.equals("RSA4096") ? "RSA" : algorithm;
+        KeyPairGenerator generator = KeyPairGenerator.getInstance(jca, "BC");
+        if (jca.equals("EC")) { generator.initialize(new ECGenParameterSpec(algorithm.equals("EC384") ? "secp384r1" : "secp256r1")); }
+        if (jca.equals("RSA")) { generator.initialize(algorithm.equals("RSA4096") ? 4096 : 2048); }
         return generator.generateKeyPair();
+    }
+
+    private static String familyOf(String algorithm) {
+        if (algorithm.startsWith("EC")) return "ECDSA";
+        if (algorithm.startsWith("RSA")) return "RSA";
+        if (algorithm.startsWith("ML-DSA")) return "ML-DSA";
+        if (algorithm.startsWith("SLH-DSA")) return "SLH-DSA";
+        return algorithm;
     }
 
     private static void put(KeyringStore store, String name, String algorithm, KeyPair pair) throws Exception {
@@ -189,7 +205,7 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         assertEquals(mode, store.getProfileVersion(binding.reference().profileId(), binding.reference().profileVersion())
                 .orElseThrow().definition().hybridMode());
         if (mode instanceof HybridCertificateMode.AltSignature) {
-            assertTrue(Pkix.verifyAlternativeSignature(certificate, altKey.getPublic()));
+            assertTrue(Pkix.verifyAlternativeSignatureCor3(certificate, altKey.getPublic()));
             assertTrue(java.util.Arrays.equals(altKey.getPublic().getEncoded(), AltSignatureExtensions.requiredValue(
                     certificate, AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO)));
         } else {
@@ -218,8 +234,9 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
                 new zeroecho.pki.api.request.CertificationRequest(X509,
                         new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.DER, csr))),
                 zeroecho.pki.api.request.RequestStorePolicy.STORE_ALWAYS);
-        LocalSigningResult.Completed completed = execute(session,
-                new PkiSigningOperation.IssueCredential(issuer, request, "matrix-leaf"));
+        var operation = new PkiSigningOperation.IssueCredential(issuer, request, "matrix-leaf");
+        session.signingCommands().orElseThrow().validate(operation, RootCreationFixture.ACCESS, Optional.empty(), CancellationSignal.NONE);
+        LocalSigningResult.Completed completed = execute(session, operation);
         return new PkiId(((PkiOperationValue.Text) completed.result().fields().get("credentialId")).value());
     }
 
@@ -235,12 +252,17 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
     }
 
     CertificateProfileDefinition profile(String id, long version, CertificateProfileKind kind, HybridCertificateMode selected) {
+        return profile(id, version, kind, selected, Set.of(family));
+    }
+
+    CertificateProfileDefinition profile(String id, long version, CertificateProfileKind kind, HybridCertificateMode selected,
+            Set<String> subjectAlgorithms) {
         return new CertificateProfileDefinition(kind, id, version, X509, "Hybrid lifecycle matrix", Duration.ofDays(365),
                 IssuanceApprovalRequirement.NONE, new SubjectPolicy(false, List.of(
                         new SubjectRdnRule(SubjectRdnType.COMMON_NAME, 1, 1, 128, Optional.empty(), true),
                         new SubjectRdnRule(SubjectRdnType.COUNTRY_NAME, 1, 1, 2, Optional.empty(), true))),
                 new CaCertificatePolicy(true, kind == CertificateProfileKind.ROOT_CA ? 2 : 1, true,
-                        Set.of(CaKeyUsage.KEY_CERT_SIGN, CaKeyUsage.CRL_SIGN), Set.of(family)),
+                        Set.of(CaKeyUsage.KEY_CERT_SIGN, CaKeyUsage.CRL_SIGN), subjectAlgorithms),
                 X509AlgorithmBindingPolicy.standardOnly(), Optional.empty(), selected);
     }
 
@@ -260,13 +282,13 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
                         CertificateProfileKind.INTERMEDIATE_CA, descendant));
             } catch (Exception failure) { throw new AssertionError("Profile fixture failed", failure); }
         }
-        return store;
+        return storeDecorator.apply(store);
     }
     @Override public AuditSink openAudit(ProviderConfig configuration) { return event -> { }; }
     @Override public PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,
             SigningProviderRuntimeDependencies dependencies) {
         PkiBootstrap.SigningComposition real = PkiBootstrap.openConfiguredSigningComposition(configuration, dependencies);
-        if (alternativeFault == null) { return real; }
+        if (alternativeFault == null) { return new PkiBootstrap.SigningComposition(signingDecorator.apply(real.provider()), real.capabilities()); }
         zeroecho.pki.spi.crypto.SigningProvider wrapped = (zeroecho.pki.spi.crypto.SigningProvider)
                 java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[] {
                         zeroecho.pki.spi.crypto.SigningProvider.class, zeroecho.pki.spi.crypto.PublicKeyInfoSource.class,

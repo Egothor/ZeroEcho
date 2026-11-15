@@ -197,8 +197,14 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
             throw invalid("ISSUER_BINDING_INCONSISTENT");
         }
         String profileCommitment = HexFormat.of().formatHex(profile.reference().canonicalSha256());
+        var binding = store.getIssuerCryptographicBinding(generation.issuerId())
+                .orElseThrow(() -> invalid("ISSUER_CRYPTOGRAPHIC_BINDING_MISSING"));
         if (!generation.profilePolicyCommitment().equals(profileCommitment)
-                || !generation.x509BindingCommitment().equals(profileCommitment)) {
+                || !binding.profile().equals(profile.reference())
+                || !binding.authorityId().equals(generation.authorityId())
+                || !binding.credentialId().equals(generation.credentialId())
+                || !binding.primary().keyRef().equals(generation.signingKeyRef())
+                || !generation.x509BindingCommitment().equals(binding.bindingSetCommitment())) {
             throw invalid("ISSUER_PROFILE_INCONSISTENT");
         }
         if (generation.issuerId().equals(prepared.generation().issuerId())

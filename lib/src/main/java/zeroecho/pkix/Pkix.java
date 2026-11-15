@@ -128,7 +128,7 @@ public final class Pkix {
     }
 
     /**
-     * Verifies a certificate's standardized alternative signature against an
+     * Verifies a certificate's legacy BC pre-TBS alternative signature against an
      * explicitly trusted issuer alternative key. The subject alternative key
      * extension does not establish issuer trust. No primary signature, validity
      * interval or certification path is validated by this method.
@@ -140,6 +140,21 @@ public final class Pkix {
      */
     public static boolean verifyAlternativeSignature(X509Certificate certificate, PublicKey issuerAlternativeKey) {
         return provider().verifyAlternativeSignature(Objects.requireNonNull(certificate, "certificate"),
+                Objects.requireNonNull(issuerAlternativeKey, "issuerAlternativeKey"));
+    }
+
+    /**
+     * Verifies the X.509 Cor.3 defect 450 transcript using a trusted issuer key.
+     * Retains both native algorithm identifiers and omits only altSignatureValue
+     * and the outer signature bits. Performs no primary/path/time verification.
+     * @param certificate nonnull certificate containing all alternative extensions
+     * @param issuerAlternativeKey nonnull trusted issuer alternative public key
+     * @return false for missing, malformed or invalid alternative signatures
+     * @throws UnsupportedOperationException if the provider lacks this capability
+     * @throws NullPointerException if an argument is null
+     */
+    public static boolean verifyAlternativeSignatureCor3(X509Certificate certificate, PublicKey issuerAlternativeKey) {
+        return provider().verifyAlternativeSignatureCor3(Objects.requireNonNull(certificate, "certificate"),
                 Objects.requireNonNull(issuerAlternativeKey, "issuerAlternativeKey"));
     }
 

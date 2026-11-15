@@ -94,7 +94,7 @@ class FilesystemStatusScheduleTest {
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     @TempDir Path temporary;
 
-    @Test void oldVersion18WithoutScheduleNamespaceIsEmptyAndReopens() throws Exception {
+    @Test void currentVersion18WithoutScheduleNamespaceIsEmptyAndReopens() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             assertTrue(store.getStatusSchedule(new PkiId("absent"), StatusObjectType.CRL).isEmpty());
             assertTrue(store.listActiveStatusSchedulesPage(Optional.empty(), 10, CancellationSignal.NONE).isEmpty());

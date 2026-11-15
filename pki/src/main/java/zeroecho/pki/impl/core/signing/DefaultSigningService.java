@@ -72,6 +72,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
     private final PkiStore store;
     private final SigningProvider provider;
     private final AlgorithmIdentity defaultSignatureAlgorithm;
+    private final Optional<zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot> domainAuthority;
     private final Duration signingTtl;
     private final SecureRandom random;
     private final Runnable requireOpen;
@@ -100,6 +101,29 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
             AlgorithmIdentity defaultSignatureAlgorithm, Duration signingTtl, SecureRandom random,
             Runnable requireOpen, AcceptanceOperation acceptance,
             Runnable wakeReactor, ObservationWait observationWait) {
+        this(store, provider, defaultSignatureAlgorithm, signingTtl, random, requireOpen, acceptance,
+                wakeReactor, observationWait, Optional.empty());
+    }
+
+    /**
+     * Creates signing admission with an exact authority for frozen domain selections.
+     * @param store authoritative signing metadata store
+     * @param provider already-open provider
+     * @param defaultSignatureAlgorithm configured default for legacy callers
+     * @param signingTtl exact positive operation lifetime
+     * @param random fresh submission identifier source
+     * @param requireOpen session lifetime check
+     * @param acceptance custody-transfer acceptance boundary
+     * @param wakeReactor coalesced wake callback
+     * @param observationWait existing bounded observation wait
+     * @param domainAuthority exact configured algorithm authority, absent for compatibility construction
+     * @throws IllegalArgumentException if default/provider/lifetime policy is invalid
+     */
+    public DefaultSigningService(PkiStore store, SigningProvider provider,
+            AlgorithmIdentity defaultSignatureAlgorithm, Duration signingTtl, SecureRandom random,
+            Runnable requireOpen, AcceptanceOperation acceptance, Runnable wakeReactor,
+            ObservationWait observationWait, Optional<zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot> domainAuthority) {
+        this.domainAuthority = Objects.requireNonNull(domainAuthority, "domainAuthority");
         this.store = Objects.requireNonNull(store, "store");
         this.provider = Objects.requireNonNull(provider, "provider");
         this.defaultSignatureAlgorithm = Objects.requireNonNull(defaultSignatureAlgorithm, "defaultSignatureAlgorithm");
@@ -185,13 +209,21 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
             PkiId fairnessAuthorityId, SignWorkflowStore.OuterCommand outer) {
         requireOpen.run();
         Objects.requireNonNull(request, "request");
-        if (!defaultSignatureAlgorithm.canonicalForm().equals(request.algorithmId()) || !signingTtl.equals(request.ttl())) {
+        if (!signingTtl.equals(request.ttl())) {
             throw new IllegalArgumentException("Domain signing configuration differs from this session");
         }
+        AlgorithmIdentity selected = domainAuthority.map(value -> value.resolveIdentity(request.algorithmId()))
+                .orElseGet(() -> defaultSignatureAlgorithm.canonicalForm().equals(request.algorithmId())
+                        ? defaultSignatureAlgorithm : AlgorithmIdentity.parse(request.algorithmId(), java.util.List.of()));
+        if (selected.kind() != AlgorithmIdentity.Kind.SIGNATURE || !selected.canonicalForm().equals(request.algorithmId())
+                || !provider.supportedAlgorithms().contains(selected.canonicalForm())) {
+            throw new IllegalArgumentException("Frozen domain signing algorithm is unavailable");
+        }
+        X509SecurityFloor.requirePermitted(selected);
         SigningSubmissionId submission = SigningSubmissionId.parse(request.operationId());
         submission.validate(namespace, store.signingNow(), store.signingHorizon(), store.signingPermittedSkew());
         SigningRequest metadata = new SigningRequest(submission, request.accessContext(), request.keyRef(),
-                fairnessAuthorityId, defaultSignatureAlgorithm, request.content().encoding(), request.signatureEncoding());
+                fairnessAuthorityId, selected, request.content().encoding(), request.signatureEncoding());
         AcceptanceComponents.validate(metadata);
         DurableContentReference candidate = restore(request.content());
         if (candidate.lifecycle() != DurableContentReference.Lifecycle.OPERATION) {

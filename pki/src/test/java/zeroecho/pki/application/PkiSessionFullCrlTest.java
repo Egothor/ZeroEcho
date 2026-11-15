@@ -600,7 +600,7 @@ class PkiSessionFullCrlTest {
                     new SubjectRef("CN=Session CRL"), new Validity(before, after), Integer.toString(serial),
                     new PkiId("public:session-crl"), new CaProfileBinding(profile), CredentialStatus.ISSUED,
                     PkiTestRuntime.stageCredential(store, der), new SimpleAttributeSet()));
-            store.putIssuerGeneration(new IssuerGeneration(issuer, CA, credentialId, KEY, state, commitment, commitment));
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, new IssuerGeneration(issuer, CA, credentialId, KEY, state, commitment, zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), algorithm);
             store.putIssuerChainPath(chain);
             java.util.ArrayList<PkiId> generations = new java.util.ArrayList<>(previous);
             generations.add(issuer);

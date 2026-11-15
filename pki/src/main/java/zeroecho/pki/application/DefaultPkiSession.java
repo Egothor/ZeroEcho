@@ -209,7 +209,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         SigningGraph signingGraph = null;
         try {
             store = Objects.requireNonNull(exactBootstrap.openStore(exact.store(),
-                    new PkiStoreRuntimeDependencies(exactClock)), "opened store");
+                    new PkiStoreRuntimeDependencies(exactClock,
+                            zeroecho.pki.impl.core.IssuerBindingResolver.publicEvidenceVerifier(authority))), "opened store");
             audit = runtime.auditSink().orElseGet(
                     () -> Objects.requireNonNull(exactBootstrap.openAudit(exact.audit()), "opened audit sink"));
             ProfileService profiles = new DefaultProfileService(store, exactClock, audit, bindings.registry(),
@@ -269,7 +270,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         SigningGraph signingGraph = null;
         try {
             store = Objects.requireNonNull(exactBootstrap.openStore(exact.store(),
-                    new PkiStoreRuntimeDependencies(exactClock)), "opened store");
+                    new PkiStoreRuntimeDependencies(exactClock,
+                            zeroecho.pki.impl.core.IssuerBindingResolver.publicEvidenceVerifier(authority))), "opened store");
             audit = runtime.auditSink().orElseGet(
                     () -> Objects.requireNonNull(exactBootstrap.openAudit(exact.audit()), "opened audit sink"));
             ProfileService profiles = new DefaultProfileService(store, exactClock, audit, bindings.registry(),
@@ -327,7 +329,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                         }
                     }, () -> { }, (operationId, cancellation) -> {
                         throw new UnsupportedOperationException("Local signing does not support bounded observation waits");
-                    });
+                    }, Optional.of(signingAuthority));
             DefaultSemanticSigningService semantic = composeSemantic(store, clock, authority, verification,
                     bindings, signing.signatureAlgorithm(), provider, signingAuthority, pureEdDsaMaximum, service);
             return new SigningGraph(Optional.of(service), Optional.of(semantic), Optional.empty(), provider, null);
@@ -369,7 +371,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                                 zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
                             return reactor.acceptScheduledSign(command, claim, transferCustody);
                         }
-                    }, reactor::wake, reactor::awaitBoundedObservation);
+                    }, reactor::wake, reactor::awaitBoundedObservation, Optional.of(signingAuthority));
             DefaultSemanticSigningService semantic = composeSemantic(store, clock, authority, verification,
                     bindings, signing.signatureAlgorithm(), provider, signingAuthority, pureEdDsaMaximum, service);
             return new SigningGraph(Optional.of(service), Optional.of(semantic),
@@ -391,7 +393,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                 store, provider, signingAuthority, authority, verification, signatureAlgorithm, new SecureRandom(), pureEdDsaMaximum);
         return new DefaultSemanticSigningService(store, service,
                 new zeroecho.pki.impl.core.EndEntitySigningPreparation(store, clock, authority, verification,
-                        bindings.registry(), signatureAlgorithm), pureEdDsaMaximum,
+                        bindings.registry(), signatureAlgorithm, signingAuthority, provider), pureEdDsaMaximum,
                 Optional.of(new FullCrlSigningPreparation(store, clock, signingAuthority,
                         bindings.registry(), signatureAlgorithm)),
                 Optional.of(proofPreparation),

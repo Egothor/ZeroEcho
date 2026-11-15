@@ -188,10 +188,10 @@ public final class HttpOperationCodec {
     private static PkiSigningOperation signingOperation(String id, Fields fields) {
         return switch (id) {
             case PkiSigningOperation.CreateAuthority.NAME -> {
-                fields.exact("formatId", "subjectRef", "profileId", "keyRef");
+                fields.allowed(Set.of("formatId", "subjectRef", "profileId", "keyRef", "signatureAlgorithmId"));
                 yield new PkiSigningOperation.CreateAuthority(new FormatId(fields.text("formatId")),
                         new SubjectRef(fields.text("subjectRef")), fields.text("profileId"),
-                        new KeyRef(fields.text("keyRef")));
+                        new KeyRef(fields.text("keyRef")),fields.optionalText("signatureAlgorithmId"));
             }
             case PkiSigningOperation.IssueCredential.NAME -> {
                 fields.exact("issuerCaId", "requestId", "profileId");
@@ -228,10 +228,10 @@ public final class HttpOperationCodec {
                         StatusObjectType.valueOf(fields.text("type")), new FormatId(fields.text("formatId")));
             }
             case PkiSigningOperation.CreateIntermediate.NAME -> {
-                fields.allowed(Set.of("formatId", "issuerCaId", "subjectRef", "profileId", "keyRef"));
+                fields.allowed(Set.of("formatId", "issuerCaId", "subjectRef", "profileId", "keyRef", "signatureAlgorithmId"));
                 yield new PkiSigningOperation.CreateIntermediate(new FormatId(fields.text("formatId")),
                         fields.pkiId("issuerCaId"), new SubjectRef(fields.text("subjectRef")),
-                        fields.text("profileId"), fields.optionalText("keyRef").map(KeyRef::new));
+                        fields.text("profileId"), fields.optionalText("keyRef").map(KeyRef::new),fields.optionalText("signatureAlgorithmId"));
             }
             case PkiSigningOperation.IssueIntermediateCertificate.NAME -> {
                 fields.allowed(Set.of("formatId", "issuerCaId", "subjectCaId", "profileId", "notBefore", "notAfter"));

@@ -171,6 +171,19 @@ final class BcCertificateBuilder implements CertificateBuilder {
         return buildBody(null, true);
     }
 
+    @Override
+    public byte[] buildAlternativeSignatureTbs(AlgorithmIdentifier nativeAlgorithm) {
+        Objects.requireNonNull(nativeAlgorithm, "nativeAlgorithm");
+        try {
+            byte[] tbs = buildBody(nativeAlgorithm, true);
+            return new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
+                    org.bouncycastle.asn1.ASN1Sequence.getInstance(tbs),
+                    BcAlgorithmIdentifiers.toBc(nativeAlgorithm)}).getEncoded(ASN1Encoding.DER);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot encode Cor3 alternative-signature input", failure);
+        }
+    }
+
     private byte[] buildBody(AlgorithmIdentifier signatureAlgorithm, boolean alternative) {
         Objects.requireNonNull(serialNumber, "serialNumber");
         Objects.requireNonNull(subject, "subject");
@@ -190,7 +203,7 @@ final class BcCertificateBuilder implements CertificateBuilder {
         generator.setStartDate(new Time(Date.from(notBefore)));
         generator.setEndDate(new Time(Date.from(notAfter)));
         generator.setSubjectPublicKeyInfo(spki);
-        generator.setSignature(alternative ? null : BcAlgorithmIdentifiers.toBc(signatureAlgorithm));
+        generator.setSignature(signatureAlgorithm == null ? null : BcAlgorithmIdentifiers.toBc(signatureAlgorithm));
         ExtensionsGenerator selectedExtensions = new ExtensionsGenerator();
         if (addSubjectKeyIdentifier) {
             selectedExtensions.addExtension(BcExtensions.subjectKeyIdentifier(spki));
@@ -207,7 +220,7 @@ final class BcCertificateBuilder implements CertificateBuilder {
             generator.setExtensions(selectedExtensions.generate());
         }
         try {
-            return alternative ? generator.generatePreTBSCertificate().getEncoded(ASN1Encoding.DER)
+            return alternative && signatureAlgorithm == null ? generator.generatePreTBSCertificate().getEncoded(ASN1Encoding.DER)
                     : generator.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
         } catch (IOException failure) {
             throw new IllegalStateException("Cannot encode certificate body", failure);

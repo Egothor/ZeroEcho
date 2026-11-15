@@ -121,7 +121,7 @@ class FilesystemCrlNumberReservationTest {
             assertEquals(BigInteger.ONE, store.reserveCrlNumber(first.generation().issuerId()));
             Issuer rollover = issuer(store, "First", 2);
             assertEquals(first.scope(), rollover.scope());
-            assertThrows(IllegalStateException.class, () -> store.putIssuerGeneration(first.generation()));
+            assertThrows(IllegalStateException.class, () -> zeroecho.pki.testkit.IssuerBindingFixture.put(store, first.generation(), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256));
             store.putCredential(first.credential());
             assertEquals(BigInteger.TWO, store.reserveCrlNumber(rollover.generation().issuerId()));
             Issuer distinct = issuer(store, "Second", 1);
@@ -189,7 +189,7 @@ class FilesystemCrlNumberReservationTest {
     private static void restoreSnapshotGeneration(FilesystemPkiStore store, IssuerGeneration generation) {
         // This fixture has no CaRecord, so snapshots intentionally omit its generation.
         if (store.getIssuerGeneration(generation.issuerId()).isEmpty()) {
-            store.putIssuerGeneration(generation);
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         }
     }
 
@@ -336,8 +336,8 @@ class FilesystemCrlNumberReservationTest {
                 PkiTestRuntime.stageCredential(store, certificate.getEncoded()), new SimpleAttributeSet());
         store.putCredential(credential);
         IssuerGeneration generation = new IssuerGeneration(generationId, authority, credentialId, new KeyRef("key:test"),
-                IssuerGenerationState.ACTIVE, "1".repeat(64), "1".repeat(64));
-        store.putIssuerGeneration(generation);
+                IssuerGenerationState.ACTIVE, "0".repeat(64), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         store.putIssuerChainPath(path);
         return new Issuer(generation, credential, CrlScope.of(name.getEncoded(), key.getPublic().getEncoded()));
     }

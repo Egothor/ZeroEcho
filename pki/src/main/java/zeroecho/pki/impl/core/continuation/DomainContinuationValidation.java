@@ -147,7 +147,9 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
             case "RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY" -> true;
             default -> throw new IllegalStateException("Domain continuation kind and operation differ");
         };
-        command.requireFields(lifecycle ? 24 : 23);
+        int legacyFields = lifecycle ? 24 : 23;
+        if (command.fields().size() == legacyFields + 1) digest(command.field(legacyFields));
+        else command.requireFields(legacyFields);
         if (lifecycle) {
             pkiId(command, 23);
             String predecessor = command.field(23);
@@ -216,7 +218,8 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (CREATE_ROOT.equals(command.operation()) || ROLLOVER_ROOT.equals(command.operation())) {
             // Both operations freeze the authority before signing. Creation derives
             // it from the operation; rollover retains the existing authority.
-            command.requireFields(14);
+            if (command.fields().size() == 15) CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
+            else command.requireFields(14);
             new FormatId(command.field(0));
             new SubjectRef(command.field(1));
             new KeyRef(command.field(3));
@@ -230,7 +233,8 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (!IntermediateSigningCommand.supports(command.operation())) {
             throw new IllegalStateException("Domain continuation kind and operation differ");
         }
-        command.requireFields(23);
+        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        else command.requireFields(23);
         new FormatId(command.field(0));
         pkiId(command, 1);
         pkiId(command, 2);

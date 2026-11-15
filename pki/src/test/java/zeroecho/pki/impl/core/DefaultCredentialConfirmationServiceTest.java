@@ -777,9 +777,9 @@ final class DefaultCredentialConfirmationServiceTest {
                     "1", new PkiId("spki:proof-issuer"), new zeroecho.pki.api.credential.CaProfileBinding(
                             new CertificateProfileRef("proof-root", 1, new byte[32])), CredentialStatus.ISSUED,
                     PkiTestRuntime.stageCredential(store, ISSUER_CERTIFICATE), new SimpleAttributeSet()));
-            store.putIssuerGeneration(new zeroecho.pki.api.ca.IssuerGeneration(generationId, authority, credentialId,
+            zeroecho.pki.testkit.IssuerBindingFixture.put(store, new zeroecho.pki.api.ca.IssuerGeneration(generationId, authority, credentialId,
                     new zeroecho.pki.api.KeyRef("proof-issuer-key"), zeroecho.pki.api.ca.IssuerGenerationState.ACTIVE,
-                    "00".repeat(32), "00".repeat(32)));
+                    "00".repeat(32), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
             store.putIssuerChainPath(path);
         }
         return reference;

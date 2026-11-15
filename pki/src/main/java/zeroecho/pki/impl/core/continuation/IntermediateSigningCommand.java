@@ -69,7 +69,7 @@ public final class IntermediateSigningCommand {
     private IntermediateSigningCommand() { }
 
     /**
-     * Identifies the closed set sharing this exact 23-field schema.
+     * Identifies the closed set sharing this legacy 23-field or current 25-field schema.
      * @param operation discriminator to test, possibly null
      * @return true only for creation, additional issuance or rollover
      */
@@ -79,7 +79,7 @@ public final class IntermediateSigningCommand {
 
     /**
      * Validates frozen proof coordinates and canonical provenance only.
-     * @param command complete 23-field intermediate signing command
+     * @param command complete legacy 23-field or current 25-field intermediate signing command
      * @return exact nested, complete canonical proof command
      * @throws IllegalStateException if frozen provenance is inconsistent
      */
@@ -87,8 +87,10 @@ public final class IntermediateSigningCommand {
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public static DomainCommandEncoding.Decoded validate(DomainCommandEncoding.Decoded command) {
         if (!supports(command.operation())) { throw invalid(); }
-        command.requireFields(23);
+        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        else command.requireFields(23);
         requireBound(command.operation(), command.fields());
+        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14)));
         ManagedKeyProofCommand.positiveLength(command.field(21), 1_048_576);
         ManagedKeyProofCommand.hex(command.field(22), 32, 32);
         try {
@@ -162,7 +164,7 @@ public final class IntermediateSigningCommand {
      * Bounds exact framed size before encoding a prospective command.
      * @param operation exact supported intermediate operation discriminator
      * @param correlation private stable operation correlation
-     * @param fields exact 23 canonical signing fields
+     * @param fields exact legacy 23 or current 25 canonical signing fields
      * @return complete validated template, with no staging or store activity
      */
     public static DomainContinuationTemplate template(String operation, String correlation, List<String> fields) {
@@ -174,7 +176,7 @@ public final class IntermediateSigningCommand {
     }
 
     private static void requireBound(String operation, List<String> fields) {
-        if (!supports(operation) || fields.size() != 23) { throw invalid(); }
+        if (!supports(operation) || (fields.size() != 23 && fields.size() != 25)) { throw invalid(); }
         long bytes = 13L + operation.length();
         for (String field : fields) {
             bytes += 4L + ManagedKeyProofCommand.utf8Length(field, ManagedKeyProofCommand.MAX_COMMAND_BYTES);

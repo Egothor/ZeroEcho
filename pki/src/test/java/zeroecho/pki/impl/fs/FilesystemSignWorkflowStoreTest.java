@@ -923,7 +923,7 @@ final class FilesystemSignWorkflowStoreTest {
     }
 
     @Test
-    void cleanV16MarkerIsPublishedAndUnsupportedRootIsRejectedWithoutFurtherMutation(
+    void currentMarkerIsPublishedAndUnsupportedRootIsRejectedWithoutFurtherMutation(
             @TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
         {

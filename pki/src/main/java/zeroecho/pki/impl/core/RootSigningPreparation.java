@@ -149,6 +149,15 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         this.pureEdDsaMaximum = pureEdDsaMaximum;
     }
 
+    /** @return exact configured canonical creation signature; performs no lookup or mutation */
+    public String creationSignatureAlgorithm() { return signature.canonicalForm(); }
+
+    private RootSigningPreparation selected(CaCreateCommand input) {
+        String selected = input.signatureAlgorithmId().orElse(signature.canonicalForm());
+        return selected.equals(signature.canonicalForm()) ? this : new RootSigningPreparation(store, clock, provider,
+                authority, bindings, selected, pureEdDsaMaximum);
+    }
+
     /**
      * Validates the currently known root inputs without serial allocation,
      * content staging, provider signing or authority mutation. Alternative keys
@@ -166,6 +175,11 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         Objects.requireNonNull(access, "access");
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        RootSigningPreparation selected = selected(input);
+        if (selected != this) {
+            selected.validate(access, input, cancellation);
+            return;
+        }
         RootInput publicInput = readInput(input, cancellation);
         // These local coordinates exercise policy without consuming a real serial or operation ID.
         PkiId validationId = new PkiId("preflight:root");
@@ -239,6 +253,8 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         Objects.requireNonNull(submission, "submission");
         Objects.requireNonNull(ttl, "ttl");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        RootSigningPreparation selected = selected(input);
+        if (selected != this) return selected.prepare(access, input, submission, ttl, cancellation);
         validateSubmission(submission, ttl);
         Instant evaluationTime = clock.instant();
         RootInput publicInput = readInput(input, cancellation);
@@ -263,7 +279,8 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
                 input.keyRef().value(), profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
                 HexFormat.of().formatHex(profile.reference().canonicalSha256()), validity.notBefore().toString(),
                 validity.notAfter().toString(), serial.toString(), canonicalSubject,
-                approved.policy().toString(), approved.algorithmBindingPolicy().toString(), root.value());
+                approved.policy().toString(), approved.algorithmBindingPolicy().toString(), root.value(),
+                outgoing(profile, input.keyRef(), input.altKeyRef(), spki).encodeForSubject());
         return stage(access, input.keyRef(), submission, ttl, template, tbs, cancellation);
     }
 
@@ -317,6 +334,14 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         Objects.requireNonNull(submission, "submission");
         Objects.requireNonNull(ttl, "ttl");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        CaRecord current = store.getCa(caId).orElseThrow(() -> reject("ROOT_MISSING"));
+        var retained = store.getIssuerCryptographicBinding(current.currentIssuanceIssuerId());
+        if (retained.isEmpty()) throw reject("ISSUER_BINDING_MISSING");
+        if (!retained.orElseThrow().primary().signatureAlgorithm().equals(signature)) {
+            return new RootSigningPreparation(store, clock, provider, authority, bindings,
+                    retained.orElseThrow().primary().signatureAlgorithm().canonicalForm(), pureEdDsaMaximum)
+                    .prepareExisting(access, caId, replacementKey, requestedValidity, attributes, submission, ttl, cancellation);
+        }
         validateSubmission(submission, ttl);
         ExistingRoot existing = readExisting(caId, replacementKey, requestedValidity, attributes,
                 CertificateSerialAllocator.allocate(), cancellation);
@@ -342,7 +367,8 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
                 keyRef.value(), profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
                 HexFormat.of().formatHex(profile.reference().canonicalSha256()), validity.notBefore().toString(),
                 validity.notAfter().toString(), serial.toString(), canonicalSubject,
-                approved.policy().toString(), approved.algorithmBindingPolicy().toString(), caId.value());
+                approved.policy().toString(), approved.algorithmBindingPolicy().toString(), caId.value(),
+                outgoing(profile, keyRef, Optional.empty(), spki).encodeForSubject());
         return stage(access, keyRef, submission, ttl, template, tbs, cancellation);
     }
 
@@ -374,6 +400,17 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
     private void validateExistingInput(AccessContext access, Object command, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(access, "access");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        PkiId caId = command instanceof CaRolloverCommand.Root value ? value.caId()
+                : command instanceof CaKeyRotationCommand.Root value ? value.caId() : null;
+        if (caId == null) throw new UnsupportedOperationException("Unsupported root lifecycle input");
+        CaRecord ca = store.getCa(caId).orElseThrow(() -> reject("ROOT_MISSING"));
+        var retained = store.getIssuerCryptographicBinding(ca.currentIssuanceIssuerId()).orElseThrow(() -> reject("ISSUER_BINDING_MISSING"));
+        if (!retained.primary().signatureAlgorithm().equals(signature)) {
+            new RootSigningPreparation(store, clock, provider, authority, bindings,
+                    retained.primary().signatureAlgorithm().canonicalForm(), pureEdDsaMaximum)
+                    .validateExistingInput(access, command, cancellation);
+            return;
+        }
         ExistingRoot existing;
         if (command instanceof CaRolloverCommand.Root input) {
             existing = readExisting(input.caId(), Optional.empty(), input.requestedValidity(), input.attributes(), BigInteger.ONE, cancellation);
@@ -392,15 +429,20 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         if (!root.caId().equals(caId) || root.kind() != CaKind.ROOT || root.state() != CaState.ACTIVE) {
             throw reject("ROOT_UNAVAILABLE");
         }
+        if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
+        var generation = IssuerAuthorities.current(store, root);
+        EncodedObject issuerPublicKey = keys.resolvePublicKeyInfo(generation.signingKeyRef());
+        IssuerBindingResolver.resolve(store, generation,
+                reference -> reference.equals(generation.signingKeyRef()) ? issuerPublicKey : keys.resolvePublicKeyInfo(reference), authority);
         Credential selected = IssuerAuthorities.currentCredential(store, root);
         if (!(selected.profileBinding() instanceof CaProfileBinding historical)) { throw reject("ROOT_PROFILE_BINDING_INVALID"); }
         ActiveCertificateProfile profile = store.requireActiveProfile(historical.reference().profileId());
         if (!profile.reference().profileId().equals(historical.reference().profileId())
                 || !selected.formatId().equals(BcX509CredentialFramework.FORMAT_ID)) { throw reject("PROFILE_BINDING_INVALID"); }
         CaCertificateProfileValidator.requireProfileShape(profile, CertificateProfileKind.ROOT_CA, selected.formatId());
-        requireHybridContinuity(selected, historical, profile, cancellation);
+        requireHybridContinuity(caId, selected, historical, profile, cancellation);
         KeyRef keyRef = replacementKey.orElse(root.issuerKeyRef());
-        byte[] spki = publicKeyInfo(keyRef, cancellation);
+        byte[] spki = keyRef.equals(generation.signingKeyRef()) ? issuerPublicKey.bytes() : publicKeyInfo(keyRef, cancellation);
         EncodedObject exactKey = new EncodedObject(Encoding.DER, spki);
         X500Principal subject = new X500Principal(root.subjectRef().value());
         List<SubjectRdn> rdns = CaCertificateProfileValidator.validateTrustedSubject(subject, profile.definition());
@@ -413,6 +455,23 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
 
     private record ExistingRoot(Credential selected, ActiveCertificateProfile profile, KeyRef keyRef, byte[] spki,
             X500Principal subject, ValidatedCaCertificateRequest approved) { }
+
+    private zeroecho.pki.impl.core.continuation.CaOutgoingBinding outgoing(ActiveCertificateProfile profile,
+            KeyRef primaryRef, Optional<KeyRef> alternativeOverride, byte[] primarySpki) throws IOException {
+        if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
+        var primary = IssuerBindingResolver.createKey(primaryRef, signature, primarySpki,
+                reference -> {
+                    if (!primaryRef.equals(reference)) throw reject("SUBJECT_KEY_REFERENCE_DIFFERS");
+                    return new EncodedObject(Encoding.DER, primarySpki);
+                }, authority);
+        Optional<zeroecho.pki.api.ca.IssuerKeyBinding> alternative = Optional.empty();
+        if (profile.definition().hybridMode() instanceof HybridCertificateMode.AltSignature mode) {
+            KeyRef reference = alternativeOverride.orElseGet(() -> new KeyRef(mode.altKeyRef()));
+            alternative = Optional.of(IssuerBindingResolver.createKey(reference,
+                    authority.resolveIdentity(mode.altSignatureAlgorithmId()), publicKeyInfo(reference, zeroecho.core.io.CancellationSignal.NONE), keys, authority));
+        }
+        return new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(primary, alternative, bindings.commitment());
+    }
 
     private byte[] buildTbs(Optional<KeyRef> alternativeKey, HybridCertificateMode hybridMode,
             ValidatedCaCertificateRequest approved,
@@ -447,7 +506,7 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
                         approved.policy().keyUsageCritical())
                 .addExtension(AltSignatureExtensions.subjectAltPublicKeyInfo(altSpki))
                 .addExtension(AltSignatureExtensions.altSignatureAlgorithm(altAlgId))
-                .buildAlternativeSignatureTbs();
+                .buildAlternativeSignatureTbs(algorithm);
         if (preTbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) { throw reject("TBS_TOO_LARGE"); }
         if (!(provider instanceof AltSigningCapability altSigner)) { throw reject("ALT_SIGNING_CAPABILITY_UNAVAILABLE"); }
         cancellation.throwIfCancelled();
@@ -475,7 +534,7 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
                 .buildTbs(algorithm);
     }
 
-    private void requireHybridContinuity(Credential selected, CaProfileBinding historical,
+    private void requireHybridContinuity(PkiId caId, Credential selected, CaProfileBinding historical,
             ActiveCertificateProfile active, CancellationSignal cancellation) throws IOException {
         zeroecho.pki.api.profile.ImportedCertificateProfileVersion previous = store.getProfileVersion(
                 historical.reference().profileId(), historical.reference().profileVersion())
@@ -494,11 +553,18 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
                     authority.resolveIdentity(alternative.altSignatureAlgorithmId()),
                     X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE)
                     .orElseThrow(() -> reject("ALT_ALGORITHM_BINDING_MISSING")));
+            var baseline = store.getIssuerCryptographicBinding(zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, selected.credentialId()))
+                    .map(zeroecho.pki.api.ca.IssuerCryptographicBinding::certificateHybridBaseline)
+                    .orElseThrow(() -> reject("ISSUER_BINDING_MISSING"));
+            boolean signatureValid = baseline == zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.COR3_SIGNED_WRAPPER
+                    ? Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(expected))
+                    : baseline == zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.LEGACY_PRE_TBS
+                            && Pkix.verifyAlternativeSignature(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(expected));
             if (!java.util.Arrays.equals(expected, configured)
                     || !java.util.Arrays.equals(Pkix.encodeAlgorithmIdentifier(algorithm),
                             AltSignatureExtensions.requiredValue(certificate,
                                     AltSignatureExtensions.OID_ALT_SIGNATURE_ALGORITHM))
-                    || !Pkix.verifyAlternativeSignature(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(expected))) {
+                    || !signatureValid) {
                 throw reject("ALT_KEY_CONTINUITY_INVALID");
             }
         }

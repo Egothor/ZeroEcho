@@ -114,6 +114,7 @@ public final class IntermediateCreationFixture {
     public final KeyPair parentKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
     public final KeyPair childKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
     public final KeyPair rotatedKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+    private final Map<KeyRef, EncodedObject> issuerPublicKeys = new java.util.HashMap<>();
     public final Provider provider = new Provider();
     public final X509AuthoritySnapshot signing = PkiTestRuntime.signingAuthority(provider);
     public final BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
@@ -147,8 +148,8 @@ public final class IntermediateCreationFixture {
                 new PkiId("spki:" + hash(parentKey.getPublic().getEncoded())), new CaProfileBinding(profile), CredentialStatus.ISSUED,
                 PkiTestRuntime.stageCredential(store, der), new SimpleAttributeSet()));
         String commitment = java.util.HexFormat.of().formatHex(profile.canonicalSha256());
-        store.putIssuerGeneration(new IssuerGeneration(generation, CA, credentialId, PARENT_KEY, IssuerGenerationState.ACTIVE,
-                commitment, commitment));
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, new IssuerGeneration(generation, CA, credentialId, PARENT_KEY, IssuerGenerationState.ACTIVE,
+                commitment, zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE);
         store.putIssuerChainPath(path);
         store.putCa(new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, PARENT_KEY, new SubjectRef("CN=Parent"),
                 List.of(generation), generation, path.pathId()));
@@ -184,6 +185,7 @@ public final class IntermediateCreationFixture {
         PkiId middle = new PkiId("middle-authority");
         KeyRef middleKey = new KeyRef("middle-key");
         KeyPair middlePair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+        issuerPublicKeys.put(middleKey, new EncodedObject(Encoding.DER, middlePair.getPublic().getEncoded()));
         String metadataSubject = legacy ? Pkix.distinguishedNameString(Pkix.parseDistinguishedName(new X500Principal(subject).getEncoded())) : subject;
         CaRecord root = store.getCa(CA).orElseThrow();
         IssuerChainPath rootPath = store.getIssuerChainPath(root.issuanceChainPathId()).orElseThrow();
@@ -203,8 +205,8 @@ public final class IntermediateCreationFixture {
                 new PkiId("spki:" + hash(middlePair.getPublic().getEncoded())), new CaProfileBinding(profile), CredentialStatus.ISSUED,
                 PkiTestRuntime.stageCredential(store, der), new SimpleAttributeSet()));
         String commitment = java.util.HexFormat.of().formatHex(profile.canonicalSha256());
-        store.putIssuerGeneration(new IssuerGeneration(generation, middle, credentialId, middleKey, IssuerGenerationState.ACTIVE,
-                commitment, commitment));
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, new IssuerGeneration(generation, middle, credentialId, middleKey, IssuerGenerationState.ACTIVE,
+                commitment, zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE);
         store.putIssuerChainPath(path);
         store.putCa(new CaRecord(middle, CaKind.INTERMEDIATE, CaState.ACTIVE, middleKey, new SubjectRef(metadataSubject),
                 List.of(generation), generation, path.pathId()));
@@ -263,11 +265,17 @@ public final class IntermediateCreationFixture {
     public final class Provider implements SigningProvider, PublicKeyInfoSource {
         public int dispatches;
         public int lookups;
+        public int issuerLookups;
         @Override public String id() { return "intermediate-test"; }
         @Override public ConfigurationCommitment configurationCommitment() { return new ConfigurationCommitment(new byte[32]); }
         @Override public Set<String> supportedAlgorithms() { return Set.of(ALGORITHM); }
         @Override public SigningInputCapabilities inputCapabilities() { return new SigningInputCapabilities(4_000_000, Map.of()); }
         @Override public EncodedObject resolvePublicKeyInfo(KeyRef key) {
+            if (PARENT_KEY.equals(key)) {
+                issuerLookups++;
+                return new EncodedObject(Encoding.DER, parentKey.getPublic().getEncoded());
+            }
+            if (issuerPublicKeys.containsKey(key)) { issuerLookups++; return issuerPublicKeys.get(key); }
             lookups++;
             if (!key.equals(CHILD_KEY) && !key.equals(ROTATED_KEY)) { throw new AssertionError("Only a proven subject key may be exported"); }
             return new EncodedObject(Encoding.DER, (key.equals(ROTATED_KEY) ? rotatedKey : childKey).getPublic().getEncoded());

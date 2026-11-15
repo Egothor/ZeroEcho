@@ -158,6 +158,15 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         IssuerChainPath path = store.getIssuerChainPath(frozen.pathId())
                 .orElseThrow(() -> new PostconditionFailure("ISSUER_PATH_UNAVAILABLE"));
         requireFrozenIssuer(generation, path, frozen.authorityId(), frozen.issuerId(), frozen.pathCommitment());
+        int bindingIndex = "ISSUE_END_ENTITY".equals(command.operation()) ? 23 : 24;
+        if (command.fields().size() == bindingIndex + 1) {
+            var binding = store.getIssuerCryptographicBinding(generation.issuerId())
+                    .orElseThrow(() -> new PostconditionFailure("FROZEN_ISSUER_BINDING_MISSING"));
+            if (!binding.commitment().equals(command.field(bindingIndex))
+                    || !binding.primary().keyRef().value().equals(command.field(11))) {
+                throw new PostconditionFailure("FROZEN_ISSUER_BINDING_DIFFERS");
+            }
+        }
         X509Certificate certificate = certificate(result);
         requireIssuedMetadata(certificate, frozen.serial(), frozen.notBefore(), frozen.notAfter(),
                 frozen.publicKeyFingerprint());
@@ -362,12 +371,31 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
             X509Certificate issuerCertificate = certificate(issuerDer);
             try {
                 certificate.verify(issuerCertificate.getPublicKey());
+                if (certificate.getExtensionValue("2.5.29.72") != null
+                        || certificate.getExtensionValue("2.5.29.73") != null
+                        || certificate.getExtensionValue("2.5.29.74") != null) {
+                    byte[] alternativeSpki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(issuerCertificate, "2.5.29.72");
+                    if (!Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(alternativeSpki))) {
+                        throw new PostconditionFailure("CERTIFICATE_ALT_SIGNATURE_DIFFERS");
+                    }
+                }
+            } catch (java.io.IOException malformed) {
+                throw new PostconditionFailure("CERTIFICATE_ALT_SIGNATURE_DIFFERS", malformed);
             } catch (java.security.GeneralSecurityException failure) {
                 throw new PostconditionFailure("CERTIFICATE_SIGNATURE_DIFFERS", failure);
             }
         } finally {
             Arrays.fill(issuerDer, (byte) 0);
         }
+    }
+
+    /* default */ static zeroecho.pkix.AlgorithmIdentifier nativeSignatureAlgorithm(X509Certificate certificate)
+            throws java.security.cert.CertificateEncodingException, java.io.IOException {
+        byte[] tbs = certificate.getTBSCertificate();
+        var layout = new zeroecho.pki.impl.framework.x509.StreamingDerReader()
+                .inspectUnsignedCertificateTbs(tbs, 1_048_576);
+        return Pkix.parseAlgorithmIdentifier(java.util.Arrays.copyOfRange(tbs, layout.algorithmOffset(),
+                layout.algorithmOffset() + layout.algorithmLength()));
     }
 
     /* default */ static X509Certificate certificate(EncodedObject encoded) {

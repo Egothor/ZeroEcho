@@ -773,7 +773,8 @@ public final class OperationSecurityDescriptors {
         return switch (operation) {
             case PkiSigningOperation.CreateAuthority value -> "format=" + atom(value.formatId().value()) + ";subject="
                     + atom(value.subjectRef().value()) + ";profile=" + atom(value.profileId())
-                    + ";keyRef=" + atom(value.keyRef().value());
+                    + ";keyRef=" + atom(value.keyRef().value())
+                    + value.signatureAlgorithmId().map(id->";signatureAlgorithmId="+atom(id)).orElse("");
             case PkiSigningOperation.IssueCredential value -> "issuer=" + atom(value.issuerCaId().value()) + ";request="
                     + atom(value.requestId().value()) + ";profile=" + atom(value.profileId());
             case PkiSigningOperation.RenewCredential value -> "credential=" + atom(value.credentialId().value());
@@ -788,7 +789,8 @@ public final class OperationSecurityDescriptors {
             case PkiSigningOperation.CreateIntermediate value -> "format=" + atom(value.formatId().value()) + ";issuer="
                     + atom(value.issuerCaId().value()) + ";subject=" + atom(value.subjectRef().value())
                     + ";profile=" + atom(value.profileId()) + ";keyRef="
-                    + atom(value.keyRef().map(zeroecho.pki.api.KeyRef::value).orElse(""));
+                    + atom(value.keyRef().map(zeroecho.pki.api.KeyRef::value).orElse(""))
+                    + value.signatureAlgorithmId().map(id->";signatureAlgorithmId="+atom(id)).orElse("");
             case PkiSigningOperation.IssueIntermediateCertificate value -> "format=" + atom(value.formatId().value())
                     + ";issuer=" + atom(value.issuerCaId().value()) + ";subject=" + atom(value.subjectCaId().value())
                     + ";profile=" + atom(value.profileId()) + ";validity="

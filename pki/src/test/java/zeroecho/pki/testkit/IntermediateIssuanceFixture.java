@@ -107,8 +107,8 @@ public final class IntermediateIssuanceFixture {
                 new PkiId("spki:" + IntermediateCreationFixture.hash(base.childKey.getPublic().getEncoded())), new CaProfileBinding(historical),
                 CredentialStatus.ISSUED, PkiTestRuntime.stageCredential(store, der), new SimpleAttributeSet()));
         String commitment = HexFormat.of().formatHex(historical.canonicalSha256());
-        store.putIssuerGeneration(new IssuerGeneration(generation, SUBJECT, credentialId, IntermediateCreationFixture.CHILD_KEY,
-                IssuerGenerationState.ACTIVE, commitment, commitment));
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, new IssuerGeneration(generation, SUBJECT, credentialId, IntermediateCreationFixture.CHILD_KEY,
+                IssuerGenerationState.ACTIVE, commitment, zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT), zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE);
         store.putIssuerChainPath(path);
         store.putCa(new CaRecord(SUBJECT, CaKind.INTERMEDIATE, CaState.ACTIVE, IntermediateCreationFixture.CHILD_KEY,
                 subject, List.of(generation), generation, path.pathId()));

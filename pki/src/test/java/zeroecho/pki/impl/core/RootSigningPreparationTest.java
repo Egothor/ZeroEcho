@@ -171,7 +171,7 @@ final class RootSigningPreparationTest {
             assertEquals(Encoding.DER, first.content().encoding());
             assertEquals(DurableContentReference.Lifecycle.OPERATION, first.content().lifecycle());
             DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(first.domainTemplate().command());
-            command.requireFields(14);
+            command.requireFields(15);
             assertEquals("CREATE_ROOT", command.operation());
             assertEquals(DomainCommandEncoding.rootAuthorityId(first.operationId()).value(), command.field(13));
             assertEquals("root-test", command.field(2));

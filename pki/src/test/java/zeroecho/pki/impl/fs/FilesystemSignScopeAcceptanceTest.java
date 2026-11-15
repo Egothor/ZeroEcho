@@ -336,6 +336,11 @@ class FilesystemSignScopeAcceptanceTest {
                 SemanticIssuanceFixture.publicKeyDigest(), "", "", "");
         template = zeroecho.pki.testkit.IntermediateProofProvenanceFixture.withProof(template,
                 base.providerNamespace(), base.providerConfigurationCommitment(), candidate.length(), candidate.sha256());
+        var fields = new java.util.ArrayList<>(DomainCommandEncoding.decode(template.command()).fields());
+        fields.add(capturedBinding("child-key", certificate.getPublicKey().getEncoded()));
+        var incoming = store.getIssuerCryptographicBinding(SemanticIssuanceFixture.issuerId(1)).orElseThrow();
+        fields.add(new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(incoming.primary(), Optional.empty(), incoming.bindingSetCommitment()).encodeForSubject());
+        template = DomainCommandEncoding.template(template.kind(), "CREATE_INTERMEDIATE", fields.toArray(String[]::new));
         store.stagedContent().retireUnownedContent(base.candidate());
         return new SignWorkflowStore.AcceptanceCommand(base.operationId(), base.providerNamespace(),
                 base.providerConfigurationCommitment(), base.accessContext(), base.keyRef(), base.fairnessAuthorityId(), base.algorithmId(),
@@ -405,18 +410,42 @@ class FilesystemSignScopeAcceptanceTest {
         String namespace = store.signingNamespace() + ".scope-test";
         PkiId operation = SigningSubmissionId.create(namespace, now, new SecureRandom()).id();
         PkiId authority = DomainCommandEncoding.rootAuthorityId(operation);
+        // Acceptance validates the imported reference; no active preparation policy is needed.
+        var definition = zeroecho.pki.testkit.RootCreationFixture.definition("scope-root",
+                zeroecho.pki.api.profile.CertificateProfileKind.ROOT_CA, java.time.Duration.ofDays(365),
+                zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.standardOnly());
+        byte[] canonical = zeroecho.pki.api.profile.CertificateProfileDocumentCodec.writeCanonical(definition);
+        var profile = new zeroecho.pki.api.profile.CertificateProfileRef("scope-root", 1,
+                java.security.MessageDigest.getInstance("SHA-256").digest(canonical));
+        store.importProfileVersion(new zeroecho.pki.api.profile.ImportedCertificateProfileVersion(profile,
+                zeroecho.pki.api.profile.CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical,
+                zeroecho.pki.testkit.RootCreationFixture.NOW));
+        var certificate = SemanticIssuanceFixture.certificate("CN=Acceptance Issuer", BigInteger.valueOf(serial),
+                SemanticIssuanceFixture.BEFORE, SemanticIssuanceFixture.AFTER);
+        byte[] tbs = certificate.toASN1Structure().getTBSCertificate().getEncoded();
         DomainContinuationTemplate template = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, "CREATE_ROOT",
-                "x509", "root", "root", SemanticIssuanceFixture.KEY.value(), "profile", "1", "1".repeat(64),
+                "x509", "CN=Acceptance Issuer", "scope-root", SemanticIssuanceFixture.KEY.value(), "scope-root", "1",
+                java.util.HexFormat.of().formatHex(profile.canonicalSha256()),
                 SemanticIssuanceFixture.BEFORE.toString(), SemanticIssuanceFixture.AFTER.toString(), Integer.toString(serial),
-                "CN=Acceptance Issuer", "", "", authority.value());
-        byte[] tbs = SemanticIssuanceFixture.certificate("CN=Acceptance Issuer", BigInteger.valueOf(serial),
-                SemanticIssuanceFixture.BEFORE, SemanticIssuanceFixture.AFTER).toASN1Structure().getTBSCertificate().getEncoded();
+                "CN=Acceptance Issuer", "", "", authority.value(), capturedBinding(SemanticIssuanceFixture.KEY.value(),
+                        certificate.getSubjectPublicKeyInfo().getEncoded()));
         return new SignWorkflowStore.AcceptanceCommand(operation, namespace, new SigningProvider.ConfigurationCommitment(new byte[32]),
                 new AccessContext(new Principal("TEST", "scope"), new Purpose("SIGN"), Optional.empty(), Optional.empty()),
                 SemanticIssuanceFixture.KEY, authority, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(),
                 Encoding.BINARY, now, now.plusSeconds(60), PkiTestRuntime.operationReference(store.stagedContent(), Encoding.DER, tbs),
                 Optional.of(new SignWorkflowStore.OuterCommand(template.kind(), operation.value(), template.command(), template.commandCommitment())),
                 SignWorkflowStore.Mode.NORMAL, java.util.Optional.empty());
+    }
+
+    private static String capturedBinding(String keyRef, byte[] spki) throws Exception {
+        var primary = new zeroecho.pki.api.ca.IssuerKeyBinding(new zeroecho.pki.api.KeyRef(keyRef),
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY,
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                new zeroecho.pki.api.EncodedObject(Encoding.DER, zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(
+                        zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11"))),
+                java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(spki)));
+        return new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(primary, Optional.empty(),
+                zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT).encodeForSubject();
     }
 
     static CrlScope candidateScope(SignWorkflowStore.AcceptanceCommand command, FilesystemPkiStore store) throws Exception {

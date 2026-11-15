@@ -69,7 +69,7 @@ import zeroecho.pkix.sign.ContentVerifier;
 public interface PkixProvider {
 
     /**
-     * Verifies only the standardized alternative signature using an explicit
+     * Verifies only the legacy BC pre-TBS alternative signature using an explicit
      * issuer alternative key. Missing or malformed alternative extensions fail
      * closed. This operation performs no path, time or primary-signature checks.
      * @param certificate nonnull certificate with all three alternative extensions
@@ -79,6 +79,20 @@ public interface PkixProvider {
      */
     default boolean verifyAlternativeSignature(X509Certificate certificate, PublicKey issuerAlternativeKey) {
         throw new UnsupportedOperationException("Alternative-signature verification is unavailable");
+    }
+
+    /**
+     * Verifies the X.509 Cor.3 defect 450 transcript using a trusted issuer key.
+     * Retains both native algorithm identifiers and omits only altSignatureValue
+     * and the outer signature bits. Performs no primary/path/time verification.
+     * @param certificate nonnull certificate containing all alternative extensions
+     * @param issuerAlternativeKey nonnull trusted issuer alternative public key
+     * @return false for missing, malformed or invalid alternative signatures
+     * @throws UnsupportedOperationException if the provider lacks this capability
+     * @throws NullPointerException if an argument is null
+     */
+    default boolean verifyAlternativeSignatureCor3(X509Certificate certificate, PublicKey issuerAlternativeKey) {
+        throw new UnsupportedOperationException("Cor3 alternative-signature verification is unavailable");
     }
 
     /**

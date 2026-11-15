@@ -34,6 +34,8 @@
 
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.EncodedObject;
+
 import zeroecho.pki.api.request.X509EnrollmentPayload;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -97,6 +99,8 @@ final class EndEntityIssuancePreparation {
     private final PkiStore store;
     private final EffectiveCredentialStatusResolver status;
     private final X509AuthoritySnapshot authority;
+    private final Optional<zeroecho.pki.spi.crypto.PublicKeyInfoSource> managedKeys;
+    private final X509AuthoritySnapshot signingAuthority;
     private final BcX509ProofOfPossessionVerifier proofVerifier;
     private final X509ProfileBindingMatcher bindingMatcher;
     private final AlgorithmIdentity signature;
@@ -104,6 +108,14 @@ final class EndEntityIssuancePreparation {
 
     /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm) {
+        this(store, clock, authority, verifier, bindings, signatureAlgorithm, authority, Optional.empty());
+    }
+
+    /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
+            BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm,
+            X509AuthoritySnapshot signingAuthority, Optional<zeroecho.pki.spi.crypto.PublicKeyInfoSource> managedKeys) {
+        this.signingAuthority = Objects.requireNonNull(signingAuthority, "signingAuthority");
+        this.managedKeys = Objects.requireNonNull(managedKeys, "managedKeys");
         this.serialSource = CertificateSerialAllocator::allocate;
         this.store = Objects.requireNonNull(store, "store");
         this.status = new StoreBackedEffectiveCredentialStatusResolver(store, clock);
@@ -120,6 +132,7 @@ final class EndEntityIssuancePreparation {
 
     private EndEntityIssuancePreparation(EndEntityIssuancePreparation source) {
         store = source.store; status = source.status; authority = source.authority;
+        managedKeys = source.managedKeys; signingAuthority = source.signingAuthority;
         proofVerifier = source.proofVerifier; bindingMatcher = source.bindingMatcher; signature = source.signature;
         serialSource = () -> BigInteger.ONE;
     }
@@ -180,12 +193,23 @@ final class EndEntityIssuancePreparation {
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
             Optional<IssuanceIntent> intent, CancellationSignal cancellation) throws IOException {
+        return prepareCandidate(access, candidate, evaluation, csrDer, intent, Optional.empty(), false, cancellation);
+    }
+
+    /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
+            EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
+            Optional<IssuanceIntent> intent, Optional<zeroecho.pki.api.Validity> frozenValidity, boolean sdk,
+            CancellationSignal cancellation) throws IOException {
         CaRecord ca = store.getCa(candidate.issuerCaId()).orElseThrow(
                 () -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
         if (!ca.caId().equals(candidate.issuerCaId()) || ca.state() != CaState.ACTIVE) {
             throw new PkiException("Issuer CA is not active", PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
         }
         IssuerGeneration generation = IssuerAuthorities.current(store, ca);
+        zeroecho.pki.api.ca.IssuerCryptographicBinding issuerBinding = store.getIssuerCryptographicBinding(generation.issuerId())
+                .orElseThrow(() -> new PkiException("Issuer binding unavailable: code=ISSUER_BINDING_MISSING"));
+        AlgorithmIdentity signature = issuerBinding.primary().signatureAlgorithm();
+        X509SecurityFloor.requirePermitted(signature);
         IssuerChainPath path = IssuerAuthorities.issuancePath(store, ca);
         if (intent.isPresent()) {
             requireSelectedIssuance(intent.orElseThrow(), generation, path);
@@ -200,9 +224,18 @@ final class EndEntityIssuancePreparation {
                 || !profile.definition().formatId().equals(BcX509CredentialFramework.FORMAT_ID)) {
             throw new PkiException("End-entity preparation rejected: code=PROFILE_KIND_MISMATCH");
         }
+        boolean requestAlternative = profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature;
+        if (requestAlternative != sdk) throw new PkiException("SDK dual proof required: code=SDK_PROFILE_REQUIRED");
+        if (sdk) {
+            var mode = (zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature) profile.definition().hybridMode();
+            var alternative = issuerBinding.alternative().orElseThrow(() -> new PkiException("SDK_ISSUER_NOT_HYBRID"));
+            if (!alternative.signatureAlgorithm().equals(authority.resolveIdentity(mode.altSignatureAlgorithmId()))) {
+                throw new PkiException("SDK_ALTERNATIVE_ISSUER_ALGORITHM_DIFFERS");
+            }
+        }
         ValidatedCertificateRequest validated = csrDer.isPresent()
-                ? CertificateProfileValidator.validate(candidate, profile.profile(), profile.reference(), issuer,
-                        evaluation.evaluationTime(), authority)
+                ? CertificateProfileValidator.validateFrozen(candidate, profile.profile(), profile.reference(), issuer,
+                        evaluation.evaluationTime(), authority, frozenValidity)
                 : CertificateProfileValidator.validateReconstructed(candidate, profile.profile(), profile.reference(), issuer,
                         evaluation.evaluationTime(), authority);
         ValidatedCertificateRequest approved = validated.withFrozenIssuance(
@@ -217,9 +250,13 @@ final class EndEntityIssuancePreparation {
             AlgorithmIdentity issuerKey = adapter.decode(Pkix.subjectPublicKeyAlgorithm(
                     Pkix.subjectPublicKeyInfo(certificate)), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
             X509SuiteCompatibility.requireCompatible(signature, issuerKey);
+            if (managedKeys.isPresent()) IssuerBindingResolver.resolve(store, generation, managedKeys.orElseThrow(), authority);
             X509AlgorithmBindingPolicy policy = approved.algorithmBindingPolicy();
             signingBinding = selectBinding(signature, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
                     policy.certificateSignature());
+            if (!signingBinding.equals(Pkix.parseAlgorithmIdentifier(issuerBinding.primary().signatureAlgorithmIdentifier().bytes()))) {
+                throw new IllegalArgumentException("Frozen issuer signature binding differs");
+            }
             if (csrDer.isPresent()) {
                 X509EnrollmentPayload payload = csrDer.orElseThrow();
                 AlgorithmIdentifier proofAlgorithm = payload.kind() == X509EnrollmentPayload.Kind.PKCS10
@@ -235,8 +272,29 @@ final class EndEntityIssuancePreparation {
         }
         cancellation.throwIfCancelled();
         return new Prepared(access, approved, generation.signingKeyRef(), signature, signingBinding,
-                serialSource.get(), evaluation.evaluationTime(), issuerDer, issuer.content());
+                serialSource.get(), evaluation.evaluationTime(), issuerDer, issuer.content(), issuerBinding, profile);
     }
+
+    /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
+            CancellationSignal cancellation) throws IOException {
+        if (managedKeys.isEmpty()) throw new PkiException("SDK_MANAGED_PUBLIC_KEY_SOURCE_REQUIRED");
+        var parsed = new BcX509CertificationRequestParser().parseHybridSdk(new zeroecho.pki.api.request.CertificationRequest(
+                BcX509CredentialFramework.FORMAT_ID, new EncodedObject(zeroecho.pki.api.Encoding.DER, input.payload().der())));
+        if (!java.util.Arrays.equals(parsed.primary().publicKeyInfo().bytes(), supplied.primary().publicKeyInfo().bytes())
+                || !java.util.Arrays.equals(parsed.alternativeSubjectPublicKeyInfo().bytes(), supplied.alternativeSubjectPublicKeyInfo().bytes())) {
+            throw new PkiException("SDK_REQUEST_MISMATCH");
+        }
+        var candidate = new VerifiedIssuanceCandidate(parsed.primary(), parsed.primary().requestId(),
+                parsed.primary().publicKeyInfo(), ProofOfPossessionStatus.VERIFIED,
+                new IssueEndEntityCommand(input.issuerCaId(), parsed.primary(), input.profileId(), input.validityOverride()));
+        EndEntityIssuancePreparation selected = preview ? withoutSerialAllocation() : this;
+        return selected.prepareCandidate(access, candidate, status.beginEvaluation(), Optional.of(input.payload()),
+                Optional.empty(), frozenValidity, true, cancellation);
+    }
+
+    /* default */ X509AuthoritySnapshot authority() { return signingAuthority; }
 
     private static void requireSelectedIssuance(IssuanceIntent expected, IssuerGeneration generation, IssuerChainPath path) {
         if (!expected.expectedIssuerId().equals(generation.issuerId())
@@ -303,7 +361,8 @@ final class EndEntityIssuancePreparation {
     /** Frozen, bounded inputs for the subsequent TBS construction step. */
     /* default */ record Prepared(AccessContext access, ValidatedCertificateRequest request, KeyRef keyRef,
             AlgorithmIdentity signature, AlgorithmIdentifier signatureBinding, BigInteger serial,
-            Instant evaluationTime, byte[] issuerDer, DurableContentReference issuerContent) {
+            Instant evaluationTime, byte[] issuerDer, DurableContentReference issuerContent,
+            zeroecho.pki.api.ca.IssuerCryptographicBinding issuerBinding, ActiveCertificateProfile profile) {
         Prepared { issuerDer = issuerDer.clone(); }
         @Override public byte[] issuerDer() { return issuerDer.clone(); }
         @Override public String toString() { return "PreparedEndEntityIssuance[redacted]"; }

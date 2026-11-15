@@ -427,8 +427,8 @@ final class PkiOperationAdministrationTest {
                 CredentialStatus.ISSUED, PkiTestRuntime.stageCredential(store, certificate), new SimpleAttributeSet()));
         // Distinct provider key references can identify the same public key during administrative selection.
         IssuerGeneration generation = new IssuerGeneration(issuerId, authority, credentialId, new KeyRef("admin-key-" + serial),
-                state, "1".repeat(64), "1".repeat(64));
-        store.putIssuerGeneration(generation);
+                state, "0".repeat(64), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
         return generation;
     }
 

@@ -1,0 +1,189 @@
+package zeroecho.pki.server;
+
+import static org.junit.jupiter.api.Assertions.*;
+import java.nio.file.Path;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.Signature;
+import java.security.cert.X509Certificate;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.TreeMap;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.ASN1OctetString;
+import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
+import org.bouncycastle.asn1.x509.ExtensionsGenerator;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.jcajce.spec.ContextParameterSpec;
+import org.bouncycastle.jcajce.spec.MLDSAParameterSpec;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.hybrid.HybridCertificateMode;
+import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
+import zeroecho.pki.api.hybrid.sdk.HybridSdkProofs;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
+import zeroecho.pki.api.profile.CertificateProfileDefinition;
+import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.IssuanceApprovalRequirement;
+import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.application.PkiSessionConfiguration;
+import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.server.http.HttpOperationCodec;
+import zeroecho.pki.server.http.StrictJson;
+import zeroecho.pki.spi.crypto.ManagedKeyGeneration;
+import zeroecho.pkix.Pkix;
+
+/** Real native-domain hierarchy and SDK workflow; certificate transport identities are trusted fixtures, not live mTLS. */
+class HybridSdkRealIssuanceTest {
+    @Test void realHybridHierarchyAndProofApprovedLeafSurviveRestartWithoutChangingFrozenValidityOrCreationDefault(@TempDir Path root)throws Exception {
+        zeroecho.sdk.util.BouncyCastleActivator.init();
+        var original=withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(root));
+        PkiAdminBootstrap.bootstrap(ManagedKeyGenerationIntegrationTest.withoutSigning(original),"administrator","approver","trusted-proxy");
+        var clock=new TestClock();PkiId rootCredential,intermediateCredential,intermediateAuthority;
+        HybridSdkAdmissionService.Challenge challenge;byte[] first,second;
+        var client=client();String requestId=HybridSdkProofs.parse(client.csr()).primary().requestId().value();
+        PkiOperationValue.ObjectValue leafEnvelope;
+        try(var realm=ServerRealmContext.open(original.realm(),dependencies(),clock,new java.security.SecureRandom())) {
+            var keys=realm.session().managedKeyGeneration().orElseThrow();
+            var rootPrimary=keys.generate("1".repeat(64),ManagedKeyGeneration.Parameters.ECDSA_P384);
+            var rootAlternative=keys.generate("2".repeat(64),ManagedKeyGeneration.Parameters.ML_DSA_87);
+            var intermediatePrimary=keys.generate("3".repeat(64),ManagedKeyGeneration.Parameters.ECDSA_P384);
+            var intermediateAlternative=keys.generate("4".repeat(64),ManagedKeyGeneration.Parameters.ML_DSA_87);
+            var classical=keys.generate("5".repeat(64),ManagedKeyGeneration.Parameters.RSA_4096);
+            var pqc=keys.generate("6".repeat(64),ManagedKeyGeneration.Parameters.ML_DSA_87);
+            install(realm,"root-ca","native-root",new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),rootAlternative.keyRef().value()),IssuanceApprovalRequirement.NONE);
+            install(realm,"intermediate-ca","native-intermediate",new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),intermediateAlternative.keyRef().value()),IssuanceApprovalRequirement.NONE);
+            install(realm,"vpn-client","native-leaf",HybridCertificateMode.AltSignature.requested(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm()),IssuanceApprovalRequirement.SINGLE);
+            for(var template:BuiltInCertificateProfileCatalog.load(getClass().getClassLoader())) {
+                if(List.of("root-ca","pqc-root-ca").contains(template.definition().profileId())) {
+                    realm.session().profiles().importBuiltIn(template);realm.session().profiles().activateProfile(template.definition().profileId(),template.definition().profileVersion());
+                }
+            }
+            var rootRequest=submit(realm,"root","ca.create",arguments("formatId","x509","subjectRef","CN=Native Hybrid Root","profileId","native-root","keyRef",rootPrimary.keyRef().value(),"signatureAlgorithmId",BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm()));
+            approve(realm,rootRequest);rootCredential=credential(process(realm.administrativeRequests(),"root"));
+            var rootAuthority=authority(realm,rootCredential);
+            var intermediate=submit(realm,"intermediate","ca.intermediate.create",arguments("formatId","x509","issuerCaId",rootAuthority.value(),"subjectRef","CN=Native Hybrid Intermediate","profileId","native-intermediate","keyRef",intermediatePrimary.keyRef().value(),"signatureAlgorithmId",BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm()));
+            approve(realm,intermediate);intermediateCredential=credential(process(realm.administrativeRequests(),"intermediate"));intermediateAuthority=authority(realm,intermediateCredential);
+            var defaultArguments=arguments("formatId","x509","subjectRef","CN=Classical Default","profileId","root-ca","keyRef",classical.keyRef().value());
+            var explicitArguments=new TreeMap<>(defaultArguments.fields());explicitArguments.put("signatureAlgorithmId",new PkiOperationValue.Text(original.realm().pkiSessionConfiguration().signing().orElseThrow().signatureAlgorithm()));
+            var implicitApproval=assertInstanceOf(ServerOperationGateway.Outcome.ApprovalRequired.class,realm.gateway().execute(request(realm,"ca.create",envelope(defaultArguments)),zeroecho.core.io.CancellationSignal.NONE));
+            var explicitApproval=assertInstanceOf(ServerOperationGateway.Outcome.ApprovalRequired.class,realm.gateway().execute(request(realm,"ca.create",envelope(new PkiOperationValue.ObjectValue(explicitArguments))),zeroecho.core.io.CancellationSignal.NONE));
+            assertEquals(implicitApproval.operationCommitment(),explicitApproval.operationCommitment());
+            var pendingDefault=submit(realm,"default-frozen","ca.create",defaultArguments);
+            var frozenArgs=(PkiOperationValue.ObjectValue)pendingDefault.envelope().fields().get("arguments");
+            assertEquals(original.realm().pkiSessionConfiguration().signing().orElseThrow().signatureAlgorithm(),((PkiOperationValue.Text)frozenArgs.fields().get("signatureAlgorithmId")).value());
+            var pqcRequest=submit(realm,"pqc","ca.create",arguments("formatId","x509","subjectRef","CN=PQC Root","profileId","pqc-root-ca","keyRef",pqc.keyRef().value(),"signatureAlgorithmId",BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm()));
+            approve(realm,pqcRequest);var pqcCertificate=certificate(realm,credential(process(realm.administrativeRequests(),"pqc")));
+            assertEquals("2.16.840.1.101.3.4.3.19",pqcCertificate.getSigAlgOID());pqcCertificate.verify(pqcCertificate.getPublicKey());
+            leafEnvelope=envelope(arguments("issuerCaId",intermediateAuthority.value(),"requestId",requestId,"profileId","native-leaf"));
+            assertNotEquals(rootAuthority,intermediateAuthority);
+            assertEquals(intermediateAuthority.value(),((PkiOperationValue.Text)leafEnvelope.fields().get("authorityId")).value());
+            var gatewayRequest=request(realm,"credential.issue",leafEnvelope);
+            assertThrows(RuntimeException.class,()->realm.administrativeRequests().submit("ordinary-bypass",gatewayRequest,leafEnvelope,Duration.ofSeconds(30)));
+            assertTrue(AdministrativeWorkflowFixture.control(realm).protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,"ordinary-bypass").isEmpty());
+            try(var sdk=new AdministrativeRequestCoordinator(realm,AdministrativeWorkflowFixture.control(realm),clock,"https://example.invalid:443")) {
+                challenge=sdk.sdkAdmission().challenge(gatewayRequest,leafEnvelope,client.csr(),new byte[32]);
+                first=sign(client.primary(),"SHA384withECDSA",challenge.primary().encode());
+                second=sign(client.alternative(),"ML-DSA-87",new HybridSdkFrame(2,challenge.primary().fields()).encode());
+                var admitted=sdk.sdkAdmission().accept(challenge.intentId(),"sdk-leaf",gatewayRequest,leafEnvelope,Duration.ofSeconds(30),first,second);
+                assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,admitted.state());assertTrue(admitted.sdkProof().isPresent());
+                assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,sdk.process("sdk-leaf").state());
+                assertTrue(sdk.inspect("sdk-leaf","administrator").receipt().isEmpty());
+            }
+        }
+        clock.advance(600); // The accepted 300-second proof must not expire while waiting for human approval.
+        var changed=withDefault(original,BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm());
+        try(var realm=ServerRealmContext.open(changed.realm(),dependencies(),clock,new java.security.SecureRandom())) {
+            var pendingDefault=realm.administrativeRequests().inspect("default-frozen","administrator");approve(realm,pendingDefault);
+            var classical=certificate(realm,credential(process(realm.administrativeRequests(),"default-frozen")));
+            assertEquals("1.2.840.113549.1.1.12",classical.getSigAlgOID()); // SHA384withRSA, despite the changed creation default.
+            try(var sdk=new AdministrativeRequestCoordinator(realm,AdministrativeWorkflowFixture.control(realm),clock,"https://example.invalid:443")) {
+                var replay=sdk.sdkAdmission().accept(challenge.intentId(),"sdk-leaf",request(realm,"credential.issue",leafEnvelope),leafEnvelope,Duration.ofSeconds(30),first,second);
+                approve(realm,replay);var completed=process(sdk,"sdk-leaf");assertEquals(replay.sdkProof(),completed.sdkProof());
+                var leaf=certificate(realm,credential(completed));var intermediate=certificate(realm,intermediateCredential);var rootCertificate=certificate(realm,rootCredential);
+                assertEquals(intermediateAuthority,realm.session().repository().credential(credential(completed)).orElseThrow().issuerRef().caId());
+                assertEquals(intermediate.getSubjectX500Principal(),leaf.getIssuerX500Principal());
+                assertEquals(-1,leaf.getBasicConstraints());
+                assertEquals(new javax.security.auth.x500.X500Principal("CN=Alice Example"),leaf.getSubjectX500Principal());
+                assertEquals("x509:"+java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(leaf.getEncoded())),credential(completed).value());
+                assertDoesNotThrow(()->rootCertificate.verify(rootCertificate.getPublicKey()),"Native root primary signature");
+                assertDoesNotThrow(()->intermediate.verify(rootCertificate.getPublicKey()),"Native intermediate primary signature");
+                assertDoesNotThrow(()->leaf.verify(intermediate.getPublicKey()),"Native leaf primary signature");
+                assertTrue(Pkix.verifyAlternativeSignatureCor3(rootCertificate,alternative(rootCertificate)));
+                assertTrue(Pkix.verifyAlternativeSignatureCor3(intermediate,alternative(rootCertificate)));
+                assertTrue(Pkix.verifyAlternativeSignatureCor3(leaf,alternative(intermediate)));
+                assertFalse(Pkix.verifyAlternativeSignatureCor3(leaf,client.alternative().getPublic()));
+                assertArrayEquals(client.alternative().getPublic().getEncoded(),alternativeSpki(leaf));
+                var subject=zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(challenge.target().field(15)).objectFields();
+                assertEquals(Instant.parse(subject.get("notBefore").textValue()),leaf.getNotBefore().toInstant());
+                assertEquals(Instant.parse(subject.get("notAfter").textValue()),leaf.getNotAfter().toInstant());
+                assertEquals(4,realm.session().repository().authorities(Optional.empty(),100).size());
+            }
+        }
+    }
+
+    private static void install(ServerRealmContext realm,String templateId,String id,HybridCertificateMode mode,IssuanceApprovalRequirement approval) {
+        var source=BuiltInCertificateProfileCatalog.load(HybridSdkRealIssuanceTest.class.getClassLoader()).stream().map(t->t.definition()).filter(d->d.profileId().equals(templateId)).findFirst().orElseThrow();
+        var definition=new CertificateProfileDefinition(source.certificateType(),id,1,source.formatId(),id,source.maximumValidity(),approval,source.subjectPolicy(),source.certificatePolicy(),source.algorithmBindingPolicy(),source.confirmationPolicy(),mode);
+        realm.session().profiles().importProfile(CertificateProfileDocumentCodec.writeCanonical(definition));realm.session().profiles().activateProfile(id,1);
+    }
+    private static AdministrativeRequest submit(ServerRealmContext realm,String id,String operation,PkiOperationValue.ObjectValue arguments) {
+        var envelope=envelope(arguments);return realm.administrativeRequests().submit(id,request(realm,operation,envelope),envelope,Duration.ofSeconds(30));
+    }
+    private static ServerOperationGateway.Request request(ServerRealmContext realm,String operation,PkiOperationValue.ObjectValue envelope) {
+        var decoded=HttpOperationCodec.decode(operation,StrictJson.encode(envelope),262144,realm.configuration().realmId(),realm.gateway()::descriptor);
+        var evidence=new CertificateIdentityEvidence(realm.configuration().realmId(),"a".repeat(64),"b".repeat(64),java.util.Set.of("c".repeat(64)),"d".repeat(64));
+        return new ServerOperationGateway.Request(realm.configuration().realmId(),"administrator",AdministrativeAuthenticationMode.DIRECT_MTLS,Optional.empty(),Optional.of(evidence),decoded.operation(),decoded.resource(),Permission.Relationship.ANY,decoded.context(),Optional.empty(),operation);
+    }
+    private static void approve(ServerRealmContext realm,AdministrativeRequest request) {request.approvalId().ifPresent(id->realm.approvals().decide(id,"administrator",ApprovalService.Choice.APPROVE,"Explicit native integration approval"));}
+    private static AdministrativeRequest process(AdministrativeRequestCoordinator coordinator,String id)throws Exception {
+        long end=System.nanoTime()+Duration.ofSeconds(15).toNanos();AdministrativeRequest result;
+        do {result=coordinator.process(id);if(result.terminal())break;Thread.sleep(5);}while(System.nanoTime()<end);
+        assertEquals(AdministrativeRequest.State.SUCCEEDED,result.state(),result.failureCode().orElse(result.state().name()));return result;
+    }
+    private static PkiId credential(AdministrativeRequest result){return new PkiId(((PkiOperationValue.Text)result.result().orElseThrow().fields().get("credentialId")).value());}
+    private static PkiId authority(ServerRealmContext realm,PkiId credential) {
+        var repository=realm.session().repository();
+        var matches=repository.authorities(Optional.empty(),100).stream().filter(ca->ca.issuerIds().stream()
+                .anyMatch(id->repository.issuer(id).orElseThrow().credentialId().equals(credential))).toList();
+        assertEquals(1,matches.size(),"Exactly one subject authority owns the issued CA credential");
+        return matches.getFirst().caId();
+    }
+    private static X509Certificate certificate(ServerRealmContext realm,PkiId credential)throws Exception{try(var content=realm.session().repository().openCredential(credential);var in=content.openStream()){return Pkix.parseCertificate(in.readAllBytes());}}
+    private static byte[] alternativeSpki(X509Certificate certificate){return ASN1OctetString.getInstance(certificate.getExtensionValue("2.5.29.72")).getOctets();}
+    private static java.security.PublicKey alternative(X509Certificate certificate)throws Exception{return KeyFactory.getInstance("ML-DSA","BC").generatePublic(new X509EncodedKeySpec(alternativeSpki(certificate)));}
+    private static PkiOperationValue.ObjectValue envelope(PkiOperationValue.ObjectValue args){
+        var fields=new TreeMap<String,PkiOperationValue>();fields.put("version",new PkiOperationValue.IntegerValue(1));fields.put("arguments",args);
+        if(args.fields().containsKey("issuerCaId"))fields.put("authorityId",args.fields().get("issuerCaId"));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+    private static PkiOperationValue.ObjectValue arguments(String...values){var result=new TreeMap<String,PkiOperationValue>();for(int i=0;i<values.length;i+=2)result.put(values[i],new PkiOperationValue.Text(values[i+1]));return new PkiOperationValue.ObjectValue(result);}
+    private static Client client()throws Exception{
+        var ec=KeyPairGenerator.getInstance("EC");ec.initialize(new ECGenParameterSpec("secp384r1"));var primary=ec.generateKeyPair();var ml=KeyPairGenerator.getInstance("ML-DSA","BC");ml.initialize(MLDSAParameterSpec.ml_dsa_87);var alternative=ml.generateKeyPair();
+        var extensions=new ExtensionsGenerator();extensions.addExtension(new ASN1ObjectIdentifier("2.5.29.72"),false,alternative.getPublic().getEncoded());extensions.addExtension(new ASN1ObjectIdentifier("2.5.29.17"),false,new GeneralNames(new GeneralName(GeneralName.uniformResourceIdentifier,"spiffe://example.invalid/client/alice")));
+        var builder=new JcaPKCS10CertificationRequestBuilder(new javax.security.auth.x500.X500Principal("CN=Alice Example"),primary.getPublic());
+        return new Client(primary,alternative,builder.addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest,extensions.generate()).build(new JcaContentSignerBuilder("SHA384withECDSA").build(primary.getPrivate())).getEncoded());
+    }
+    private static byte[] sign(KeyPair key,String algorithm,byte[] bytes)throws Exception{var signature=algorithm.equals("ML-DSA-87")?Signature.getInstance(algorithm,"BC"):Signature.getInstance(algorithm);if(algorithm.equals("ML-DSA-87"))signature.setParameter(new ContextParameterSpec(new byte[0]));signature.initSign(key.getPrivate());signature.update(bytes);return signature.sign();}
+    private static PkiSessionRuntimeDependencies dependencies(){return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(()->new KeyringPassword("integration-test-key".toCharArray()));}
+    private static PkiServerConfiguration withIssuancePolicy(PkiServerConfiguration source){var r=source.realm();var policies=new java.util.HashMap<>(r.approvalPolicies());policies.put(OperationSecurityDescriptors.ApprovalCategory.ISSUANCE_SINGLE,policies.get(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK));var realm=new ServerRealmConfiguration(r.realmId(),r.displayName(),r.confirmationProofPolicy(),r.pkiSessionConfiguration(),r.authorityExposure(),r.authorizationCommitment(),r.approvalCommitment(),ServerRealmConfiguration.extendedApprovalCommitment(policies),r.disclosureCommitment(),r.disclosureDefaults(),r.controlLogPath(),r.controlStoreId(),policies,r.initialAdministratorPrincipalId());return new PkiServerConfiguration(source.version(),source.serverName(),realm,source.listener(),source.authentication(),source.execution(),source.runtime());}
+    private static PkiServerConfiguration withDefault(PkiServerConfiguration source,String algorithm){var r=source.realm();var s=r.pkiSessionConfiguration();var old=s.signing().orElseThrow();var signing=new PkiSessionConfiguration.SigningConfiguration(old.provider(),algorithm,old.signingTtl(),old.unlockEnvironmentVariable(),old.topology(),old.pureEdDsaMaximumTbsBytes());var session=new PkiSessionConfiguration(s.version(),s.store(),s.audit(),Optional.of(signing),s.publishers(),s.bindingProviders());var realm=new ServerRealmConfiguration(r.realmId(),r.displayName(),r.confirmationProofPolicy(),session,r.authorityExposure(),r.authorizationCommitment(),r.approvalCommitment(),r.extendedApprovalCommitment(),r.disclosureCommitment(),r.disclosureDefaults(),r.controlLogPath(),r.controlStoreId(),r.approvalPolicies(),r.initialAdministratorPrincipalId());return new PkiServerConfiguration(source.version(),source.serverName(),realm,source.listener(),source.authentication(),source.execution(),source.runtime());}
+    private record Client(KeyPair primary,KeyPair alternative,byte[] csr){}
+    private static final class TestClock extends Clock{private Instant now=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);void advance(long seconds){now=now.plusSeconds(seconds);}@Override public Instant instant(){return now;}@Override public ZoneId getZone(){return ZoneOffset.UTC;}@Override public Clock withZone(ZoneId zone){return this;}}
+}

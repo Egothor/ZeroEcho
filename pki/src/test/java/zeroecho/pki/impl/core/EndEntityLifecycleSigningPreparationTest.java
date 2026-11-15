@@ -137,7 +137,8 @@ final class EndEntityLifecycleSigningPreparationTest {
                 SignWorkflowStore.OuterCommand outer = workflow.envelope().outer().orElseThrow();
                 DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command());
                 assertEquals(operation, command.operation());
-                command.requireFields(24);
+                command.requireFields(25);
+                assertEquals(store.getIssuerCryptographicBinding(new PkiId(command.field(1))).orElseThrow().commitment(), command.field(24));
                 assertEquals(leaf.credentialId().value(), command.field(23));
                 assertEquals(leaf.issuerRef().caId().value(), command.field(0));
                 assertEquals(leaf.issuerRef().issuerId().value(), command.field(1));

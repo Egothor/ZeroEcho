@@ -39,6 +39,24 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class HybridSdkValueTest {
+
+    @Test void typedReadsPreserveCanonicalBytesAndRejectWrongKinds() {
+        var value=HybridSdkValue.object(java.util.Map.of("dates",HybridSdkValue.object(java.util.Map.of(
+                "notBefore",HybridSdkValue.text("2026-11-14T12:00:00Z"),"version",HybridSdkValue.integer(Long.MAX_VALUE))),
+                "label",HybridSdkValue.text(" Alice ")));
+        byte[] encoded=value.encode();
+        var fields=HybridSdkValue.decode(encoded).objectFields();
+        assertEquals(" Alice ",fields.get("label").textValue());
+        assertEquals("2026-11-14T12:00:00Z",fields.get("dates").objectFields().get("notBefore").textValue());
+        assertEquals(Long.MAX_VALUE,fields.get("dates").objectFields().get("version").integerValue());
+        assertArrayEquals(encoded,value.encode());
+        assertThrows(UnsupportedOperationException.class,()->fields.put("extra",HybridSdkValue.integer(1)));
+        assertThrows(IllegalArgumentException.class,()->value.textValue());
+        assertThrows(IllegalArgumentException.class,()->value.integerValue());
+        assertThrows(IllegalArgumentException.class,()->HybridSdkValue.text("no").objectFields());
+        assertThrows(IllegalArgumentException.class,()->fields.get("label").integerValue());
+        assertThrows(IllegalArgumentException.class,()->HybridSdkValue.integer(1).textValue());
+    }
     @Test void canonicalizesEveryClosedValueTypeAndObjectKeyOrder() {
         var value = HybridSdkValue.object(Map.of("z", HybridSdkValue.bytes(new byte[] {1, 2}), "a",
                 HybridSdkValue.list(List.of(HybridSdkValue.text("name"), HybridSdkValue.integer(-4), HybridSdkValue.bool(true)))));

@@ -44,6 +44,17 @@ final class HybridSdkAdmissionService {
     interface Resolver {
         /** Returns a fully authorized immutable admission and exact F7, or rejects unsupported targets. */
         Context resolve(ServerOperationGateway.Request request, PkiOperationValue.ObjectValue envelope, ParsedHybridSdkRequest subject);
+
+        /**
+         * Revalidates the exact target recovered from the private durable intent.
+         * Implementations with time-sensitive policy must preserve its frozen absolute
+         * validity; they must not rebase dates from the current clock. This argument
+         * never originates in caller-supplied JSON or forwarded transport headers.
+         */
+        default Context revalidate(ServerOperationGateway.Request request, PkiOperationValue.ObjectValue envelope,
+                ParsedHybridSdkRequest subject, HybridSdkFrame retainedTarget) {
+            return resolve(request,envelope,subject);
+        }
     }
 
     /** Immutable, server-resolved semantic context; ordinary callers cannot submit this through HTTP. */
@@ -53,6 +64,14 @@ final class HybridSdkAdmissionService {
 
     /** Exact public challenge; contains no bearer capability or private material. */
     record Challenge(String intentId, HybridSdkFrame primary, HybridSdkFrame target) { }
+
+    /** Private, defensively copied proof material recovered only from the consumed authoritative intent. */
+    record Preparation(ParsedHybridSdkRequest subject, HybridSdkFrame primaryFrame, HybridSdkFrame target,
+            byte[] primaryProof, byte[] alternativeProof, String proofCommitment, Instant acceptedAt) {
+        Preparation { primaryProof=primaryProof.clone();alternativeProof=alternativeProof.clone(); }
+        @Override public byte[] primaryProof() { return primaryProof.clone(); }
+        @Override public byte[] alternativeProof() { return alternativeProof.clone(); }
+    }
 
     /** Only this gate constructs a verified transaction input. */
     static final class Acceptance {
@@ -118,7 +137,7 @@ final class HybridSdkAdmissionService {
             var previous=control.protocolRecord(ServerControlStore.HYBRID_SDK_INTENT,intentId).orElseThrow(HybridSdkAdmissionService::invalid);
             Intent intent=decode(previous);
             ParsedHybridSdkRequest parsed=parse(intent.originalDer());
-            Context context=resolve(request,envelope,parsed);
+            Context context=resolve(request,envelope,parsed,Optional.of(intent.target()));
             if(!Arrays.equals(intent.frame().field(2),text(request.realmId().value())))throw invalid();
             requireContext(intent,authentication(request),context.target());
             if (intent.requestId().isPresent()) {
@@ -139,13 +158,21 @@ final class HybridSdkAdmissionService {
         }
     }
 
+    Preparation preparation(AdministrativeRequest request, ServerOperationGateway.Request authenticated,
+            PkiOperationValue.ObjectValue envelope) {
+        validateRetained(request,authenticated,envelope);
+        Intent intent=retainedIntent(request);
+        return new Preparation(parse(intent.originalDer()),intent.frame(),intent.target(),intent.primaryProof(),
+                intent.alternativeProof(),intent.proofCommitment().orElseThrow(),Instant.ofEpochSecond(intent.acceptedAt()));
+    }
+
     /** Immutable receipt observation never depends on today's admission policy or credential mapping. */
     void validateIntegrity(AdministrativeRequest request) { retainedIntent(request); }
 
     void validateRetained(AdministrativeRequest request, ServerOperationGateway.Request authenticated,
             PkiOperationValue.ObjectValue envelope) {
         Intent intent=retainedIntent(request);
-        Context current=resolve(authenticated,envelope,parse(intent.originalDer()));
+        Context current=resolve(authenticated,envelope,parse(intent.originalDer()),Optional.of(intent.target()));
         if(!request.operationCommitment().equals(current.admission().commitment())
                 || !request.scope().equals(current.admission().request().resource().scope())
                 || !request.policyCommitment().equals(current.admission().policy().map(ApprovalService.Policy::commitment))) throw new SecurityException("SDK_CONTEXT_CHANGED");
@@ -167,13 +194,21 @@ final class HybridSdkAdmissionService {
     }
 
     private Context resolve(ServerOperationGateway.Request request, PkiOperationValue.ObjectValue envelope, ParsedHybridSdkRequest subject) {
+        return resolve(request,envelope,subject,Optional.empty());
+    }
+    private Context resolve(ServerOperationGateway.Request request, PkiOperationValue.ObjectValue envelope,
+            ParsedHybridSdkRequest subject, Optional<HybridSdkFrame> retainedTarget) {
         authentication(request); // Missing validated certificate context cannot reach a fixture or production resolver.
         coordinator.requireSdkActor(request);
         if (!(request.operation() instanceof AdministrativeOperation.Signing)
                 || request.operation().name().equals("ca.create")) throw new UnsupportedOperationException("SDK_ISSUANCE_TARGET_UNSUPPORTED");
-        Context context=Objects.requireNonNull(resolver.resolve(request,envelope,subject));
+        Context context=Objects.requireNonNull(retainedTarget.isPresent()
+                ?resolver.revalidate(request,envelope,subject,retainedTarget.orElseThrow())
+                :resolver.resolve(request,envelope,subject));
         var admission=context.admission(); var target=context.target();
-        if (!admission.decision().allowed() || !admission.request().principalId().equals(request.principalId())
+        boolean admitted=admission.decision().allowed() || admission.decision().code()==AuthorizationEngine.Code.APPROVAL_REQUIRED
+                && admission.policy().isPresent();
+        if (!admitted || !admission.request().principalId().equals(request.principalId())
                 || !admission.request().realmId().equals(request.realmId())
                 || !admission.request().operation().equals(request.operation())
                 || !Arrays.equals(authentication(admission.request()).encode(),authentication(request).encode())

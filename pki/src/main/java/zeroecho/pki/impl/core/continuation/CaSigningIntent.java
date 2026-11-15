@@ -76,7 +76,7 @@ public final class CaSigningIntent {
      * preparation/admission boundary. Length framing uses big-endian 32-bit byte
      * lengths and strict UTF-8; aggregate framed input is bounded to 1 MiB.
      *
-     * @param command exact supported intermediate discriminator and 23 fields
+     * @param command exact supported discriminator with legacy 23 or current 25 fields
      * @param signatureAlgorithm exact selected signature identity
      * @return canonical versioned SHA-256 commitment
      * @throws NullPointerException if an argument is null
@@ -86,7 +86,9 @@ public final class CaSigningIntent {
      * streams one field at a time; attribute decoding retains its existing costs.
      */
     public static String commitment(DomainCommandEncoding.Decoded command, AlgorithmIdentity signatureAlgorithm) {
-        Objects.requireNonNull(command, "command").requireFields(23);
+        Objects.requireNonNull(command, "command");
+        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        else command.requireFields(23);
         Objects.requireNonNull(signatureAlgorithm, "signatureAlgorithm");
         if (!IntermediateSigningCommand.supports(command.operation())
                 || signatureAlgorithm.kind() != AlgorithmIdentity.Kind.SIGNATURE) {
@@ -106,7 +108,9 @@ public final class CaSigningIntent {
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public static String commitmentOfCanonicalAlgorithm(DomainCommandEncoding.Decoded command, String algorithm) {
-        Objects.requireNonNull(command, "command").requireFields(23);
+        Objects.requireNonNull(command, "command");
+        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        else command.requireFields(23);
         if (!IntermediateSigningCommand.supports(command.operation()) || Objects.requireNonNull(algorithm, "algorithm").isBlank()) {
             throw invalid();
         }
@@ -128,7 +132,7 @@ public final class CaSigningIntent {
                 field(output, DOMAIN);
                 field(output, command.operation());
                 field(output, algorithm);
-                output.writeInt(FIELD_COUNT);
+                output.writeInt(FIELD_COUNT + (command.fields().size() == 25 ? 2 : 0));
                 for (int index = 0; index < command.fields().size(); index++) {
                     if (!isProofField(index)) { field(output, command.field(index)); }
                 }

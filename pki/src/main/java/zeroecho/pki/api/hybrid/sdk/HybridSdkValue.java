@@ -97,6 +97,43 @@ public final class HybridSdkValue {
             return decode(bytes.toByteArray());
         } catch (IOException impossible) { throw new IllegalStateException(impossible); }
     }
+    /**
+     * Reads the fields of an already canonical object without changing its encoding.
+     * @return immutable identifier-sorted map of immutable independent values
+     * @throws IllegalArgumentException if this value is not an object
+     */
+    public Map<String, HybridSdkValue> objectFields() {
+        try (var input = new DataInputStream(new ByteArrayInputStream(encoded))) {
+            if (input.readUnsignedByte() != 6) throw invalid();
+            int count = input.readInt(); var fields = new TreeMap<String, HybridSdkValue>();
+            for (int index = 0; index < count; index++) {
+                String key = text(readBytes(input, input.readUnsignedShort()));
+                int start = encoded.length - input.available();
+                read(input, 1, new int[1]);
+                int end = encoded.length - input.available();
+                fields.put(key, new HybridSdkValue(java.util.Arrays.copyOfRange(encoded, start, end)));
+            }
+            return java.util.Collections.unmodifiableSortedMap(fields);
+        } catch (IOException malformed) { throw invalid(); }
+    }
+    /**
+     * Reads an already validated exact UTF-8 text value.
+     * @return text without normalization or trimming
+     * @throws IllegalArgumentException if this value is not text
+     */
+    public String textValue() {
+        if (encoded[0] != 1) throw invalid();
+        return text(java.util.Arrays.copyOfRange(encoded, 5, encoded.length));
+    }
+    /**
+     * Reads the signed 64-bit integer value.
+     * @return exact integer
+     * @throws IllegalArgumentException if this value is not an integer
+     */
+    public long integerValue() {
+        if (encoded[0] != 2) throw invalid();
+        return ByteBuffer.wrap(encoded, 1, Long.BYTES).getLong();
+    }
     /** @return defensive copy of the exact canonical bytes */
     public byte[] encode() { return encoded.clone(); }
     /** @param encoded borrowed canonical typed bytes @return independent validated value @throws IllegalArgumentException for unsupported, malformed or excessive input */

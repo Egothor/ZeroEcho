@@ -188,7 +188,7 @@ final class DefaultSigningServiceTest {
     }
 
     @Test
-    void domainAdoptionStillRequiresConfiguredDefaultAndLifetime(@TempDir Path root) throws Exception {
+    void domainAdoptionRetainsSupportedFrozenAlgorithmAndRequiresLifetime(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 4, new MutableClock(NOW));
                 TestProvider provider = new TestProvider()) {
             DefaultSigningService service = service(store, provider, () -> { });
@@ -197,9 +197,16 @@ final class DefaultSigningServiceTest {
                     "algorithm-boundary", "CREATE_ROOT", "x509");
             SignWorkflowStore.OuterCommand outer = new SignWorkflowStore.OuterCommand(template.kind(),
                     template.correlationId().orElseThrow(), template.command(), template.commandCommitment());
-            DomainSigningRequest otherAlgorithm = new DomainSigningRequest(raw.receipt().operationId(), ACCESS, raw.request().keyRef(),
-                    BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm(), Encoding.BINARY, raw.candidate(), Duration.ofMinutes(1), template, java.util.Optional.empty());
-            assertThrows(IllegalArgumentException.class, () -> service.prepareDomain(otherAlgorithm, raw.request().fairnessAuthorityId(), outer));
+            var candidate = zeroecho.pki.testkit.PkiTestRuntime.operationReference(store.stagedContent(), Encoding.DER, new byte[]{1});
+            DomainSigningRequest otherAlgorithm = new DomainSigningRequest(service.newSubmissionId().id(), ACCESS, raw.request().keyRef(),
+                    BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm(), Encoding.BINARY, candidate, Duration.ofMinutes(1), template, java.util.Optional.empty());
+            var selected = service.prepareDomain(otherAlgorithm, raw.request().fairnessAuthorityId(), outer);
+            assertEquals(BootstrapAlgorithmIdentities.ED25519_SIGNATURE, selected.request().signatureAlgorithm());
+            assertEquals(raw.request().keyRef(), selected.request().keyRef());
+            service.discard(selected);
+            var unsupported = new DomainSigningRequest(raw.receipt().operationId(), ACCESS, raw.request().keyRef(),
+                    BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(), Encoding.BINARY, raw.candidate(), Duration.ofMinutes(1), template, java.util.Optional.empty());
+            assertThrows(IllegalArgumentException.class, () -> service.prepareDomain(unsupported, raw.request().fairnessAuthorityId(), outer));
             DomainSigningRequest otherLifetime = new DomainSigningRequest(raw.receipt().operationId(), ACCESS, raw.request().keyRef(),
                     BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), Encoding.BINARY, raw.candidate(), Duration.ofMinutes(2), template, java.util.Optional.empty());
             assertThrows(IllegalArgumentException.class, () -> service.prepareDomain(otherLifetime, raw.request().fairnessAuthorityId(), outer));

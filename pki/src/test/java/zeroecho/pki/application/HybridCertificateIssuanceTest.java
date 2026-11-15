@@ -35,6 +35,7 @@
 package zeroecho.pki.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -98,19 +99,30 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 final class HybridCertificateIssuanceTest {
 
-    @Test void historicallyActiveAlternativeIntermediateCannotIssue(@TempDir Path root) throws Exception {
+    @Test void alternativeIntermediateRetainsItsOwnSubjectKeyAndBothParentSignatures(@TempDir Path root) throws Exception {
         HybridIssuanceFixture fixture = new HybridIssuanceFixture(root, "EC", "ECDSA", ECDSA_ALGORITHM,
                 HybridIssuanceFixture.alternative());
         try (PkiSession session = fixture.open()) {
             zeroecho.pki.api.PkiId ca = fixture.create(session);
-            RootCreationFixture.install(fixture.store, fixture.profile("unsupported-intermediate", 1,
-                    CertificateProfileKind.INTERMEDIATE_CA, fixture.mode));
+            RootCreationFixture.install(fixture.store, fixture.profile("hybrid-intermediate", 1,
+                    CertificateProfileKind.INTERMEDIATE_CA, new HybridCertificateMode.AltSignature(
+                            BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE.canonicalForm(), HybridIssuanceFixture.key("other-alt").value())));
             LocalSigningResult result = session.localSigning().orElseThrow().execute(
-                    new PkiSigningOperation.CreateIntermediate(X509, ca, new SubjectRef("CN=Rejected Child,C=CZ"),
-                            "unsupported-intermediate", Optional.of(HybridIssuanceFixture.key("child"))), CancellationSignal.NONE);
-            LocalSigningResult.Failed failed = org.junit.jupiter.api.Assertions.assertInstanceOf(LocalSigningResult.Failed.class, result);
-            assertTrue(failed.receipt().isEmpty());
-            assertEquals(1, fixture.store.listCas().size());
+                    new PkiSigningOperation.CreateIntermediate(X509, ca, new SubjectRef("CN=Hybrid Child,C=CZ"),
+                            "hybrid-intermediate", Optional.of(HybridIssuanceFixture.key("child"))), CancellationSignal.NONE);
+            LocalSigningResult.Completed completed = org.junit.jupiter.api.Assertions.assertInstanceOf(LocalSigningResult.Completed.class, result);
+            var credentialId = new zeroecho.pki.api.PkiId(((PkiOperationValue.Text) completed.result().fields().get("credentialId")).value());
+            var child = fixture.certificate(credentialId);
+            child.verify(fixture.rootKey.getPublic(), "BC");
+            assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(child, fixture.altKey.getPublic()));
+            assertFalse(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(child, fixture.childKey.getPublic()));
+            assertEquals(2, fixture.store.listCas().size());
+            var childCa = fixture.store.listCas().stream().filter(value -> !value.caId().equals(ca)).findFirst().orElseThrow();
+            var binding = fixture.store.getIssuerCryptographicBinding(childCa.currentIssuanceIssuerId()).orElseThrow();
+            assertEquals(HybridIssuanceFixture.key("child"), binding.primary().keyRef());
+            assertEquals(HybridIssuanceFixture.key("other-alt"), binding.alternative().orElseThrow().keyRef());
+            assertEquals(zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.COR3_SIGNED_WRAPPER,
+                    binding.certificateHybridBaseline());
         }
     }
 

@@ -497,7 +497,8 @@ final class FsSnapshotExporter {
                 for (IssuerGeneration generation : authority.generations()) {
                     if (transferred.contains(generation.credentialId())
                             && target.getIssuerGeneration(generation.issuerId()).isEmpty()) {
-                        target.putIssuerGeneration(generation);
+                        target.putIssuerGeneration(generation, AuthorityMetadataStore.findBinding(snapshot, generation.issuerId())
+                                .orElseThrow(() -> new IOException("Snapshot issuer cryptographic binding is missing")));
                     }
                 }
                 for (IssuerChainPath path : authority.paths()) {
@@ -544,7 +545,8 @@ final class FsSnapshotExporter {
                         }
                     }
                     if (target.getIssuerGeneration(generation.issuerId()).isEmpty()) {
-                        target.putIssuerGeneration(generation);
+                        target.putIssuerGeneration(generation, AuthorityMetadataStore.findBinding(snapshot, generation.issuerId())
+                                .orElseThrow(() -> new IOException("Snapshot issuer cryptographic binding is missing")));
                     }
                     if (target.getIssuerChainPath(path.pathId()).isEmpty()) {
                         target.putIssuerChainPath(path);

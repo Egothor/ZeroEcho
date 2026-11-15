@@ -102,12 +102,27 @@ final class NormalizedCaMetadataTest {
         try (SegmentedTransactionalMetadataStore metadata = SegmentedTransactionalMetadataStore.create(root, STORE)) {
             AuthorityMetadataStore authority = new AuthorityMetadataStore(metadata, NormalizedCaMetadataTest::committed);
             List<PkiId> ids = new ArrayList<>();
-            for (int first = 0; first <= count; first += AuthorityMetadataStore.MAX_BATCH_MUTATIONS) {
+            byte[] certificate = zeroecho.pki.testkit.SemanticIssuanceFixture.certificate("CN=Normalized", java.math.BigInteger.ONE,
+                    zeroecho.pki.testkit.SemanticIssuanceFixture.BEFORE, zeroecho.pki.testkit.SemanticIssuanceFixture.AFTER).getEncoded();
+            var publicKey = zeroecho.pkix.Pkix.subjectPublicKeyInfo(zeroecho.pkix.Pkix.parseCertificate(certificate));
+            var publicBinding = new zeroecho.pki.api.ca.IssuerKeyBinding(new KeyRef("key"), zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY,
+                    zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                    new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.DER, java.util.HexFormat.of().parseHex("300d06092a864886f70d01010b0500")),
+                    java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(publicKey)));
+            int pairedBatch = AuthorityMetadataStore.MAX_BATCH_MUTATIONS / 2;
+            for (int first = 0; first <= count; first += pairedBatch) {
                 try (MetadataTransaction transaction = metadata.beginTransaction()) {
-                    for (int index = first; index <= count && index < first + AuthorityMetadataStore.MAX_BATCH_MUTATIONS; index++) {
+                    for (int index = first; index <= count && index < first + pairedBatch; index++) {
                         IssuerGeneration generation = generation(index);
                         AuthorityMetadataStore.create(transaction, AuthorityMetadataCodec.generationKey(generation.issuerId()),
                                 FsCodec.encode(FsCodec.ISSUER_GENERATION, generation));
+                        var keyBinding = new zeroecho.pki.api.ca.IssuerKeyBinding(generation.signingKeyRef(), publicBinding.publicKeyAlgorithm(),
+                                publicBinding.signatureAlgorithm(), publicBinding.signatureAlgorithmIdentifier(), publicBinding.subjectSpkiSha256());
+                        var binding = zeroecho.pki.impl.core.IssuerBindingResolver.createCaptured(generation, certificate, "x509", keyBinding, Optional.empty(),
+                                zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE,
+                                new zeroecho.pki.api.profile.CertificateProfileRef("normalized", 1, new byte[32]),
+                                zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
+                        AuthorityMetadataStore.create(transaction, AuthorityMetadataCodec.bindingKey(generation.issuerId()), IssuerBindingStorageCodec.encode(binding, generation));
                         if (index < count) { ids.add(generation.issuerId()); }
                     }
                     committed(transaction.commit());
@@ -163,7 +178,7 @@ final class NormalizedCaMetadataTest {
         PkiId credential = new PkiId("credential:" + ordinal);
         return new IssuerGeneration(IssuerGeneration.idFor(CA, credential), CA, credential,
                 new KeyRef(ordinal == 0 ? "k".repeat(1_048_576) : "key"),
-                IssuerGenerationState.ACTIVE, "0".repeat(64), "1".repeat(64));
+                IssuerGenerationState.ACTIVE, "0".repeat(64), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
     }
 
     private static void committed(MetadataCommitResult result) { assertEquals(MetadataCommitResult.Outcome.COMMITTED, result.outcome()); }

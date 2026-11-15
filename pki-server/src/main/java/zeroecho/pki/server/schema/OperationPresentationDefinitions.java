@@ -146,7 +146,8 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_FORMAT_ID, new FieldSemantics(TEXT_TEXT, "format", false, false, false, "", "", "")),
                                 Map.entry("subjectRef", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_PROFILE_ID, new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
-                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", ""))
+                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", "")),
+                                Map.entry("signatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Canonical outgoing signature algorithm identity; omit to retain the configured creation default.", ""))
                         ))),
                 new Presentation("ca.transition", "Transition authority state", "Change the lifecycle state of an authority.", TEXT_AUTHORITIES,
                         new TransportSemantics(TEXT_AUTHORITY, TEXT_CA_ID, Map.ofEntries(
@@ -160,7 +161,8 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_ISSUER_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
                                 Map.entry("subjectRef", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_PROFILE_ID, new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
-                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", ""))
+                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", "")),
+                                Map.entry("signatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Canonical outgoing signature algorithm identity; omit to retain the configured creation default.", ""))
                         ))),
                 new Presentation("ca.intermediate.issue", "Issue intermediate certificate", "Issue a CA certificate for a subordinate authority.", TEXT_AUTHORITIES,
                         new TransportSemantics(TEXT_AUTHORITY, TEXT_ISSUER_CA_ID, Map.ofEntries(

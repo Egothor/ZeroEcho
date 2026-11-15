@@ -96,6 +96,11 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         this(realm,control,clock,signingService,"https://unconfigured.invalid:443",HybridSdkAdmissionService.unsupported());
     }
 
+    /** Explicit internal SDK composition; public carrier activation remains a separate configured boundary. */
+    AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock, String sdkOrigin) {
+        this(realm,control,clock,()->realm.session().semanticSigning().orElseThrow(),sdkOrigin,new HybridSdkIssuerResolver(realm));
+    }
+
     /** Internal server-owned SDK resolver composition; the default constructor remains unsupported. */
     AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock,
             java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService,
@@ -144,6 +149,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         if (requestId == null || !requestId.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")) throw new IllegalArgumentException("Invalid request ID");
         var admission = proof.map(value->value.context().admission()).orElseGet(()->realm.gateway().assessAdministrativeRequest(request));
         if (!supports(realm.gateway().descriptor(admission.request().operation()))) throw new IllegalArgumentException("DURABLE_REQUEST_UNSUPPORTED");
+        var retainedEnvelope=freezeCreationEnvelope(envelope,admission.request().operation());
         long timeout = executionTimeout.toMillis();
         if (timeout < 1 || timeout > 120000) throw new IllegalArgumentException("Invalid execution budget");
         String target = ApprovalService.digest(admission.commitment() + '|' + timeout);
@@ -166,7 +172,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         Instant now = now();
         var actor = new AdministrativeRequest.Actor(request.principalId(),request.authenticationMode(),request.transportPrincipalId(),request.credentialEvidence());
         Optional<String> approvalId=admission.policy().map(v->APPROVAL_PREFIX+requestId);
-        var retained = new AdministrativeRequest(requestId,0,request.operation().name(),envelope,actor,admission.request().resource().scope(),
+        var retained = new AdministrativeRequest(requestId,0,request.operation().name(),retainedEnvelope,actor,admission.request().resource().scope(),
                 admission.commitment(),validatedProfile,target,approvalId.isPresent()?AdministrativeRequest.State.WAITING_APPROVAL:AdministrativeRequest.State.READY,
                 now,now,timeout,approvalId,admission.policy().map(ApprovalService.Policy::commitment),Optional.empty(),Optional.empty(),Optional.empty(),proof.map(HybridSdkAdmissionService.Acceptance::proof));
         if(proof.isPresent())validateActor(retained);
@@ -287,8 +293,19 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             CancellationSignal cancellation=()->closed.get() || !clock.instant().isBefore(deadline);
             if(request.operation() instanceof AdministrativeOperation.Signing signing) {
                 AccessContext access=new AccessContext(new Principal("ADMIN_PRINCIPAL",request.principalId()),new Purpose(signing.operation().name()),Optional.empty(),Optional.empty());
-                PreparedSemanticSigningRequest prepared=realm.session().signingCommands().orElseThrow().prepare(signing.operation(),access,
-                        realm.gateway().administrativeSigningEvidence(admission),cancellation);
+                PreparedSemanticSigningRequest prepared;
+                if(current.sdkProof().isPresent()) {
+                    var input=sdkAdmission.preparation(current,request,current.envelope());
+                    var operation=HybridSdkIssuerResolver.issue(request);
+                    var commands=realm.session().signingCommands().orElseThrow();
+                    var preview=commands.previewSdk(operation,access,input.subject(),Optional.of(HybridSdkIssuerResolver.frozenValidity(input.target())),cancellation);
+                    var proof=new zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval(preview,input.primaryFrame(),input.target(),
+                            input.primaryProof(),input.alternativeProof(),input.proofCommitment(),input.acceptedAt());
+                    prepared=commands.prepareSdk(operation,access,input.subject(),proof,realm.gateway().administrativeSigningEvidence(admission),cancellation);
+                } else {
+                    prepared=realm.session().signingCommands().orElseThrow().prepare(signing.operation(),access,
+                            realm.gateway().administrativeSigningEvidence(admission),cancellation);
+                }
                 var service=signingService.get();
                 try {
                     synchronized(control) {
@@ -409,6 +426,20 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         }
     }
     private AdministrativeRequest failCurrent(String id,String code) { var v=find(id).orElseThrow();return finish(v,AdministrativeRequest.State.FAILED,Optional.empty(),code); }
+    private static PkiOperationValue.ObjectValue freezeCreationEnvelope(PkiOperationValue.ObjectValue envelope, AdministrativeOperation operation) {
+        Optional<String> algorithm=operation instanceof AdministrativeOperation.Signing signing?switch(signing.operation()) {
+            case PkiSigningOperation.CreateAuthority value -> value.signatureAlgorithmId();
+            case PkiSigningOperation.CreateIntermediate value -> value.signatureAlgorithmId();
+            default -> Optional.empty();
+        }:Optional.empty();
+        if(algorithm.isEmpty())return envelope;
+        var fields=new LinkedHashMap<>(envelope.fields());
+        var arguments=new LinkedHashMap<>(((PkiOperationValue.ObjectValue)fields.get("arguments")).fields());
+        arguments.put("signatureAlgorithmId",text(algorithm.orElseThrow()));
+        fields.put("arguments",new PkiOperationValue.ObjectValue(arguments));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
     private static Optional<String> sdkProfileCommitment(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame target) {
         String policy=new String(target.field(12),java.nio.charset.StandardCharsets.UTF_8);
         if(!policy.matches("sha256:[0-9a-f]{64}"))throw new ValidationFailure("SDK_PROFILE_COMMITMENT_UNSUPPORTED");

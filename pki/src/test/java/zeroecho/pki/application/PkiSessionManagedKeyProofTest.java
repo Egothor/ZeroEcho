@@ -185,7 +185,8 @@ final class PkiSessionManagedKeyProofTest {
             PreparedSemanticSigningRequest prepared = rotation
                     ? semantic.prepareCaKeyRotation(IntermediateCreationFixture.ACCESS, rotate, CancellationSignal.NONE)
                     : semantic.prepareCaRollover(IntermediateCreationFixture.ACCESS, rollover, CancellationSignal.NONE);
-            assertEquals(lookups + 1, issuance.base.provider.lookups, "Exactly one current SPKI export freezes the internal proof");
+            assertEquals(lookups + (rotation ? 2 : 1), issuance.base.provider.lookups,
+                    "One subject proof export; replacement also verifies the distinct retained issuer key");
             assertEquals(0, fixture.dispatches.get());
             assertTrue(fixture.store.getSignWorkflow(prepared.receipt().operationId()).isEmpty());
             assertEquals(before, fixture.store.getCa(before.caId()).orElseThrow());

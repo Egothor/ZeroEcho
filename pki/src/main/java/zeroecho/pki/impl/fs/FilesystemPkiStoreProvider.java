@@ -127,7 +127,11 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         String rootString = config.require("root");
         Path root = Path.of(rootString);
 
-        return new FilesystemPkiStore(root, options(config), dependencies.clock());
+        FsPkiStoreOptions options = options(config);
+        if (dependencies.issuerAlgorithmEvidenceVerifier().isPresent()) {
+            options = options.withIssuerAlgorithmEvidenceVerifier(dependencies.issuerAlgorithmEvidenceVerifier().orElseThrow());
+        }
+        return new FilesystemPkiStore(root, options, dependencies.clock());
     }
 
     /* default */ static FsPkiStoreOptions options(ProviderConfig config) {

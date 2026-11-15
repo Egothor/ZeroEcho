@@ -939,6 +939,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private void validateAuthorityMetadata() throws IOException {
         try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
             AuthorityMetadataStore.validateAll(snapshot);
+            AuthorityMetadataStore.visit(snapshot, AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec::generation,
+                    generation -> validateIssuerGeneration(generation));
             AuthorityMetadataStore.visit(snapshot, AuthorityMetadataCodec.ISSUER_PATH, AuthorityMetadataCodec::path,
                     path -> validateIssuerChainPath(snapshot, path));
         }
@@ -1214,7 +1216,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 STATUS_OWNER_NAMESPACE, PUBLICATION_RECORD_NAMESPACE,
                 CREDENTIAL_SERIAL_NAMESPACE, AuthorityMetadataCodec.CA_BASE, AuthorityMetadataCodec.CA_CURRENT,
                 AuthorityMetadataCodec.CA_HISTORY, AuthorityMetadataCodec.CA_GENERATION_ORDER, AuthorityMetadataCodec.CA_GENERATION_MEMBER,
-                AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec.ISSUER_PATH,
+                AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec.ISSUER_CRYPTO_BINDING, AuthorityMetadataCodec.ISSUER_PATH,
                 AuthorityMetadataCodec.CREDENTIAL_RECORD, AuthorityMetadataCodec.CREDENTIAL_OWNER_SET));
     }
 
@@ -1569,6 +1571,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putIssuerGeneration(IssuerGeneration generation) {
+        throw new IllegalStateException("Current storage requires explicit issuer cryptographic binding; use the paired generation operation");
+    }
+
+    @Override
+    public void putIssuerGeneration(IssuerGeneration generation, zeroecho.pki.api.ca.IssuerCryptographicBinding binding) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
         try (admission) {
             requireStoreUsable();
@@ -1586,7 +1593,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     throw signingDurabilityFailure(failure);
                 }
             }
-            try { authorityMetadata().create(AuthorityMetadataCodec.generationKey(generation.issuerId()), FsCodec.encode(FsCodec.ISSUER_GENERATION, generation)); }
+            validateIssuerBindingEvidence(generation, binding, credential);
+            try { authorityMetadata().createGeneration(generation, binding); }
             catch (IOException failure) { throw signingDurabilityFailure(failure); }
         }
     }
@@ -1604,6 +1612,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 if (value.isPresent() && !value.orElseThrow().issuerId().equals(issuerId)) { throw new IOException("Issuer metadata identity differs"); }
                 return value.map(this::validateIssuerGeneration);
             } catch (IOException failure) { throw new IllegalStateException("Issuer generation metadata read failed", failure); }
+        }
+    }
+
+    @Override
+    public Optional<zeroecho.pki.api.ca.IssuerCryptographicBinding> getIssuerCryptographicBinding(PkiId issuerId) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
+            requireStoreUsable();
+            Objects.requireNonNull(issuerId, "issuerId");
+            try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return AuthorityMetadataStore.findBinding(snapshot, issuerId); }
+            catch (IOException failure) { throw new IllegalStateException("Issuer cryptographic binding read failed", failure); }
         }
     }
 
@@ -3462,9 +3481,68 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return record;
     }
 
+    private void validateIssuerBindingEvidence(IssuerGeneration generation,
+            zeroecho.pki.api.ca.IssuerCryptographicBinding binding, Credential credential) {
+        if (!binding.formatId().equals(credential.formatId().value())
+                || !(credential.profileBinding() instanceof zeroecho.pki.api.credential.CaProfileBinding profile)
+                || !profile.reference().equals(binding.profile())) {
+            throw new IllegalStateException("Issuer credential profile differs from cryptographic binding");
+        }
+        if (!BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
+            validateGenericIssuerDigest(binding, credential);
+            return;
+        }
+        if (credential.content().length() > 8 * 1024 * 1024) { throw new IllegalStateException("Issuer certificate exceeds its evidence bound"); }
+        byte[] der = new byte[Math.toIntExact(credential.content().length())];
+        try (var readable = stagedContent.openContent(credential.content()); var input = readable.openStream()) {
+            int offset = 0;
+            while (offset < der.length) {
+                int count = input.read(der, offset, der.length - offset);
+                if (count <= 0) { throw new IOException("Issuer certificate content truncated"); }
+                offset += count;
+            }
+            if (input.read() != -1 || !java.util.HexFormat.of().formatHex(sha256Digest(der)).equals(binding.certificateSha256())) {
+                throw new IOException("Issuer certificate digest differs");
+            }
+        } catch (IOException failure) { throw new IllegalStateException("Issuer certificate evidence invalid", failure); }
+        if (BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
+            var verifier = options.issuerAlgorithmEvidenceVerifier()
+                    .orElseGet(zeroecho.pki.impl.core.IssuerBindingResolver::defaultPublicEvidenceVerifier);
+            var certificate = Pkix.parseCertificate(der);
+            verifier.verify(binding.primary(), new EncodedObject(Encoding.DER, Pkix.subjectPublicKeyInfo(certificate)));
+            binding.alternative().ifPresent(alternative -> {
+                try {
+                    verifier.verify(alternative, new EncodedObject(Encoding.DER,
+                            zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72")));
+                } catch (IOException failure) { throw new IllegalStateException("Alternative issuer public evidence invalid", failure); }
+            });
+            zeroecho.pki.impl.core.IssuerBindingResolver.createCaptured(generation, der, binding.formatId(), binding.primary(),
+                    binding.alternative(), binding.certificateHybridBaseline(), binding.profile(), binding.bindingSetCommitment());
+        }
+    }
+
+    private void validateGenericIssuerDigest(zeroecho.pki.api.ca.IssuerCryptographicBinding binding, Credential credential) {
+        try (var content = stagedContent.openContent(credential.content()); var input = content.openStream()) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long remaining = credential.content().length(); byte[] buffer = new byte[65_536]; int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (count > remaining) { throw new IOException("Generic issuer content length differs"); }
+                digest.update(buffer, 0, count); remaining -= count;
+            }
+            if (remaining != 0 || !java.util.HexFormat.of().formatHex(digest.digest()).equals(binding.certificateSha256())) {
+                throw new IOException("Generic issuer content digest differs");
+            }
+        } catch (IOException | java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("Generic issuer public evidence invalid", failure);
+        }
+    }
+
     private IssuerGeneration validateIssuerGeneration(IssuerGeneration generation) {
-        getCredential(generation.credentialId())
+        Credential credential = getCredential(generation.credentialId())
                 .orElseThrow(() -> new IllegalStateException("Issuer credential reference is missing"));
+        var binding = getIssuerCryptographicBinding(generation.issuerId())
+                .orElseThrow(() -> new IllegalStateException("Issuer cryptographic binding is missing; fresh empty PKI installation required"));
+        validateIssuerBindingEvidence(generation, binding, credential);
         return generation;
     }
 
