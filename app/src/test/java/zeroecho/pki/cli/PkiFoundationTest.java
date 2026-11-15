@@ -169,6 +169,31 @@ class PkiFoundationTest {
     }
 
     @Test
+    void authorityCreationBindingsPreserveExplicitSignatureSelectionAndLegacyOmission() throws IOException {
+        PkiOperationRegistry registry = new PkiOperationRegistry();
+        for (String operation : List.of("ca.create", "ca.intermediate.create")) {
+            String base = "\"formatId\":\"x509\",\"subjectRef\":\"CN=CA\",\"profileId\":\"ca-profile\",\"keyRef\":\"fixture:ca.prv\""
+                    + (operation.equals("ca.intermediate.create") ? ",\"issuerCaId\":\"parent\"" : "");
+            for (Optional<String> selection : List.of(Optional.<String>empty(), Optional.of("ML-DSA-87"))) {
+                String selector = selection.map(value -> ",\"signatureAlgorithmId\":\"" + value + "\"").orElse("");
+                var command = assertInstanceOf(PkiLocalCommand.Signing.class,
+                        registry.bind(operation, arguments("{" + base + selector + "}"), temporaryDirectory));
+                Optional<String> actual = switch (command.operation()) {
+                    case PkiSigningOperation.CreateAuthority root -> root.signatureAlgorithmId();
+                    case PkiSigningOperation.CreateIntermediate intermediate -> intermediate.signatureAlgorithmId();
+                    default -> throw new AssertionError("Unexpected signing operation");
+                };
+                assertEquals(selection, actual);
+            }
+            for (String invalid : List.of(",\"signatureAlgorithmId\":\"\"", ",\"signatureAlgorithmId\":\" \"",
+                    ",\"signatureAlgorithmId\":1", ",\"signatureAlgorithmId\":null", ",\"signatureAlgorithm\":\"ML-DSA-87\"")) {
+                assertThrows(IllegalArgumentException.class,
+                        () -> registry.bind(operation, arguments("{" + base + invalid + "}"), temporaryDirectory));
+            }
+        }
+    }
+
+    @Test
     void mandatoryCredentialInventoryBindsTypedAuthorityLimitsAndExclusiveCursor() throws IOException {
         PkiOperationRegistry registry=new PkiOperationRegistry();
         for(int limit:List.of(1,1000)) {

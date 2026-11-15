@@ -571,7 +571,33 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         result.put(PROFILE_ID, credentialFields(credential).get(PROFILE_ID));
         result.put("profilePolicyCommitment", text(generation.profilePolicyCommitment()));
         result.put("x509BindingCommitment", text(generation.x509BindingCommitment()));
+        var binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow(Missing::new);
+        result.put("cryptographicBinding", cryptographicBindingFields(binding));
         return result;
+    }
+
+    private static PkiOperationValue.ObjectValue cryptographicBindingFields(
+            zeroecho.pki.api.ca.IssuerCryptographicBinding binding) {
+        Map<String, PkiOperationValue> values = fields();
+        values.put("version", integer(binding.version()));
+        values.put("commitment", text(binding.commitment()));
+        values.put("certificateSha256", text(binding.certificateSha256()));
+        values.put("certificateHybridBaseline", text(binding.certificateHybridBaseline().name()));
+        values.put("bindingSetCommitment", text(binding.bindingSetCommitment()));
+        values.put("evidenceSha256", text(binding.evidenceSha256()));
+        values.put("primary", issuerKeyFields(binding.primary()));
+        binding.alternative().ifPresent(role -> values.put("alternative", issuerKeyFields(role)));
+        return object(values);
+    }
+
+    private static PkiOperationValue.ObjectValue issuerKeyFields(zeroecho.pki.api.ca.IssuerKeyBinding role) {
+        return object(Map.of(
+                "keyRef", text(role.keyRef().value()),
+                "publicKeyAlgorithmId", text(role.publicKeyAlgorithm().canonicalForm()),
+                "signatureAlgorithmId", text(role.signatureAlgorithm().canonicalForm()),
+                "signatureAlgorithmIdentifierDer", text(java.util.Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(role.signatureAlgorithmIdentifier().bytes())),
+                "subjectSpkiSha256", text(role.subjectSpkiSha256())));
     }
 
     private PkiOperationResult inspectIssuerChainPath(PkiOperation.InspectIssuerChainPath request) {

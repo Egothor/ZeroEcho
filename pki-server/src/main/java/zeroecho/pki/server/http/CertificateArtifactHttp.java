@@ -94,6 +94,7 @@ final class CertificateArtifactHttp {
             }
             if(query!=null)throw new SecurityException("Certificate unavailable");
             Map<String,PkiOperationValue> fields=new LinkedHashMap<>();
+            fields.put("issuerId",text(credential.issuerRef().issuerId().value()));
             fields.put("credentialId",text(credentialId.value()));fields.put("authorityId",text(coordinates.authorityId().value()));fields.put("formatId",text(credential.formatId().value()));
             fields.put("representations",new PkiOperationValue.ListValue(representations.stream().<PkiOperationValue>map(value -> new PkiOperationValue.ObjectValue(Map.of(
                     "id",text(value.id()),"label",text(value.label()),"mediaType",text(value.mediaType()),"fileName",text(fileName(credentialId,value.fileExtension())),

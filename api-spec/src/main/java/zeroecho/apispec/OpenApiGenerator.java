@@ -252,8 +252,8 @@ public final class OpenApiGenerator {
             y.mapping("title", "ZeroEcho PKI Administrative API");
             y.mapping("version", version);
             y.mapping(TEXT_DESCRIPTION,
-                    "Mutual-TLS administrative API for ZeroEcho PKI. All endpoints require a "
-                    + "client certificate. Every operation is dispatched as POST /operations/{operationId}.");
+                    "ZeroEcho PKI administrative API and optional SDK listener contracts. Administrative paths require mutual TLS. "
+                    + "Protocol SDK paths override the server base and preserve their native authentication policies.");
             y.blockMapping("license", () -> {
                 y.mapping("name", "BSD 4-Clause");
                 y.mapping("identifier", "BSD-4-Clause");
@@ -299,6 +299,7 @@ public final class OpenApiGenerator {
 
         // Paths
         y.blockMapping("paths", () -> {
+            SdkOpenApi.paths(y);
             // Discovery endpoint
             y.blockMapping("/operations", () -> {
                 y.blockMapping("get", () -> {
@@ -321,7 +322,8 @@ public final class OpenApiGenerator {
                         y.mapping("summary", content ? "Download an authorized immutable " + kind + " artifact" : "Inspect authorized " + kind + " representations");
                         y.mapping(TEXT_DESCRIPTION, "Authenticated private route. Exact canonical stored object scope is checked; anonymous publication is independent. "
                                 + (content ? "Requires " + permission + ". Provider-owned representation selected by query; returns a native attachment with exact Content-Length, Content-Digest, no-store and nosniff. Status exports stream with bounded memory and cancellation (256 MiB native, 368 MiB encoded maximum)."
-                                : "Metadata permission is required; representations is empty when full-content authorization is absent. Returns result.value with object identity and provider-owned id, label, mediaType, fileName and same-origin href."));
+                                : "Metadata permission is required; representations is empty when full-content authorization is absent. Returns result.value with object identity and provider-owned id, label, mediaType, fileName and same-origin href. "
+                                  + (kind.equals("certificate") ? "Certificate metadata includes the exact immutable issuerId; use issuer.generation.inspect under its separate authorization to obtain stored cryptographicBinding and outgoing signing roles. Certificate access does not grant generation inspection." : "")));
                         y.blockMapping("parameters", () -> {
                             y.sequenceItem(() -> { y.mapping("name", "id"); y.mapping("in", "path"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); });
                             if(content)y.sequenceItem(() -> { y.mapping("name", "representation"); y.mapping("in", "query"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); });
@@ -407,6 +409,7 @@ public final class OpenApiGenerator {
             // Common schemas
             y.blockMapping("schemas", () -> {
                 emitCommonSchemas(y);
+                SdkOpenApi.schemas(y);
                 y.blank();
 
                 // Per-operation argument schemas
@@ -540,6 +543,17 @@ public final class OpenApiGenerator {
                     }
                 });
             });
+            if (!download) {
+                y.blockMapping("'202'", () -> {
+                    y.mapping(TEXT_DESCRIPTION, "Operation accepted with a retained pending signing receipt. result.operationId identifies the original signing operation; inspect Location before retrying an uncertain outcome.");
+                    y.blockMapping("headers", () -> y.blockMapping("Location", () -> {
+                        y.mapping(TEXT_DESCRIPTION, "Retained signing status at /admin/v1/signing-operations/{operationId}");
+                        y.blockMapping(SCHEMA_FIELD, () -> y.mapping(TEXT_TYPE, STRING_TYPE));
+                    }));
+                    y.blockMapping(CONTENT_FIELD, () -> y.blockMapping("application/json", () ->
+                            y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse")));
+                });
+            }
             if (highRisk) {
                 y.blockMapping("'409'", () -> {
                     y.mapping(TEXT_DESCRIPTION, "Dual-control approval required before the operation can proceed");

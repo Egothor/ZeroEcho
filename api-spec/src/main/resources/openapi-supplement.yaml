@@ -190,39 +190,31 @@ operations:
 
   credential.issue:
     summary: "Issue a new end-entity certificate"
-    description: "Signs a validated certificate request and stores the resulting credential object. The request must be in APPROVED state; issuance is idempotent for the same request."
+    description: "Issues from the selected imported request and immutable profile under the current authorized issuer generation/path. Durable signing receipts govern replay and uncertain outcomes. Hybrid SDK enrollment uses its explicit challenge/accept sidepath and both client-owned subject-key proofs."
     arguments:
-      formatId: "Certificate encoding format (PEM, DER, PKCS12)"
-      subjectRef: "Subject distinguished name reference"
-      profileId: "Issuance profile governing extensions and key policy"
-      keyRef: "Key reference for the end-entity key"
+      issuerCaId: "Selected issuing authority"
+      requestId: "Imported certificate request identifier"
+      profileId: "Immutable selected issuance profile"
 
   credential.renew:
-    summary: "Renew an expiring credential with the same key"
-    description: "Reissues a certificate for an existing credential, extending its validity window without changing the key. The original credential is superseded but not revoked."
+    summary: "Renew a credential while retaining its subject keys"
+    description: "Prepares renewal from the retained issuance record under current policy. Hybrid renewal requires fresh SDK proof of both unchanged subject keys and verified predecessor lineage. Held or permanently revoked keys cannot be reused. No private key is generated or exported. The predecessor is superseded through the existing lifecycle rules, without implicit revocation."
     arguments:
-      formatId: "Certificate encoding format"
-      subjectRef: "Subject reference (must match the existing credential's subject)"
-      profileId: "Issuance profile to apply"
-      keyRef: "Existing key reference; must match the credential's enrolled key"
+      credentialId: "Exact predecessor credential identifier"
 
   credential.replace:
-    summary: "Replace a credential with a new key (rekeying)"
-    description: "Issues a new certificate under a freshly generated key, superseding the existing credential. The previous key and certificate are no longer used but remain in the audit trail."
+    summary: "Replace a credential from a new imported request"
+    description: "Issues from the selected new client-owned request and profile and supersedes the exact predecessor. Hybrid replacement proves the selected subject-key tuple. Changing only an alternative key does not rehabilitate a held or revoked primary key. No implicit server-side key generation or revocation is performed."
     arguments:
-      formatId: "Certificate encoding format"
-      subjectRef: "Subject reference for the replacement credential"
-      profileId: "Issuance profile to apply"
-      keyRef: "Reference for the new key"
+      existingCredentialId: "Exact predecessor credential identifier"
+      requestId: "New imported certificate request identifier"
+      profileId: "Selected replacement profile"
 
   credential.reissue:
-    summary: "Reissue a credential to correct extensions or policy (administrative)"
-    description: "Administratively reissues a credential, typically to correct a profile error or add extensions. The original credential may be revoked depending on profile policy. This is a HIGH_RISK operation requiring dual-control approval."
+    summary: "Reissue a credential from its retained issuance record"
+    description: "Reconstructs the retained subject and subject keys under current policy and supersedes the predecessor through the existing lifecycle rules. Hybrid reissue requires fresh proof of both unchanged subject keys and verified predecessor lineage. Held or revoked keys cannot be reused. No implicit key generation or revocation is performed; normal authorization and approval policy remain authoritative."
     arguments:
-      formatId: "Certificate encoding format"
-      subjectRef: "Subject reference"
-      profileId: "Corrected issuance profile"
-      keyRef: "Key reference (may be the existing key)"
+      credentialId: "Exact predecessor credential identifier"
 
   credential.inspect:
     summary: "Retrieve metadata for a single credential"
@@ -346,6 +338,7 @@ operations:
 
   issuer.generation.inspect:
     summary: "Retrieve metadata for a single issuer generation"
+    description: "Returns exact retained generation metadata and cryptographicBinding: version, commitment, certificateSha256, certificateHybridBaseline, bindingSetCommitment, evidenceSha256 and outgoing primary/optional alternative roles. Each role exposes keyRef (never private-key bytes), canonical publicKeyAlgorithmId and signatureAlgorithmId, signatureAlgorithmIdentifierDer as canonical unpadded base64url DER, and subjectSpkiSha256. Outgoing signing roles are distinct from incoming issuer-certificate signatures; no mutable default is inferred. A missing generation or required stored binding returns OBJECT_NOT_FOUND. Requires independent generation-metadata authorization; certificate artifact access alone does not grant it."
     arguments:
       issuerId: "Stable issuer generation identifier"
 

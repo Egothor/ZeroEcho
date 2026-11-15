@@ -124,6 +124,21 @@ final class HybridCertificateIssuanceTest {
             assertEquals(HybridIssuanceFixture.key("other-alt"), binding.alternative().orElseThrow().keyRef());
             assertEquals(zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.COR3_SIGNED_WRAPPER,
                     binding.certificateHybridBaseline());
+            var inspected = org.junit.jupiter.api.Assertions.assertInstanceOf(PkiOperationOutcome.Completed.class,
+                    session.operations().execute(new PkiOperation.InspectIssuerGeneration(binding.issuerId()),
+                            CancellationSignal.NONE)).result();
+            var metadata = org.junit.jupiter.api.Assertions.assertInstanceOf(PkiOperationValue.ObjectValue.class,
+                    inspected.fields().get("cryptographicBinding")).fields();
+            assertEquals(new PkiOperationValue.Text(binding.commitment()), metadata.get("commitment"));
+            assertEquals(new PkiOperationValue.Text("COR3_SIGNED_WRAPPER"), metadata.get("certificateHybridBaseline"));
+            var primary = org.junit.jupiter.api.Assertions.assertInstanceOf(PkiOperationValue.ObjectValue.class,
+                    metadata.get("primary")).fields();
+            var alternative = org.junit.jupiter.api.Assertions.assertInstanceOf(PkiOperationValue.ObjectValue.class,
+                    metadata.get("alternative")).fields();
+            assertEquals(new PkiOperationValue.Text(HybridIssuanceFixture.key("child").value()), primary.get("keyRef"));
+            assertEquals(new PkiOperationValue.Text(HybridIssuanceFixture.key("other-alt").value()), alternative.get("keyRef"));
+            assertEquals(new PkiOperationValue.Text(binding.primary().signatureAlgorithm().canonicalForm()), primary.get("signatureAlgorithmId"));
+            assertEquals(new PkiOperationValue.Text(binding.alternative().orElseThrow().signatureAlgorithm().canonicalForm()), alternative.get("signatureAlgorithmId"));
         }
     }
 

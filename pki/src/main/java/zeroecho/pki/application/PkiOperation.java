@@ -420,8 +420,15 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
      * Inspects the metadata of one stored issuer generation through an authoritative point lookup.
      *
      * <p>Successful execution returns {@code issuerId}, {@code authorityId}, {@code credentialId}, {@code state},
-     * {@code profilePolicyCommitment}, and {@code x509BindingCommitment}.
-     * A missing object produces {@link PkiOperationFailure#NOT_FOUND} with code
+     * {@code profilePolicyCommitment}, {@code x509BindingCommitment}, and {@code cryptographicBinding}.
+     * The latter contains the stored version, commitment, certificateSha256,
+     * certificateHybridBaseline, bindingSetCommitment, evidenceSha256 and outgoing
+     * primary/optional alternative roles. Each role contains keyRef (never private
+     * bytes), publicKeyAlgorithmId and signatureAlgorithmId in canonical identity
+     * form, signatureAlgorithmIdentifierDer as unpadded base64url DER, and
+     * subjectSpkiSha256. These describe outgoing signing roles, not the incoming
+     * signatures on the issuer certificate. No current default is inferred.
+     * A missing object or required stored cryptographic binding produces {@link PkiOperationFailure#NOT_FOUND} with code
      * {@code OBJECT_NOT_FOUND}. The executor projects metadata without opening content,
      * signing, or durable admission; the store retains its existing integrity checks.</p>
      *

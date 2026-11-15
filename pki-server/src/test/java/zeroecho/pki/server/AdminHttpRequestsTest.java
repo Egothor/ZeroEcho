@@ -225,6 +225,7 @@ class AdminHttpRequestsTest {
         realm.grant(ServerTestSupport.grant("outsider.metadata","outsider",Permission.Effect.ALLOW,Permission.Action.CERTIFICATE_READ_METADATA,Permission.ResourceType.CERTIFICATE,scope,Permission.Relationship.ANY,Permission.DataView.METADATA_REDACTED),"system");
         var metadata=get(outsider,origin+"/admin/v1/certificate-artifacts/"+encoded(rootCredential.value()));
         check(metadata.statusCode()==200&&metadata.body().contains("\"representations\":[]"),"metadata-only principal got download links");
+        check(metadata.body().contains("\"issuerId\":\""+repository.credential(rootCredential).orElseThrow().issuerRef().issuerId().value()+"\""),"artifact metadata lost exact issuer generation");
         realm.grant(ServerTestSupport.grant("outsider.read-content","outsider",Permission.Effect.ALLOW,Permission.Action.CERTIFICATE_READ_CONTENT,Permission.ResourceType.CERTIFICATE,scope,Permission.Relationship.ANY,Permission.DataView.CONTENT_FULL),"system");
         check(binaryGet(outsider,content).statusCode()==404,"read-content alone permitted download");
         realm.grant(ServerTestSupport.grant("outsider.download-metadata","outsider",Permission.Effect.ALLOW,Permission.Action.CERTIFICATE_DOWNLOAD,Permission.ResourceType.CERTIFICATE,scope,Permission.Relationship.ANY,Permission.DataView.METADATA_REDACTED),"system");

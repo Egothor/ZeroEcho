@@ -85,6 +85,23 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 
 final class PkiOperationInspectionTest {
     @Test
+    void missingRequiredGenerationBindingFailsWithoutInferringDefaults(@TempDir Path temporary) throws Exception {
+        ObservedBootstrap bootstrap = new ObservedBootstrap();
+        try (PkiSession session = DefaultPkiSession.open(configuration(temporary),
+                IntermediateCreationFixture.CLOCK, bootstrap)) {
+            new IntermediateCreationFixture().initialize(bootstrap.store, 1);
+            var authority = bootstrap.store.getCa(IntermediateCreationFixture.CA).orElseThrow();
+            bootstrap.omitCryptographicBinding = true;
+            var failure = assertInstanceOf(PkiOperationOutcome.Failed.class,
+                    session.operations().execute(new PkiOperation.InspectIssuerGeneration(
+                            authority.currentIssuanceIssuerId()), CancellationSignal.NONE));
+            assertEquals(PkiOperationFailure.NOT_FOUND, failure.classification());
+            assertEquals("OBJECT_NOT_FOUND", failure.code());
+            assertTrue(session.signing().isEmpty());
+        }
+    }
+
+    @Test
     void projectsExactMetadataFromRealStoreWithoutOtherExecutorIo(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
         try (PkiSession session = DefaultPkiSession.open(configuration(temporary),
@@ -123,7 +140,8 @@ final class PkiOperationInspectionTest {
                             "credentialId", text(caCredential.credentialId().value()), "state", text("ACTIVE"),
                             "profilePolicyCommitment", text(generation.profilePolicyCommitment()),
                             "x509BindingCommitment", text(generation.x509BindingCommitment()),
-                            "profileId", text(caProfile.profileId())));
+                            "profileId", text(caProfile.profileId()),
+                            "cryptographicBinding", expectedBinding(bootstrap.store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow())));
             assertEquals(2, path.orderedCredentialIds().size());
             CaRecord parent = bootstrap.store.getCa(IntermediateCreationFixture.CA).orElseThrow();
             PkiId anchor = bootstrap.store.getIssuerGeneration(parent.currentIssuanceIssuerId())
@@ -537,12 +555,35 @@ final class PkiOperationInspectionTest {
                     executor.execute(operation, CancellationSignal.NONE)).result();
             assertEquals(new PkiOperationResult(name, expected), result);
             assertEquals(operation instanceof PkiOperation.InspectIssuerGeneration
-                    ? List.of(method, "getCredential", "getRootTrustAnchorTransitionForIssuer")
+                    ? List.of(method, "getCredential", "getIssuerCryptographicBinding", "getRootTrustAnchorTransitionForIssuer")
                     : operation instanceof PkiOperation.InspectAuthority
                             ? List.of(method, "getCaHeadSnapshot") : List.of(method), bootstrap.calls);
         } finally {
             bootstrap.stopObserving();
         }
+    }
+
+    private static PkiOperationValue.ObjectValue expectedBinding(zeroecho.pki.api.ca.IssuerCryptographicBinding binding) {
+        var fields = new java.util.LinkedHashMap<String, PkiOperationValue>();
+        fields.put("version", integer(1));
+        fields.put("commitment", text(binding.commitment()));
+        fields.put("certificateSha256", text(binding.certificateSha256()));
+        fields.put("certificateHybridBaseline", text(binding.certificateHybridBaseline().name()));
+        fields.put("bindingSetCommitment", text(binding.bindingSetCommitment()));
+        fields.put("evidenceSha256", text(binding.evidenceSha256()));
+        fields.put("primary", expectedRole(binding.primary()));
+        binding.alternative().ifPresent(role -> fields.put("alternative", expectedRole(role)));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
+    private static PkiOperationValue.ObjectValue expectedRole(zeroecho.pki.api.ca.IssuerKeyBinding role) {
+        return new PkiOperationValue.ObjectValue(Map.of(
+                "keyRef", text(role.keyRef().value()),
+                "publicKeyAlgorithmId", text(role.publicKeyAlgorithm().canonicalForm()),
+                "signatureAlgorithmId", text(role.signatureAlgorithm().canonicalForm()),
+                "signatureAlgorithmIdentifierDer", text(java.util.Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(role.signatureAlgorithmIdentifier().bytes())),
+                "subjectSpkiSha256", text(role.subjectSpkiSha256())));
     }
 
     private static Map<String, PkiOperationValue> credentialFields(Credential credential,
@@ -611,6 +652,7 @@ final class PkiOperationInspectionTest {
         private String expectedMethod;
         private PkiId expectedId;
         private PkiId generationCredentialId;
+        private boolean omitCryptographicBinding;
         private boolean reverseList;
         private boolean failList;
         private List<?> listResult;
@@ -650,11 +692,15 @@ final class PkiOperationInspectionTest {
         private PkiStore observedStore() {
             return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
                     (proxy, method, arguments) -> {
+                        if (omitCryptographicBinding && method.getName().equals("getIssuerCryptographicBinding")) {
+                            return Optional.empty();
+                        }
                         if (expectedMethod != null) {
                             calls.add(method.getName());
                             if ((expectedMethod.equals("getCa") && method.getName().equals("getCaHeadSnapshot"))
                                     || (expectedMethod.equals("getIssuerGeneration")
-                                            && method.getName().equals("getRootTrustAnchorTransitionForIssuer"))) {
+                                            && (method.getName().equals("getRootTrustAnchorTransitionForIssuer")
+                                                || method.getName().equals("getIssuerCryptographicBinding")))) {
                                 assertEquals(expectedId, arguments[0], "Lifecycle metadata must belong to the inspected object");
                             } else if (expectedMethod.equals("getIssuerGeneration") && method.getName().equals("getCredential")) {
                                 assertEquals(generationCredentialId, arguments[0], "Generation profile must come from its stored credential");

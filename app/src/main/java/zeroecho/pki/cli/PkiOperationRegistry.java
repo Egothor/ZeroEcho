@@ -275,10 +275,11 @@ final class PkiOperationRegistry {
     }
 
     private PkiSigningOperation createAuthority(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        requireFields(arguments, Set.of(FORMAT_ID, "subjectRef", PROFILE_ID, "keyRef"));
+        allowedFields(arguments, Set.of(FORMAT_ID, "subjectRef", PROFILE_ID, "keyRef"),
+                Set.of(FORMAT_ID, "subjectRef", PROFILE_ID, "keyRef", "signatureAlgorithmId"));
         return new PkiSigningOperation.CreateAuthority(new FormatId(text(arguments, FORMAT_ID)),
                 new SubjectRef(text(arguments, "subjectRef")), text(arguments, PROFILE_ID),
-                new KeyRef(text(arguments, "keyRef")));
+                new KeyRef(text(arguments, "keyRef")), optionalText(arguments, "signatureAlgorithmId"));
     }
 
     private PkiOperation transitionAuthority(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
@@ -336,12 +337,13 @@ final class PkiOperationRegistry {
     private PkiSigningOperation createIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
         if (!supplied.containsAll(Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID))
-                || !Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID, "keyRef").containsAll(supplied)) {
+                || !Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID, "keyRef", "signatureAlgorithmId").containsAll(supplied)) {
             throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         return new PkiSigningOperation.CreateIntermediate(new FormatId(text(arguments, FORMAT_ID)),
                 new PkiId(text(arguments, ISSUER_CA_ID)), new SubjectRef(text(arguments, "subjectRef")),
-                text(arguments, PROFILE_ID), optionalText(arguments, "keyRef").map(KeyRef::new));
+                text(arguments, PROFILE_ID), optionalText(arguments, "keyRef").map(KeyRef::new),
+                optionalText(arguments, "signatureAlgorithmId"));
     }
 
     private PkiSigningOperation issueIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
