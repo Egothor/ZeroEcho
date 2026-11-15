@@ -111,7 +111,7 @@ distributions {
 }
 
 tasks.named('test') {
-    useJUnitPlatform { excludeTags 'frontend-integration', 'packaged-integration' }
+    useJUnitPlatform { excludeTags 'frontend-integration', 'packaged-integration', 'certificate-scenario' }
     dependsOn tasks.named('installDist')
     def maintainedExamples = ['documentation', 'deploy'].collect { directory ->
         rootProject.fileTree(directory) {
@@ -204,4 +204,19 @@ frontendProject.plugins.withId('com.github.node-gradle.node') {
             jvmArgumentProviders.add(frontendArguments)
         }
     }
+}
+
+// C04 native rehearsal: the external client uses only localhost HTTPS and its own keys.
+tasks.register('certificateScenarioTest', Test) {
+    group = 'verification'
+    description = 'Rehearses approved certificate scenarios through the real external HTTPS client, without Podman.'
+    dependsOn tasks.named('testClasses'), ':app:installDist'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'certificate-scenario' }
+    testLogging { exceptionFormat = 'full' }
+    systemProperty 'scenario.repository', rootProject.projectDir.absolutePath
+    systemProperty 'scenario.cryptoClasspath', project(':app').layout.buildDirectory.dir('install/app/lib').get().asFile.absolutePath + '/*'
+    maxParallelForks = 1
+    outputs.upToDateWhen { false }
 }

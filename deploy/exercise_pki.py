@@ -1367,20 +1367,27 @@ def _default_output(prefix):
 
 
 def main(arguments=None):
-    """Run a new-object-only live demo or report the reviewed qualification plan.
+    """Run a host-only demo, approved algorithm scenario, full qualification or plan.
 
     Args:
         arguments: Optional CLI argument list; None reads the process arguments.
     Returns:
-        Zero for verified demo artifacts, two for invalid/blocked execution, three
-        for strict incomplete operation coverage. Existing PKI objects are never deleted.
+        Zero for the requested verified scenario, two for invalid/blocked execution,
+        three for incomplete full/strict qualification, four for an external restart.
+        Existing PKI objects are never deleted.
     Raises:
         ExerciseFailure: Inputs, permission preflight or safe fixture setup are invalid.
         OSError: Private inputs or output state cannot be accessed.
         subprocess.SubprocessError: A required cryptographic helper fails or times out.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("live-demo", "full", "plan"), default="live-demo")
+    parser.add_argument("--mode", choices=("live-demo", "full", "plan", "algorithms"), default="live-demo")
+    parser.add_argument("--variant", choices=("p384", "rsa4096", "mldsa87", "hybrid"))
+    parser.add_argument("--realm-id", help="Exact selected HTTPS realm for algorithm scenarios")
+    parser.add_argument("--crypto-classpath", help="Locally built app distribution lib/* for scenario crypto")
+    parser.add_argument("--sdk-authentication", choices=("direct-mtls-v1", "trusted-proxy-mtls-v1"))
+    parser.add_argument("--sdk-transport-principal", help="Actual configured administrative proxy principal")
+    parser.add_argument("--approved-sdk-target", help="SHA-512 of the exact operator-reviewed SDK target proposal")
     parser.add_argument("--directory", type=Path, default=Path.home() / ".local/share/zeroecho-pki")
     parser.add_argument("--url")
     parser.add_argument("--connection-file", type=Path, help="Private client connection file exported by the deployment script for full qualification")
@@ -1400,6 +1407,11 @@ def main(arguments=None):
     if "isolated-full" in raw_arguments or "--mode=isolated-full" in raw_arguments:
         parser.error("isolated-full no longer deploys containers; use the deployment script first, then --mode full --connection-file FILE")
     options = parser.parse_args(raw_arguments)
+    if options.mode != "algorithms" and any(value is not None for value in (options.variant, options.realm_id,
+            options.crypto_classpath, options.sdk_authentication, options.sdk_transport_principal, options.approved_sdk_target)):
+        parser.error("Algorithm scenario arguments require --mode algorithms")
+    if options.mode == "algorithms" and (options.public_url or options.public_trust or options.require_public or options.strict_coverage):
+        parser.error("Algorithm scenarios do not qualify public artifacts or full catalogue coverage")
     os.umask(0o077)
     if options.mode == "plan":
         print(json.dumps({"mode": "plan", "catalogCount": len(CATALOG_IDS), "operations": list(CATALOG_IDS),
@@ -1437,6 +1449,24 @@ def main(arguments=None):
                 result=_full_client(exercise,options,connection)
                 return result
             finally:exercise.close()
+        if options.mode == "algorithms":
+            from exercise_algorithms import run
+            try:
+                exercise.state["mode"] = "algorithms"
+                run(exercise, options, certificate)
+                print("Verified algorithm scenario artifacts: " + str(output))
+                return 0
+            except (ExerciseFailure, KeyError, ValueError) as error:
+                reason = str(error) if isinstance(error, ExerciseFailure) else "Incomplete algorithm scenario response"
+                exercise.state["failure"] = reason
+                exercise.save()
+                _atomic_json(output / "algorithm-report.json", {"version": 1, "variant": options.variant,
+                    "verified": False, "podmanQualified": False, "environment": "external-https-client", "reason": reason})
+                print(reason, file=sys.stderr)
+                print("Retained algorithm scenario artifacts: " + str(output))
+                return 2
+            finally:
+                exercise.close()
         exercise.state["mode"] = "live-demo"
         exercise.save()
         code = 0

@@ -34,7 +34,7 @@
 ###############################################################################
 
 # Purpose: qualify new demo PKI objects through authenticated API calls.
-# Usage: ./deploy/exercise-pki.sh [--mode live-demo|full|plan] [options]
+# Usage: ./deploy/exercise-pki.sh [--mode live-demo|full|algorithms|plan] [options]
 # Input: client connection metadata, trust CA, administrator PKCS#12; password on TTY.
 # Output: private client.key, CSR, certificates, CRLs, checkpoint and report directory.
 # Exit: 0 verified demo; 2 blocked/failed; 3 incomplete qualification; 4 external restart required.

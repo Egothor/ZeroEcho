@@ -39,6 +39,7 @@ module zeroecho.app {
     requires zeroecho.lib;
     requires zeroecho.ext;
     requires zeroecho.pki;
+    requires org.bouncycastle.pkix;
     requires org.apache.commons.cli;
     requires tools.jackson.core;
     requires java.logging;

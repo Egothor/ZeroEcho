@@ -312,6 +312,8 @@ def _configuration(root, values, fingerprints):
                 "idlePollIntervalMillis": 100, "closeTimeoutMillis": 5000}, "exactGroups": [],
                 "catchAll": {"laneCount": 1, "prefetchSize": 1}}}}
     document["listener"]["address"] = "0.0.0.0"
+    if values.get("hybrid_sdk", False):
+        document["listener"]["hybridSdk"] = {"canonicalOrigin": "https://" + values["hostname"] + ":" + str(int(values["port"]))}
     document["listener"]["tlsProvider"]["properties"] = {
         "keyStore": "/deployment/tls/server/server-identity.p12",
         "keyStorePasswordEnvironment": "ZEROECHO_TLS_PASSWORD",
@@ -788,7 +790,10 @@ def _main():
     parser.add_argument("--root-admin", action="store_true", help="With update, explicitly designate only the initial administrator for own-request approval")
     parser.add_argument("--certificate-access", action="store_true", help="With update, explicitly add certificate content/download access for the initial administrator pair")
     parser.add_argument("--status-access", action="store_true", help="With update, explicitly add status-object content download access for the initial administrator pair")
+    parser.add_argument("--hybrid-sdk", action="store_true", help="With fresh install, explicitly enable the existing administrative SDK at the external HTTPS origin")
     args = parser.parse_args()
+    if args.hybrid_sdk and args.command != "install":
+        parser.error("--hybrid-sdk is only valid with a fresh install")
     if args.status_access and args.command != "update":
         parser.error("--status-access is only valid with update")
     if args.certificate_access and args.command != "update":
@@ -797,7 +802,9 @@ def _main():
         parser.error("--root-admin is only valid with update")
     os.umask(0o077)
     if args.command == "install":
-        _install(curses.wrapper(_form, args.directory))
+        values = curses.wrapper(_form, args.directory)
+        values["hybrid_sdk"] = args.hybrid_sdk
+        _install(values)
         return
     if args.command == "test-start":
         from exercise_environment import start
