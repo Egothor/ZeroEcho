@@ -786,6 +786,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry("displayName", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry("certificateProfileId", new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "Certificate profile applied to issued credentials.", "")),
                                 Map.entry("subjectDnPattern", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Regex the requested Subject DN must match (omit = unconstrained).", "")),
+                                Map.entry("sdkProfile", new FieldSemantics("enum", "", false, false, false, "", "Opt in to zeroecho-hybrid-sdk-v1; omission disables SDK enrollment.", "")),
                                 Map.entry("requireApproval", new FieldSemantics("boolean", "", false, false, false, "", "Require out-of-band approval before issuance.", ""))
                         ))),
                 new Presentation("enrollment.profile.update", "Update enrollment profile", "Replace all mutable fields of an enrollment profile.", TEXT_ENROLLMENT,
@@ -795,6 +796,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry("state", new FieldSemantics(TEXT_ENUM, "", false, false, false, "", "", "")),
                                 Map.entry("certificateProfileId", new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
                                 Map.entry("subjectDnPattern", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
+                                Map.entry("sdkProfile", new FieldSemantics("enum", "", false, false, false, "", "Opt in to zeroecho-hybrid-sdk-v1; omission disables SDK enrollment.", "")),
                                 Map.entry("requireApproval", new FieldSemantics("boolean", "", false, false, false, "", "", ""))
                         ))),
                 new Presentation("enrollment.profile.inspect", "Inspect enrollment profile", "Show one enrollment profile.", TEXT_ENROLLMENT,

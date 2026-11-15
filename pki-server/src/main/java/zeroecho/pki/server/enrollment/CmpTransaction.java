@@ -161,6 +161,17 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
         @Override public String toString() { return "CmpTransaction.Response[redacted]"; }
     }
 
+    /**
+     * Constructs the exact blank manifest without reserving or persisting anything.
+     * This pure bounded value grants no authentication or enrollment authority.
+     * @param frozen genuine native coordinates captured by the trusted adapter
+     * @return revision-one manifest with no enrollment or response
+     */
+    public static CmpTransaction unreserved(Frozen frozen) {
+        return new CmpTransaction(CmpTransactionCodec.id(frozen.realmId(), frozen.source().label(), frozen.transactionSha256()),
+                1, frozen, Optional.empty(), Optional.empty());
+    }
+
     /** {@return the complete versioned manifest commitment} */
     public String commitment() { return EnrollmentTransactionCodec.sha256(CmpTransactionCodec.encode(this)); }
     /** {@return a redacted description} */

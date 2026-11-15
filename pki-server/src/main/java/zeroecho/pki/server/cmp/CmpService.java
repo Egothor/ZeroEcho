@@ -221,6 +221,144 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
         catch (Exception unavailable) { throw new CmpProtocolException(503, "CMP processing is unavailable"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 
+    /**
+     * Reports explicit request-owned dual-key profile support without changing native policy.
+     * @param endpoint registered endpoint
+     * @return whether the configured enrollment profile enables this SDK
+     */
+    public boolean hybridSdkAvailable(CmpEndpoint endpoint) {
+        var policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId());
+        if (policy.isEmpty() || policy.orElseThrow().state() != zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE || policy.orElseThrow().sdkProfile().isEmpty() || realm.enrollmentRuntime().isEmpty()
+                || realm.enrollmentCoordinator().isEmpty() || realm.session().semanticSigning().isEmpty()) return false;
+        return realm.session().profiles().requireActiveProfile(endpoint.profileId()).definition().hybridMode()
+                instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature mode
+                && mode.subjectKeySource() == zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
+    }
+
+    /**
+     * Authenticates exact protected wire and freezes a pure manifest without reserving CMP work.
+     * @param endpoint registered endpoint
+     * @param wire original protected PKIMessage
+     * @param clientNonce exact client challenge nonce
+     * @param origin explicitly configured listener origin
+     * @param cancellation request cancellation
+     * @return immutable dual-proof challenge
+     * @throws CmpProtocolException for invalid or unavailable native input
+     */
+    public zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(CmpEndpoint endpoint, byte[] wire,
+            byte[] clientNonce, String origin, CancellationSignal cancellation) throws CmpProtocolException {
+        try {
+            if (!hybridSdkAvailable(endpoint)) throw new IllegalArgumentException("CMP SDK profile unavailable");
+            var request = CmpProtectedMessage.parse(wire); var runtime = realm.enrollmentRuntime().orElseThrow();
+            String credential = runtime.activeCredentialId(EnrollmentRuntimeConfiguration.Protocol.CMP, endpoint.authorityId());
+            try (var lease = runtime.acquire(credential)) {
+                var chain = authorityChain(lease.configuration()); boolean pbm = endpoint.protectionPolicy() == CmpProtectionPolicy.SHARED_SECRET_MAC;
+                var name = sdkServerName(pbm, chain, lease);
+                try (var authentication = CmpAuthentication.verify(request, pbm, lease, realm.configuration().realmId(), name, clock.instant(), cancellation)) {
+                    requireSdkInitial(endpoint, request, authentication, lease);
+                    var requester = coordinator().freezeRequesterExclusions(authentication.requester());
+                    var frozen = frozenManifest(endpoint, request, hash(wire), requester, lease, chain);
+                    return coordinator().challengeSdk(sdkAdmission(endpoint, request, wire, frozen, origin, authentication, lease), clientNonce);
+                }
+            }
+        } catch (IllegalArgumentException | zeroecho.pki.api.PkiException invalid) { throw new CmpProtocolException(400, "Invalid CMP SDK request"); }
+        catch (Exception unavailable) { throw new CmpProtocolException(503, "CMP SDK processing unavailable"); }
+    }
+
+    /**
+     * Accepts dual proofs atomically with the native manifest, or authenticates a consumed read.
+     * @param endpoint registered endpoint
+     * @param wire exact original protected PKIMessage
+     * @param intentId retained SDK challenge identity
+     * @param sdkRequestId stable acceptance identity
+     * @param primaryProof primary client-key proof
+     * @param alternativeProof alternative client-key proof
+     * @param origin configured listener origin
+     * @param cancellation request cancellation
+     * @return normal protected native response
+     * @throws CmpProtocolException for rejected or unavailable input
+     */
+    public byte[] acceptSdk(CmpEndpoint endpoint, byte[] wire, String intentId, String sdkRequestId, byte[] primaryProof,
+            byte[] alternativeProof, String origin, CancellationSignal cancellation) throws CmpProtocolException {
+        try {
+            var sdk = coordinator().retainedSdkIntent(intentId).orElseThrow(); var original = sdk.admission();
+            var frozen = original.cmpManifest().orElseThrow();
+            if (!frozen.source().label().equals(endpoint.label()) || !origin.equals(original.canonicalOrigin())
+                    || !Arrays.equals(wire, sdk.nativeWire().orElseThrow())) throw new IllegalArgumentException("CMP SDK wire differs");
+            var request = CmpProtectedMessage.parse(wire); var runtime = realm.enrollmentRuntime().orElseThrow();
+            try (var lease = runtime.acquire(frozen.source().credentialId().orElseThrow())) {
+                var chain = authorityChain(lease.configuration()); boolean pbm = frozen.requester().type() == IssuanceExecutionEvidence.ActorType.CMP_PBM;
+                var name = sdkServerName(pbm, chain, lease);
+                try (var authentication = CmpAuthentication.verify(request, pbm, lease, realm.configuration().realmId(), name, clock.instant(), cancellation)) {
+                    requireRetained(CmpTransaction.unreserved(frozen), authentication, lease);
+                    boolean consumed = sdk.state() == zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED;
+                    zeroecho.pki.server.enrollment.EnrollmentSdkAdmission supplied;
+                    if (consumed) {
+                        var old = original.admission();
+                        var read = new EnrollmentCoordinator.Admission(old.protocol(), old.endpointId(), frozen.requester(), old.transactionId(), old.operation(), old.payload(), old.validity(), old.predecessorId(), old.protocolDeadline());
+                        supplied = new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(read, original.expectedEndpointCommitment(), origin,
+                                original.authenticationContext(), original.target(), original.cmpManifest(), Optional.of(wire));
+                    } else {
+                        requireSdkInitial(endpoint, request, authentication, lease);
+                        var snapshot = endpoints.requireCurrent(endpoint);
+                        if (!snapshot.commitment().equals(frozen.source().commitment())
+                                || !runtime.activeCredentialId(EnrollmentRuntimeConfiguration.Protocol.CMP, endpoint.authorityId()).equals(lease.configuration().credentialId())
+                                || !coordinator().freezeRequesterExclusions(authentication.requester()).equals(frozen.requester())) throw new IllegalArgumentException("CMP SDK source changed");
+                        supplied = sdkAdmission(endpoint, request, wire, frozen, origin, authentication, lease);
+                    }
+                    coordinator().admitSdk(supplied, intentId, sdkRequestId, primaryProof, alternativeProof);
+                    var manifest = coordinator().findCmp(endpoint.label(), frozen.transactionSha256()).orElseThrow();
+                    if (manifest.response().filter(response -> response.requestSha256().equals(hash(wire))).isPresent()) return coordinator().cmpResponse(manifest);
+                    return continueTransaction(manifest, request, hash(wire), authentication, lease, name, chain, cancellation);
+                }
+            }
+        } catch (IllegalArgumentException | zeroecho.pki.api.PkiException invalid) { throw new CmpProtocolException(400, "Invalid CMP SDK request"); }
+        catch (Exception unavailable) { throw new CmpProtocolException(503, "CMP SDK processing unavailable"); }
+    }
+
+    private static X500Principal sdkServerName(boolean pbm, List<byte[]> chain, EnrollmentRuntime.CredentialLease lease) {
+        return pbm ? Pkix.parseCertificate(chain.getFirst()).getSubjectX500Principal() : lease.responseChain().getFirst().getSubjectX500Principal();
+    }
+    private void requireSdkInitial(CmpEndpoint endpoint, CmpProtectedMessage request, CmpAuthentication authentication,
+            EnrollmentRuntime.CredentialLease lease) throws IOException {
+        if (!hybridSdkAvailable(endpoint) || request.certificationRequest().isEmpty() || !initialRequestAllowed(request, request.isPbm())
+                || staleMessage(request, realm.enrollmentRuntime().orElseThrow()) || !authorizeInitial(endpoint, request, authentication, lease)) throw new IllegalArgumentException("CMP SDK initial request rejected");
+        zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(new X509EnrollmentPayload(X509EnrollmentPayload.Kind.CRMF, request.certificationRequest().orElseThrow()));
+    }
+    private zeroecho.pki.server.enrollment.EnrollmentSdkAdmission sdkAdmission(CmpEndpoint endpoint, CmpProtectedMessage request,
+            byte[] wire, CmpTransaction.Frozen frozen, String origin, CmpAuthentication authentication, EnrollmentRuntime.CredentialLease lease) throws IOException {
+        var requester = frozen.requester(); var snapshot = endpoints.requireCurrent(endpoint);
+        String credentialId = requester.type() == IssuanceExecutionEvidence.ActorType.CMP_PBM ? requester.actorId() : requester.certificate().orElseThrow().certificateSha256();
+        var anchor = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.of(
+                "credentialId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(credentialId),
+                "credentialRevision", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.integer(0),
+                "endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(frozen.source().commitment())));
+        var fields = new java.util.HashMap<String,zeroecho.pki.api.hybrid.sdk.HybridSdkValue>();
+        fields.put("endpointId", sdkValue(endpoint.label())); fields.put("endpointCommitment", sdkValue(frozen.source().commitment()));
+        fields.put("authenticationPolicyCommitment", sdkValue(frozen.source().commitment()));
+        fields.put("manifestCommitment", sdkValue("sha256:" + CmpTransaction.unreserved(frozen).commitment()));
+        fields.put("transactionIdSha256", sdkValue(frozen.transactionSha256())); fields.put("certReqId", sdkValue(request.requestId().toString()));
+        fields.put("bodyType", sdkValue(Integer.toString(request.bodyType()))); fields.put("originalWireSha512", sdkValue("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(wire))));
+        fields.put("senderNonceSha256", sdkValue(hash(request.senderNonce()))); fields.put("recipientNonceSha256", sdkValue(request.recipientNonce().map(CmpService::hash).orElse("")));
+        fields.put("authenticationCredentialId", sdkValue(credentialId)); fields.put("authenticationCredentialRevision", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.integer(0)); fields.put("requestKind", sdkValue("CRMF"));
+        byte[] authAnchor = requester.type() == IssuanceExecutionEvidence.ActorType.CMP_PBM ? anchor.encode() : ("sha256:" + credentialId).getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        var auth = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(6, java.util.Map.of(1,sdkBytes(requester.actorId()),2,sdkBytes(request.isPbm()?"cmp-pbm-v1":"cmp-signature-v1"),
+                3,zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(authAnchor),4,sdkBytes("cmp-v1"),5,zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(fields).encode()));
+        var policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId()).orElseThrow();
+        var target = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1,"CMP",endpoint.label(),snapshot.revision(),snapshot.commitment(),endpoint.enrollmentProfileId(),
+                realm.enrollmentProfiles().revision(endpoint.enrollmentProfileId()),EnrollmentProfileService.commitment(policy),request.bodyType()==7?"REPLACE":"ISSUE",X509EnrollmentPayload.Kind.CRMF,frozen.transactionSha256(),
+                "sha512:"+HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(auth.encode())));
+        Optional<PkiId> predecessor = Optional.empty();
+        if (request.bodyType()==7) {
+            predecessor=Optional.of(authorizeTarget(frozen.authorityId().value(),request,authentication,lease).credentialId());
+        }
+        var admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.CMP,endpoint.label(),requester,frozen.transactionSha256(),request.bodyType()==7?EnrollmentTransaction.Operation.REPLACE:EnrollmentTransaction.Operation.ISSUE,
+                new X509EnrollmentPayload(X509EnrollmentPayload.Kind.CRMF,request.certificationRequest().orElseThrow()),Optional.empty(),predecessor,Optional.of(frozen.expiresAt()));
+        return new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(admission,snapshot.commitment(),origin,auth,target,Optional.of(frozen),Optional.of(wire));
+    }
+    private static zeroecho.pki.api.hybrid.sdk.HybridSdkValue sdkValue(String value) { return zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(value); }
+    private static byte[] sdkBytes(String value) { return value.getBytes(java.nio.charset.StandardCharsets.UTF_8); }
+
     private boolean authorizeInitial(CmpEndpoint endpoint, CmpProtectedMessage request,
             CmpAuthentication authentication, EnrollmentRuntime.CredentialLease lease) throws IOException {
         try {
@@ -257,6 +395,12 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
 
     private CmpTransaction reserve(CmpEndpoint endpoint, CmpProtectedMessage request, String wireHash, CmpAuthentication authentication,
             EnrollmentRuntime.CredentialLease lease, List<byte[]> authorityChain) throws java.security.cert.CertificateEncodingException {
+        return coordinator().reserveCmp(frozenManifest(endpoint, request, wireHash, authentication.requester(), lease, authorityChain));
+    }
+
+    private CmpTransaction.Frozen frozenManifest(CmpEndpoint endpoint, CmpProtectedMessage request, String wireHash,
+            EnrollmentTransaction.Requester requester, EnrollmentRuntime.CredentialLease lease, List<byte[]> authorityChain)
+            throws java.security.cert.CertificateEncodingException {
         EnrollmentEndpointRegistry.Snapshot snapshot = endpoints.requireCurrent(endpoint);
         EnrollmentRuntimeConfiguration.CredentialSet credential = lease.configuration();
         CaRecord authority = realm.session().repository().authority(new PkiId(endpoint.authorityId())).orElseThrow();
@@ -271,11 +415,11 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
         if (credentialDeadline.isBefore(expires)) {
             expires = credentialDeadline;
         }
-        return coordinator().reserveCmp(new CmpTransaction.Frozen(realm.configuration().realmId(), source, authentication.requester(), authority.caId(),
+        return new CmpTransaction.Frozen(realm.configuration().realmId(), source, requester, authority.caId(),
                 realm.session().profiles().requireActiveProfile(endpoint.profileId()).reference(), new PkiId(credential.issuerId()),
                 path.pathId(), path.pathCommitment(), hash(request.transactionId()), wireHash, request.bodyType(), request.requestId(),
                 request.certificationRequest().map(CmpService::hash), request.requestsImplicitConfirmation(), now, expires,
-                responseBound(lease, authorityChain)));
+                responseBound(lease, authorityChain));
     }
 
     private byte[] continueTransaction(CmpTransaction manifest, CmpProtectedMessage request, String wireHash, CmpAuthentication authentication,

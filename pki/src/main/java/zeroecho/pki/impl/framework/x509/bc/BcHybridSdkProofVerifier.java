@@ -85,8 +85,7 @@ public final class BcHybridSdkProofVerifier {
         primaryProof = primaryProof.clone(); alternativeProof = alternativeProof.clone();
         try {
             byte[] original = original(request);
-            ParsedHybridSdkRequest reparsed = new BcX509CertificationRequestParser().parseHybridSdk(
-                    new CertificationRequest(BcX509CredentialFramework.FORMAT_ID, new EncodedObject(Encoding.DER, original)));
+            ParsedHybridSdkRequest reparsed = new BcX509CertificationRequestParser().parseHybridSdk(request.originalPayload());
             if (!request.primary().subjectRef().equals(reparsed.primary().subjectRef())
                     || !request.primary().subjectRdns().equals(reparsed.primary().subjectRdns())
                     || !request.primary().subjectAlternativeNames().equals(reparsed.primary().subjectAlternativeNames())
@@ -115,12 +114,20 @@ public final class BcHybridSdkProofVerifier {
     static void requireRequest(ParsedHybridSdkRequest request) {
         try {
             Keys keys = keys(request); byte[] der = original(request);
-            var csr = org.bouncycastle.asn1.pkcs.CertificationRequest.getInstance(ASN1Primitive.fromByteArray(der));
-            if (!Arrays.equals(csr.getSignatureAlgorithm().getEncoded("DER"), HybridSdkFrame.primaryAlgorithm())
-                    || csr.getSignature().getPadBits() != 0
-                    || !Arrays.equals(csr.getCertificationRequestInfo().getSubjectPublicKeyInfo().getEncoded("DER"), request.primary().publicKeyInfo().bytes())) throw invalid();
-            requireEcdsaSignature(csr.getSignature().getBytes());
-            if (!verifyEcdsa(keys.primary(), csr.getCertificationRequestInfo().getEncoded("DER"), csr.getSignature().getBytes())) throw invalid();
+            if (request.originalPayload().kind() == X509EnrollmentPayload.Kind.CRMF) {
+                var crmf = zeroecho.pkix.cmp.CrmfRequest.parse(der);
+                if (!Arrays.equals(zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(crmf.signatureAlgorithm()), HybridSdkFrame.primaryAlgorithm())
+                        || !Arrays.equals(crmf.subjectPublicKeyInfo(), request.primary().publicKeyInfo().bytes())) throw invalid();
+                requireEcdsaSignature(crmf.signature());
+                if (!verifyEcdsa(keys.primary(), crmf.signedRequest(), crmf.signature())) throw invalid();
+            } else {
+                var csr = org.bouncycastle.asn1.pkcs.CertificationRequest.getInstance(ASN1Primitive.fromByteArray(der));
+                if (!Arrays.equals(csr.getSignatureAlgorithm().getEncoded("DER"), HybridSdkFrame.primaryAlgorithm())
+                        || csr.getSignature().getPadBits() != 0
+                        || !Arrays.equals(csr.getCertificationRequestInfo().getSubjectPublicKeyInfo().getEncoded("DER"), request.primary().publicKeyInfo().bytes())) throw invalid();
+                requireEcdsaSignature(csr.getSignature().getBytes());
+                if (!verifyEcdsa(keys.primary(), csr.getCertificationRequestInfo().getEncoded("DER"), csr.getSignature().getBytes())) throw invalid();
+            }
         } catch (java.io.IOException | GeneralSecurityException | IllegalArgumentException invalid) { throw invalid(); }
     }
 
@@ -149,7 +156,9 @@ public final class BcHybridSdkProofVerifier {
     }
     private static byte[] original(ParsedHybridSdkRequest request) {
         X509EnrollmentPayload payload = BcX509RequestPayloads.extract(request.primary());
-        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10) throw invalid(); return payload.der();
+        if (payload.kind() != request.originalPayload().kind()
+                || !Arrays.equals(payload.der(), request.originalPayload().der())) throw invalid();
+        return payload.der();
     }
     private static boolean verifyEcdsa(PublicKey key, byte[] bytes, byte[] signature) throws GeneralSecurityException {
         Signature verifier = Signature.getInstance("SHA384withECDSA"); verifier.initVerify(key); verifier.update(bytes); return verifier.verify(signature);

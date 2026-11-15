@@ -65,6 +65,28 @@ import zeroecho.pki.server.RealmId;
  */
 public record EnrollmentTransaction(String id, long revision, Intent intent, State state,
         List<Decision> decisions, Optional<SigningAcceptanceReceipt> receipt, Optional<PkiId> credentialId) {
+    /**
+     * Immutable retained SDK acceptance reference; construction grants no enrollment authority.
+     * @param intentId canonical server intent identity
+     * @param proofCommitment complete F3 SHA-512 commitment
+     * @param authenticationContextSha512 exact F6 SHA-512 commitment
+     * @param targetSha512 exact F7 SHA-512 commitment
+     * @param acceptedAt trusted acceptance time, independent of later approval delay
+     */
+    public record SdkProofReference(String intentId, String proofCommitment, String authenticationContextSha512,
+            String targetSha512, Instant acceptedAt) {
+        /** Rejects noncanonical coordinates without reading any credential or store. */
+        public SdkProofReference {
+            if (intentId == null || !intentId.matches("[0-9a-f]{64}")) throw invalid();
+            for (String value : new String[] {proofCommitment, authenticationContextSha512, targetSha512}) {
+                if (value == null || !value.matches("sha512:[0-9a-f]{128}")) throw invalid();
+            }
+            Objects.requireNonNull(acceptedAt, "acceptedAt");
+        }
+        /** @return redacted immutable reference description */
+        @Override public String toString() { return "EnrollmentTransaction.SdkProofReference[redacted]"; }
+    }
+
     private static final int MAX_LEGACY_KEY_COMMITMENTS = 3;
     /** Protocol family determines admission and recovery binding semantics. */
     public enum Protocol {
@@ -198,15 +220,49 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
      * @param artifact immutable encrypted delivery binding for attached server-keygen work
      * @param createdAt admission time
      * @param expiresAt deadline for a fresh dispatch claim
+     * @param sdkProof retained fresh dual-client proof reference, absent for ordinary enrollment
      */
     public record Intent(RealmId realmId, Source source, Requester requester, String transactionId, Operation operation,
             PkiId requestId, X509EnrollmentPayload.Kind requestKind, String requestSha256, int requestBytes,
             PkiId authorityId, CertificateProfileRef profile, PkiId issuerId, PkiId pathId, String pathCommitment,
             Optional<Validity> validity, Optional<PkiId> predecessorId, Optional<String> predecessorSha256,
             ApprovalCategory approvalCategory, Optional<ApprovalService.Policy> approvalPolicy, Optional<ArtifactBinding> artifact,
-            Instant createdAt, Instant expiresAt) {
+            Instant createdAt, Instant expiresAt, Optional<SdkProofReference> sdkProof) {
+        /**
+         * Creates an ordinary intent retaining the version-two representation.
+         * @param realmId owning realm @param source frozen endpoint @param requester genuine native actor
+         * @param transactionId replay coordinate @param operation native operation @param requestId stored request
+         * @param requestKind typed syntax @param requestSha256 original digest @param requestBytes original size
+         * @param authorityId selected authority @param profile certificate profile @param issuerId selected generation
+         * @param pathId selected path @param pathCommitment exact path digest @param validity optional validity
+         * @param predecessorId lifecycle predecessor @param predecessorSha256 exact predecessor digest
+         * @param approvalCategory required approval @param approvalPolicy frozen policy @param artifact keygen binding
+         * @param createdAt admission time @param expiresAt dispatch deadline
+         */
+        public Intent(RealmId realmId, Source source, Requester requester, String transactionId, Operation operation,
+                PkiId requestId, X509EnrollmentPayload.Kind requestKind, String requestSha256, int requestBytes,
+                PkiId authorityId, CertificateProfileRef profile, PkiId issuerId, PkiId pathId, String pathCommitment,
+                Optional<Validity> validity, Optional<PkiId> predecessorId, Optional<String> predecessorSha256,
+                ApprovalCategory approvalCategory, Optional<ApprovalService.Policy> approvalPolicy, Optional<ArtifactBinding> artifact,
+                Instant createdAt, Instant expiresAt) {
+            this(realmId, source, requester, transactionId, operation, requestId, requestKind, requestSha256, requestBytes,
+                    authorityId, profile, issuerId, pathId, pathCommitment, validity, predecessorId, predecessorSha256,
+                    approvalCategory, approvalPolicy, artifact, createdAt, expiresAt, Optional.empty());
+        }
+        /**
+         * Copies this immutable policy with an explicit retained SDK proof reference.
+         * @param proof exact optional SDK reference
+         * @return complete copied intent
+         */
+        public Intent withSdkProof(Optional<SdkProofReference> proof) {
+            return new Intent(realmId, source, requester, transactionId, operation, requestId, requestKind, requestSha256, requestBytes,
+                    authorityId, profile, issuerId, pathId, pathCommitment, validity, predecessorId, predecessorSha256,
+                    approvalCategory, approvalPolicy, artifact, createdAt, expiresAt, proof);
+        }
         /** Validates complete, bounded, internally consistent admission references. */
         public Intent {
+            Objects.requireNonNull(sdkProof, "sdkProof");
+            if (sdkProof.isPresent() && (artifact.isPresent() || operation == Operation.SERVER_KEYGEN)) throw invalid();
             Objects.requireNonNull(realmId, "realmId"); Objects.requireNonNull(source, "source");
             Objects.requireNonNull(requester, "requester"); digest(transactionId); Objects.requireNonNull(operation, "operation");
             Objects.requireNonNull(requestId, "requestId"); Objects.requireNonNull(requestKind, "requestKind"); digest(requestSha256);
@@ -244,7 +300,7 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
             }
             if (operation == Operation.REPLACE && (source.protocol() != Protocol.CMP
                     || requester.type() != IssuanceExecutionEvidence.ActorType.CMP_SIGNER
-                    || requestKind != X509EnrollmentPayload.Kind.CRMF || validity.isPresent())) {
+                    || requestKind != X509EnrollmentPayload.Kind.CRMF || (sdkProof.isEmpty() ? validity.isPresent() : validity.isEmpty()))) {
                 throw invalid();
             }
             if (approvalCategory == ApprovalCategory.ISSUANCE_SINGLE && approvalPolicy.orElseThrow().threshold() != 1

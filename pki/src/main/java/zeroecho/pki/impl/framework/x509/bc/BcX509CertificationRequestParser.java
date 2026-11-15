@@ -185,6 +185,45 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         } catch (java.io.IOException malformed) { throw new PkiException("SDK_REQUEST_INVALID"); }
     }
 
+    /**
+     * Parses and verifies the fixed SDK suite in one explicitly typed original request.
+     * @param payload canonical single PKCS#10 or CRMF request
+     * @return normalized dual-key request with verified original primary proof
+     * @throws PkiException for unsupported syntax, extension, suite or proof
+     */
+    public zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parseHybridSdk(X509EnrollmentPayload payload) {
+        Objects.requireNonNull(payload, "payload");
+        if (payload.kind() == X509EnrollmentPayload.Kind.PKCS10) {
+            return parseHybridSdk(new CertificationRequest(BcX509CredentialFramework.FORMAT_ID,
+                    new EncodedObject(Encoding.DER, payload.der())));
+        }
+        byte[] der = payload.der();
+        try {
+            new StreamingDerReader().validate(der, MAXIMUM_CSR_DER_BYTES);
+            CrmfRequest crmf = CrmfRequest.parse(der);
+            var standard = new java.util.ArrayList<zeroecho.pkix.CertificateExtension>();
+            var seen = new java.util.HashSet<String>(); byte[] alternative = null;
+            for (var extension : crmf.requestedExtensions()) {
+                if (!seen.add(extension.oid())) throw new PkiException("SDK_REQUEST_DUPLICATE_EXTENSION");
+                if (extension.oid().equals("2.5.29.72")) {
+                    if (extension.critical() || extension.derValue().length > 8192) throw new PkiException("SDK_SUBJECT_KEY_INVALID");
+                    alternative = extension.derValue();
+                } else standard.add(extension);
+            }
+            if (alternative == null) throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+            var subject = parseSubject(crmf.subject()); var sans = parseRequestedExtensions(standard);
+            var primary = new ParsedCertificationRequest(new PkiId("crmf:" + sha256Hex(der)),
+                    BcX509CredentialFramework.FORMAT_ID, subjectReference(subject),
+                    new EncodedObject(Encoding.DER, crmf.subjectPublicKeyInfo()), Optional.empty(), Optional.empty(),
+                    subject, sans, !sans.isEmpty(), SimpleAttributeSet.builder()
+                            .put(BcX509Attributes.CRMF_DER, new AttributeValue.BytesValue(der)).build());
+            var result = new zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest(primary,
+                    new EncodedObject(Encoding.DER, alternative), payload);
+            BcHybridSdkProofVerifier.requireRequest(result);
+            return result;
+        } catch (java.io.IOException | IllegalArgumentException malformed) { throw new PkiException("SDK_REQUEST_INVALID"); }
+    }
+
     private ParsedCertificationRequest parse(CertificationRequest request, java.util.function.Consumer<byte[]> alternative) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");

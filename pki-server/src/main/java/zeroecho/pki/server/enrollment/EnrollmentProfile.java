@@ -59,6 +59,7 @@ import java.util.TreeSet;
  *                         wildcards; see {@link EnrollmentSubjectPattern}
  * @param requiredSanDomains DNS suffixes each requiring at least one matching DNS SAN;
  *                           normalized to sorted lowercase ASCII; empty = unconstrained
+ * @param sdkProfile optional explicit SDK profile; absence retains ordinary enrollment
  * @param requireApproval    whether issuance requires an out-of-band approval
  */
 public record EnrollmentProfile(
@@ -69,9 +70,25 @@ public record EnrollmentProfile(
         Set<String> allowedAuthorityIds,
         Optional<String> subjectDnPattern,
         List<String> requiredSanDomains,
-        boolean requireApproval) {
+        boolean requireApproval, Optional<String> sdkProfile) {
     private static final int MAXIMUM_AUTHORITY_COUNT = 256;
     private static final int MAXIMUM_SAN_DOMAIN_COUNT = 256;
+
+    /**
+     * Creates an ordinary profile with SDK enrollment disabled.
+     * @param id stable identity
+     * @param displayName display label
+     * @param state lifecycle state
+     * @param certificateProfileId certificate policy identity
+     * @param allowedAuthorityIds permitted authorities
+     * @param subjectDnPattern optional subject constraint
+     * @param requiredSanDomains required DNS suffixes
+     * @param requireApproval independent approval requirement
+     */
+    public EnrollmentProfile(String id, String displayName, EnrollmentProfileState state, String certificateProfileId,
+            Set<String> allowedAuthorityIds, Optional<String> subjectDnPattern, List<String> requiredSanDomains, boolean requireApproval) {
+        this(id, displayName, state, certificateProfileId, allowedAuthorityIds, subjectDnPattern, requiredSanDomains, requireApproval, Optional.empty());
+    }
 
     /** Validates and defensively copies the record. */
     public EnrollmentProfile {
@@ -81,6 +98,8 @@ public record EnrollmentProfile(
         if (displayName == null || displayName.isBlank() || displayName.length() > 256) {
             throw new IllegalArgumentException("Enrollment profile display name must contain 1 through 256 characters");
         }
+        Objects.requireNonNull(sdkProfile, "sdkProfile");
+        if (sdkProfile.filter(value -> !"zeroecho-hybrid-sdk-v1".equals(value)).isPresent()) throw new IllegalArgumentException("Unsupported enrollment SDK profile");
         Objects.requireNonNull(state, "state");
         EnrollmentEndpoint.requireProfileId(certificateProfileId);
         allowedAuthorityIds = Set.copyOf(Objects.requireNonNull(allowedAuthorityIds, "allowedAuthorityIds"));
@@ -112,7 +131,7 @@ public record EnrollmentProfile(
      */
     public EnrollmentProfile withState(EnrollmentProfileState newState) {
         return new EnrollmentProfile(id, displayName, newState, certificateProfileId,
-                allowedAuthorityIds, subjectDnPattern, requiredSanDomains, requireApproval);
+                allowedAuthorityIds, subjectDnPattern, requiredSanDomains, requireApproval, sdkProfile);
     }
 
     private static String canonicalDomain(String value) {

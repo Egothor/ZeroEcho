@@ -958,6 +958,7 @@ class AcmeEndToEndTest {
             org.junit.jupiter.api.Assertions.assertArrayEquals(completed.body(), estPost(wire, enroll, body).body());
         }
         // The next TLS server trusts the issuing CA for certificate-authenticated reenrollment.
+        awaitCertificateValidity(leaf);
         HttpServerTestSupport.tls(authorityCertificate);
         HttpClient renewing = HttpClient.newBuilder().sslContext(HttpServerTestSupport.context(leafKey, leaf,
                 tls.rootCertificate(), true, authorityCertificate)).build();
@@ -1542,8 +1543,415 @@ class AcmeEndToEndTest {
         }
     }
 
+    @Test
+    void explicitSdkAcmeUsesRealJwsDualProofApprovalAndRolloverReplay() throws Exception {
+        var tls = HttpServerTestSupport.tls(); int port = reservePort(), challengePort = reservePort();
+        var root = sdkMaterial(); var subject = sdkMaterial(); var account = ec((byte) 91); var replacement = ec((byte) 92);
+        var fixture = fixture(tls, port, reservePort(), challengePort, root.primary(), Optional.of(root.alternative())); seedSdk(fixture);
+        URI directoryUri = URI.create("https://localhost:" + port + "/acme/" + DIRECTORY_ALIAS + "/directory");
+        var wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+        try (var server = start(fixture); var client = new AcmeTestClient(wire, directoryUri, account)) {
+            server.realm().createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+            var directory = client.directory(); assertTrue(directory.bodyText().contains("zeroechoHybridSdk"));
+            client.nonce(URI.create(AcmeTestClient.text(directory, "newNonce")));
+            assertEquals(201, client.createAccount(URI.create(AcmeTestClient.text(directory, "newAccount")), "{\"termsOfServiceAgreed\":true}").status());
+            var ready = readyOrder(client, directory, challengePort); URI orderUri = URI.create(ready.header("Location").orElseThrow());
+            String orderId = orderUri.getPath().substring(orderUri.getPath().lastIndexOf('/') + 1);
+            String sdkBase = "https://localhost:" + port + "/acme/" + DIRECTORY_ALIAS + "/hybrid-sdk/v1";
+            URI challengeUri = URI.create(sdkBase + "/challenge/" + orderId), acceptUri = URI.create(sdkBase + "/accept/" + orderId);
+            String request = sdkChallengeBody(subject.csr()); String usedNonce = client.replayNonce().orElseThrow();
+            var challenged = client.kid(challengeUri, request); assertEquals(200, challenged.status(), challenged.bodyText());
+            assertEquals(400, client.kidWithNonce(challengeUri, request, usedNonce).status());
+            var primaryFrame = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(AcmeTestClient.text(challenged, "primaryFrame")));
+            var alternativeFrame = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(AcmeTestClient.text(challenged, "alternativeFrame")));
+            String intentId = AcmeTestClient.text(challenged, "intentId");
+            var retained = server.realm().enrollmentCoordinator().orElseThrow().retainedSdkIntent(intentId).orElseThrow();
+            var storedOrder = server.realm().acmeControl().get(AcmeState.Order.class, orderId).orElseThrow();
+            var authorizationValues = storedOrder.authorizationIds().stream().sorted().map(id -> {
+                var authorization = server.realm().acmeControl().get(AcmeState.Authorization.class, id).orElseThrow();
+                return zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("authorizationId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(id),
+                        "recordCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(authorization.commitment())));
+            }).toList();
+            String authorizationCommitment = "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.list(authorizationValues).encode()));
+            assertEquals(authorizationCommitment, zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(retained.authenticationContext().field(5)).objectFields().get("authorizationCommitment").textValue());
+            byte[] firstProof = sdkSignature(subject.primary(), "SHA384withECDSA", primaryFrame.encode());
+            byte[] secondProof = sdkSignature(subject.alternative(), "ML-DSA-87", alternativeFrame.encode()); byte[] corrupt = secondProof.clone(); corrupt[0] ^= 1;
+            assertEquals(400, client.kid(acceptUri, sdkAcceptBody(subject.csr(), intentId, firstProof, corrupt)).status());
+            assertTrue(server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().isEmpty());
+            String acceptedBody = sdkAcceptBody(subject.csr(), intentId, firstProof, secondProof);
+            var pending = client.kid(acceptUri, acceptedBody); assertEquals(200, pending.status(), pending.bodyText()); assertEquals("processing", AcmeTestClient.text(pending, "status"));
+            var enrollment = server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().getFirst(); assertTrue(enrollment.receipt().isEmpty());
+            assertEquals(200, client.rollover(URI.create(AcmeTestClient.text(directory, "keyChange")), replacement).status());
+            assertEquals(200, client.kid(acceptUri, acceptedBody).status());
+            assertEquals(403, client.kid(acceptUri, sdkAcceptBody(sdkMaterial().csr(), intentId, firstProof, secondProof)).status());
+            approveEnrollment(server, enrollment.id(), tls.clientCertificate());
+            var complete = awaitValidOrder(client, orderUri, client.postAsGet(orderUri));
+            var downloaded = client.postAsGet(URI.create(AcmeTestClient.text(complete, "certificate"))); assertEquals(200, downloaded.status());
+            var certificate = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(new java.io.ByteArrayInputStream(downloaded.body()));
+            certificate.verify(root.primary().getPublic()); assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(certificate, root.alternative().getPublic()));
+            assertArrayEquals(subject.primary().getPublic().getEncoded(), certificate.getPublicKey().getEncoded());
+            assertArrayEquals(subject.alternative().getPublic().getEncoded(), org.bouncycastle.asn1.ASN1OctetString.getInstance(certificate.getExtensionValue("2.5.29.72")).getOctets());
+            assertEquals(200, client.kid(acceptUri, acceptedBody).status()); assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 10).values().size());
+        }
+    }
+
+    @Test void explicitSdkEstEnrollAndReenrollUseRealTlsDualProofAndNativePolling() throws Exception {
+        var tls = HttpServerTestSupport.tls(); var root = sdkMaterial(); var subject = sdkMaterial(); int port = reservePort();
+        var base = fixture(tls, reservePort(), reservePort(), reservePort(), root.primary(), Optional.of(root.alternative())); seedSdk(base);
+        var source = base.configuration();
+        var listener = new PkiServerConfiguration.EstListener("est-sdk", InetAddress.getLoopbackAddress(), port,
+                new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 65_536,
+                Optional.of(new PkiServerConfiguration.HybridSdkListener("https://localhost:" + port)));
+        var fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(), source.listener(),
+                source.authentication(), source.execution(), source.runtime(), source.publicListener(), source.acmeListener(),
+                Optional.of(listener), source.scepListener(), source.cmpListener(), source.auditProjection()), base.dependencies(), base.http01());
+        URI sdk = URI.create("https://localhost:" + port + "/.well-known/est/sdk/hybrid-sdk/v1");
+        URI enroll = URI.create("https://localhost:" + port + "/.well-known/est/sdk/simpleenroll");
+        byte[] nativeBody = Base64.getEncoder().encode(subject.csr());
+        X509Certificate leaf, authority;
+        try (var wire = HttpClient.newBuilder().sslContext(tls.clientContext()).build(); var server = start(fixture)) {
+            var directory = server.realm().acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            var imported = server.realm().session().profiles().requireActiveProfile("server-tls");
+            byte[] clientProfile = new String(zeroecho.pki.api.profile.CertificateProfileDocumentCodec.writeCanonical(imported.definition()), StandardCharsets.UTF_8)
+                    .replace("server-tls", "client-tls").replace("1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2").getBytes(StandardCharsets.UTF_8);
+            server.realm().session().profiles().importProfile(clientProfile); server.realm().session().profiles().activateProfile("client-tls", 1);
+            server.realm().enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("est-sdk-enrollment", "EST SDK explicit approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "client-tls", Set.of(directory.authorityId().value()),
+                    Optional.empty(), List.of(), true, Optional.of("zeroecho-hybrid-sdk-v1")));
+            server.realm().enrollmentEndpoints().register(new zeroecho.pki.server.est.EstEndpoint("sdk", directory.authorityId().value(),
+                    "client-tls", "est-sdk-enrollment", zeroecho.pki.server.est.KeygenPolicy.DISABLED));
+            server.realm().createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+            int before = server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size();
+            var forbidden = estSdkPost(wire, URI.create(sdk + "/challenge"), estSdkChallenge("serverkeygen", subject.csr()));
+            assertTrue(forbidden.statusCode() >= 400);
+            assertEquals(before, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            var challenge = estSdkPost(wire, URI.create(sdk + "/challenge"), estSdkChallenge("simpleenroll", subject.csr()));
+            assertEquals(200, challenge.statusCode(), new String(challenge.body(), StandardCharsets.UTF_8));
+            var fields = ((PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(challenge.body(), 262144)).fields();
+            String intent = ((PkiOperationValue.Text) fields.get("intentId")).value();
+            var first = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("primaryFrame")).value()));
+            var second = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("alternativeFrame")).value()));
+            byte[] proof1 = sdkSignature(subject.primary(), "SHA384withECDSA", first.encode()), proof2 = sdkSignature(subject.alternative(), "ML-DSA-87", second.encode());
+            String accepted = estSdkAccept("simpleenroll", subject.csr(), intent, "est-sdk-enroll", proof1, proof2);
+            var acceptance = estSdkPost(wire, URI.create(sdk + "/accept"), accepted);
+            assertEquals(202, acceptance.statusCode(), new String(acceptance.body(), StandardCharsets.UTF_8));
+            var pending = server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().getFirst();
+            approveEnrollment(server, pending.id(), tls.forwardedCertificate());
+            var completed = awaitEst(wire, enroll, nativeBody);
+            var certificates = CertificateFactory.getInstance("X.509").generateCertificates(new java.io.ByteArrayInputStream(Base64.getMimeDecoder().decode(completed.body())));
+            leaf = certificates.stream().map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() < 0).findFirst().orElseThrow();
+            authority = certificates.stream().map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() >= 0).findFirst().orElseThrow();
+            leaf.verify(root.primary().getPublic()); assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(leaf, root.alternative().getPublic()));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(subject.primary().getPublic().getEncoded(), leaf.getPublicKey().getEncoded());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(subject.alternative().getPublic().getEncoded(), org.bouncycastle.asn1.ASN1OctetString.getInstance(leaf.getExtensionValue("2.5.29.72")).getOctets());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(completed.body(), estSdkPost(wire, URI.create(sdk + "/accept"), accepted).body());
+            byte[] altered = proof2.clone(); altered[0] ^= 1;
+            assertTrue(estSdkPost(wire, URI.create(sdk + "/accept"), estSdkAccept("simpleenroll", subject.csr(), intent, "est-sdk-enroll", proof1, altered)).statusCode() >= 400);
+        }
+        awaitCertificateValidity(leaf);
+        HttpServerTestSupport.tls(authority);
+        try (var renewing = HttpClient.newBuilder().sslContext(HttpServerTestSupport.context(subject.primary(), leaf, tls.rootCertificate(), true, authority)).build();
+                var server = start(fixture)) {
+            var challenge = estSdkPost(renewing, URI.create(sdk + "/challenge"), estSdkChallenge("simplereenroll", subject.csr()));
+            assertEquals(200, challenge.statusCode(), new String(challenge.body(), StandardCharsets.UTF_8));
+            var fields = ((PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(challenge.body(), 262144)).fields();
+            String intent = ((PkiOperationValue.Text) fields.get("intentId")).value();
+            var first = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("primaryFrame")).value()));
+            var second = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("alternativeFrame")).value()));
+            String accepted = estSdkAccept("simplereenroll", subject.csr(), intent, "est-sdk-renew",
+                    sdkSignature(subject.primary(), "SHA384withECDSA", first.encode()), sdkSignature(subject.alternative(), "ML-DSA-87", second.encode()));
+            var acceptance = estSdkPost(renewing, URI.create(sdk + "/accept"), accepted);
+            assertEquals(202, acceptance.statusCode(), new String(acceptance.body(), StandardCharsets.UTF_8));
+            var pending = server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().stream()
+                    .filter(value -> value.intent().operation() == zeroecho.pki.server.enrollment.EnrollmentTransaction.Operation.RENEW).findFirst().orElseThrow();
+            approveEnrollment(server, pending.id(), tls.forwardedCertificate());
+            var completed = awaitEst(renewing, URI.create("https://localhost:" + port + "/.well-known/est/sdk/simplereenroll"), nativeBody);
+            var renewed = CertificateFactory.getInstance("X.509").generateCertificates(new java.io.ByteArrayInputStream(Base64.getMimeDecoder().decode(completed.body())))
+                    .stream().map(X509Certificate.class::cast).filter(value -> value.getBasicConstraints() < 0).findFirst().orElseThrow();
+            renewed.verify(root.primary().getPublic()); assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(renewed, root.alternative().getPublic()));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(leaf.getPublicKey().getEncoded(), renewed.getPublicKey().getEncoded());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(subject.alternative().getPublic().getEncoded(), org.bouncycastle.asn1.ASN1OctetString.getInstance(renewed.getExtensionValue("2.5.29.72")).getOctets());
+            assertFalse(leaf.getSerialNumber().equals(renewed.getSerialNumber()));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(completed.body(), estSdkPost(renewing, URI.create(sdk + "/accept"), accepted).body());
+            assertEquals(2, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+        }
+    }
+
+    @Test void explicitSdkScepUsesOriginalCmsDualProofApprovalAndNativeProtectedPoll() throws Exception {
+        var tls = HttpServerTestSupport.tls(); var root = sdkMaterial(); var subject = sdkMaterial(); int port = reservePort();
+        var base = fixture(tls, reservePort(), reservePort(), reservePort(), root.primary(), Optional.of(root.alternative())); seedSdk(base);
+        var source = base.configuration();
+        var listener = new PkiServerConfiguration.ScepListener("scep-sdk", InetAddress.getLoopbackAddress(), port,
+                new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 131_072,
+                Optional.of(new PkiServerConfiguration.HybridSdkListener("https://localhost:" + port)));
+        var fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(), source.listener(), source.authentication(),
+                source.execution(), source.runtime(), source.publicListener(), source.acmeListener(), source.estListener(), Optional.of(listener),
+                source.cmpListener(), source.auditProjection()), base.dependencies(), base.http01());
+        Path ringPath = temporaryDirectory.resolve("sdk-scep-custody.zek");
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet credentialSet;
+        X509Certificate authority; var raKey = rsa((byte) 103); X509Certificate ra;
+        try (var context = ServerRealmContext.open(source.realm(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random());
+                var password = new KeyringPassword(KEYRING_PASSWORD.clone()); var ring = KeyringStore.create(ringPath, password)) {
+            var directory = context.acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            var issuer = context.session().repository().issuer(directory.issuerId()).orElseThrow();
+            try (var content = context.session().repository().openCredential(issuer.credentialId()); var input = content.openStream()) {
+                authority = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+            }
+            awaitCertificateValidity(authority);
+            ra = zeroecho.pkix.Pkix.certificateBuilder().subject(new javax.security.auth.x500.X500Principal("CN=SDK SCEP RA"))
+                    .issuer(authority.getSubjectX500Principal()).publicKey(raKey.getPublic()).serialNumber(BigInteger.valueOf(9401))
+                    .validity(authority.getNotBefore().toInstant(), authority.getNotBefore().toInstant().plus(Duration.ofDays(1)))
+                    .basicConstraints(zeroecho.pkix.BasicConstraints.endEntity(), true)
+                    .keyUsage(Set.of(zeroecho.pkix.KeyUsage.DIGITAL_SIGNATURE, zeroecho.pkix.KeyUsage.KEY_ENCIPHERMENT), true)
+                    .build(zeroecho.pkix.Pkix.signer(root.primary().getPrivate(), zeroecho.pkix.AlgorithmIdentifier.absent("1.2.840.10045.4.3.3")));
+            Path raFile = temporaryDirectory.resolve("sdk-scep-ra.der"), rootFile = temporaryDirectory.resolve("sdk-scep-root.der");
+            java.nio.file.Files.write(raFile, ra.getEncoded()); java.nio.file.Files.write(rootFile, authority.getEncoded()); ring.putPrivate("sdk-ra", "RSA", raKey.getPrivate());
+            credentialSet = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet("sdk-ra",
+                    zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.SCEP, directory.authorityId().value(), directory.issuerId().value(),
+                    directory.issuancePathId().value(), Optional.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                            new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("sdk-scep", "sdk-ra"), List.of(raFile, rootFile))),
+                    List.of(), List.of(), Optional.empty());
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("scep-sdk-policy", "Explicit SCEP SDK approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(directory.authorityId().value()),
+                    Optional.empty(), List.of(), true, Optional.of("zeroecho-hybrid-sdk-v1")));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.scep.ScepEndpoint("sdk", directory.authorityId().value(), "server-tls", "scep-sdk-policy",
+                    HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest("scep-secret".getBytes(StandardCharsets.UTF_8)))));
+            context.createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+        }
+        var runtime = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(EnrollmentTestSupport.runtimeConfiguration().budgets(),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Keyring("sdk-scep", ringPath)), List.of(credentialSet),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(credentialSet.protocol(), credentialSet.authorityId(), credentialSet.credentialId())), Optional.empty());
+        var extensions = new ExtensionsGenerator(); extensions.addExtension(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.5.29.72"), false, subject.alternative().getPublic().getEncoded());
+        extensions.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.dNSName, "localhost")));
+        byte[] csr = new JcaPKCS10CertificationRequestBuilder(new javax.security.auth.x500.X500Principal("CN=localhost"), subject.primary().getPublic())
+                .addAttribute(PKCSObjectIdentifiers.pkcs_9_at_challengePassword, new org.bouncycastle.asn1.DERUTF8String("scep-secret"))
+                .addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
+                .build(new JcaContentSignerBuilder("SHA384withECDSA").build(subject.primary().getPrivate())).getEncoded();
+        var requesterKey = rsa((byte) 104); var requester = requesterCertificate(requesterKey); byte[] nonce = new byte[16]; nonce[0] = 17;
+        byte[] protectedRequest = ScepTestClient.request(csr, "sdk-scep-one", nonce, 19, requesterKey, requester, ra);
+        URI nativeUri = URI.create("https://localhost:" + port + "/scep/sdk"), sdk = URI.create(nativeUri + "/hybrid-sdk/v1");
+        try (var wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build(); var server = startScep(fixture, runtime)) {
+            var advertised = wire.send(HttpRequest.newBuilder(URI.create(nativeUri + "?operation=GetCACert")).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, advertised.statusCode());
+            assertTrue(CertificateFactory.getInstance("X.509").generateCertificates(new ByteArrayInputStream(advertised.body())).contains(ra));
+            String challengeBody = sdkChallengeBody(protectedRequest).replace("\"csr\":", "\"messageDer\":");
+            var challenged = estSdkPost(wire, URI.create(sdk + "/challenge"), challengeBody);
+            assertEquals(200, challenged.statusCode(), new String(challenged.body(), StandardCharsets.UTF_8));
+            var fields = ((PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(challenged.body(), 262144)).fields();
+            String intent = ((PkiOperationValue.Text) fields.get("intentId")).value();
+            var retainedIntent = server.realm().enrollmentCoordinator().orElseThrow().retainedSdkIntent(intent).orElseThrow();
+            var policyInputs = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of(
+                    "endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(retainedIntent.admission().expectedEndpointCommitment()),
+                    "credentialId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(credentialSet.credentialId())));
+            String expectedChallengePolicy = "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(policyInputs.encode()));
+            assertEquals(expectedChallengePolicy, zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(retainedIntent.authenticationContext().field(5))
+                    .objectFields().get("challengePolicyCommitment").textValue());
+            var first = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("primaryFrame")).value()));
+            var second = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("alternativeFrame")).value()));
+            byte[] proof1 = sdkSignature(subject.primary(), "SHA384withECDSA", first.encode()), proof2 = sdkSignature(subject.alternative(), "ML-DSA-87", second.encode());
+            String acceptedBody = sdkAcceptBody(protectedRequest, intent, proof1, proof2).replace("acme-sdk-one", "scep-sdk-one").replace("\"csr\":", "\"messageDer\":");
+            byte[] changedProof = proof2.clone(); changedProof[0] ^= 1;
+            String badProof = sdkAcceptBody(protectedRequest, intent, proof1, changedProof).replace("acme-sdk-one", "scep-sdk-one").replace("\"csr\":", "\"messageDer\":");
+            assertTrue(estSdkPost(wire, URI.create(sdk + "/accept"), badProof).statusCode() >= 400);
+            byte[] otherWire = ScepTestClient.request(csr, "sdk-scep-one", nonce, 19, requesterKey, requester, ra);
+            String badWire = sdkAcceptBody(otherWire, intent, proof1, proof2).replace("acme-sdk-one", "scep-sdk-one").replace("\"csr\":", "\"messageDer\":");
+            assertTrue(estSdkPost(wire, URI.create(sdk + "/accept"), badWire).statusCode() >= 400);
+            assertEquals(0, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            var accepted = estSdkPost(wire, URI.create(sdk + "/accept"), acceptedBody);
+            assertEquals(200, accepted.statusCode(), new String(accepted.body(), StandardCharsets.UTF_8));
+            assertEquals("3", ScepTestClient.response(accepted.body(), ra, requesterKey, nonce).status());
+            assertEquals("3", ScepTestClient.response(estSdkPost(wire, URI.create(sdk + "/accept"), acceptedBody).body(), ra, requesterKey, nonce).status());
+            assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            var pending = server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().getFirst(); approveEnrollment(server, pending.id(), tls.forwardedCertificate());
+            byte[] pollNonce = new byte[16]; pollNonce[0] = 18;
+            byte[] poll = ScepTestClient.request(ScepTestClient.poll(authority), "sdk-scep-one", pollNonce, 20, requesterKey, requester, ra);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10); ScepTestClient.Response response;
+            do {
+                var observed = scepPost(wire, nativeUri, poll); assertEquals(200, observed.statusCode(), new String(observed.body(), StandardCharsets.UTF_8));
+                response = ScepTestClient.response(observed.body(), ra, requesterKey, pollNonce);
+            } while (response.status().equals("3") && System.nanoTime() < deadline);
+            assertEquals("0", response.status()); var leaf = response.certificate(); leaf.verify(root.primary().getPublic());
+            assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(leaf, root.alternative().getPublic()));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(subject.primary().getPublic().getEncoded(), leaf.getPublicKey().getEncoded());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(subject.alternative().getPublic().getEncoded(), org.bouncycastle.asn1.ASN1OctetString.getInstance(leaf.getExtensionValue("2.5.29.72")).getOctets());
+            assertEquals("0", ScepTestClient.response(estSdkPost(wire, URI.create(sdk + "/accept"), acceptedBody).body(), ra, requesterKey, nonce).status());
+            assertEquals(1, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+        }
+    }
+
+    @Test void explicitSdkCmpPbmEnrollmentAndSignatureReplacementKeepNativePollAndConfirmation() throws Exception {
+        var tls = HttpServerTestSupport.tls(); var root = sdkMaterial(); var subject = sdkMaterial(); var replacement = sdkMaterial(); int port = reservePort();
+        var base = fixture(tls, reservePort(), reservePort(), reservePort(), root.primary(), Optional.of(root.alternative())); seedSdk(base);
+        var source = base.configuration(); var listener = new PkiServerConfiguration.CmpListener("cmp-sdk", InetAddress.getLoopbackAddress(), port,
+                new ProviderConfig("test-tls", Map.of()), source.execution(), 16_384, 131_072,
+                Optional.of(new PkiServerConfiguration.HybridSdkListener("https://localhost:" + port)));
+        var fixture = new Fixture(new PkiServerConfiguration(source.version(), source.serverName(), source.realm(), source.listener(), source.authentication(),
+                source.execution(), source.runtime(), source.publicListener(), source.acmeListener(), source.estListener(), source.scepListener(), Optional.of(listener),
+                source.auditProjection()), base.dependencies(), base.http01());
+        Path ringPath = temporaryDirectory.resolve("sdk-cmp-custody.zek"); var responderKey = rsa((byte) 113); X509Certificate authority, responder;
+        byte[] secret = new byte[32]; Arrays.fill(secret, (byte) 0x81);
+        zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet credentialSet;
+        try (var context = ServerRealmContext.open(source.realm(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random());
+                var password = new KeyringPassword(KEYRING_PASSWORD.clone()); var ring = KeyringStore.create(ringPath, password)) {
+            var directory = context.acmeControl().page(AcmeState.Directory.class, 0, 256).values().getFirst();
+            var issuer = context.session().repository().issuer(directory.issuerId()).orElseThrow();
+            try (var content = context.session().repository().openCredential(issuer.credentialId()); var input = content.openStream()) {
+                authority = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+            }
+            awaitCertificateValidity(authority);
+            responder = zeroecho.pkix.Pkix.certificateBuilder().subject(new javax.security.auth.x500.X500Principal("CN=SDK CMP responder"))
+                    .issuer(authority.getSubjectX500Principal()).publicKey(responderKey.getPublic()).serialNumber(BigInteger.valueOf(9701))
+                    .validity(authority.getNotBefore().toInstant(), authority.getNotBefore().toInstant().plus(Duration.ofDays(1)))
+                    .basicConstraints(zeroecho.pkix.BasicConstraints.endEntity(), true).keyUsage(Set.of(zeroecho.pkix.KeyUsage.DIGITAL_SIGNATURE), true)
+                    .build(zeroecho.pkix.Pkix.signer(root.primary().getPrivate(), zeroecho.pkix.AlgorithmIdentifier.absent("1.2.840.10045.4.3.3")));
+            Path responseFile = temporaryDirectory.resolve("sdk-cmp-responder.der"), rootFile = temporaryDirectory.resolve("sdk-cmp-root.der");
+            java.nio.file.Files.write(responseFile, responder.getEncoded()); java.nio.file.Files.write(rootFile, authority.getEncoded());
+            ring.putPrivate("sdk-responder", "RSA", responderKey.getPrivate()); ring.putSecret("pbm", "HMAC", new javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256"));
+            var pbm = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Pbm(1000, 2000, 16, 32,
+                    Set.of(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.PbmDigest.SHA256),
+                    Set.of(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.PbmMac.HMAC_SHA256),
+                    List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.PbmIdentity("0102", "sdk-pbm-owner",
+                            new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("sdk-cmp", "pbm"), List.of("pbm-owner-exclusion"))));
+            credentialSet = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.CredentialSet("sdk-responder",
+                    zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Protocol.CMP, directory.authorityId().value(), directory.issuerId().value(), directory.issuancePathId().value(),
+                    Optional.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Signer(
+                            new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.KeyReference("sdk-cmp", "sdk-responder"), List.of(responseFile, rootFile))),
+                    List.of(rootFile), List.of(), Optional.of(pbm));
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("cmp-sdk-policy", "CMP SDK explicit approval",
+                    zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE, "server-tls", Set.of(directory.authorityId().value()), Optional.empty(), List.of(), true, Optional.of("zeroecho-hybrid-sdk-v1")));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.cmp.CmpEndpoint("sdk-pbm", directory.authorityId().value(), "server-tls", "cmp-sdk-policy", zeroecho.pki.server.cmp.CmpProtectionPolicy.SHARED_SECRET_MAC));
+            context.enrollmentEndpoints().register(new zeroecho.pki.server.cmp.CmpEndpoint("sdk-signature", directory.authorityId().value(), "server-tls", "cmp-sdk-policy", zeroecho.pki.server.cmp.CmpProtectionPolicy.SIGNATURE_BASED));
+            context.createPrincipal(ServerTestSupport.principal("approver"), "bootstrap");
+        }
+        var runtime = new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration(EnrollmentTestSupport.runtimeConfiguration().budgets(),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.Keyring("sdk-cmp", ringPath)), List.of(credentialSet),
+                List.of(new zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.ActiveCredential(credentialSet.protocol(), credentialSet.authorityId(), credentialSet.credentialId())), Optional.empty());
+        try (var wire = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build(); var server = startScep(fixture, runtime)) {
+            URI pbmUri = URI.create("https://localhost:" + port + "/pkix/sdk-pbm"), signatureUri = URI.create("https://localhost:" + port + "/pkix/sdk-signature");
+            byte[] transaction = CmpTestClient.nonce(111), initialNonce = CmpTestClient.nonce(112);
+            byte[] original = CmpTestClient.pbm(CmpTestClient.sdkEnrollment(subject.primary(), subject.alternative(), null), transaction, initialNonce, null, secret, authority);
+            String challengeBody = sdkChallengeBody(original).replace("\"csr\":", "\"messageDer\":");
+            var challenged = estSdkPost(wire, URI.create(pbmUri + "/hybrid-sdk/v1/challenge"), challengeBody);
+            assertEquals(200, challenged.statusCode(), new String(challenged.body(), StandardCharsets.UTF_8));
+            var fields = ((PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(challenged.body(), 262144)).fields();
+            String intent = ((PkiOperationValue.Text) fields.get("intentId")).value();
+            var retained = server.realm().enrollmentCoordinator().orElseThrow().retainedSdkIntent(intent).orElseThrow();
+            var auth = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(retained.authenticationContext().field(5)).objectFields();
+            assertEquals("sdk-pbm-owner", auth.get("authenticationCredentialId").textValue()); assertEquals(0, auth.get("authenticationCredentialRevision").integerValue());
+            assertEquals(CmpTestClient.REQUEST_ID.toString(), auth.get("certReqId").textValue());
+            assertEquals("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(original)), auth.get("originalWireSha512").textValue());
+            var anchor = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of(
+                    "credentialId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("sdk-pbm-owner"), "credentialRevision", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.integer(0),
+                    "endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(retained.admission().expectedEndpointCommitment())));
+            assertArrayEquals(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(anchor.encode()), retained.authenticationContext().field(3));
+            var first = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("primaryFrame")).value()));
+            var second = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("alternativeFrame")).value()));
+            byte[] primaryProof = sdkSignature(subject.primary(), "SHA384withECDSA", first.encode()), alternativeProof = sdkSignature(subject.alternative(), "ML-DSA-87", second.encode());
+            String acceptedBody = sdkAcceptBody(original, intent, primaryProof, alternativeProof).replace("acme-sdk-one", "cmp-sdk-pbm").replace("\"csr\":", "\"messageDer\":");
+            byte[] bad = alternativeProof.clone(); bad[0] ^= 1;
+            assertTrue(estSdkPost(wire, URI.create(pbmUri + "/hybrid-sdk/v1/accept"), sdkAcceptBody(original, intent, primaryProof, bad)
+                    .replace("acme-sdk-one", "cmp-sdk-pbm").replace("\"csr\":", "\"messageDer\":")).statusCode() >= 400);
+            byte[] changedWire = CmpTestClient.pbm(CmpTestClient.sdkEnrollment(subject.primary(), subject.alternative(), null), transaction, CmpTestClient.nonce(113), null, secret, authority);
+            assertTrue(estSdkPost(wire, URI.create(pbmUri + "/hybrid-sdk/v1/accept"), sdkAcceptBody(changedWire, intent, primaryProof, alternativeProof)
+                    .replace("acme-sdk-one", "cmp-sdk-pbm").replace("\"csr\":", "\"messageDer\":")).statusCode() >= 400);
+            assertEquals(0, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            var accepted = estSdkPost(wire, URI.create(pbmUri + "/hybrid-sdk/v1/accept"), acceptedBody); assertEquals(200, accepted.statusCode(), new String(accepted.body(), StandardCharsets.UTF_8));
+            var reply = CmpTestClient.pbmResponse(accepted.body(), transaction, initialNonce, secret); assertTrue(reply.pending());
+            assertArrayEquals(accepted.body(), estSdkPost(wire, URI.create(pbmUri + "/hybrid-sdk/v1/accept"), acceptedBody).body());
+            approveEnrollment(server, cmpTransaction(server, "sdk-pbm", transaction).enrollmentId().orElseThrow(), tls.forwardedCertificate());
+            X509Certificate issued = null;
+            for (int value = 130; value < 170; value++) {
+                byte[] nonce = CmpTestClient.nonce(value), poll = CmpTestClient.pbm(CmpTestClient.poll(), transaction, nonce, reply.nonce(), secret, authority);
+                var response = cmpPost(wire, pbmUri, poll); assertEquals(200, response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+                reply = CmpTestClient.pbmResponse(response.body(), transaction, nonce, secret);
+                if (reply.certificate().isPresent()) { issued = reply.certificate().orElseThrow(); break; }
+                assertTrue(reply.pending()); TimeUnit.MILLISECONDS.sleep(10);
+            }
+            org.junit.jupiter.api.Assertions.assertNotNull(issued); issued.verify(root.primary().getPublic()); assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(issued, root.alternative().getPublic()));
+            assertArrayEquals(subject.primary().getPublic().getEncoded(), issued.getPublicKey().getEncoded());
+            assertArrayEquals(subject.alternative().getPublic().getEncoded(), org.bouncycastle.asn1.ASN1OctetString.getInstance(issued.getExtensionValue("2.5.29.72")).getOctets());
+            byte[] confirmNonce = CmpTestClient.nonce(171), confirm = CmpTestClient.pbm(CmpTestClient.sdkConfirmation(issued, true), transaction, confirmNonce, reply.nonce(), secret, authority);
+            assertEquals(19, CmpTestClient.pbmResponse(cmpPost(wire, pbmUri, confirm).body(), transaction, confirmNonce, secret).type());
+            awaitCertificateValidity(issued);
+            byte[] replacementTransaction = CmpTestClient.nonce(172), replacementNonce = CmpTestClient.nonce(173);
+            byte[] replacementWire = CmpTestClient.signedSdk(CmpTestClient.sdkEnrollment(replacement.primary(), replacement.alternative(), issued),
+                    replacementTransaction, replacementNonce, null, subject.primary(), issued, responder);
+            challenged = estSdkPost(wire, URI.create(signatureUri + "/hybrid-sdk/v1/challenge"), sdkChallengeBody(replacementWire).replace("\"csr\":", "\"messageDer\":"));
+            assertEquals(200, challenged.statusCode(), new String(challenged.body(), StandardCharsets.UTF_8));
+            fields = ((PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(challenged.body(), 262144)).fields(); intent = ((PkiOperationValue.Text) fields.get("intentId")).value();
+            retained = server.realm().enrollmentCoordinator().orElseThrow().retainedSdkIntent(intent).orElseThrow();
+            assertEquals("cmp-signature-v1", new String(retained.authenticationContext().field(2), StandardCharsets.UTF_8));
+            first = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("primaryFrame")).value()));
+            second = zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.decode(Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("alternativeFrame")).value()));
+            acceptedBody = sdkAcceptBody(replacementWire, intent, sdkSignature(replacement.primary(), "SHA384withECDSA", first.encode()),
+                    sdkSignature(replacement.alternative(), "ML-DSA-87", second.encode())).replace("acme-sdk-one", "cmp-sdk-replace").replace("\"csr\":", "\"messageDer\":");
+            accepted = estSdkPost(wire, URI.create(signatureUri + "/hybrid-sdk/v1/accept"), acceptedBody); assertEquals(200, accepted.statusCode(), new String(accepted.body(), StandardCharsets.UTF_8));
+            reply = CmpTestClient.signatureResponse(accepted.body(), replacementTransaction, replacementNonce, responder); assertTrue(reply.pending());
+            approveEnrollment(server, cmpTransaction(server, "sdk-signature", replacementTransaction).enrollmentId().orElseThrow(), tls.forwardedCertificate());
+            CmpCompletion completed = null;
+            for (int value = 180; value < 220; value++) {
+                byte[] nonce = CmpTestClient.nonce(value), poll = CmpTestClient.signedSdk(CmpTestClient.poll(), replacementTransaction, nonce, reply.nonce(), subject.primary(), issued, responder);
+                var response = cmpPost(wire, signatureUri, poll); assertEquals(200, response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+                reply = CmpTestClient.signatureResponse(response.body(), replacementTransaction, nonce, responder);
+                if (reply.certificate().isPresent()) { completed = new CmpCompletion(reply.certificate().orElseThrow(), poll, response.body(), reply); break; }
+                assertTrue(reply.pending()); TimeUnit.MILLISECONDS.sleep(10);
+            }
+            org.junit.jupiter.api.Assertions.assertNotNull(completed); var replaced = completed.certificate(); replaced.verify(root.primary().getPublic());
+            assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(replaced, root.alternative().getPublic()));
+            assertArrayEquals(replacement.primary().getPublic().getEncoded(), replaced.getPublicKey().getEncoded());
+            assertArrayEquals(replacement.alternative().getPublic().getEncoded(), org.bouncycastle.asn1.ASN1OctetString.getInstance(replaced.getExtensionValue("2.5.29.72")).getOctets());
+            assertFalse(Arrays.equals(issued.getPublicKey().getEncoded(), replaced.getPublicKey().getEncoded()));
+            byte[] replacementConfirmNonce = CmpTestClient.nonce(221), replacementConfirm = CmpTestClient.signedSdk(CmpTestClient.sdkConfirmation(replaced, true), replacementTransaction,
+                    replacementConfirmNonce, reply.nonce(), subject.primary(), issued, responder);
+            assertEquals(19, CmpTestClient.signatureResponse(cmpPost(wire, signatureUri, replacementConfirm).body(), replacementTransaction, replacementConfirmNonce, responder).type());
+            assertEquals(2, server.realm().enrollmentCoordinator().orElseThrow().list(0, 256).values().size());
+            assertEquals(zeroecho.pki.server.enrollment.EnrollmentTransaction.Operation.REPLACE, server.realm().enrollmentCoordinator().orElseThrow()
+                    .find(cmpTransaction(server, "sdk-signature", replacementTransaction).enrollmentId().orElseThrow()).orElseThrow().intent().operation());
+        }
+    }
+
+    private static HttpResponse<byte[]> estSdkPost(HttpClient client, URI uri, String document) throws Exception {
+        return client.send(HttpRequest.newBuilder(uri).header("Content-Type", "application/vnd.zeroecho.hybrid-sdk+json")
+                .POST(HttpRequest.BodyPublishers.ofString(document, StandardCharsets.UTF_8)).build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+    private static String estSdkChallenge(String operation, byte[] csr) {
+        return sdkChallengeBody(csr).replace("\"csr\":", "\"operation\":\"" + operation + "\",\"requestDer\":");
+    }
+    private static String estSdkAccept(String operation, byte[] csr, String intent, String requestId, byte[] primary, byte[] alternative) {
+        return sdkAcceptBody(csr, intent, primary, alternative).replace("acme-sdk-one", requestId)
+                .replace("\"csr\":", "\"operation\":\"" + operation + "\",\"requestDer\":");
+    }
+
+    private static String sdkChallengeBody(byte[] csr) {
+        return "{\"version\":1,\"profile\":\"zeroecho-hybrid-sdk-v1\",\"clientNonce\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]) + "\",\"csr\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(csr) + "\"}";
+    }
+    private static String sdkAcceptBody(byte[] csr, String intent, byte[] primary, byte[] alternative) {
+        return "{\"version\":1,\"profile\":\"zeroecho-hybrid-sdk-v1\",\"intentId\":\"" + intent + "\",\"sdkRequestId\":\"acme-sdk-one\",\"csr\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(csr)
+                + "\",\"primaryProof\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(primary) + "\",\"alternativeProof\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(alternative) + "\"}";
+    }
+    private static SdkMaterial sdkMaterial() throws Exception {
+        zeroecho.sdk.util.BouncyCastleActivator.init(); var ec = KeyPairGenerator.getInstance("EC"); ec.initialize(new java.security.spec.ECGenParameterSpec("secp384r1")); var primary = ec.generateKeyPair();
+        var ml = KeyPairGenerator.getInstance("ML-DSA", "BC"); ml.initialize(org.bouncycastle.jcajce.spec.MLDSAParameterSpec.ml_dsa_87); var alternative = ml.generateKeyPair();
+        var extensions = new ExtensionsGenerator(); extensions.addExtension(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.5.29.72"), false, alternative.getPublic().getEncoded());
+        extensions.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.dNSName, "localhost")));
+        byte[] csr = new JcaPKCS10CertificationRequestBuilder(new javax.security.auth.x500.X500Principal("CN=localhost"), primary.getPublic()).addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
+                .build(new JcaContentSignerBuilder("SHA384withECDSA").build(primary.getPrivate())).getEncoded();
+        return new SdkMaterial(primary, alternative, csr);
+    }
+    private static byte[] sdkSignature(KeyPair key, String algorithm, byte[] bytes) throws Exception {
+        var signature = algorithm.equals("ML-DSA-87") ? java.security.Signature.getInstance(algorithm, "BC") : java.security.Signature.getInstance(algorithm);
+        if (algorithm.equals("ML-DSA-87")) signature.setParameter(new org.bouncycastle.jcajce.spec.ContextParameterSpec(new byte[0]));
+        signature.initSign(key.getPrivate()); signature.update(bytes); return signature.sign();
+    }
+    private record SdkMaterial(KeyPair primary, KeyPair alternative, byte[] csr) { }
+
     private Fixture fixture(HttpServerTestSupport.Fixture tls, int acmePort, int publicPort, int challengePort,
             KeyPair rootKey) throws Exception {
+        return fixture(tls, acmePort, publicPort, challengePort, rootKey, Optional.empty());
+    }
+
+    private Fixture fixture(HttpServerTestSupport.Fixture tls, int acmePort, int publicPort, int challengePort,
+            KeyPair rootKey, Optional<KeyPair> sdkAlternative) throws Exception {
         Path root = temporaryDirectory.resolve("server");
         PkiServerConfiguration base = HttpServerTestSupport.configuration(root, tls.clientCertificate());
         try {
@@ -1553,14 +1961,18 @@ class AcmeEndToEndTest {
         Path keyring = root.resolve("signing-keyring.zek");
         try (KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
                 KeyringStore store = KeyringStore.create(keyring, password)) {
-            store.putPrivate("root.prv", "RSA", rootKey.getPrivate());
-            store.putPublic("root.pub", "RSA", rootKey.getPublic());
+            store.putPrivate("root.prv", sdkAlternative.isPresent() ? "ECDSA" : "RSA", rootKey.getPrivate());
+            store.putPublic("root.pub", sdkAlternative.isPresent() ? "ECDSA" : "RSA", rootKey.getPublic());
+            if (sdkAlternative.isPresent()) {
+                store.putPrivate("root-alt.prv", "ML-DSA", sdkAlternative.orElseThrow().getPrivate());
+                store.putPublic("root-alt.pub", "ML-DSA", sdkAlternative.orElseThrow().getPublic());
+            }
         }
         ProviderConfig workflow = new ProviderConfig("zeroecho-lib", Map.of(
                 "keyringPath", keyring.toString(),
                 "keyRefPrefix", "acme-test:", "requireComponentSuffix", "true"));
         PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                workflow, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(),
+                workflow, (sdkAlternative.isPresent() ? BootstrapAlgorithmIdentities.ECDSA_SHA384 : BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256).canonicalForm(),
                 Duration.ofSeconds(10), Optional.empty(),
                 signingTopology(), java.util.OptionalLong.empty());
         PkiSessionConfiguration session = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
@@ -1586,7 +1998,8 @@ class AcmeEndToEndTest {
                 PkiServerConfiguration.AcmeTransportMode.DIRECT_TLS, List.of(), Set.of(),
                 URI.create("https://localhost:" + acmePort), 16_384, 1_048_576, lane, lane,
                 Duration.ofMinutes(5), 256, 32, 32, Duration.ofMinutes(1), 32, 32, 16, 32, 2,
-                List.of(http01), List.of(new ProviderConfig(TestAcmeEabProvider.ID, Map.of())));
+                List.of(http01), List.of(new ProviderConfig(TestAcmeEabProvider.ID, Map.of())),
+                sdkAlternative.isPresent() ? Optional.of(new PkiServerConfiguration.HybridSdkListener("https://localhost:" + acmePort)) : Optional.empty());
         PkiServerConfiguration.PublicListener publicListener = new PkiServerConfiguration.PublicListener(
                 InetAddress.getByName("127.0.0.1"), publicPort,
                 Optional.of(new ProviderConfig("test-tls", Map.of())), false, base.authentication(),
@@ -1598,6 +2011,37 @@ class AcmeEndToEndTest {
         PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
                 () -> new KeyringPassword(KEYRING_PASSWORD.clone()));
         return new Fixture(configuration, dependencies, http01);
+    }
+
+    private void seedSdk(Fixture fixture) throws Exception {
+        try (var context = ServerRealmContext.open(fixture.configuration().realm(), fixture.dependencies(), CLOCK, HttpServerTestSupport.random())) {
+            for (String templateId : List.of("root-ca", "server-tls")) {
+                var source = template(templateId).definition();
+                var mode = templateId.equals("root-ca")
+                        ? new zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(), "acme-test:root-alt.prv")
+                        : zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature.requested(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm());
+                var definition = new zeroecho.pki.api.profile.CertificateProfileDefinition(source.certificateType(), source.profileId(), 1, source.formatId(), source.displayName(), source.maximumValidity(),
+                        templateId.equals("root-ca") ? zeroecho.pki.api.profile.IssuanceApprovalRequirement.NONE : zeroecho.pki.api.profile.IssuanceApprovalRequirement.SINGLE,
+                        source.subjectPolicy(), source.certificatePolicy(), source.algorithmBindingPolicy(), source.confirmationPolicy(), mode);
+                context.session().profiles().importProfile(zeroecho.pki.api.profile.CertificateProfileDocumentCodec.writeCanonical(definition));
+                context.session().profiles().activateProfile(definition.profileId(), 1);
+            }
+            var signing = context.session().semanticSigning().orElseThrow();
+            var prepared = signing.prepareRootCreation(new zeroecho.pki.api.audit.AccessContext(new zeroecho.pki.api.audit.Principal("SYSTEM", "sdk-test"), new zeroecho.pki.api.audit.Purpose("ca.create"), Optional.empty(), Optional.empty()),
+                    new CaCreateCommand(template("root-ca").definition().formatId(), new SubjectRef("CN=ACME SDK Root"), "root-ca", new KeyRef("acme-test:root.prv"), new SimpleAttributeSet()), zeroecho.core.io.CancellationSignal.NONE);
+            var accepted = signing.accept(prepared); var certificate = awaitSigning(signing, accepted.receipt().operationId()).completedCredentialId().orElseThrow();
+            try (var content = context.session().repository().openCredential(certificate); var input = content.openStream()) {
+                awaitCertificateValidity((X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input));
+            }
+            var authority = context.session().repository().credential(certificate).orElseThrow().issuerRef().caId();
+            context.enrollmentProfiles().register(new zeroecho.pki.server.enrollment.EnrollmentProfile("acme-enrollment", "Explicit ACME SDK policy", zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE,
+                    "server-tls", Set.of(authority.value()), Optional.empty(), List.of(), true, Optional.of("zeroecho-hybrid-sdk-v1")));
+            var service = new AcmeService(context, CLOCK, HttpServerTestSupport.random(), Map.of(Http01ChallengeProvider.ID, new Http01ChallengeProvider()), Map.of(Http01ChallengeProvider.ID, fixture.http01()), Map.of(), Map.of());
+            var profile = context.session().profiles().requireActiveProfile("server-tls");
+            var directory = service.registerDirectory(new AcmeService.DirectoryRegistration(DIRECTORY_ALIAS, authority, "server-tls", "acme-enrollment", Set.of(IDENTIFIER), Duration.ofDays(30),
+                    profile.definition().leafPolicy().allowedSubjectKeyAlgorithmIds(), Set.of("STANDARD_ONLY"), Set.of(AcmeState.ChallengeType.HTTP_01), Set.of(Http01ChallengeProvider.ID), Optional.empty(), false));
+            service.activateDirectory(directory.directoryId());
+        }
     }
 
     private void seed(Fixture fixture) throws Exception {

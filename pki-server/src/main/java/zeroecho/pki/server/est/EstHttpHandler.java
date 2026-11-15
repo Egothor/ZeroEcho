@@ -57,6 +57,8 @@ import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.http.ServerRuntime;
 import zeroecho.pki.server.http.RequestIds;
+import zeroecho.pki.server.http.HybridSdkHttpCodec;
+import zeroecho.pki.server.PkiServerConfiguration;
 
 /**
  * HTTP handler for the EST RFC 7030 protocol.
@@ -82,6 +84,7 @@ public final class EstHttpHandler implements HttpHandler {
     private final BooleanSupplier ready;
     private final int maximumBodyBytes;
     private final Duration maximumDeadline;
+    private final Optional<PkiServerConfiguration.HybridSdkListener> hybridSdk;
 
     /** Creates an EST boundary with mutual TLS and runtime admission control.
      * @param realm owning realm
@@ -94,6 +97,20 @@ public final class EstHttpHandler implements HttpHandler {
      */
     public EstHttpHandler(ServerRealmContext realm, EstService service, ServerRuntime runtime,
             RequestIds requestIds, BooleanSupplier ready, int configuredMaximumBodyBytes, Duration maximumDeadline) {
+        this(realm, service, runtime, requestIds, ready, configuredMaximumBodyBytes, maximumDeadline, Optional.empty());
+    }
+
+    /**
+     * Adds explicitly configured SDK sidepaths while preserving the existing native boundary.
+     * @param realm owning realm @param service EST operations @param runtime bounded execution
+     * @param requestIds request correlation @param ready readiness predicate
+     * @param configuredMaximumBodyBytes existing body limit, still capped at64KiB
+     * @param maximumDeadline existing execution deadline @param hybridSdk explicit configured SDK origin
+     */
+    public EstHttpHandler(ServerRealmContext realm, EstService service, ServerRuntime runtime,
+            RequestIds requestIds, BooleanSupplier ready, int configuredMaximumBodyBytes, Duration maximumDeadline,
+            Optional<PkiServerConfiguration.HybridSdkListener> hybridSdk) {
+        this.hybridSdk = Objects.requireNonNull(hybridSdk, "hybridSdk");
         Objects.requireNonNull(realm, "realm");
         this.service = Objects.requireNonNull(service, "service");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
@@ -170,6 +187,11 @@ public final class EstHttpHandler implements HttpHandler {
 
     private Response route(HttpExchange exchange, CancellationSignal cancellation) throws IOException, EstProtocolException {
         cancellation.throwIfCancelled();
+        String requestPath = exchange.getRequestURI().getPath();
+        String[] sdkSegments = requestPath.startsWith("/.well-known/est/")
+                ? requestPath.substring("/.well-known/est/".length()).split("/", -1) : new String[0];
+        boolean sdkPath = sdkSegments.length >= 2 && "hybrid-sdk".equals(sdkSegments[1]);
+        if (sdkPath && hybridSdk.isEmpty()) return error(404, "EST SDK is disabled");
         // Require mTLS client certificate.
         X509Certificate clientCert;
         try {
@@ -195,6 +217,11 @@ public final class EstHttpHandler implements HttpHandler {
         }
         String label = after.substring(0, slash);
         String operation = after.substring(slash + 1);
+        if (!label.isEmpty() && (operation.equals("hybrid-sdk") || operation.startsWith("hybrid-sdk/"))) {
+            var endpoint = service.find(label).orElse(null);
+            if (endpoint == null) return error(404, "EST endpoint is not registered");
+            return sdkRoute(exchange, endpoint, operation, clientCert, cancellation);
+        }
         if (label.isEmpty() || operation.isEmpty() || operation.contains("/")) {
             return error(404, "EST endpoint or operation not found");
         }
@@ -206,6 +233,36 @@ public final class EstHttpHandler implements HttpHandler {
         EstEndpoint endpoint = maybeEndpoint.get();
 
         return dispatch(exchange, endpoint, operation, clientCert, cancellation);
+    }
+
+    private Response sdkRoute(HttpExchange exchange, EstEndpoint endpoint, String operation, X509Certificate certificate,
+            CancellationSignal cancellation) throws IOException, EstProtocolException {
+        if (hybridSdk.isEmpty() || !exchange.getRequestURI().getRawPath().equals(exchange.getRequestURI().getPath())
+                || exchange.getRequestURI().getRawFragment() != null) return error(404, "EST SDK path not recognized");
+        String[] parts = operation.split("/", -1);
+        if (parts.length < 2 || !"v1".equals(parts[1])) return error(404, "EST SDK path not recognized");
+        if (parts.length == 2) {
+            if (!"GET".equals(exchange.getRequestMethod())) return error(405, "EST SDK capability requires GET");
+            if (!service.hybridSdkAvailable(endpoint)) return error(404, "EST SDK profile unavailable");
+            String base = "/.well-known/est/" + endpoint.label() + "/hybrid-sdk/v1";
+            return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.capability(base,
+                    java.util.List.of("simpleenroll", "simplereenroll"), hybridSdk.orElseThrow().canonicalOrigin(), maximumBodyBytes), Optional.empty());
+        }
+        if (parts.length != 3 || !("challenge".equals(parts[2]) || "accept".equals(parts[2]))) return error(404, "EST SDK path not recognized");
+        if (!"POST".equals(exchange.getRequestMethod())) return error(405, "EST SDK action requires POST");
+        String media = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (media == null || !HybridSdkHttpCodec.MEDIA_TYPE.equalsIgnoreCase(media.trim())) return error(415, "EST SDK content type required");
+        boolean acceptance = "accept".equals(parts[2]);
+        var fields = HybridSdkHttpCodec.parse(readBody(exchange), maximumBodyBytes, acceptance, java.util.Set.of("operation", "requestDer"));
+        String selected = HybridSdkHttpCodec.text(fields, "operation");
+        byte[] der = HybridSdkHttpCodec.bytes(fields, "requestDer", 1, zeroecho.pki.api.request.X509EnrollmentPayload.MAXIMUM_DER_BYTES);
+        String origin = hybridSdk.orElseThrow().canonicalOrigin();
+        if (!acceptance) {
+            var challenge = service.challengeSdk(endpoint, selected, der, certificate, HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32), origin);
+            return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.challenge(challenge.intentId(), challenge.primaryFrame(), challenge.targetFrame()), Optional.empty());
+        }
+        return enrollment(service.acceptSdk(endpoint, selected, der, certificate, HybridSdkHttpCodec.text(fields, "intentId"), HybridSdkHttpCodec.text(fields, "sdkRequestId"),
+                HybridSdkHttpCodec.bytes(fields, "primaryProof", 1, 104), HybridSdkHttpCodec.bytes(fields, "alternativeProof", 4627, 4627), origin, cancellation));
     }
 
     private Response dispatch(HttpExchange exchange, EstEndpoint endpoint,

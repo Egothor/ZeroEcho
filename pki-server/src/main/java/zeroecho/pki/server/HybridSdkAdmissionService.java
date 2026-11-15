@@ -117,17 +117,24 @@ final class HybridSdkAdmissionService {
         Intent value=new Intent(frame,authentication,context.target(),originalDer.clone(),-1,Optional.empty(),Optional.empty(),new byte[0],new byte[0]);
         String id=hex(intent);
         synchronized(control) {
-            int open=0;
-            try(var cursor=control.protocolSnapshot(ServerControlStore.HYBRID_SDK_INTENT)) {
-                Optional<ServerControlStore.ProtocolRecord> next;
-                while((next=cursor.next()).isPresent()) {
-                    Intent previous=decode(next.orElseThrow());
-                    if (previous.requestId().isEmpty() && epoch(previous.frame(),8)>issued && ++open>=MAX_OPEN) throw new IllegalStateException("SDK_INTENT_CAPACITY");
-                }
-            }
+            if (control.openSdkIntentCount(Instant.ofEpochSecond(issued)) >= MAX_OPEN) throw new IllegalStateException("SDK_INTENT_CAPACITY");
             control.mutateProtocol(java.util.List.of(new ServerControlStore.ProtocolMutation(encode(id,value),Optional.empty())));
         }
         return new Challenge(id,frame,context.target());
+    }
+
+    /** Compares the repeated original request before existing acceptance or replay. */
+    AdministrativeRequest accept(String intentId, String requestId, ServerOperationGateway.Request request,
+            PkiOperationValue.ObjectValue envelope, Duration timeout, byte[] originalDer,
+            byte[] primaryProof, byte[] alternativeProof) {
+        synchronized (control) {
+            var retained = control.protocolRecord(ServerControlStore.HYBRID_SDK_INTENT, intentId)
+                    .orElseThrow(HybridSdkAdmissionService::invalid);
+            if (!MessageDigest.isEqual(decode(retained).originalDer(), originalDer)) {
+                throw new AdministrativeRequestCoordinator.Conflict();
+            }
+            return accept(intentId, requestId, request, envelope, timeout, primaryProof, alternativeProof);
+        }
     }
 
     AdministrativeRequest accept(String intentId, String requestId, ServerOperationGateway.Request request,
@@ -136,18 +143,24 @@ final class HybridSdkAdmissionService {
         synchronized(control) {
             var previous=control.protocolRecord(ServerControlStore.HYBRID_SDK_INTENT,intentId).orElseThrow(HybridSdkAdmissionService::invalid);
             Intent intent=decode(previous);
-            ParsedHybridSdkRequest parsed=parse(intent.originalDer());
-            Context context=resolve(request,envelope,parsed,Optional.of(intent.target()));
+            authentication(request);
+            coordinator.requireSdkActor(request);
             if(!Arrays.equals(intent.frame().field(2),text(request.realmId().value())))throw invalid();
-            requireContext(intent,authentication(request),context.target());
             if (intent.requestId().isPresent()) {
                 if (!intent.requestId().orElseThrow().equals(requestId)
                         || !MessageDigest.isEqual(intent.primaryProof(),primaryProof)
                         || !MessageDigest.isEqual(intent.alternativeProof(),alternativeProof)) throw new AdministrativeRequestCoordinator.Conflict();
                 var retained=coordinator.inspect(requestId,request.principalId());
                 if(retained.executionTimeoutMillis()!=timeout.toMillis() || !retained.envelope().equals(envelope)) throw new AdministrativeRequestCoordinator.Conflict();
-                validateRetained(retained,request,envelope); return retained;
+                validateIntegrity(retained);
+                if (!Arrays.equals(intent.target().field(1), text(request.operation().name()))
+                        || !retained.scope().realmId().equals(request.realmId())
+                        || !retained.actor().principalId().equals(request.principalId())) throw new AdministrativeRequestCoordinator.Conflict();
+                return retained;
             }
+            ParsedHybridSdkRequest parsed=parse(intent.originalDer());
+            Context context=resolve(request,envelope,parsed,Optional.of(intent.target()));
+            requireContext(intent,authentication(request),context.target());
             Instant accepted=clock.instant();
             String commitment=HybridSdkProofs.verify(parsed,intent.frame(),primaryProof,alternativeProof,accepted);
             var proof=new AdministrativeRequest.SdkProof(intentId,commitment);
@@ -282,6 +295,19 @@ final class HybridSdkAdmissionService {
             return new ServerControlStore.ProtocolRecord(ServerControlStore.HYBRID_SDK_INTENT,id,ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(payload)),payload);
         } catch(IOException impossible) {throw new IllegalStateException(impossible);}
     }
+    static boolean openAt(ServerControlStore.ProtocolRecord record, Instant now) {
+        byte[] payload = record.payload();
+        if (payload.length < 8) throw invalid();
+        int magic = java.nio.ByteBuffer.wrap(payload).getInt();
+        if (magic == zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.MAGIC) {
+            var intent = zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.decode(record);
+            return intent.state() == zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.OPEN && now.isBefore(intent.expiresAt());
+        }
+        if (magic != MAGIC) throw invalid();
+        var intent = decode(record);
+        return intent.requestId().isEmpty() && now.getEpochSecond() < epoch(intent.frame(), 8);
+    }
+
     private static Intent decode(ServerControlStore.ProtocolRecord record) {
         byte[] payload=record.payload();
         if(!record.namespace().equals(ServerControlStore.HYBRID_SDK_INTENT)||!record.commitment().equals(ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(payload))))throw invalid();

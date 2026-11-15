@@ -48,8 +48,10 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.HexFormat;
 import java.util.Objects;
 import zeroecho.pki.server.enrollment.EnrollmentCoordinator;
+import zeroecho.pki.server.enrollment.EnrollmentProfileService;
 import zeroecho.pki.server.enrollment.EnrollmentTransaction;
 import zeroecho.pki.server.enrollment.EnrollmentIdentityAliases;
 import zeroecho.pki.api.request.X509EnrollmentPayload;
@@ -972,6 +974,144 @@ public final class AcmeService {
         return realm.enrollmentCoordinator().orElseThrow(() -> new IllegalStateException("ACME enrollment coordinator is unavailable"));
     }
 
+    /**
+     * Reports usable explicitly opted-in SDK enrollment, without granting admission.
+     * @param directory configured directory snapshot
+     * @return whether its current enrollment/certificate policies and runtime support SDK issuance
+     */
+    public boolean hybridSdkAvailable(AcmeState.Directory directory) {
+        var policy = realm.enrollmentProfiles().find(directory.enrollmentProfileId());
+        if (policy.isEmpty() || policy.orElseThrow().state() != zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE
+                || policy.orElseThrow().sdkProfile().isEmpty() || realm.enrollmentCoordinator().isEmpty()
+                || realm.session().semanticSigning().isEmpty()) return false;
+        var profile = realm.session().profiles().getImportedVersion(directory.profile().profileId(), directory.profile().profileVersion());
+        return profile.isPresent() && profile.orElseThrow().definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature alt
+                && alt.subjectKeySource() == zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
+    }
+
+    /**
+     * Freezes genuine account/order/authorization and client proof context without finalizing an order.
+     * @param accountId currently JWS-authenticated account
+     * @param expectedAccountCommitment exact current JWS key snapshot
+     * @param orderId account-owned order
+     * @param csrDer exact original SDK PKCS#10
+     * @param clientNonce exact client nonce
+     * @param canonicalOrigin configured listener origin
+     * @return retained server challenge
+     */
+    public synchronized zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(String accountId,
+            String expectedAccountCommitment, String orderId, byte[] csrDer, byte[] clientNonce, String canonicalOrigin) {
+        var account = requireAuthenticatedAccount(accountId, expectedAccountCommitment); var order = requireOrder(orderId);
+        if (!order.accountId().equals(accountId)) throw new IllegalArgumentException("ACME order unavailable");
+        return enrollment().challengeSdk(sdkAdmission(account, order, csrDer, canonicalOrigin), clientNonce);
+    }
+
+    /**
+     * Accepts fresh dual-client proofs or reads the same consumed receipt using current account JWS ownership.
+     * Consumed replay precedes READY, mutable source/key commitments and proof expiry.
+     * @param accountId current JWS-authenticated account
+     * @param expectedAccountCommitment current verified key snapshot
+     * @param orderId stable account-owned order
+     * @param csrDer exact original SDK request
+     * @param intentId retained challenge
+     * @param sdkRequestId exact stable SDK request identity
+     * @param primaryProof client primary signature
+     * @param alternativeProof client alternative signature
+     * @param canonicalOrigin configured listener origin
+     * @param cancellation transport cancellation
+     * @return normal retained ACME order response
+     */
+    public synchronized AcmeState.Order acceptSdk(String accountId, String expectedAccountCommitment, String orderId,
+            byte[] csrDer, String intentId, String sdkRequestId, byte[] primaryProof, byte[] alternativeProof,
+            String canonicalOrigin, CancellationSignal cancellation) {
+        var account = requireAuthenticatedAccount(accountId, expectedAccountCommitment); var order = requireOrder(orderId);
+        if (!order.accountId().equals(accountId)) throw new IllegalArgumentException("ACME order unavailable");
+        var directory = requireDirectory(order.directoryId());
+        var retained = enrollment().retainedSdkIntent(intentId).orElseThrow(() -> new IllegalArgumentException("SDK intent unavailable"));
+        var old = retained.admission(); var original = old.admission();
+        var authFields = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(old.authenticationContext().field(5)).objectFields();
+        if (original.protocol() != EnrollmentTransaction.Protocol.ACME || !original.endpointId().equals(directory.directoryId())
+                || !old.target().endpointId().equals(directory.alias()) || !original.requester().actorId().equals(accountId)
+                || !authFields.get("orderId").textValue().equals(orderId) || !original.transactionId().equals(digest(orderId))
+                || !canonicalOrigin.equals(old.canonicalOrigin()) || !java.util.Arrays.equals(original.payload().der(), csrDer)) {
+            throw new IllegalArgumentException("SDK retained order differs");
+        }
+        if (retained.state() == zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED) {
+            var readAdmission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.ACME, original.endpointId(), sdkRequester(account),
+                    original.transactionId(), original.operation(), original.payload(), original.validity(), original.predecessorId(), original.protocolDeadline());
+            var read = new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(readAdmission, old.expectedEndpointCommitment(), old.canonicalOrigin(), old.authenticationContext(), old.target(), Optional.empty());
+            var transaction = enrollment().admitSdk(read, intentId, sdkRequestId, primaryProof, alternativeProof);
+            return attachSdkReceipt(order, transaction);
+        }
+        var transaction = enrollment().admitSdk(sdkAdmission(account, order, csrDer, canonicalOrigin), intentId, sdkRequestId, primaryProof, alternativeProof);
+        requireEnrollmentBinding(order, directory, transaction);
+        return continueEnrollment(order, directory, account, transaction, cancellation);
+    }
+
+    private EnrollmentTransaction.Requester sdkRequester(AcmeState.Account account) {
+        var key = zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(account.publicKeySpki());
+        return new EnrollmentTransaction.Requester(IssuanceExecutionEvidence.ActorType.ACME_ACCOUNT, account.accountId(),
+                IssuanceExecutionEvidence.Authentication.ACME_ACCOUNT_JWS, Optional.empty(), Optional.of(key.canonicalSha256()),
+                key.equivalentSubjectPublicKeyInfoSha256(), new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), Set.of()));
+    }
+
+    private zeroecho.pki.server.enrollment.EnrollmentSdkAdmission sdkAdmission(AcmeState.Account account, AcmeState.Order order,
+            byte[] csrDer, String canonicalOrigin) {
+        var directory = requireDirectory(order.directoryId());
+        if (!hybridSdkAvailable(directory) || order.status() != AcmeState.OrderStatus.READY || !clock.instant().isBefore(order.expiresAt())) {
+            throw new IllegalStateException("ACME SDK order is not ready");
+        }
+        validateFrozenOrder(order, directory); requireActiveAdmission(directory);
+        var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, csrDer));
+        requireExactIdentifiers(parsed.primary(), order.identifiers());
+        var authorizations = new java.util.ArrayList<zeroecho.pki.api.hybrid.sdk.HybridSdkValue>();
+        for (String id : order.authorizationIds().stream().sorted().toList()) {
+            var authorization = requireAuthorization(id);
+            if (!authorization.accountId().equals(account.accountId()) || !authorization.orderId().equals(order.orderId())
+                    || authorization.status() != AcmeState.AuthorizationStatus.VALID || !clock.instant().isBefore(authorization.expiresAt())) {
+                throw new IllegalStateException("ACME SDK authorization unavailable");
+            }
+            authorizations.add(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of(
+                    "authorizationId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(authorization.authorizationId()),
+                    "recordCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(authorization.commitment()))));
+        }
+        var requester = sdkRequester(account); String keyHash = requester.canonicalKeySha256().orElseThrow();
+        var values = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.ofEntries(
+                Map.entry("endpointId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(directory.alias())), Map.entry("endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(directory.commitment())),
+                Map.entry("accountId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(account.accountId())), Map.entry("accountKeySha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(keyHash)),
+                Map.entry("orderId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(order.orderId())), Map.entry("orderCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(order.commitment())),
+                Map.entry("authorizationCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("sha256:" + digestBytes(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.list(authorizations).encode()))),
+                Map.entry("identifiers", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.list(order.identifiers().stream().map(value -> zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of(
+                        "type", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("dns"), "value", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(value.value()), "wildcard", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bool(value.wildcard())))).toList())),
+                Map.entry("requestKind", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("PKCS10"))));
+        var auth = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(6, Map.of(1, sdkText(account.accountId()), 2, sdkText("acme-account-jws-v1"),
+                3, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(sdkText("sha256:" + keyHash)), 4, sdkText("acme-v1"), 5, values.encode()));
+        var policy = realm.enrollmentProfiles().find(directory.enrollmentProfileId()).orElseThrow();
+        var target = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "ACME", directory.alias(), directory.revision(), directory.commitment(),
+                directory.enrollmentProfileId(), realm.enrollmentProfiles().revision(directory.enrollmentProfileId()), EnrollmentProfileService.commitment(policy), "ISSUE", X509EnrollmentPayload.Kind.PKCS10,
+                digest(order.orderId()), "sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(auth.encode())));
+        var admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.ACME, directory.directoryId(), requester, digest(order.orderId()),
+                EnrollmentTransaction.Operation.ISSUE, parsed.originalPayload(), orderValidity(order), Optional.empty(), Optional.of(order.expiresAt()));
+        return new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(admission, directory.commitment(), canonicalOrigin, auth, target, Optional.empty());
+    }
+
+    private AcmeState.Order attachSdkReceipt(AcmeState.Order order, EnrollmentTransaction transaction) {
+        if (order.status() == AcmeState.OrderStatus.VALID) return order;
+        var binding = enrollment().issuanceBinding(transaction.id());
+        var status = switch (transaction.state()) {
+            case REJECTED, EXPIRED, FAILED -> AcmeState.OrderStatus.INVALID;
+            default -> AcmeState.OrderStatus.PROCESSING;
+        };
+        var operation = transaction.receipt().map(zeroecho.pki.api.signing.SigningAcceptanceReceipt::operationId).or(() -> order.signingOperationId());
+        if (transaction.state() == EnrollmentTransaction.State.ISSUED) {
+            var signed = realm.session().semanticSigning().orElseThrow().find(operation.orElseThrow()).orElseThrow();
+            return applySigningSnapshot(order, requireDirectory(order.directoryId()), order.accountId(), signed);
+        }
+        if (order.status() == status && order.issuanceCommitment().equals(Optional.of(binding.effectiveCommitment())) && order.signingOperationId().equals(operation)) return order;
+        return (AcmeState.Order) store.replace(List.of(new AcmeControlStore.Replacement(order, copyOrder(order, status, Optional.empty(), operation, Optional.of(binding.effectiveCommitment()))))).getFirst();
+    }
+    private static byte[] sdkText(String text) { return text.getBytes(StandardCharsets.UTF_8); }
+
     private Optional<EnrollmentTransaction> enrollmentFor(AcmeState.Order order, AcmeState.Directory directory) {
         return enrollment().find(EnrollmentTransaction.Protocol.ACME, directory.alias(), IssuanceExecutionEvidence.ActorType.ACME_ACCOUNT,
                 order.accountId(), digest(order.orderId()), EnrollmentTransaction.Operation.ISSUE);
@@ -993,7 +1133,7 @@ public final class AcmeService {
                 || intent.requester().type() != IssuanceExecutionEvidence.ActorType.ACME_ACCOUNT || !intent.requester().actorId().equals(order.accountId())
                 || !intent.authorityId().equals(order.authorityId()) || !intent.profile().equals(order.profile())
                 || !intent.issuerId().equals(order.issuerId()) || !intent.pathId().equals(order.issuancePathId())
-                || !intent.pathCommitment().equals(order.issuancePathCommitment()) || !intent.validity().equals(orderValidity(order))
+                || !intent.pathCommitment().equals(order.issuancePathCommitment()) || !requestedValidity(transaction).equals(orderValidity(order))
                 || intent.requestKind() != X509EnrollmentPayload.Kind.PKCS10 || intent.expiresAt().isAfter(order.expiresAt())) {
             throw new IllegalStateException("ACME frozen enrollment binding differs");
         }
@@ -1005,6 +1145,11 @@ public final class AcmeService {
                 || order.credentialId().isPresent() && !order.credentialId().equals(transaction.credentialId())) {
             throw new IllegalStateException("ACME signing attachment differs");
         }
+    }
+
+    private Optional<Validity> requestedValidity(EnrollmentTransaction transaction) {
+        return transaction.intent().sdkProof().map(proof -> enrollment().retainedSdkIntent(proof.intentId()).orElseThrow().admission().admission().validity())
+                .orElse(transaction.intent().validity());
     }
 
     private String admittedDirectoryCommitment(AcmeState.Directory directory) {

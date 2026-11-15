@@ -101,6 +101,8 @@ class AdminHttpRequestsTest {
                 var server = PkiHttpsServer.start(config, dependencies, Clock.systemUTC(),
                         HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader())) {
             String base = "https://localhost:" + server.address().getPort() + "/admin/v1/requests";
+            check(get(admin, "https://localhost:" + server.address().getPort() + "/admin/v1/hybrid-sdk/v1").statusCode() == 404,
+                    "SDK capability was advertised without listener opt-in");
             var capabilities = get(admin, "https://localhost:" + server.address().getPort() + "/admin/v1/realm");
             check(capabilities.statusCode()==200 && capabilities.body().contains("\"publicRepository\":{\"available\":false,\"authorityListAvailable\":false}"),
                     "disabled public repository was not authoritatively advertised: "+capabilities.body());

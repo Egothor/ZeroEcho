@@ -286,9 +286,20 @@ final class EndEntityIssuancePreparation {
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
             Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
             EffectiveCredentialStatusResolver.Evaluation evaluation, CancellationSignal cancellation) throws IOException {
+        return prepareSdk(access, input, supplied, frozenValidity, preview, evaluation, Optional.empty(), cancellation);
+    }
+
+    /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
+            EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<IssuanceIntent> intent,
+            CancellationSignal cancellation) throws IOException {
         if (managedKeys.isEmpty()) throw new PkiException("SDK_MANAGED_PUBLIC_KEY_SOURCE_REQUIRED");
-        var parsed = new BcX509CertificationRequestParser().parseHybridSdk(new zeroecho.pki.api.request.CertificationRequest(
-                BcX509CredentialFramework.FORMAT_ID, new EncodedObject(zeroecho.pki.api.Encoding.DER, input.payload().der())));
+        if (input.payload().kind() != supplied.originalPayload().kind()
+                || !java.util.Arrays.equals(input.payload().der(), supplied.originalPayload().der())) {
+            throw new PkiException("SDK_REQUEST_MISMATCH");
+        }
+        var parsed = new BcX509CertificationRequestParser().parseHybridSdk(input.payload());
         if (!java.util.Arrays.equals(parsed.primary().publicKeyInfo().bytes(), supplied.primary().publicKeyInfo().bytes())
                 || !java.util.Arrays.equals(parsed.alternativeSubjectPublicKeyInfo().bytes(), supplied.alternativeSubjectPublicKeyInfo().bytes())) {
             throw new PkiException("SDK_REQUEST_MISMATCH");
@@ -298,8 +309,10 @@ final class EndEntityIssuancePreparation {
                 new IssueEndEntityCommand(input.issuerCaId(), parsed.primary(), input.profileId(), input.validityOverride()));
         EndEntityIssuancePreparation selected = preview ? withoutSerialAllocation() : this;
         return selected.prepareCandidate(access, candidate, evaluation, Optional.of(input.payload()),
-                Optional.empty(), frozenValidity, true, cancellation);
+                intent, frozenValidity, true, cancellation);
     }
+
+    /* default */ EffectiveCredentialStatusResolver.Evaluation beginSdkEvaluation() { return status.beginEvaluation(); }
 
     /* default */ X509AuthoritySnapshot authority() { return signingAuthority; }
 

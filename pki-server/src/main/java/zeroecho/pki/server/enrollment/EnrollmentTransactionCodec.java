@@ -63,30 +63,36 @@ import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlStore;
 
-/** Strict version-two bounded encoding; no original request or secret material. */
-final class EnrollmentTransactionCodec {
+/** Strict ordinary-v2/SDK-v3 bounded encoding; no original request or secret material. */
+public final class EnrollmentTransactionCodec {
     private static final int MAXIMUM_TEXT_LENGTH = 8_192;
     /* default */ static final int MAXIMUM_BYTES = 524_288;
     private static final int VERSION = 2;
     private EnrollmentTransactionCodec() { }
 
-    /* default */ static ServerControlStore.ProtocolRecord record(EnrollmentTransaction value) {
+    /** @param value immutable transaction @return exact bounded control record */
+    public static ServerControlStore.ProtocolRecord record(EnrollmentTransaction value) {
         byte[] payload = encode(value);
         return new ServerControlStore.ProtocolRecord(ServerControlStore.ENROLLMENT_REQUEST, value.id(), sha256(payload), payload);
     }
 
-    /* default */ static EnrollmentTransaction decode(ServerControlStore.ProtocolRecord record) {
+    /** @param record exact control record @return independently validated transaction */
+    public static EnrollmentTransaction decode(ServerControlStore.ProtocolRecord record) {
         byte[] payload = record.payload();
         if (!ServerControlStore.ENROLLMENT_REQUEST.equals(record.namespace()) || payload.length > MAXIMUM_BYTES
                 || !sha256(payload).equals(record.commitment())) {
             throw invalid();
         }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
-            if (in.readInt() != VERSION) {
+            int version = in.readInt();
+            if (version != VERSION && version != 3) {
                 throw invalid();
             }
             String id = text(in); long revision = in.readLong();
-            EnrollmentTransaction.Intent intent = intent(in);
+            var intentFields = intentFields(in);
+            // Ordinary v2 validates immediately; SDK v3 must read its mandatory
+            // trailing proof before constructing the proof-bound absolute intent.
+            EnrollmentTransaction.Intent intent = version == VERSION ? intentFields.apply(Optional.empty()) : null;
             EnrollmentTransaction.State state = EnrollmentTransaction.State.valueOf(text(in));
             int count = count(in, 4096);
             List<EnrollmentTransaction.Decision> decisions = new ArrayList<>(count);
@@ -97,6 +103,7 @@ final class EnrollmentTransactionCodec {
             Optional<SigningAcceptanceReceipt> receipt = in.readBoolean()
                     ? Optional.of(SigningAcceptanceReceipt.parse(new PkiId(text(in)), text(in))) : Optional.empty();
             Optional<PkiId> credential = optional(in).map(PkiId::new);
+            if (version == 3) intent = intentFields.apply(Optional.of(proof(in)));
             EnrollmentTransaction value = new EnrollmentTransaction(id, revision, intent, state, decisions, receipt, credential);
             if (in.read() != -1 || !record.recordId().equals(value.id()) || !Arrays.equals(payload, encode(value))) {
                 throw invalid();
@@ -109,7 +116,7 @@ final class EnrollmentTransactionCodec {
 
     /* default */ static byte[] encode(EnrollmentTransaction value) {
         return bytes(out -> {
-            out.writeInt(VERSION); text(out, value.id()); out.writeLong(value.revision()); intent(out, value.intent());
+            out.writeInt(value.intent().sdkProof().isPresent() ? 3 : VERSION); text(out, value.id()); out.writeLong(value.revision()); intent(out, value.intent());
             text(out, value.state().name()); out.writeInt(value.decisions().size());
             for (EnrollmentTransaction.Decision decision : value.decisions()) {
                 text(out, decision.principalId()); evidence(out, decision.evidence()); text(out, decision.choice().name());
@@ -120,11 +127,16 @@ final class EnrollmentTransactionCodec {
                 text(out, value.receipt().orElseThrow().operationId().value()); text(out, value.receipt().orElseThrow().encodedCommitment());
             }
             optional(out, value.credentialId().map(PkiId::value));
+            if (value.intent().sdkProof().isPresent()) proof(out, value.intent().sdkProof().orElseThrow());
         });
     }
 
     /* default */ static String intentCommitment(EnrollmentTransaction.Intent value) {
-        return sha256(bytes(out -> { text(out, "zeroecho.enrollment-intent.v2"); intent(out, value); }));
+        return sha256(bytes(out -> {
+            text(out, value.sdkProof().isPresent() ? "zeroecho.enrollment-intent.sdk.v3" : "zeroecho.enrollment-intent.v2");
+            intent(out, value);
+            if (value.sdkProof().isPresent()) proof(out, value.sdkProof().orElseThrow());
+        }));
     }
 
     /* default */ static String replayId(RealmId realm, EnrollmentTransaction.Source source, EnrollmentTransaction.Requester requester,
@@ -144,6 +156,14 @@ final class EnrollmentTransactionCodec {
             text(out, label); text(out, type.name()); text(out, actorId);
             text(out, transaction); text(out, operation.name());
         }));
+    }
+
+    /* default */ static void proof(DataOutputStream out, EnrollmentTransaction.SdkProofReference value) throws IOException {
+        text(out, value.intentId()); text(out, value.proofCommitment()); text(out, value.authenticationContextSha512());
+        text(out, value.targetSha512()); instant(out, value.acceptedAt());
+    }
+    /* default */ static EnrollmentTransaction.SdkProofReference proof(DataInputStream in) throws IOException {
+        return new EnrollmentTransaction.SdkProofReference(text(in), text(in), text(in), text(in), instant(in));
     }
 
     /* default */ static void intent(DataOutputStream out, EnrollmentTransaction.Intent value) throws IOException {
@@ -188,6 +208,10 @@ final class EnrollmentTransactionCodec {
     }
 
     /* default */ static EnrollmentTransaction.Intent intent(DataInputStream in) throws IOException {
+        return intentFields(in).apply(Optional.empty());
+    }
+
+    private static java.util.function.Function<Optional<EnrollmentTransaction.SdkProofReference>, EnrollmentTransaction.Intent> intentFields(DataInputStream in) throws IOException {
         RealmId realm = new RealmId(text(in));
         EnrollmentTransaction.Source source = source(in);
         EnrollmentTransaction.Requester requester = requester(in);
@@ -203,8 +227,9 @@ final class EnrollmentTransactionCodec {
                 strings(in, 4096), strings(in, 4096), in.readBoolean(), Duration.ofSeconds(in.readLong(), in.readInt()), in.readBoolean())) : Optional.empty();
         Optional<EnrollmentTransaction.ArtifactBinding> artifact = in.readBoolean()
                 ? Optional.of(new EnrollmentTransaction.ArtifactBinding(text(in), text(in), text(in), in.readLong())) : Optional.empty();
-        return new EnrollmentTransaction.Intent(realm, source, requester, transaction, operation, request, kind, digest, size, authority,
-                profile, issuer, path, pathDigest, validity, predecessor, predecessorDigest, category, policy, artifact, instant(in), instant(in));
+        Instant created = instant(in), expires = instant(in);
+        return proof -> new EnrollmentTransaction.Intent(realm, source, requester, transaction, operation, request, kind, digest, size, authority,
+                profile, issuer, path, pathDigest, validity, predecessor, predecessorDigest, category, policy, artifact, created, expires, proof);
     }
 
     private static void evidence(DataOutputStream out, CertificateIdentityEvidence value) throws IOException {
@@ -252,12 +277,12 @@ final class EnrollmentTransactionCodec {
     private static Optional<String> optional(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(text(in)) : Optional.empty(); }
     private static void instant(DataOutputStream out, Instant value) throws IOException { out.writeLong(value.getEpochSecond()); out.writeInt(value.getNano()); }
     private static Instant instant(DataInputStream in) throws IOException { return Instant.ofEpochSecond(in.readLong(), in.readInt()); }
-    private static void text(DataOutputStream out, String value) throws IOException {
+    /* default */ static void text(DataOutputStream out, String value) throws IOException {
         if (value.length() > MAXIMUM_TEXT_LENGTH) {
             throw invalid();
         } out.writeUTF(value);
     }
-    private static String text(DataInputStream in) throws IOException {
+    /* default */ static String text(DataInputStream in) throws IOException {
         String value = in.readUTF(); if (value.length() > MAXIMUM_TEXT_LENGTH) {
             throw invalid();
         } return value;

@@ -292,12 +292,12 @@ public final class PkiServerConfigurationCodec {
     }
 
     private static PkiServerConfiguration.Listener listener(Fields value) {
-        value.exact("address", "port", "tlsProvider", "clientCertificateRequired", "maximumHeaderBytes",
-                "maximumBodyBytes");
+        value.allowed(Set.of("address", "port", "tlsProvider", "clientCertificateRequired", "maximumHeaderBytes",
+                "maximumBodyBytes", "hybridSdk"));
         PkiServerConfiguration.Listener result = new PkiServerConfiguration.Listener(
                 address(value.text("address")), value.integer("port"), provider(value.object("tlsProvider")),
                 value.bool("clientCertificateRequired"), value.integer("maximumHeaderBytes"),
-                value.integer("maximumBodyBytes"));
+                value.integer("maximumBodyBytes"), hybridSdk(value));
         value.complete();
         return result;
     }
@@ -403,7 +403,7 @@ public final class PkiServerConfigurationCodec {
                 "maximumOrdersPresented", "admissionWindowMillis", "maximumNewAccountsPerWindow",
                 "maximumNewOrdersPerAccountWindow", "maximumPendingOrdersPerAccount",
                 "maximumChallengeValidationsPerAccountWindow", "maximumConcurrentFinalizations",
-                "challengeProviders", "eabProviders"));
+                "challengeProviders", "eabProviders", "hybridSdk"));
         if (!value.bool("enabled")) {
             value.exact("enabled"); value.complete(); return Optional.empty();
         }
@@ -427,47 +427,55 @@ public final class PkiServerConfigurationCodec {
                 value.integer("maximumNewOrdersPerAccountWindow"), value.integer("maximumPendingOrdersPerAccount"),
                 value.integer("maximumChallengeValidationsPerAccountWindow"),
                 value.integer("maximumConcurrentFinalizations"), providers(value.list("challengeProviders")),
-                providers(value.list("eabProviders")));
+                providers(value.list("eabProviders")), hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
     private static Optional<PkiServerConfiguration.EstListener> estListener(Fields value) {
         value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
-                "execution", "maximumHeaderBytes", "maximumBodyBytes"));
+                "execution", "maximumHeaderBytes", "maximumBodyBytes", "hybridSdk"));
         if (!value.bool("enabled")) {
             value.exact("enabled"); value.complete(); return Optional.empty();
         }
         PkiServerConfiguration.EstListener result = new PkiServerConfiguration.EstListener(
                 value.text("listenerId"), address(value.text("address")), value.integer("port"),
                 provider(value.object("tlsProvider")), execution(value.object("execution")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"));
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"), hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
     private static Optional<PkiServerConfiguration.ScepListener> scepListener(Fields value) {
         value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
-                "execution", "maximumHeaderBytes", "maximumBodyBytes"));
+                "execution", "maximumHeaderBytes", "maximumBodyBytes", "hybridSdk"));
         if (!value.bool("enabled")) {
             value.exact("enabled"); value.complete(); return Optional.empty();
         }
         PkiServerConfiguration.ScepListener result = new PkiServerConfiguration.ScepListener(
                 value.text("listenerId"), address(value.text("address")), value.integer("port"),
                 provider(value.object("tlsProvider")), execution(value.object("execution")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"));
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"), hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
     private static Optional<PkiServerConfiguration.CmpListener> cmpListener(Fields value) {
         value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
-                "execution", "maximumHeaderBytes", "maximumBodyBytes"));
+                "execution", "maximumHeaderBytes", "maximumBodyBytes", "hybridSdk"));
         if (!value.bool("enabled")) {
             value.exact("enabled"); value.complete(); return Optional.empty();
         }
         PkiServerConfiguration.CmpListener result = new PkiServerConfiguration.CmpListener(
                 value.text("listenerId"), address(value.text("address")), value.integer("port"),
                 provider(value.object("tlsProvider")), execution(value.object("execution")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"));
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"), hybridSdk(value));
         value.complete(); return Optional.of(result);
+    }
+
+    private static Optional<PkiServerConfiguration.HybridSdkListener> hybridSdk(Fields value) {
+        Optional<Fields> configured = value.optionalObject("hybridSdk");
+        if (configured.isEmpty()) return Optional.empty();
+        Fields sdk = configured.orElseThrow(); sdk.exact("canonicalOrigin");
+        var result = new PkiServerConfiguration.HybridSdkListener(sdk.text("canonicalOrigin"));
+        sdk.complete(); return Optional.of(result);
     }
 
     private static List<ProviderConfig> providers(List<PkiOperationValue> source) {

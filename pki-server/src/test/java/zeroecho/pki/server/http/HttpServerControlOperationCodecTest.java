@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -55,6 +56,22 @@ import zeroecho.pki.application.PkiOperation;
 class HttpServerControlOperationCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
+
+    @Test void enrollmentProfileSdkSelectorIsAnExplicitClosedPublicArgument() {
+        String ordinary = "{\"version\":1,\"arguments\":{\"id\":\"sdk-profile\",\"displayName\":\"SDK profile\",\"certificateProfileId\":\"client\"}}";
+        String enabled = ordinary.replace("\"certificateProfileId\":\"client\"", "\"certificateProfileId\":\"client\",\"sdkProfile\":\"zeroecho-hybrid-sdk-v1\"");
+        for (String operation : java.util.List.of("enrollment.profile.register", "enrollment.profile.update")) {
+            var control = assertInstanceOf(AdministrativeOperation.Control.class, decode(operation, enabled).operation()).operation();
+            var profile = control instanceof ServerControlOperation.RegisterEnrollmentProfile register ? register.profile()
+                    : ((ServerControlOperation.UpdateEnrollmentProfile) control).profile();
+            assertEquals("zeroecho-hybrid-sdk-v1", profile.sdkProfile().orElseThrow());
+            var disabled = assertInstanceOf(AdministrativeOperation.Control.class, decode(operation, ordinary).operation()).operation();
+            assertTrue((disabled instanceof ServerControlOperation.RegisterEnrollmentProfile register ? register.profile()
+                    : ((ServerControlOperation.UpdateEnrollmentProfile) disabled).profile()).sdkProfile().isEmpty());
+            assertThrows(IllegalArgumentException.class, () -> decode(operation, enabled.replace("zeroecho-hybrid-sdk-v1", "unknown-sdk")));
+            assertThrows(IllegalArgumentException.class, () -> decode(operation, enabled.replace("\"zeroecho-hybrid-sdk-v1\"", "true")));
+        }
+    }
 
     @Test void enrollmentDecisionsRequireExactReviewedCommitmentAndClosedArguments() {
         for (String name : java.util.List.of("enrollment.request.approve", "enrollment.request.reject")) {

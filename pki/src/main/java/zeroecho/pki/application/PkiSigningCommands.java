@@ -197,4 +197,22 @@ public interface PkiSigningCommands {
      * @throws IllegalStateException if the owning session is closed
      */
     PkiOperationResult completedResult(SemanticSigningOperation operation);
+
+    /**
+     * Evaluates an explicitly bound native enrollment target without fabricating authority.
+     * @param operation supported leaf operation @param access authorized invocation
+     * @param request proof-bound original request @param frozenValidity retained absolute validity
+     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
+     * @param cancellation cooperative cancellation @return immutable public preview
+     * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
+        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        return previewSdk(operation, access, request, frozenValidity, cancellation);
+    }
 }

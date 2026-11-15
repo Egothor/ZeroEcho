@@ -119,6 +119,8 @@ final class ScepHttpHandler implements HttpHandler {
             return error(404, "SCEP endpoint not found");
         }
         String label = path.substring(6);
+        String[] sdkSegments = label.split("/", -1);
+        if (sdkSegments.length >= 2 && "hybrid-sdk".equals(sdkSegments[1])) return sdkRoute(exchange, sdkSegments, cancellation);
         if (label.endsWith("/")) {
             label = label.substring(0, label.length() - 1);
         }
@@ -142,7 +144,8 @@ final class ScepHttpHandler implements HttpHandler {
             return error(405, "SCEP discovery requires GET");
         }
         return switch (operation) {
-            case "GetCACaps" -> new Response(200, TEXT, service.getCaCaps());
+            case "GetCACaps" -> new Response(200, TEXT, configuration.hybridSdk().isPresent() && service.hybridSdkAvailable(endpoint)
+                    ? (new String(service.getCaCaps(), StandardCharsets.US_ASCII) + "ZeroEcho-Hybrid-SDK-v1\n").getBytes(StandardCharsets.US_ASCII) : service.getCaCaps());
             case "GetCACert", "GetCACertChain" -> {
                 ScepService.CaCertificateResponse response = service.getCaCert(endpoint);
                 yield new Response(200, response.contentType(), response.body());
@@ -150,6 +153,36 @@ final class ScepHttpHandler implements HttpHandler {
             case "PKIOperation" -> operation(exchange, endpoint, query, limit, cancellation);
             default -> error(400, "Unsupported SCEP operation");
         };
+    }
+
+    private Response sdkRoute(HttpExchange exchange, String[] parts, ServerRuntime.CancellationToken cancellation) throws IOException, ScepProtocolException {
+        if (configuration.hybridSdk().isEmpty()) return error(404, "SCEP SDK is disabled");
+        if (!exchange.getRequestURI().getRawPath().equals(exchange.getRequestURI().getPath()) || exchange.getRequestURI().getRawQuery() != null
+                || exchange.getRequestURI().getRawFragment() != null || parts.length < 3 || !"v1".equals(parts[2]) || parts[0].isEmpty()) return error(404, "SCEP SDK path unavailable");
+        var endpoint = service.find(parts[0]).orElse(null); if (endpoint == null) return error(404, "SCEP endpoint unavailable");
+        int limit = Math.min(configuration.maximumBodyBytes(), zeroecho.pkix.scep.ScepCodec.MAXIMUM_REQUEST_BYTES);
+        if (parts.length == 3) {
+            if (!HTTP_GET.equals(exchange.getRequestMethod())) return error(405, "SCEP SDK capability requires GET");
+            if (!service.hybridSdkAvailable(endpoint)) return error(404, "SCEP SDK profile unavailable");
+            return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.capability("/scep/" + endpoint.label() + "/hybrid-sdk/v1",
+                    java.util.List.of("PKIOperation"), configuration.hybridSdk().orElseThrow().canonicalOrigin(), limit));
+        }
+        if (parts.length != 4 || !("challenge".equals(parts[3]) || "accept".equals(parts[3]))) return error(404, "SCEP SDK path unavailable");
+        if (!HTTP_POST.equals(exchange.getRequestMethod())) return error(405, "SCEP SDK action requires POST");
+        String media = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (media == null || !HybridSdkHttpCodec.MEDIA_TYPE.equalsIgnoreCase(media.trim())) return error(415, "SCEP SDK content type required");
+        byte[] body; try (InputStream input = exchange.getRequestBody()) { body = input.readNBytes(limit + 1); }
+        if (body.length > limit) return error(413, "SCEP SDK request exceeds configured limit");
+        boolean acceptance = "accept".equals(parts[3]);
+        var fields = HybridSdkHttpCodec.parse(body, limit, acceptance, java.util.Set.of("messageDer"));
+        byte[] wire = HybridSdkHttpCodec.bytes(fields, "messageDer", 1, zeroecho.pkix.scep.ScepCodec.MAXIMUM_REQUEST_BYTES);
+        String origin = configuration.hybridSdk().orElseThrow().canonicalOrigin();
+        if (!acceptance) {
+            var challenge = service.challengeSdk(endpoint, wire, HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32), origin);
+            return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.challenge(challenge.intentId(), challenge.primaryFrame(), challenge.targetFrame()));
+        }
+        return new Response(200, "application/x-pki-message", service.acceptSdk(endpoint, wire, HybridSdkHttpCodec.text(fields, "intentId"), HybridSdkHttpCodec.text(fields, "sdkRequestId"),
+                HybridSdkHttpCodec.bytes(fields, "primaryProof", 1, 104), HybridSdkHttpCodec.bytes(fields, "alternativeProof", 4627, 4627), origin, cancellation));
     }
 
     private Response operation(HttpExchange exchange, ScepEndpoint endpoint, String query, int limit,

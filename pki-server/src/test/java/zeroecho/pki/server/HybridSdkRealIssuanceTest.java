@@ -206,6 +206,101 @@ class HybridSdkRealIssuanceTest {
         }
     }
 
+    @Test void configuredAdminSdkHttpIssuesAfterApprovalAndRejectsChangedWire(@TempDir Path directory) throws Exception {
+        zeroecho.sdk.util.BouncyCastleActivator.init();
+        var original = withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(directory));
+        PkiAdminBootstrap.bootstrap(ManagedKeyGenerationIntegrationTest.withoutSigning(original), "administrator", "approver", "trusted-proxy");
+        PkiId ca; X509Certificate rootCertificate;
+        try (var realm = ServerRealmContext.open(original.realm(), dependencies())) {
+            var keys = realm.session().managedKeyGeneration().orElseThrow();
+            var primary = keys.generate("8".repeat(64), ManagedKeyGeneration.Parameters.ECDSA_P384);
+            var alternative = keys.generate("9".repeat(64), ManagedKeyGeneration.Parameters.ML_DSA_87);
+            install(realm, "root-ca", "http-root", new HybridCertificateMode.AltSignature(
+                    BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(), alternative.keyRef().value()), IssuanceApprovalRequirement.NONE);
+            install(realm, "vpn-client", "http-leaf", HybridCertificateMode.AltSignature.requested(
+                    BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm()), IssuanceApprovalRequirement.SINGLE);
+            var creation = submit(realm, "http-root", "ca.create", arguments("formatId", "x509", "subjectRef", "CN=HTTP SDK Root",
+                    "profileId", "http-root", "keyRef", primary.keyRef().value(), "signatureAlgorithmId", BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm()));
+            approve(realm, creation); var credential = credential(process(realm.administrativeRequests(), "http-root"));
+            ca = authority(realm, credential); rootCertificate = certificate(realm, credential);
+        }
+        Instant rootNotBefore = rootCertificate.getNotBefore().toInstant();
+        assertFalse(rootNotBefore.isAfter(Instant.now().plusSeconds(1)), "Root validity exceeds inward whole-second boundary");
+        while (Instant.now().isBefore(rootNotBefore)) {
+            java.util.concurrent.TimeUnit.NANOSECONDS.sleep(Math.max(1, Duration.between(Instant.now(), rootNotBefore).toNanos()));
+        }
+        rootCertificate.checkValidity();
+        var tls = HttpServerTestSupport.tls();
+        var transport = HttpServerTestSupport.configuration(directory.resolve("transport"), tls.clientCertificate());
+        var old = transport.listener();
+        var listener = new PkiServerConfiguration.Listener(old.address(), old.port(), old.tlsProvider(), old.clientCertificateRequired(),
+                old.maximumHeaderBytes(), old.maximumBodyBytes(), Optional.of(new PkiServerConfiguration.HybridSdkListener("https://sdk.example.invalid:443")));
+        String fingerprint = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(tls.clientCertificate().getEncoded()));
+        var auth = new PkiServerConfiguration.Authentication(AdministrativeAuthenticationMode.DIRECT_MTLS,
+                List.of(new PkiServerConfiguration.ClientCertificateMapping("sdk-admin", "administrator", Optional.of(fingerprint), Optional.empty(), Optional.empty())),
+                List.of(), List.of(), java.util.Set.of(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0, 0);
+        var config = new PkiServerConfiguration(original.version(), original.serverName(), original.realm(), listener, auth, transport.execution(), transport.runtime());
+        try (var http = java.net.http.HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+                var server = PkiHttpsServer.start(config, dependencies(), Clock.systemUTC(), HttpServerTestSupport.random(),
+                        zeroecho.pki.server.http.TestTlsProvider.class.getClassLoader())) {
+            String base = "https://localhost:" + server.address().getPort() + "/admin/v1/hybrid-sdk/v1";
+            var capability = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(base)).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, capability.statusCode());
+            assertTrue(new String(capability.body(), java.nio.charset.StandardCharsets.UTF_8).contains("https://sdk.example.invalid:443"));
+            var client = client(); var parsed = HybridSdkProofs.parse(client.csr());
+            var body = new TreeMap<String, PkiOperationValue>(); body.put("version", new PkiOperationValue.IntegerValue(1));
+            body.put("profile", new PkiOperationValue.Text("zeroecho-hybrid-sdk-v1")); body.put("operationId", new PkiOperationValue.Text("credential.issue"));
+            body.put("arguments", arguments("issuerCaId", ca.value(), "requestId", parsed.primary().requestId().value(), "profileId", "http-leaf"));
+            body.put("requestDer", httpBytes(client.csr())); body.put("clientNonce", httpBytes(new byte[32]));
+            assertEquals(400, sdkPost(http, base + "/challenge", new PkiOperationValue.ObjectValue(Map.of())).statusCode());
+            var malformed = new TreeMap<>(body); malformed.put("unexpected", new PkiOperationValue.BooleanValue(true));
+            assertEquals(400, sdkPost(http, base + "/challenge", new PkiOperationValue.ObjectValue(malformed)).statusCode());
+            malformed = new TreeMap<>(body); malformed.put("clientNonce", new PkiOperationValue.Text("AA=="));
+            assertEquals(400, sdkPost(http, base + "/challenge", new PkiOperationValue.ObjectValue(malformed)).statusCode());
+            malformed = new TreeMap<>(body); malformed.put("clientNonce", httpBytes(new byte[33]));
+            assertEquals(400, sdkPost(http, base + "/challenge", new PkiOperationValue.ObjectValue(malformed)).statusCode());
+            assertEquals(400, sdkPost(http, base.replace("hybrid-sdk/v1", "hybrid-sdk%2fv1") + "/challenge", new PkiOperationValue.ObjectValue(body)).statusCode());
+            var challenged = sdkPost(http, base + "/challenge", new PkiOperationValue.ObjectValue(body));
+            assertEquals(200, challenged.statusCode(), new String(challenged.body()));
+            var fields = ((PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(challenged.body(), 262144)).fields();
+            var first = HybridSdkFrame.decode(java.util.Base64.getUrlDecoder().decode(((PkiOperationValue.Text) fields.get("primaryFrame")).value()));
+            assertEquals("https://sdk.example.invalid:443", new String(first.field(9), java.nio.charset.StandardCharsets.UTF_8));
+            body.remove("clientNonce"); body.put("intentId", fields.get("intentId")); body.put("sdkRequestId", new PkiOperationValue.Text("http-sdk"));
+            body.put("primaryProof", httpBytes(sign(client.primary(), "SHA384withECDSA", first.encode())));
+            body.put("alternativeProof", httpBytes(sign(client.alternative(), "ML-DSA-87", new HybridSdkFrame(2, first.fields()).encode())));
+            byte[] changed = client.csr().clone(); changed[changed.length - 1] ^= 1;
+            var changedBody = new TreeMap<>(body); changedBody.put("requestDer", httpBytes(changed));
+            assertEquals(409, sdkPost(http, base + "/accept", new PkiOperationValue.ObjectValue(changedBody)).statusCode());
+            var accepted = sdkPost(http, base + "/accept", new PkiOperationValue.ObjectValue(body));
+            assertEquals(202, accepted.statusCode(), new String(accepted.body()));
+            var retained = server.realm().administrativeRequests().inspect("http-sdk", "administrator");
+            assertEquals(AdministrativeRequest.State.WAITING_APPROVAL, retained.state()); approve(server.realm(), retained);
+            String poll = base.substring(0, base.indexOf("/hybrid-sdk")) + "/requests/http-sdk";
+            java.net.http.HttpResponse<byte[]> observed;
+            long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+            do {
+                observed = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(poll)).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+                if (new String(observed.body()).contains("\"state\":\"SUCCEEDED\"")) break;
+                Thread.sleep(10);
+            } while (System.nanoTime() < deadline);
+            assertEquals(200, observed.statusCode()); assertTrue(new String(observed.body()).contains("SUCCEEDED"), new String(observed.body()));
+            var completed = server.realm().administrativeRequests().inspect("http-sdk", "administrator");
+            var leaf = certificate(server.realm(), credential(completed)); leaf.verify(rootCertificate.getPublicKey());
+            assertTrue(Pkix.verifyAlternativeSignatureCor3(leaf, alternative(rootCertificate)));
+            assertArrayEquals(client.alternative().getPublic().getEncoded(), alternativeSpki(leaf));
+            assertEquals(202, sdkPost(http, base + "/accept", new PkiOperationValue.ObjectValue(body)).statusCode());
+        }
+    }
+
+    private static PkiOperationValue.Text httpBytes(byte[] value) {
+        return new PkiOperationValue.Text(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value));
+    }
+    private static java.net.http.HttpResponse<byte[]> sdkPost(java.net.http.HttpClient client, String uri, PkiOperationValue.ObjectValue document) throws Exception {
+        return client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(uri)).header("Content-Type", "application/vnd.zeroecho.hybrid-sdk+json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(zeroecho.pki.server.http.StrictJson.encode(document))).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+    }
+
     private static void install(ServerRealmContext realm,String templateId,String id,HybridCertificateMode mode,IssuanceApprovalRequirement approval) {
         var source=BuiltInCertificateProfileCatalog.load(HybridSdkRealIssuanceTest.class.getClassLoader()).stream().map(t->t.definition()).filter(d->d.profileId().equals(templateId)).findFirst().orElseThrow();
         var definition=new CertificateProfileDefinition(source.certificateType(),id,1,source.formatId(),id,source.maximumValidity(),approval,source.subjectPolicy(),source.certificatePolicy(),source.algorithmBindingPolicy(),source.confirmationPolicy(),mode);

@@ -329,7 +329,7 @@ class PkiHttpsServerTest {
         assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration(2, valid.serverName(),
                 valid.realm(), valid.listener(), valid.authentication(), valid.execution(), valid.runtime()));
         String production = java.nio.file.Files.readString(java.nio.file.Path.of(
-                "..", "docs", "pki-server-production-example.json"));
+                "..", "documentation", "examples", "configuration", "pki-server-production-example.json"));
         PkiServerConfiguration decoded = PkiServerConfigurationCodec.decode(production.getBytes(
                 java.nio.charset.StandardCharsets.UTF_8));
         assertTrue(decoded.publicListener().isEmpty());
@@ -382,7 +382,7 @@ class PkiHttpsServerTest {
                 "pki-server-trusted-proxy-rfc9440-example.json" };
         Set<String> audiences = new java.util.HashSet<>();
         for (String example : examples) {
-            String document = java.nio.file.Files.readString(java.nio.file.Path.of("..", "docs", example));
+            String document = java.nio.file.Files.readString(java.nio.file.Path.of("..", "documentation", "examples", "configuration", example));
             PkiServerConfiguration decoded = PkiServerConfigurationCodec.decode(
                     document.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertEquals(PkiServerConfiguration.CURRENT_VERSION, decoded.version());
@@ -394,7 +394,7 @@ class PkiHttpsServerTest {
         assertEquals(examples.length, audiences.size());
 
         String production = java.nio.file.Files.readString(java.nio.file.Path.of(
-                "..", "docs", "pki-server-production-example.json"));
+                "..", "documentation", "examples", "configuration", "pki-server-production-example.json"));
         String defaults = production.replace(
                 ",\n      \"challengeTtlMillis\": 300000,\n      \"rsaMaximumModulusBits\": 8192", "");
         CredentialConfirmationProofPolicy defaulted = PkiServerConfigurationCodec.decode(
@@ -1010,8 +1010,28 @@ class PkiHttpsServerTest {
                     new CaProfileBinding(new CertificateProfileRef("public-root-profile", 1, new byte[32])),
                     CredentialStatus.ISSUED, reference, new SimpleAttributeSet());
             store.putCredential(credential);
-            store.putIssuerGeneration(new IssuerGeneration(issuerId, authorityId, credentialId, key,
-                    IssuerGenerationState.ACTIVE, "0".repeat(64), "1".repeat(64)));
+            var catalog = zeroecho.pki.impl.framework.x509.StandardX509Bindings.catalog();
+            String registryCommitment = zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry.create(
+                    zeroecho.pki.impl.framework.x509.StandardX509Bindings.descriptors()).commitment();
+            byte[] spki = certificate.getPublicKey().getEncoded();
+            byte[] signatureAlgorithm = new org.bouncycastle.cert.X509CertificateHolder(certificate.getEncoded())
+                    .getSignatureAlgorithm().getEncoded();
+            var publicAlgorithm = catalog.reverse(zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.fromLib(
+                    zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(spki)),
+                    zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            var signingAlgorithm = catalog.reverse(zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.fromLib(
+                    zeroecho.pkix.Pkix.parseAlgorithmIdentifier(signatureAlgorithm)),
+                    zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            var generation = new IssuerGeneration(issuerId, authorityId, credentialId, key,
+                    IssuerGenerationState.ACTIVE, "0".repeat(64), registryCommitment);
+            var primary = new zeroecho.pki.api.ca.IssuerKeyBinding(key, publicAlgorithm, signingAlgorithm,
+                    new zeroecho.pki.api.EncodedObject(Encoding.DER, signatureAlgorithm),
+                    java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(spki)));
+            var binding = zeroecho.pki.impl.core.IssuerBindingResolver.createCaptured(generation, certificate.getEncoded(),
+                    "x509", primary, Optional.empty(),
+                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE,
+                    ((CaProfileBinding) credential.profileBinding()).reference(), registryCommitment);
+            store.putIssuerGeneration(generation, binding);
             store.putIssuerChainPath(path);
             store.putCa(new CaRecord(authorityId, CaKind.ROOT, CaState.ACTIVE, key, subject,
                     List.of(issuerId), issuerId, path.pathId()));

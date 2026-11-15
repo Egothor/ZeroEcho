@@ -100,6 +100,21 @@ public final class AcmeTestClient implements AutoCloseable {
                 Optional.empty(), Optional.of(accountKid), true));
     }
 
+    /**
+     * Sends a genuine KID JWS with an explicitly selected nonce for replay-negative tests.
+     * @param endpoint exact configured URL @param payload original JSON @param selectedNonce test nonce
+     * @return actual HTTPS protocol response
+     */
+    public Response kidWithNonce(URI endpoint, String payload, String selectedNonce) throws Exception {
+        if (accountKid == null) throw new IllegalStateException("ACME account has not been created");
+        String current = nonce; byte[] body;
+        try {
+            nonce = Objects.requireNonNull(selectedNonce, "selectedNonce");
+            body = flattened(endpoint, payload.getBytes(StandardCharsets.UTF_8), accountKey, Optional.empty(), Optional.of(accountKid), true);
+        } finally { nonce = current; }
+        return post(endpoint, body);
+    }
+
     /** Performs strict nested-JWS account-key rollover and adopts the replacement key. */
     public Response rollover(URI endpoint, KeyPair replacement) throws Exception {
         String innerClaims = "{\"account\":\"" + accountKid + "\",\"oldKey\":" + jwk(accountKey) + "}";

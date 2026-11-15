@@ -98,6 +98,24 @@ public final class HybridSdkValue {
         } catch (IOException impossible) { throw new IllegalStateException(impossible); }
     }
     /**
+     * Reads an already canonical ordered list without changing its encoding.
+     * @return immutable ordered independent values
+     * @throws IllegalArgumentException if this value is not a list
+     */
+    public List<HybridSdkValue> listValues() {
+        try (var input = new DataInputStream(new ByteArrayInputStream(encoded))) {
+            if (input.readUnsignedByte() != 5) throw invalid();
+            int count = input.readInt(); var values = new java.util.ArrayList<HybridSdkValue>(count);
+            for (int index = 0; index < count; index++) {
+                int start = encoded.length - input.available();
+                read(input, 1, new int[1]);
+                int end = encoded.length - input.available();
+                values.add(new HybridSdkValue(java.util.Arrays.copyOfRange(encoded, start, end)));
+            }
+            return List.copyOf(values);
+        } catch (IOException malformed) { throw invalid(); }
+    }
+    /**
      * Reads the fields of an already canonical object without changing its encoding.
      * @return immutable identifier-sorted map of immutable independent values
      * @throws IllegalArgumentException if this value is not an object

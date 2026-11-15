@@ -76,6 +76,49 @@ class HybridSdkFrameTest {
         assertThrows(IllegalArgumentException.class, () -> HybridSdkFrame.decode(oversized));
     }
 
+    @Test void nativeAuthenticationContextsAreClosedAndCarrierBound() {
+        var context = new java.util.TreeMap<String, HybridSdkValue>();
+        for (String key : new String[]{"endpointId", "endpointCommitment", "certificateSha256", "canonicalKeySha256", "issuerSerialSha256"}) {
+            context.put(key, HybridSdkValue.text(key.endsWith("Sha256") ? "0".repeat(64) : "endpoint"));
+        }
+        context.put("operation", HybridSdkValue.text("simpleenroll"));
+        context.put("predecessorId", HybridSdkValue.text(""));
+        context.put("requestKind", HybridSdkValue.text("PKCS10"));
+        var fields = new TreeMap<Integer, byte[]>(); fields.put(1, text("native-actor"));
+        fields.put(2, text("est-mtls-v1")); fields.put(3, new byte[64]); fields.put(4, text("est-v1"));
+        fields.put(5, HybridSdkValue.object(context).encode());
+        assertArrayEquals(fields.get(5), HybridSdkFrame.decode(new HybridSdkFrame(6, fields).encode()).field(5));
+        var wrongCarrier = new TreeMap<>(fields); wrongCarrier.put(4, text("cmp-v1"));
+        assertThrows(IllegalArgumentException.class, () -> new HybridSdkFrame(6, wrongCarrier));
+        context.put("callerSaysAuthenticated", HybridSdkValue.bool(true));
+        fields.put(5, HybridSdkValue.object(context).encode());
+        assertThrows(IllegalArgumentException.class, () -> new HybridSdkFrame(6, fields));
+    }
+
+    @Test void cmpRequestIdPreservesTheNativeUnsigned64Boundary() {
+        var context = new java.util.TreeMap<String, HybridSdkValue>();
+        for (String key : new String[]{"endpointId", "endpointCommitment", "authenticationPolicyCommitment", "manifestCommitment",
+                "transactionIdSha256", "originalWireSha512", "senderNonceSha256", "authenticationCredentialId"}) {
+            String value = key.endsWith("Sha256") ? "0".repeat(64)
+                    : key.endsWith("Sha512") ? "sha512:" + "0".repeat(128) : "native";
+            context.put(key, HybridSdkValue.text(value));
+        }
+        context.put("bodyType", HybridSdkValue.text("ir"));
+        context.put("recipientNonceSha256", HybridSdkValue.text(""));
+        context.put("authenticationCredentialRevision", HybridSdkValue.integer(1));
+        context.put("requestKind", HybridSdkValue.text("CRMF"));
+        var fields = new TreeMap<Integer, byte[]>(); fields.put(1, text("native-actor"));
+        fields.put(2, text("cmp-signature-v1")); fields.put(3, new byte[64]); fields.put(4, text("cmp-v1"));
+        for (String id : new String[]{"0", "9223372036854775808", "18446744073709551615"}) {
+            context.put("certReqId", HybridSdkValue.text(id)); fields.put(5, HybridSdkValue.object(context).encode());
+            assertArrayEquals(fields.get(5), HybridSdkFrame.decode(new HybridSdkFrame(6, fields).encode()).field(5));
+        }
+        for (String id : new String[]{"18446744073709551616", "-1", "00", "01"}) {
+            context.put("certReqId", HybridSdkValue.text(id)); fields.put(5, HybridSdkValue.object(context).encode());
+            assertThrows(IllegalArgumentException.class, () -> new HybridSdkFrame(6, fields));
+        }
+    }
+
     static HybridSdkFrame vector() {
         var fields = new TreeMap<Integer, byte[]>();
         fields.put(1, text("zeroecho-hybrid-sdk-v1")); fields.put(2, text("example-realm"));

@@ -109,7 +109,7 @@ public final class EstTransport implements AutoCloseable {
             listener.setHttpsConfigurator(mutualTlsConfigurator(tls));
             listener.setExecutor(protocol.transportExecutor());
             listener.createContext("/.well-known/est/",
-                    new EstHttpHandler(realm, service, protocol, new RequestIds(random), ready, configuration.maximumBodyBytes(), configuration.execution().maximumDeadline()));
+                    new EstHttpHandler(realm, service, protocol, new RequestIds(random), ready, configuration.maximumBodyBytes(), configuration.execution().maximumDeadline(), configuration.hybridSdk()));
             listener.start();
             return new EstTransport(listener, protocol, service);
         } catch (IOException failure) {

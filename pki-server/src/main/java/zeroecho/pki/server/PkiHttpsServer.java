@@ -221,7 +221,8 @@ public final class PkiHttpsServer implements AutoCloseable {
                 }
             };
             PkiSessionRuntimeDependencies resolvedDependencies = runtimeDependencies.withDashboardLiveSource(liveSource);
-            realm = ServerRealmContext.open(exact.realm(), resolvedDependencies, clock, random);
+            realm = ServerRealmContext.open(exact.realm(), resolvedDependencies, clock, random,
+                    exact.listener().hybridSdk().map(PkiServerConfiguration.HybridSdkListener::canonicalOrigin));
             if (transfer.isPresent()) {
                 try { realm.installBackupTransfer(transfer.orElseThrow(), clock, random); }
                 catch (java.io.IOException failure) { throw new IllegalStateException("Backup transfer startup failed", failure); }

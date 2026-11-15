@@ -242,9 +242,24 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param clientCertificateRequired must be {@code true}
      * @param maximumHeaderBytes bounded aggregate decoded header bytes
      * @param maximumBodyBytes bounded request body bytes
+     * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
      */
     public record Listener(InetAddress address, int port, ProviderConfig tlsProvider,
+            boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
+        /**
+         * Preserves the SDK-disabled listener constructor.
+         * @param address existing listener setting
+         * @param port existing listener setting
+         * @param tlsProvider existing listener setting
+         * @param clientCertificateRequired existing listener setting
+         * @param maximumHeaderBytes existing listener setting
+         * @param maximumBodyBytes existing listener setting
+         */
+        public Listener(InetAddress address, int port, ProviderConfig tlsProvider,
             boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes) {
+            this(address, port, tlsProvider, clientCertificateRequired, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
+        }
+
         /** Exact canonical unpadded Base64url character bound for one proof response. */
         public static final int MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS =
                 (KeyPossessionProofResponse.MAXIMUM_BYTES / 3) * 4
@@ -270,6 +285,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
 
         /** Validates listener bounds and explicit TLS selection. */
         public Listener {
+            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Objects.requireNonNull(address, "address");
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("Listener port is invalid");
             Objects.requireNonNull(tlsProvider, "tlsProvider");
@@ -620,6 +637,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param maximumConcurrentFinalizations bounded listener-wide finalization concurrency
      * @param challengeProviders explicitly enabled provider configurations
      * @param eabProviders explicitly enabled secret-confining EAB provider configurations
+     * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
      */
     public record AcmeListener(String listenerId, InetAddress address, int port, ProviderConfig tlsProvider,
             AcmeTransportMode transportMode, List<ClientCertificateMapping> proxyTransportMappings,
@@ -630,9 +648,55 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Duration admissionWindow, int maximumNewAccountsPerWindow,
             int maximumNewOrdersPerAccountWindow, int maximumPendingOrdersPerAccount,
             int maximumChallengeValidationsPerAccountWindow, int maximumConcurrentFinalizations,
+            List<ProviderConfig> challengeProviders, List<ProviderConfig> eabProviders, Optional<HybridSdkListener> hybridSdk) {
+        /**
+         * Preserves the SDK-disabled listener constructor.
+         * @param listenerId existing listener setting
+         * @param address existing listener setting
+         * @param port existing listener setting
+         * @param tlsProvider existing listener setting
+         * @param transportMode existing listener setting
+         * @param proxyTransportMappings existing listener setting
+         * @param trustedProxyPrincipalIds existing listener setting
+         * @param externalBaseUri existing listener setting
+         * @param maximumHeaderBytes existing listener setting
+         * @param maximumBodyBytes existing listener setting
+         * @param execution existing listener setting
+         * @param validationExecution existing listener setting
+         * @param nonceLifetime existing listener setting
+         * @param maximumOutstandingNonces existing listener setting
+         * @param maximumAccountsPresented existing listener setting
+         * @param maximumOrdersPresented existing listener setting
+         * @param admissionWindow existing listener setting
+         * @param maximumNewAccountsPerWindow existing listener setting
+         * @param maximumNewOrdersPerAccountWindow existing listener setting
+         * @param maximumPendingOrdersPerAccount existing listener setting
+         * @param maximumChallengeValidationsPerAccountWindow existing listener setting
+         * @param maximumConcurrentFinalizations existing listener setting
+         * @param challengeProviders existing listener setting
+         * @param eabProviders existing listener setting
+         */
+        public AcmeListener(String listenerId, InetAddress address, int port, ProviderConfig tlsProvider,
+            AcmeTransportMode transportMode, List<ClientCertificateMapping> proxyTransportMappings,
+            Set<String> trustedProxyPrincipalIds, URI externalBaseUri,
+            int maximumHeaderBytes, int maximumBodyBytes, Execution execution, Execution validationExecution,
+            Duration nonceLifetime, int maximumOutstandingNonces,
+            int maximumAccountsPresented, int maximumOrdersPresented,
+            Duration admissionWindow, int maximumNewAccountsPerWindow,
+            int maximumNewOrdersPerAccountWindow, int maximumPendingOrdersPerAccount,
+            int maximumChallengeValidationsPerAccountWindow, int maximumConcurrentFinalizations,
             List<ProviderConfig> challengeProviders, List<ProviderConfig> eabProviders) {
+            this(listenerId, address, port, tlsProvider, transportMode, proxyTransportMappings, trustedProxyPrincipalIds, externalBaseUri, maximumHeaderBytes, maximumBodyBytes, execution, validationExecution, nonceLifetime, maximumOutstandingNonces, maximumAccountsPresented, maximumOrdersPresented, admissionWindow, maximumNewAccountsPerWindow, maximumNewOrdersPerAccountWindow, maximumPendingOrdersPerAccount, maximumChallengeValidationsPerAccountWindow, maximumConcurrentFinalizations, challengeProviders, eabProviders, Optional.empty());
+        }
+
         /** Validates listener isolation, URL authority, proxy policy, and finite bounds. */
         public AcmeListener {
+            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
+            if (hybridSdk.isPresent() && !hybridSdk.orElseThrow().canonicalOrigin().equals(
+                    externalBaseUri.toString() + (externalBaseUri.getPort() < 0 ? ":443" : ""))) {
+                throw new IllegalArgumentException("SDK_ORIGIN_DIFFERS_FROM_ACME_ORIGIN");
+            }
             Permission.requireId(listenerId, "ACME listener"); Objects.requireNonNull(address, "address");
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("ACME listener port is invalid");
             Objects.requireNonNull(tlsProvider, "tlsProvider"); Objects.requireNonNull(transportMode, "transportMode");
@@ -708,12 +772,31 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param execution   isolated protocol workers, queue, admission, and deadlines
      * @param maximumHeaderBytes bounded request-header bytes
      * @param maximumBodyBytes   bounded request-body bytes (must accommodate a PKCS#10 CSR)
+     * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
      */
     public record EstListener(String listenerId, InetAddress address, int port,
             ProviderConfig tlsProvider, Execution execution,
+            int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
+        /**
+         * Preserves the SDK-disabled listener constructor.
+         * @param listenerId existing listener setting
+         * @param address existing listener setting
+         * @param port existing listener setting
+         * @param tlsProvider existing listener setting
+         * @param execution existing listener setting
+         * @param maximumHeaderBytes existing listener setting
+         * @param maximumBodyBytes existing listener setting
+         */
+        public EstListener(String listenerId, InetAddress address, int port,
+            ProviderConfig tlsProvider, Execution execution,
             int maximumHeaderBytes, int maximumBodyBytes) {
+            this(listenerId, address, port, tlsProvider, execution, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
+        }
+
         /** Validates the EST listener configuration. */
         public EstListener {
+            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Permission.requireId(listenerId, "EST listener");
             Objects.requireNonNull(address, "address");
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("EST listener port is invalid");
@@ -741,12 +824,31 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param execution          isolated protocol workers, queue, admission, and deadlines
      * @param maximumHeaderBytes bounded request-header bytes
      * @param maximumBodyBytes   bounded request-body bytes
+     * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
      */
     public record ScepListener(String listenerId, InetAddress address, int port,
             ProviderConfig tlsProvider, Execution execution,
+            int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
+        /**
+         * Preserves the SDK-disabled listener constructor.
+         * @param listenerId existing listener setting
+         * @param address existing listener setting
+         * @param port existing listener setting
+         * @param tlsProvider existing listener setting
+         * @param execution existing listener setting
+         * @param maximumHeaderBytes existing listener setting
+         * @param maximumBodyBytes existing listener setting
+         */
+        public ScepListener(String listenerId, InetAddress address, int port,
+            ProviderConfig tlsProvider, Execution execution,
             int maximumHeaderBytes, int maximumBodyBytes) {
+            this(listenerId, address, port, tlsProvider, execution, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
+        }
+
         /** Validates the SCEP listener configuration. */
         public ScepListener {
+            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Permission.requireId(listenerId, "SCEP listener");
             Objects.requireNonNull(address, "address");
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("SCEP listener port is invalid");
@@ -774,12 +876,31 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param execution          isolated protocol workers, queue, admission, and deadlines
      * @param maximumHeaderBytes bounded request-header bytes
      * @param maximumBodyBytes   bounded request-body bytes
+     * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
      */
     public record CmpListener(String listenerId, InetAddress address, int port,
             ProviderConfig tlsProvider, Execution execution,
+            int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
+        /**
+         * Preserves the SDK-disabled listener constructor.
+         * @param listenerId existing listener setting
+         * @param address existing listener setting
+         * @param port existing listener setting
+         * @param tlsProvider existing listener setting
+         * @param execution existing listener setting
+         * @param maximumHeaderBytes existing listener setting
+         * @param maximumBodyBytes existing listener setting
+         */
+        public CmpListener(String listenerId, InetAddress address, int port,
+            ProviderConfig tlsProvider, Execution execution,
             int maximumHeaderBytes, int maximumBodyBytes) {
+            this(listenerId, address, port, tlsProvider, execution, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
+        }
+
         /** Validates the CMP listener configuration. */
         public CmpListener {
+            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Permission.requireId(listenerId, "CMP listener");
             Objects.requireNonNull(address, "address");
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("CMP listener port is invalid");
@@ -900,5 +1021,23 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     private static final class StrictBounds {
         private static final int MAXIMUM_ACME_BODY = 16_777_216;
         private StrictBounds() { }
+    }
+
+    /**
+     * Explicit opt-in origin for the version-one HTTP SDK sidepaths.
+     * @param canonicalOrigin configured canonical HTTPS origin including port
+     */
+    public record HybridSdkListener(String canonicalOrigin) {
+        /** Validates the origin without inferring transport authority. */
+        public HybridSdkListener {
+            zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.requireOrigin(canonicalOrigin);
+        }
+        /**
+         * Rejects a listener unable to carry the fixed-suite proof envelope.
+         * @param maximumBodyBytes existing listener wire budget
+         */
+        public void requireBodyBudget(int maximumBodyBytes) {
+            if (maximumBodyBytes < 16_384) throw new IllegalArgumentException("SDK_BODY_BUDGET_TOO_SMALL");
+        }
     }
 }

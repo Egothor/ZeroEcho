@@ -43,10 +43,25 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
  * Construction alone does not establish either key's proof of possession.
  * @param primary normalized request retaining its exact original signed CSR
  * @param alternativeSubjectPublicKeyInfo requested alternative SUBJECT SPKI, never an issuer key
+ * @param originalPayload exact typed original request; construction does not verify it
  */
-public record ParsedHybridSdkRequest(ParsedCertificationRequest primary, EncodedObject alternativeSubjectPublicKeyInfo) {
+public record ParsedHybridSdkRequest(ParsedCertificationRequest primary, EncodedObject alternativeSubjectPublicKeyInfo,
+        zeroecho.pki.api.request.X509EnrollmentPayload originalPayload) {
+    /**
+     * Preserves the PKCS#10 request constructor.
+     * @param primary normalized request retaining original CSR evidence
+     * @param alternativeSubjectPublicKeyInfo alternative subject SPKI
+     */
+    public ParsedHybridSdkRequest(ParsedCertificationRequest primary, EncodedObject alternativeSubjectPublicKeyInfo) {
+        this(primary, alternativeSubjectPublicKeyInfo,
+                zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(primary));
+        if (originalPayload.kind() != zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10) {
+            throw new IllegalArgumentException("SDK_REQUEST_KIND_UNSUPPORTED");
+        }
+    }
     /** Validates the bounded public request view. */
     public ParsedHybridSdkRequest {
+        Objects.requireNonNull(originalPayload, "originalPayload");
         Objects.requireNonNull(primary, "primary"); Objects.requireNonNull(alternativeSubjectPublicKeyInfo, "alternativeSubjectPublicKeyInfo");
         if (alternativeSubjectPublicKeyInfo.encoding() != Encoding.DER || alternativeSubjectPublicKeyInfo.byteLength() > 8192) {
             throw new IllegalArgumentException("SDK_SUBJECT_KEY_INVALID");

@@ -173,6 +173,18 @@ final class AcmeHttpHandler implements HttpHandler {
         String[] parts = requestUri.getPath().split("/", -1);
         if (parts.length < 4 || !"".equals(parts[0]) || !"acme".equals(parts[1])) return problem(404, "malformed");
         String resource = parts[3];
+        boolean sdk = "hybrid-sdk".equals(resource);
+        if (sdk) {
+            if (configuration.hybridSdk().isEmpty()) return problem(404, "malformed");
+            if (!requestUri.getRawPath().equals(requestUri.getPath()) || parts.length < 5 || !"v1".equals(parts[4])) return problem(404, "malformed");
+            if (parts.length == 5) {
+                if (!"GET".equals(exchange.getRequestMethod())) return problem(405, "malformed");
+                var directory = activeDirectory(parts[2]);
+                if (!service.hybridSdkAvailable(directory)) return problem(404, "malformed");
+                return new Response(200, JSON, sdkCapability(directory), Optional.empty(), directory.directoryId(), Map.of());
+            }
+            if (parts.length != 7 || !("challenge".equals(parts[5]) || "accept".equals(parts[5])) || parts[6].isEmpty()) return problem(404, "malformed");
+        }
         if (parts.length == 4 && "directory".equals(resource) && "GET".equals(exchange.getRequestMethod())) {
             AcmeState.Directory directory = activeDirectory(parts[2]);
             return json(200, directoryJson(directory), directory.directoryId());
@@ -196,6 +208,7 @@ final class AcmeHttpHandler implements HttpHandler {
         if (parts.length == 4 && "new-account".equals(resource)) return newAccount(directory, verified);
         AcmeJwsVerifier.AccountKey account = verified.account().orElseThrow();
         requireAccountDirectory(account.accountId(), directory);
+        if (sdk) return sdkAction(account, directory, parts[5], parts[6], verified.payload(), cancellation);
         if (parts.length == 4 && "new-order".equals(resource)) return newOrder(directory, account, verified.payload());
         if (parts.length == 4 && "key-change".equals(resource)) {
             AcmeJwsVerifier.Verified replacement = verifier.verifyKeyChange(verified.payload(),
@@ -259,6 +272,9 @@ final class AcmeHttpHandler implements HttpHandler {
                 case "challenge" -> service.challengeDirectory(parts[4]);
                 default -> throw new AcmeJwsVerifier.AcmeProblem("malformed");
             };
+        } else if (parts.length == 7 && "hybrid-sdk".equals(resource) && "v1".equals(parts[4])
+                && ("challenge".equals(parts[5]) || "accept".equals(parts[5]))) {
+            directory = service.orderDirectory(parts[6]);
         } else if (parts.length == 7 && "credential-confirmation".equals(resource)
                 && "v1".equals(parts[4])
                 && ("challenge".equals(parts[5]) || "complete".equals(parts[5]))) {
@@ -369,6 +385,36 @@ final class AcmeHttpHandler implements HttpHandler {
         } finally {
             validations.release();
         }
+    }
+
+    private Response sdkAction(AcmeJwsVerifier.AccountKey account, AcmeState.Directory directory, String action,
+            String orderId, byte[] payload, ServerRuntime.CancellationToken cancellation) {
+        boolean acceptance = "accept".equals(action);
+        var fields = HybridSdkHttpCodec.parse(payload, configuration.maximumBodyBytes(), acceptance, java.util.Set.of("csr"));
+        byte[] csr = HybridSdkHttpCodec.bytes(fields, "csr", 1, zeroecho.pki.api.request.X509EnrollmentPayload.MAXIMUM_DER_BYTES);
+        if (!rates.tryAcquireFinalization()) return problem(429, "rateLimited");
+        try {
+            String origin = configuration.hybridSdk().orElseThrow().canonicalOrigin();
+            if (!acceptance) {
+                var challenge = service.challengeSdk(account.accountId(), account.recordCommitment(), orderId, csr,
+                        HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32), origin);
+                return new Response(200, JSON, HybridSdkHttpCodec.challenge(challenge.intentId(), challenge.primaryFrame(), challenge.targetFrame()), Optional.empty(), directory.directoryId(), Map.of());
+            }
+            var order = service.acceptSdk(account.accountId(), account.recordCommitment(), orderId, csr,
+                    HybridSdkHttpCodec.text(fields, "intentId"), HybridSdkHttpCodec.text(fields, "sdkRequestId"),
+                    HybridSdkHttpCodec.bytes(fields, "primaryProof", 1, 104), HybridSdkHttpCodec.bytes(fields, "alternativeProof", 4627, 4627), origin, cancellation);
+            return json(200, orderJson(order, directory), directory.directoryId(), Map.of("Location", resourceUrl(directory, "order", order.orderId())));
+        } finally { java.util.Arrays.fill(csr, (byte) 0); rates.releaseFinalization(); }
+    }
+
+    private byte[] sdkCapability(AcmeState.Directory directory) {
+        String base = configuration.externalBaseUri().resolve("/acme/" + directory.alias() + "/hybrid-sdk/v1").toASCIIString();
+        var encoded = HybridSdkHttpCodec.capability(base, java.util.List.of("credential.issue"), configuration.hybridSdk().orElseThrow().canonicalOrigin(), configuration.maximumBodyBytes());
+        var parsed = (PkiOperationValue.ObjectValue) StrictJson.parse(encoded, configuration.maximumBodyBytes());
+        var fields = new java.util.LinkedHashMap<>(parsed.fields());
+        fields.put("challenge", new PkiOperationValue.Text(base + "/challenge/{orderId}"));
+        fields.put("accept", new PkiOperationValue.Text(base + "/accept/{orderId}"));
+        return StrictJson.encode(new PkiOperationValue.ObjectValue(fields));
     }
 
     private Response finalizeOrder(AcmeJwsVerifier.AccountKey account, String id, byte[] payload,
@@ -589,9 +635,13 @@ final class AcmeHttpHandler implements HttpHandler {
     }
     private String directoryJson(AcmeState.Directory value) {
         String base = configuration.externalBaseUri().resolve("/acme/" + value.alias() + "/").toASCIIString();
-        return "{\"newNonce\":\"" + base + "new-nonce\",\"newAccount\":\"" + base
+        String document = "{\"newNonce\":\"" + base + "new-nonce\",\"newAccount\":\"" + base
                 + "new-account\",\"newOrder\":\"" + base + "new-order\",\"revokeCert\":\""
-                + base + "revoke-cert\",\"keyChange\":\"" + base + "key-change\"}";
+                + base + "revoke-cert\",\"keyChange\":\"" + base + "key-change\"";
+        if (configuration.hybridSdk().isPresent() && service.hybridSdkAvailable(value)) {
+            document += ",\"meta\":{\"zeroechoHybridSdk\":" + new String(sdkCapability(value), StandardCharsets.UTF_8) + "}";
+        }
+        return document + "}";
     }
     private String accountJson(AcmeState.Account value, AcmeState.Directory directory) {
         return "{\"status\":\"" + value.status().name().toLowerCase(java.util.Locale.ROOT) + "\"}";

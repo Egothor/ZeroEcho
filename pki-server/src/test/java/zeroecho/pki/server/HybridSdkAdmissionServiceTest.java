@@ -53,7 +53,8 @@ class HybridSdkAdmissionServiceTest {
         byte[] primary,alternative;
         try(var realm=ServerRealmContext.open(config.realm(),PkiSessionRuntimeDependencies.none())) {
             var control=AdministrativeWorkflowFixture.control(realm);
-            try(var coordinator=conditionalCoordinator(realm,control,clock)) {
+            var refuseFresh = new java.util.concurrent.atomic.AtomicBoolean();
+            try(var coordinator=conditionalCoordinator(realm,control,clock,refuseFresh)) {
                 var request=request(realm); var challenge=coordinator.sdkAdmission().challenge(request,envelope(),keys.csr(),new byte[32]);
                 intent=challenge.intentId();primary=sign(keys.primary(),"SHA384withECDSA",challenge.primary().encode());
                 alternative=sign(keys.alternative(),"ML-DSA-87",new HybridSdkFrame(2,challenge.primary().fields()).encode());
@@ -61,6 +62,9 @@ class HybridSdkAdmissionServiceTest {
                 assertThrows(RuntimeException.class,()->coordinator.sdkAdmission().accept(intent,"sdk-one",request,envelope(),Duration.ofSeconds(30),primary,corrupt));
                 assertTrue(control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,"sdk-one").isEmpty());
                 assertTrue(control.approvals(0,10).values().isEmpty());
+                byte[] changedDer = keys.csr().clone(); changedDer[changedDer.length - 1] ^= 1;
+                assertThrows(AdministrativeRequestCoordinator.Conflict.class, () -> coordinator.sdkAdmission().accept(
+                        intent, "sdk-one", request, envelope(), Duration.ofSeconds(30), changedDer, primary, alternative));
                 var retained=coordinator.sdkAdmission().accept(intent,"sdk-one",request,envelope(),Duration.ofSeconds(30),primary,alternative);
                 assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,retained.state());
                 assertTrue(retained.receipt().isEmpty());
@@ -72,6 +76,7 @@ class HybridSdkAdmissionServiceTest {
                         AdministrativeRequestCodec.encode(retained).payload(),524288)).fields().get("version")).value());
                 assertThrows(AdministrativeRequestCoordinator.Conflict.class,()->coordinator.sdkAdmission().accept(intent,"sdk-other",request,envelope(),Duration.ofSeconds(30),primary,alternative));
                 clock.advance(600);
+                refuseFresh.set(true); // Consumed READ replay must not revisit current issuer/policy resolution.
                 assertEquals(retained,coordinator.sdkAdmission().accept(intent,"sdk-one",request,envelope(),Duration.ofSeconds(30),primary,alternative));
             }
         }
@@ -237,9 +242,11 @@ class HybridSdkAdmissionServiceTest {
         }
     }
 
-    private static AdministrativeRequestCoordinator conditionalCoordinator(ServerRealmContext realm,ServerControlStore control,Clock clock) {
+    private static AdministrativeRequestCoordinator conditionalCoordinator(ServerRealmContext realm,ServerControlStore control,Clock clock,
+            java.util.concurrent.atomic.AtomicBoolean refuseFresh) {
         return new AdministrativeRequestCoordinator(realm,control,clock,()->{throw new UnsupportedOperationException("fixture never signs");},
                 "https://example.invalid:443",(request,envelope,subject)->{
+                    if (refuseFresh.get()) throw new SecurityException("Fixture current issuer/policy no longer admits new work");
                     var resolved=context(realm,request,envelope);var admitted=resolved.admission();
                     return new HybridSdkAdmissionService.Context(new ServerOperationGateway.Admission(admitted.request(),admitted.commitment(),admitted.policy(),
                             new AuthorizationEngine.Decision(AuthorizationEngine.Code.APPROVAL_REQUIRED,false)),resolved.target());

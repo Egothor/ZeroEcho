@@ -73,6 +73,7 @@ import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.ca.IssuerChainPath;
 import zeroecho.pki.api.issuance.CorrelatedIssuancePreparation;
+import zeroecho.pki.api.issuance.EndEntityIssuanceRequest;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileRef;
@@ -1716,6 +1717,150 @@ class EnrollmentCoordinatorTest {
         return outcome instanceof ServerOperationGateway.Outcome.ControlExecuted executed
                 && executed.outcome() instanceof ServerControlOperationOutcome.Ordinary ordinary
                 && ordinary.outcome() instanceof zeroecho.pki.application.PkiOperationOutcome.Completed;
+    }
+
+    @Test void sdkFreshProofAcceptanceReplayAndRestartRetainOnePendingReceipt() throws Exception {
+        var clock = new SdkClock(); var keys = sdkKeys(); String enrollmentId; String intentId; byte[] primary; byte[] alternative;
+        try (var opened = ServerTestSupport.open(directory)) {
+            try (var fixture = new Fixture(opened.store(), directory.resolve("sdk-domain"), 1, clock, EnrollmentTestSupport.runtimeConfiguration())) {
+                var admission = sdkSetup(fixture, keys, 1);
+                var challenge = fixture.coordinator.challengeSdk(admission, new byte[32]); intentId = challenge.intentId();
+                assertEquals(intentId, fixture.coordinator.challengeSdk(admission, new byte[32]).intentId());
+                primary = sdkSign(keys.primary(), "SHA384withECDSA", challenge.primaryFrame().encode());
+                alternative = sdkSign(keys.alternative(), "ML-DSA-87", new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(2, challenge.primaryFrame().fields()).encode());
+                byte[] bad = alternative.clone(); bad[0] ^= 1;
+                assertThrows(RuntimeException.class, () -> fixture.coordinator.admitSdk(admission, intentId, "sdk-stable", primary, bad));
+                assertTrue(fixture.coordinator.list(0, 10).values().isEmpty());
+                var value = fixture.coordinator.admitSdk(admission, intentId, "sdk-stable", primary, alternative); enrollmentId = value.id();
+                assertEquals(EnrollmentTransaction.State.PENDING, value.state()); assertTrue(value.receipt().isEmpty());
+                assertEquals(intentId, value.intent().sdkProof().orElseThrow().intentId());
+                assertThrows(IllegalArgumentException.class, () -> fixture.coordinator.admit(admission.admission()));
+                assertEquals(1, fixture.coordinator.list(0, 10).values().size());
+                assertEquals(value.id(), fixture.coordinator.retainedSdkIntent(intentId).orElseThrow().enrollmentId().orElseThrow());
+                var ordinary = fixture.profiles.find("policy").orElseThrow();
+                fixture.profiles.update(new EnrollmentProfile(ordinary.id(), "Changed current policy", ordinary.state(), ordinary.certificateProfileId(), ordinary.allowedAuthorityIds(), ordinary.subjectDnPattern(), ordinary.requiredSanDomains(), ordinary.requireApproval(), ordinary.sdkProfile()));
+                clock.advance(301);
+                assertEquals(value.id(), fixture.coordinator.retainedSdkIntent(intentId).orElseThrow().enrollmentId().orElseThrow());
+                var changedContext = sdkSetup(fixture, keys, 1);
+                assertEquals(enrollmentId, fixture.coordinator.admitSdk(changedContext, intentId, "sdk-stable", primary, alternative).id());
+                assertThrows(RuntimeException.class, () -> fixture.coordinator.admitSdk(changedContext, intentId, "sdk-other", primary, alternative));
+                assertEquals(1, fixture.coordinator.list(0, 10).values().size());
+                verify(fixture.signing, never()).prepareCorrelatedEndEntity(any(), any(), any(), any());
+            }
+            try (var fixture = new Fixture(opened.store(), directory.resolve("sdk-domain"), 1, clock, EnrollmentTestSupport.runtimeConfiguration())) {
+                var current = sdkSetup(fixture, keys, 1);
+                assertEquals(enrollmentId, fixture.coordinator.admitSdk(current, intentId, "sdk-stable", primary, alternative).id());
+                assertEquals(1, fixture.coordinator.list(0, 10).values().size());
+            }
+        }
+    }
+
+    @Test void sdkFutureApprovalBudgetRejectsBeforeChallengeOrSigning() throws Exception {
+        var clock = new SdkClock(); var keys = sdkKeys();
+        try (var opened = ServerTestSupport.open(directory); var fixture = new Fixture(opened.store(), directory.resolve("sdk-budget"), 1, clock, EnrollmentTestSupport.runtimeConfiguration())) {
+            var admission = sdkSetup(fixture, keys, 80);
+            var rejected = assertThrows(IllegalArgumentException.class, () -> fixture.coordinator.challengeSdk(admission, new byte[32]));
+            assertEquals("SDK_TOO_LARGE", rejected.getMessage());
+            assertTrue(opened.store().protocolRecords(ServerControlStore.HYBRID_SDK_INTENT, 0, 10).values().isEmpty());
+            assertTrue(fixture.coordinator.list(0, 10).values().isEmpty());
+            verify(fixture.signing, never()).prepareCorrelatedEndEntity(any(), any(), any(), any());
+        }
+    }
+
+    @Test void sdkCommittedButUnknownAcceptanceFencesUntilReopenWithoutDuplicateReceipt() throws Exception {
+        var clock = new SdkClock(); var keys = sdkKeys(); Path log;
+        try (var initialized = ServerTestSupport.open(directory)) { log = initialized.log(); }
+        var durable = DurableTransactionalMetadataStore.open(log, OptionalLong.of(1_048_576));
+        var metadata = mock(zeroecho.pki.spi.store.TransactionalMetadataStore.class, org.mockito.AdditionalAnswers.delegatesTo(durable));
+        var loseAcknowledgement = new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(call -> {
+            var actual = durable.beginTransaction();
+            var transaction = mock(zeroecho.pki.spi.store.MetadataTransaction.class, org.mockito.AdditionalAnswers.delegatesTo(actual));
+            org.mockito.Mockito.doAnswer(commit -> {
+                var result = actual.commit();
+                if (loseAcknowledgement.compareAndSet(true, false)) return new zeroecho.pki.spi.store.MetadataCommitResult(result.transactionId(), zeroecho.pki.spi.store.MetadataCommitResult.Outcome.UNKNOWN, java.util.OptionalLong.empty(), Optional.empty());
+                return result;
+            }).when(transaction).commit();
+            return transaction;
+        }).when(metadata).beginTransaction();
+        String intent; byte[] primary; byte[] alternative;
+        try (var control = new ServerControlStore(metadata); var fixture = new Fixture(control, directory.resolve("sdk-unknown"), 1, clock, EnrollmentTestSupport.runtimeConfiguration())) {
+            var admission = sdkSetup(fixture, keys, 1); var challenge = fixture.coordinator.challengeSdk(admission, new byte[32]); intent = challenge.intentId();
+            primary = sdkSign(keys.primary(), "SHA384withECDSA", challenge.primaryFrame().encode());
+            alternative = sdkSign(keys.alternative(), "ML-DSA-87", new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(2, challenge.primaryFrame().fields()).encode());
+            loseAcknowledgement.set(true);
+            assertThrows(RuntimeException.class, () -> fixture.coordinator.admitSdk(admission, intent, "sdk-unknown", primary, alternative));
+            assertThrows(RuntimeException.class, () -> fixture.coordinator.admitSdk(admission, intent, "sdk-unknown", primary, alternative));
+            assertEquals(1, control.protocolRecords(ServerControlStore.ENROLLMENT_REQUEST, 0, 10).values().size());
+        }
+        try (var control = new ServerControlStore(DurableTransactionalMetadataStore.open(log, OptionalLong.of(1_048_576)));
+                var fixture = new Fixture(control, directory.resolve("sdk-unknown"), 1, clock, EnrollmentTestSupport.runtimeConfiguration())) {
+            var admission = sdkSetup(fixture, keys, 1);
+            var value = fixture.coordinator.admitSdk(admission, intent, "sdk-unknown", primary, alternative);
+            assertEquals(EnrollmentTransaction.State.PENDING, value.state());
+            assertTrue(value.receipt().isEmpty()); assertEquals(1, fixture.coordinator.list(0, 10).values().size());
+        }
+    }
+
+    private static zeroecho.pki.server.enrollment.EnrollmentSdkAdmission sdkSetup(Fixture fixture, SdkKeys keys, int threshold) {
+        var current = fixture.profiles.find("policy").orElseThrow();
+        if (current.sdkProfile().isEmpty()) fixture.profiles.update(new EnrollmentProfile(current.id(), current.displayName(), current.state(), current.certificateProfileId(), current.allowedAuthorityIds(), current.subjectDnPattern(), current.requiredSanDomains(), true, Optional.of("zeroecho-hybrid-sdk-v1")));
+        var definition = fixture.session.profiles().requireActiveProfile("leaf").definition();
+        when(definition.hybridMode()).thenReturn(zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature.requested("ML-DSA-87"));
+        when(definition.approvalRequirement()).thenReturn(threshold > 1 ? IssuanceApprovalRequirement.THRESHOLD : IssuanceApprovalRequirement.NONE);
+        var approvers = new java.util.TreeSet<String>(); for (int index = 0; index < threshold; index++) approvers.add("sdk-approver-" + index);
+        var policy = new ApprovalService.Policy("sdk-approval", threshold, approvers, Set.of(), true, Duration.ofMinutes(20), true);
+        when(fixture.realm.approvalPolicies()).thenReturn(Map.of(threshold > 1 ? OperationSecurityDescriptors.ApprovalCategory.ISSUANCE_THRESHOLD : OperationSecurityDescriptors.ApprovalCategory.ISSUANCE_SINGLE, policy));
+        var snapshot = fixture.endpoints.requireCurrent(fixture.endpoint); String endpointCommitment = snapshot.commitment();
+        var requester = fixture.admission().requester(); String digest = requester.certificate().orElseThrow().certificateSha256();
+        var authValues = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.ofEntries(
+                Map.entry("endpointId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("est")), Map.entry("endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(endpointCommitment)),
+                Map.entry("certificateSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(digest)), Map.entry("canonicalKeySha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(digest)),
+                Map.entry("issuerSerialSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(digest)), Map.entry("operation", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("simpleenroll")),
+                Map.entry("predecessorId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("")), Map.entry("requestKind", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("PKCS10"))));
+        var auth = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(6, Map.of(1, sdkText(requester.actorId()), 2, sdkText("est-mtls-v1"), 3, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(sdkText("sha256:" + digest)), 4, sdkText("est-v1"), 5, authValues.encode()));
+        var target = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "EST", "est", snapshot.revision(), endpointCommitment, "policy", fixture.profiles.revision("policy"), EnrollmentProfileService.commitment(fixture.profiles.find("policy").orElseThrow()), "ISSUE", X509EnrollmentPayload.Kind.PKCS10,
+                "a".repeat(64), "sha512:" + java.util.HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(auth.encode())));
+        var admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, "est", requester, "a".repeat(64), EnrollmentTransaction.Operation.ISSUE, new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, keys.csr()), Optional.empty(), Optional.empty());
+        when(fixture.signing.previewSdk(any(), any(EndEntityIssuanceRequest.class), any(zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest.class), any(), any(), any())).thenAnswer(call -> {
+            var preview = mock(zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview.class);
+            Optional<zeroecho.pki.api.Validity> frozen = call.getArgument(3); var bounds = frozen.orElseGet(() -> new zeroecho.pki.api.Validity(fixture.clock.instant(), fixture.clock.instant().plusSeconds(3600)));
+            var path = fixture.session.repository().authority(AUTHORITY).orElseThrow().issuanceChainPathId(); var pathCommitment = fixture.session.repository().chainPath(path).orElseThrow().pathCommitment();
+            var inputs = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("issuerBinding", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("1".repeat(64)), "provider", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("fixture-public-authority"), "path", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(pathCommitment)));
+            var key = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(8, Map.of(1, sdkText("fixture:issuer.prv"), 2, sdkText(zeroecho.core.alg.BootstrapAlgorithmIdentities.EC_P384_PUBLIC_KEY.canonicalForm()), 3, sdkText(zeroecho.core.alg.BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm()), 4, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.primaryAlgorithm(), 5, new byte[64]));
+            when(preview.issuerCaId()).thenReturn(AUTHORITY); when(preview.issuerId()).thenReturn(ISSUER); when(preview.chainPathId()).thenReturn(path); when(preview.chainPathCommitment()).thenReturn(pathCommitment);
+            when(preview.profile()).thenReturn(new CertificateProfileRef("leaf", 1, new byte[32])); when(preview.validity()).thenReturn(bounds); when(preview.issuerCertificateSha512()).thenReturn("0".repeat(128)); when(preview.primaryIssuerBindingFrame()).thenReturn(key); when(preview.alternativeIssuerBindingFrame()).thenReturn(Optional.empty());
+            when(preview.bindingSetCommitment()).thenReturn("sha512:" + java.util.HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(inputs.encode())));
+            when(preview.effectiveSubjectValue()).thenReturn(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("notBefore", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(bounds.notBefore().toString()), "notAfter", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(bounds.notAfter().toString()))));
+            when(preview.disclosurePolicy()).thenReturn(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of()));
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> supplied = call.getArgument(4);
+            when(preview.targetExtensionValue()).thenReturn(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("version", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.integer(1), "enrollment", supplied.orElseThrow().value(), "lifecycle", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of()), "bindingSetInputs", inputs)));
+            return preview;
+        });
+        return new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(admission, endpointCommitment, "https://example.invalid:443", auth, target, Optional.empty());
+    }
+    private static SdkKeys sdkKeys() throws Exception {
+        zeroecho.sdk.util.BouncyCastleActivator.init(); var ec = java.security.KeyPairGenerator.getInstance("EC"); ec.initialize(new java.security.spec.ECGenParameterSpec("secp384r1")); var primary = ec.generateKeyPair();
+        var ml = java.security.KeyPairGenerator.getInstance("ML-DSA", "BC"); ml.initialize(org.bouncycastle.jcajce.spec.MLDSAParameterSpec.ml_dsa_87); var alternative = ml.generateKeyPair();
+        var extensions = new org.bouncycastle.asn1.x509.ExtensionsGenerator(); extensions.addExtension(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.5.29.72"), false, alternative.getPublic().getEncoded());
+        byte[] request = new JcaPKCS10CertificationRequestBuilder(new javax.security.auth.x500.X500Principal("CN=SDK Client"), primary.getPublic())
+                .addAttribute(org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
+                .build(new JcaContentSignerBuilder("SHA384withECDSA").build(primary.getPrivate())).getEncoded();
+        return new SdkKeys(primary, alternative, request);
+    }
+    private static byte[] sdkSign(KeyPair key, String algorithm, byte[] bytes) throws Exception {
+        var signer = algorithm.equals("ML-DSA-87") ? java.security.Signature.getInstance(algorithm, "BC") : java.security.Signature.getInstance(algorithm);
+        if (algorithm.equals("ML-DSA-87")) signer.setParameter(new org.bouncycastle.jcajce.spec.ContextParameterSpec(new byte[0]));
+        signer.initSign(key.getPrivate()); signer.update(bytes); return signer.sign();
+    }
+    private static byte[] sdkText(String value) { return value.getBytes(java.nio.charset.StandardCharsets.UTF_8); }
+    private record SdkKeys(KeyPair primary, KeyPair alternative, byte[] csr) { }
+    private static final class SdkClock extends java.time.Clock {
+        private Instant current = ServerTestSupport.CLOCK.instant();
+        void advance(long seconds) { current = current.plusSeconds(seconds); }
+        @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+        @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+        @Override public Instant instant() { return current; }
     }
 
     private static ServerOperationGateway.Request gatewayRequest(String principal, ServerControlOperation operation,

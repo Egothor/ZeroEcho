@@ -116,9 +116,41 @@ final class CmpTestClient {
                 .build().toASN1Structure()));
     }
 
+    static PKIBody sdkEnrollment(KeyPair subject, KeyPair alternative, X509Certificate predecessor) throws Exception {
+        CertificateRequestMessageBuilder builder = new CertificateRequestMessageBuilder(REQUEST_ID)
+                .setSubject(new X500Name("CN=localhost")).setPublicKey(SubjectPublicKeyInfo.getInstance(subject.getPublic().getEncoded()));
+        builder.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.dNSName, "localhost")));
+        builder.addExtension(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.5.29.72"), false, alternative.getPublic().getEncoded());
+        if (predecessor != null) builder.addControl(new Control() {
+            @Override public org.bouncycastle.asn1.ASN1ObjectIdentifier getType() { return CRMFObjectIdentifiers.id_regCtrl_oldCertID; }
+            @Override public ASN1Encodable getValue() { return new CertId(new GeneralName(
+                    X500Name.getInstance(predecessor.getIssuerX500Principal().getEncoded())), predecessor.getSerialNumber()); }
+        });
+        return new PKIBody(predecessor == null ? 0 : 7, new CertReqMessages(builder
+                .setProofOfPossessionSigningKeySigner(new JcaContentSignerBuilder("SHA384withECDSA").build(subject.getPrivate()))
+                .build().toASN1Structure()));
+    }
+
+    static byte[] signedSdk(PKIBody body, byte[] transaction, byte[] nonce, byte[] recipientNonce, KeyPair signer,
+            X509Certificate certificate, X509Certificate responder) throws Exception {
+        var message = builder(body, transaction, nonce, recipientNonce,
+                X500Name.getInstance(certificate.getSubjectX500Principal().getEncoded()),
+                X500Name.getInstance(responder.getSubjectX500Principal().getEncoded()))
+                .setSenderKID(keyId(certificate)).setRecipKID(keyId(responder))
+                .addCMPCertificate(new X509CertificateHolder(certificate.getEncoded()));
+        return message.build(new JcaContentSignerBuilder("SHA384withECDSA").build(signer.getPrivate())).toASN1Structure().getEncoded();
+    }
+
     static PKIBody poll() { return new PKIBody(25, new PollReqContent(REQUEST_ID)); }
     static PKIBody confirmation(X509Certificate certificate, boolean accepted) throws Exception {
         CertStatus status = new CertStatus(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()), REQUEST_ID,
+                new PKIStatusInfo(accepted ? PKIStatus.granted : PKIStatus.rejection));
+        return new PKIBody(24, CertConfirmContent.getInstance(new DERSequence(status)));
+    }
+    static PKIBody sdkConfirmation(X509Certificate certificate, boolean accepted) throws Exception {
+        // The SDK fixture's actual native ECDSA-SHA384 certificate signature selects SHA384.
+        assertEquals("1.2.840.10045.4.3.3", certificate.getSigAlgOID());
+        CertStatus status = new CertStatus(MessageDigest.getInstance("SHA-384").digest(certificate.getEncoded()), REQUEST_ID,
                 new PKIStatusInfo(accepted ? PKIStatus.granted : PKIStatus.rejection));
         return new PKIBody(24, CertConfirmContent.getInstance(new DERSequence(status)));
     }

@@ -906,4 +906,125 @@ public interface SemanticSigningService {
      * @throws IllegalArgumentException if the correlation identifier is malformed
      */
     Optional<SemanticSigningOperation> findByCorrelation(SemanticSigningKind kind, String correlationId);
+
+    /**
+     * Evaluates a native enrollment target only when this implementation supports it.
+     * @param access authorized invocation @param request exact typed leaf operation
+     * @param parsed proof-bound request @param frozenValidity retained absolute validity
+     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
+     * @param cancellation cooperative cancellation @return immutable public preview
+     * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
+        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        return previewSdk(access, request, parsed, frozenValidity, cancellation);
+    }
+
+    /**
+     * Evaluates a native enrollment target only when this implementation supports it.
+     * @param access authorized invocation @param request exact typed leaf operation
+     * @param parsed proof-bound request @param frozenValidity retained absolute validity
+     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
+     * @param cancellation cooperative cancellation @return immutable public preview
+     * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
+        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        return previewSdk(access, request, parsed, frozenValidity, cancellation);
+    }
+
+    /**
+     * Evaluates a native enrollment target only when this implementation supports it.
+     * @param access authorized invocation @param request exact typed leaf operation
+     * @param parsed proof-bound request @param frozenValidity retained absolute validity
+     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
+     * @param cancellation cooperative cancellation @return immutable public preview
+     * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
+        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        return previewSdk(access, request, parsed, frozenValidity, cancellation);
+    }
+
+    /**
+     * Evaluates a native enrollment target only when this implementation supports it.
+     * @param access authorized invocation @param request exact typed leaf operation
+     * @param parsed proof-bound request @param frozenValidity retained absolute validity
+     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
+     * @param cancellation cooperative cancellation @return immutable public preview
+     * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
+        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        return previewSdk(access, request, parsed, frozenValidity, cancellation);
+    }
+
+    /**
+     * Prepares SDK issuance under an existing durable native correlation identity.
+     * @param access genuine native caller @param request frozen correlated operation
+     * @param parsed exact original request @param approval retained dual proof and target
+     * @param evidence trusted native execution evidence @param cancellation cancellation
+     * @return retained existing operation or exclusively owned prepared candidate
+     * @throws UnsupportedOperationException if correlated SDK preparation is unavailable
+     */
+    default CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Correlated SDK preparation unavailable");
+    }
+
+    /**
+     * Prepares SDK issuance under an existing durable native correlation identity.
+     * @param access genuine native caller @param request frozen correlated operation
+     * @param parsed exact original request @param approval retained dual proof and target
+     * @param evidence trusted native execution evidence @param cancellation cancellation
+     * @return retained existing operation or exclusively owned prepared candidate
+     * @throws UnsupportedOperationException if correlated SDK preparation is unavailable
+     */
+    default CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Correlated SDK preparation unavailable");
+    }
+
+    /**
+     * Prepares SDK issuance under an existing durable native correlation identity.
+     * @param access genuine native caller @param request frozen correlated operation
+     * @param parsed exact original request @param approval retained dual proof and target
+     * @param evidence trusted native execution evidence @param cancellation cancellation
+     * @return retained existing operation or exclusively owned prepared candidate
+     * @throws UnsupportedOperationException if correlated SDK preparation is unavailable
+     */
+    default CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Correlated SDK preparation unavailable");
+    }
 }

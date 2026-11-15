@@ -110,6 +110,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     private final RealmReconciliationWakeSignal reconciliationWake = new RealmReconciliationWakeSignal();
     private final SafeAudit audit;
     private final AdministrativeRequestCoordinator administrativeRequests;
+    private final Optional<HybridSdkHttpService> hybridSdkHttp;
     private final AtomicReference<State> state = new AtomicReference<>(State.OPEN);
     private final RetryableCloseGate closeGate = new RetryableCloseGate();
     private final AtomicBoolean closeAuditAttempted = new AtomicBoolean();
@@ -130,7 +131,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
             PkiSession session, RoleTemplateCatalog roles, AuthorizationEngine authorization,
             ApprovalService approvals, BreakGlassService breakGlass, DisclosureService disclosure,
             RepositoryAliasService repositoryAliases,
-            AuditorViews auditorViews, AuditSink auditSink, Clock clock) {
+            AuditorViews auditorViews, AuditSink auditSink, Clock clock, Optional<String> sdkOrigin) {
         this.configuration = configuration;
         this.control = control;
         this.enrollmentProfiles = new zeroecho.pki.server.enrollment.EnrollmentProfileService(control);
@@ -182,7 +183,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         this.gateway.installOcsp(ocspResponders);
         this.gateway.installManagedKeys(new ManagedKeyGenerationService(configuration, control, session.managedKeyGeneration()));
         this.gateway.installEnrollmentProfiles(enrollmentProfiles);
-        this.administrativeRequests = new AdministrativeRequestCoordinator(this, control, clock);
+        this.administrativeRequests = sdkOrigin.map(origin -> new AdministrativeRequestCoordinator(this, control, clock, origin))
+                .orElseGet(() -> new AdministrativeRequestCoordinator(this, control, clock));
+        this.hybridSdkHttp = sdkOrigin.map(origin -> new HybridSdkHttpService(this.administrativeRequests));
         this.approvals.onDecision(this.administrativeRequests::wake);
     }
 
@@ -202,6 +205,12 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
 
     static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random) {
+        return open(configuration, dependencies, clock, random, Optional.empty());
+    }
+
+    static ServerRealmContext open(ServerRealmConfiguration configuration,
+            PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random, Optional<String> sdkOrigin) {
+        Objects.requireNonNull(sdkOrigin, "sdkOrigin").ifPresent(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame::requireOrigin);
         ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
         zeroecho.pki.server.schema.OperationDescriptorCatalog.current();
         PkiSessionRuntimeDependencies runtime = confirmationProofRuntime(exact,
@@ -254,7 +263,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                     session.repository(), disclosure, clock, audit);
             AuditorViews views = new AuditorViews(clock, audit);
             ServerRealmContext result = new ServerRealmContext(exact, control, session, roles, authorization,
-                    approvals, breakGlass, disclosure, aliases, views, audit, clock);
+                    approvals, breakGlass, disclosure, aliases, views, audit, clock, sdkOrigin);
             if (audit.supportsQuery()) {
                 result.gateway.installAudit(audit, audit);
                 result.auditIntegrity.set(audit);
@@ -383,6 +392,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         return runtime.withKeyPossessionProofProviders(java.util.List.of(provider))
                 .withCredentialConfirmationProofPolicy(policy);
     }
+
+    /** @return configured administrative SDK facade; empty means disabled */
+    public Optional<HybridSdkHttpService> hybridSdkHttp() { requireOpen(); return hybridSdkHttp; }
 
     /**
      * Returns the realm-owned retained administrative workflow.

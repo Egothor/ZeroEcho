@@ -49,7 +49,7 @@ import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
 
 /** Verifies configuration-file wiring of issuance-approval policies with tamper-evident B' commitment. */
 class IssuanceApprovalConfigurationCodecTest {
-    private static final Path PRODUCTION_EXAMPLE = Path.of("..", "docs", "pki-server-production-example.json");
+    private static final Path PRODUCTION_EXAMPLE = Path.of("..", "documentation", "examples", "configuration", "pki-server-production-example.json");
 
     private static final ApprovalService.Policy ISSUANCE_SINGLE = new ApprovalService.Policy("issuance-single",
             1, Set.of("issuance-approver"), Set.of(), true, Duration.ofMillis(3_600_000L), true);

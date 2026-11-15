@@ -747,6 +747,13 @@ public final class ServerControlStore implements AutoCloseable {
      * @param requested finite nonempty atomic mutation set
      */
     public synchronized void mutateProtocol(List<ProtocolMutation> requested) {
+        mutateProtocol(requested, snapshot -> { });
+    }
+
+    @FunctionalInterface
+    private interface ProtocolSnapshotValidation { void validate(MetadataSnapshot snapshot) throws IOException; }
+
+    private void mutateProtocol(List<ProtocolMutation> requested, ProtocolSnapshotValidation validation) {
         requireOpen();
         List<ProtocolMutation> mutations = List.copyOf(Objects.requireNonNull(requested, "requested"));
         if (mutations.isEmpty() || mutations.size() > 256) {
@@ -759,6 +766,7 @@ public final class ServerControlStore implements AutoCloseable {
         }
         try (MetadataSnapshot snapshot = metadata.snapshot();
                 MetadataTransaction transaction = metadata.beginTransaction()) {
+            validation.validate(snapshot);
             for (ProtocolMutation mutation : mutations) {
                 ProtocolRecord value = mutation.record();
                 MetadataKey metadataKey = key(value.namespace(), value.recordId());
@@ -799,6 +807,129 @@ public final class ServerControlStore implements AutoCloseable {
     public synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
             Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval) {
         mutateAdministrativeRequest(request, expectedRequest, expectedApproval, approval, Optional.empty());
+    }
+
+    /**
+     * Counts live OPEN intents across the closed administrative/enrollment variants.
+     * Callers hold this control monitor through subsequent challenge creation.
+     * @param now trusted current time
+     * @return bounded live challenge count
+     */
+    public synchronized int openSdkIntentCount(Instant now) {
+        requireOpen(); Objects.requireNonNull(now, "now"); int count = 0;
+        try (var cursor = protocolSnapshot(HYBRID_SDK_INTENT)) {
+            Optional<ProtocolRecord> next;
+            while ((next = cursor.next()).isPresent()) if (HybridSdkAdmissionService.openAt(next.orElseThrow(), now)) count = Math.incrementExact(count);
+        }
+        return count;
+    }
+
+    /**
+     * Atomically consumes one SDK enrollment challenge and publishes its native receipt.
+     * Approval remains embedded in the enrollment transaction. CMP creation includes
+     * all native empty response slots; no signing or request-file write occurs here.
+     * Exact expected commitments are checked within the committing snapshot. An
+     * unconfirmed commit throws and requires the caller to fence dispatch and recover.
+     * @param prior exact OPEN intent
+     * @param consumed exact CONSUMED successor
+     * @param proposed immutable native enrollment with its SDK proof reference
+     * @param expectedCmp exact prior CMP manifest, absent for initial creation
+     * @param linkedCmp exact linked CMP manifest, absent outside CMP
+     */
+    public synchronized void mutateSdkEnrollment(
+            zeroecho.pki.server.enrollment.EnrollmentSdkIntent prior,
+            zeroecho.pki.server.enrollment.EnrollmentSdkIntent consumed,
+            zeroecho.pki.server.enrollment.EnrollmentTransaction proposed,
+            Optional<zeroecho.pki.server.enrollment.CmpTransaction> expectedCmp,
+            Optional<zeroecho.pki.server.enrollment.CmpTransaction> linkedCmp) {
+        requireOpen();
+        var codecPrior = zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.record(prior);
+        var codecConsumed = zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.record(consumed);
+        var enrollment = zeroecho.pki.server.enrollment.EnrollmentTransactionCodec.record(proposed);
+        var proof = proposed.intent().sdkProof().orElseThrow(() -> new IllegalArgumentException("SDK enrollment proof missing"));
+        var source = proposed.intent().source(); var target = prior.admission().target();
+        if (prior.state() != zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.OPEN
+                || consumed.state() != zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED
+                || !prior.id().equals(consumed.id()) || consumed.revision() != Math.incrementExact(prior.revision())
+                || !consumed.enrollmentId().equals(Optional.of(proposed.id())) || proposed.revision() != 1
+                || !proposed.decisions().isEmpty() || proposed.receipt().isPresent() || proposed.credentialId().isPresent()
+                || proposed.state() != (proposed.intent().approvalPolicy().isPresent()
+                        ? zeroecho.pki.server.enrollment.EnrollmentTransaction.State.PENDING
+                        : zeroecho.pki.server.enrollment.EnrollmentTransaction.State.APPROVED)
+                || !source.protocol().name().equals(target.protocol())
+                || !proof.intentId().equals(prior.id()) || !consumed.proofCommitment().equals(Optional.of(proof.proofCommitment()))
+                || !consumed.acceptedAt().equals(Optional.of(proof.acceptedAt()))
+                || !proof.authenticationContextSha512().equals("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(prior.authenticationContext().encode())))
+                || !proof.targetSha512().equals("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(prior.targetFrame().encode())))
+                || !proposed.intent().realmId().equals(prior.realmId())
+                || !proposed.intent().requester().equals(prior.admission().admission().requester())
+                || !proposed.intent().transactionId().equals(prior.admission().admission().transactionId())
+                || proposed.intent().operation() != prior.admission().admission().operation()
+                || proposed.intent().requestKind() != prior.originalPayload().kind()
+                || !proposed.intent().requestSha256().equals(digestBytes(prior.originalPayload().der()))
+                || proposed.intent().requestBytes() != prior.originalPayload().der().length
+                || !(source.protocol() == zeroecho.pki.server.enrollment.EnrollmentTransaction.Protocol.ACME
+                        ? source.recordId() : source.label()).equals(prior.admission().admission().endpointId())
+                || !source.label().equals(target.endpointId()) || !source.commitment().equals(target.endpointCommitment())
+                || source.revision() != target.sourceRevision() || !source.enrollmentProfileId().equals(target.enrollmentPolicyId())
+                || !source.enrollmentCommitment().equals(target.enrollmentPolicyCommitment())) throw new IllegalArgumentException("SDK enrollment linkage differs");
+        var normalized = new zeroecho.pki.server.enrollment.EnrollmentSdkIntent(consumed.id(), consumed.version(), consumed.realmId(),
+                consumed.admission(), consumed.originalPayload(), consumed.nativeWire(), consumed.primaryFrame(), consumed.authenticationContext(),
+                consumed.targetFrame(), consumed.issuedAt(), consumed.expiresAt(), zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.OPEN,
+                prior.revision(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+        if (!java.util.Arrays.equals(codecPrior.payload(), zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.encode(normalized))) {
+            throw new IllegalArgumentException("SDK enrollment frozen intent differs");
+        }
+        var mutations = new ArrayList<ProtocolMutation>();
+        mutations.add(new ProtocolMutation(codecConsumed, Optional.of(codecPrior.commitment())));
+        mutations.add(new ProtocolMutation(enrollment, Optional.empty()));
+        boolean cmp = proposed.intent().source().protocol() == zeroecho.pki.server.enrollment.EnrollmentTransaction.Protocol.CMP;
+        if (cmp != linkedCmp.isPresent() || !cmp && expectedCmp.isPresent()) throw new IllegalArgumentException("SDK CMP linkage differs");
+        if (cmp) {
+            var linked = linkedCmp.orElseThrow();
+            if (!prior.admission().cmpManifest().equals(Optional.of(linked.frozen())) || !linked.enrollmentId().equals(Optional.of(proposed.id()))) {
+                throw new IllegalArgumentException("SDK CMP manifest differs");
+            }
+            if (expectedCmp.isPresent()) {
+                var expected = expectedCmp.orElseThrow();
+                if (!expected.id().equals(linked.id()) || !expected.frozen().equals(linked.frozen()) || expected.enrollmentId().isPresent()
+                        || linked.revision() != Math.incrementExact(expected.revision())) throw new IllegalArgumentException("SDK CMP predecessor differs");
+                mutations.add(new ProtocolMutation(zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.cmpRecord(linked), Optional.of(expected.commitment())));
+            } else {
+                mutations.addAll(zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.cmpCreation(linked));
+            }
+        }
+        if (mutations.size() > 256) throw new IllegalArgumentException("SDK_TOO_LARGE");
+        requireSdkProtocolBudget(mutations);
+        mutateProtocol(mutations, snapshot -> {
+            try (var row = snapshot.get(key(HYBRID_SDK_INTENT, prior.id())).orElseThrow(() -> new IllegalStateException("SDK intent unavailable"))) {
+                var retained = decode(row, KIND_PROTOCOL, input -> readProtocol(input, HYBRID_SDK_INTENT));
+                zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.requireTarget(proposed.intent(),
+                        zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.decode(retained));
+                if (!retained.commitment().equals(codecPrior.commitment()) || !java.util.Arrays.equals(retained.payload(), codecPrior.payload())) {
+                    throw new IllegalStateException("SDK intent commitment conflict");
+                }
+            }
+        });
+    }
+
+    /**
+     * Measures the exact private SDK mutation vector using the frozen durable-control framing bound.
+     * Performs no authentication, persistence, reservation or authority decision.
+     * @param mutations complete proposed bounded phase vector
+     * @throws IllegalArgumentException if the SDK half-record budget or mutation count is exceeded
+     */
+    public static void requireSdkProtocolBudget(List<ProtocolMutation> mutations) {
+        long total = 256;
+        for (var mutation : mutations) {
+            var record = mutation.record(); var metadataKey = key(record.namespace(), record.recordId());
+            int valueBytes = encode(output -> writeProtocol(output, record)).length;
+            long framing = 72L + 8L + metadataKey.namespace().getBytes(StandardCharsets.UTF_8).length
+                    + metadataKey.key().getBytes(StandardCharsets.UTF_8).length
+                    + (mutation.expectedCommitment().isPresent() ? 16L : 8L);
+            total = Math.addExact(total, Math.addExact(framing, valueBytes));
+        }
+        if (total > MAXIMUM_RECORD_BYTES / 2 || mutations.size() > 256) throw new IllegalArgumentException("SDK_TOO_LARGE");
     }
 
     /**
@@ -1201,6 +1332,11 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static MetadataKey key(String namespace, String identity) {
         return new MetadataKey(namespace, digest(identity));
+    }
+
+    private static String digestBytes(byte[] value) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
+        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
 
     private static String digest(String value) {

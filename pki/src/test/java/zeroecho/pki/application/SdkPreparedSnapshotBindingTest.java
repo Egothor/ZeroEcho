@@ -122,11 +122,79 @@ final class SdkPreparedSnapshotBindingTest {
             assertEquals(0, stages.get());
         }
     }
+    @Test void enrollmentTargetSurvivesActualPreparationAndRejectsPolicySubstitution(@TempDir Path path) throws Exception {
+        var fixture = fixture(path);
+        var signingCalls = new AtomicInteger();
+        fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    if (method.getName().equals("sign") || method.getName().equals("dispatch")) signingCalls.incrementAndGet();
+                    return invoke(provider, method, args);
+                });
+        try (var session = fixture.open()) {
+            PkiId ca = fixture.create(session);
+            RootCreationFixture.install(fixture.store, leaf(1));
+            var client = client();
+            var operation = new PkiSigningOperation.IssueCredential(ca, client.parsed().primary().requestId(), "sdk-race");
+            var commands = session.signingCommands().orElseThrow();
+            var ordinary = commands.previewSdk(operation, RootCreationFixture.ACCESS, client.parsed(), Optional.empty(), CancellationSignal.NONE);
+            assertArrayEquals(HybridSdkValue.object(Map.of()).encode(), ordinary.targetExtensionValue().encode());
+            var enrollment = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "EST", "endpoint", 1,
+                    "0".repeat(64), "policy", 1, "1".repeat(64), "ISSUE",
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, "2".repeat(64), "sha512:" + "3".repeat(128));
+            var preview = commands.previewSdk((PkiSigningOperation) operation, RootCreationFixture.ACCESS, client.parsed(),
+                    Optional.empty(), Optional.of(enrollment), CancellationSignal.NONE);
+            var signedTarget = target(preview, operation);
+            var proof = approval(preview, signedTarget, client);
+            var changed = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "EST", "endpoint", 1,
+                    "0".repeat(64), "policy", 2, "4".repeat(64), "ISSUE",
+                    zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, "2".repeat(64), "sha512:" + "3".repeat(128));
+            var changedPreview = commands.previewSdk((PkiSigningOperation) operation, RootCreationFixture.ACCESS, client.parsed(),
+                    Optional.of(preview.validity()), Optional.of(changed), CancellationSignal.NONE);
+            var altered = new SdkIssuanceApproval(changedPreview, proof.primaryFrame(), proof.targetFrame(),
+                    proof.primaryProof(), proof.alternativeProof(), proof.expectedF3(), proof.proofAcceptedAt());
+            assertThrows(PkiException.class, () -> commands.prepareSdk(operation, RootCreationFixture.ACCESS, client.parsed(),
+                    altered, Optional.empty(), CancellationSignal.NONE));
+            var service = session.semanticSigning().orElseThrow();
+            var intent = new zeroecho.pki.api.issuance.IssuanceIntent("enrollment-sdk-1", "5".repeat(64),
+                    preview.profile(), preview.issuerId(), preview.chainPathId(), preview.chainPathCommitment());
+            var correlated = new zeroecho.pki.api.issuance.CorrelatedEndEntityIssuanceRequest(
+                    new zeroecho.pki.api.issuance.EndEntityIssuanceRequest(ca, client.parsed().originalPayload(), "sdk-race", Optional.empty()), intent);
+            var prepared = assertInstanceOf(zeroecho.pki.api.issuance.CorrelatedIssuancePreparation.Prepared.class,
+                    service.prepareSdk(RootCreationFixture.ACCESS, correlated, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE));
+            var accepted = service.accept(prepared.prepared());
+            var retainedBinding = service.issuanceBinding(correlated);
+            assertEquals(intent.issuanceId(), retainedBinding.issuanceId());
+            assertEquals(preview.issuerId(), retainedBinding.expectedIssuerId());
+            assertEquals(preview.chainPathCommitment(), retainedBinding.expectedChainPathCommitment());
+            assertEquals(accepted.receipt().operationId(), service.findIssuance(retainedBinding).orElseThrow().submissionId().id());
+            assertInstanceOf(LocalSigningResult.Completed.class,
+                    session.localSigning().orElseThrow().complete(accepted.receipt().operationId(), CancellationSignal.NONE));
+            int signedBeforeReplay = signingCalls.get();
+            var replay = assertInstanceOf(zeroecho.pki.api.issuance.CorrelatedIssuancePreparation.Existing.class,
+                    service.prepareSdk(RootCreationFixture.ACCESS, correlated, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE));
+            assertEquals(accepted.receipt().operationId(), replay.operation().submissionId().id());
+            assertEquals(signedBeforeReplay, signingCalls.get());
+            assertNotEquals(intent.commandCommitment(), retainedBinding.effectiveCommitment());
+            var alteredIntent = new zeroecho.pki.api.issuance.IssuanceIntent(intent.issuanceId(), "6".repeat(64),
+                    preview.profile(), preview.issuerId(), preview.chainPathId(), preview.chainPathCommitment());
+            var conflicting = new zeroecho.pki.api.issuance.CorrelatedEndEntityIssuanceRequest(correlated.request(), alteredIntent);
+            assertThrows(PkiException.class, () -> service.prepareSdk(RootCreationFixture.ACCESS, conflicting, client.parsed(),
+                    proof, Optional.empty(), CancellationSignal.NONE));
+            byte[] badProof = proof.primaryProof(); badProof[badProof.length - 1] ^= 1;
+            var invalid = new SdkIssuanceApproval(preview, proof.primaryFrame(), proof.targetFrame(), badProof,
+                    proof.alternativeProof(), proof.expectedF3(), proof.proofAcceptedAt());
+            assertThrows(PkiException.class, () -> service.prepareSdk(RootCreationFixture.ACCESS, correlated, client.parsed(),
+                    invalid, Optional.empty(), CancellationSignal.NONE));
+        }
+    }
+
     @Test void lifecycleKeepsBothSubjectKeysAndVerifiesOriginalIssuerAfterBothIssuerRolesRotate(@TempDir Path path) throws Exception {
         var fixture = fixture(path);
         var oldKeysUnavailable = new AtomicBoolean();
+        var signingCalls = new AtomicInteger();
         fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
                 new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    if (method.getName().equals("sign") || method.getName().equals("dispatch")) signingCalls.incrementAndGet();
                     KeyRef key = null;
                     if (method.getName().equals("dispatch")) key = ((SigningProvider.SignRequest) args[0]).keyRef();
                     else if (method.getName().equals("resolvePublicKeyInfo") || method.getName().equals("sign")) key = (KeyRef) args[0];
@@ -166,7 +234,7 @@ final class SdkPreparedSnapshotBindingTest {
             assertEquals(original, preview.lifecycleTarget().orElseThrow().predecessorId());
             assertArrayEquals(client.primary().getPublic().getEncoded(), preview.primarySubjectSpki().bytes());
             assertArrayEquals(client.alternative().getPublic().getEncoded(), preview.alternativeSubjectSpki().bytes());
-            renewed = completeSdk(session, renew, client);
+            renewed = completeCorrelatedSdkLifecycle(session, renew, client, signingCalls);
             reissued = completeSdk(session, new PkiSigningOperation.ReissueCredential(renewed), client);
             for (PkiId id : List.of(renewed, reissued)) {
                 var certificate = fixture.certificate(id);
@@ -176,7 +244,7 @@ final class SdkPreparedSnapshotBindingTest {
                 assertArrayEquals(client.alternative().getPublic().getEncoded(), zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72"));
             }
             var newClient = client();
-            replacement = completeSdk(session, new PkiSigningOperation.ReplaceCredential(reissued, newClient.parsed().primary().requestId(), "sdk-race"), newClient);
+            replacement = completeCorrelatedSdkLifecycle(session, new PkiSigningOperation.ReplaceCredential(reissued, newClient.parsed().primary().requestId(), "sdk-race"), newClient, signingCalls);
             var replaced = fixture.certificate(replacement);
             replaced.verify(fixture.rotatedKey.getPublic(), "BC");
             assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(replaced, fixture.rotatedAltKey.getPublic()));
@@ -397,6 +465,57 @@ final class SdkPreparedSnapshotBindingTest {
                 HybridIssuanceFixture.CLOCK.instant());
     }
 
+    private static PkiId completeCorrelatedSdkLifecycle(PkiSession session, PkiSigningOperation operation,
+            Client client, AtomicInteger signingCalls) throws Exception {
+        var commands = session.signingCommands().orElseThrow();
+        var service = session.semanticSigning().orElseThrow();
+        var preview = commands.previewSdk(operation, RootCreationFixture.ACCESS, client.parsed(), Optional.empty(), CancellationSignal.NONE);
+        var proof = approval(preview, target(preview, operation), client);
+        boolean renewal = operation instanceof PkiSigningOperation.RenewCredential;
+        PkiId predecessor = renewal ? ((PkiSigningOperation.RenewCredential) operation).credentialId()
+                : ((PkiSigningOperation.ReplaceCredential) operation).existingCredentialId();
+        var predecessorRecord = session.repository().credential(predecessor).orElseThrow();
+        String predecessorDigest = predecessorRecord.content().sha256();
+        var intent = new zeroecho.pki.api.issuance.IssuanceIntent(renewal ? "sdk-correlated-renew" : "sdk-correlated-replace",
+                "7".repeat(64), preview.profile(), preview.issuerId(), preview.chainPathId(), preview.chainPathCommitment());
+        var renewed = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(preview.issuerCaId(),
+                new zeroecho.pki.api.issuance.EndEntityRenewalRequest(predecessor, Optional.empty()), predecessorDigest,
+                intent, Optional.of(client.parsed().originalPayload()));
+        var replaced = new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(preview.issuerCaId(),
+                new zeroecho.pki.api.issuance.EndEntityReplacementRequest(predecessor, client.parsed().originalPayload(), "sdk-race"),
+                predecessorDigest, intent);
+        var preparation = renewal
+                ? service.prepareSdk(RootCreationFixture.ACCESS, renewed, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE)
+                : service.prepareSdk(RootCreationFixture.ACCESS, replaced, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE);
+        var prepared = assertInstanceOf(zeroecho.pki.api.issuance.CorrelatedIssuancePreparation.Prepared.class, preparation);
+        var accepted = service.accept(prepared.prepared());
+        assertEquals(accepted.receipt().operationId(), (renewal ? service.findRenewal(renewed) : service.findReplacement(replaced))
+                .orElseThrow().submissionId().id());
+        var completed = assertInstanceOf(LocalSigningResult.Completed.class,
+                session.localSigning().orElseThrow().complete(accepted.receipt().operationId(), CancellationSignal.NONE));
+        int beforeReplay = signingCalls.get();
+        var replay = renewal
+                ? service.prepareSdk(RootCreationFixture.ACCESS, renewed, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE)
+                : service.prepareSdk(RootCreationFixture.ACCESS, replaced, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE);
+        assertEquals(accepted.receipt().operationId(), assertInstanceOf(
+                zeroecho.pki.api.issuance.CorrelatedIssuancePreparation.Existing.class, replay).operation().submissionId().id());
+        assertEquals(beforeReplay, signingCalls.get());
+        String changedDigest = predecessorDigest.equals("0".repeat(64)) ? "1".repeat(64) : "0".repeat(64);
+        if (renewal) {
+            var changed = new zeroecho.pki.api.issuance.CorrelatedEndEntityRenewalRequest(preview.issuerCaId(), renewed.request(),
+                    changedDigest, intent, renewed.originalRequest());
+            assertThrows(PkiException.class, () -> service.prepareSdk(RootCreationFixture.ACCESS, changed, client.parsed(), proof,
+                    Optional.empty(), CancellationSignal.NONE));
+        } else {
+            var changed = new zeroecho.pki.api.issuance.CorrelatedEndEntityReplacementRequest(preview.issuerCaId(), replaced.request(),
+                    changedDigest, intent);
+            assertThrows(PkiException.class, () -> service.prepareSdk(RootCreationFixture.ACCESS, changed, client.parsed(), proof,
+                    Optional.empty(), CancellationSignal.NONE));
+        }
+        assertEquals(beforeReplay, signingCalls.get());
+        return new PkiId(((PkiOperationValue.Text) completed.result().fields().get("credentialId")).value());
+    }
+
     private static PkiId completeSdk(PkiSession session, PkiSigningOperation operation, Client client) throws Exception {
         var commands = session.signingCommands().orElseThrow();
         var preview = commands.previewSdk(operation, RootCreationFixture.ACCESS, client.parsed(), Optional.empty(), CancellationSignal.NONE);
@@ -445,7 +564,7 @@ final class SdkPreparedSnapshotBindingTest {
         f.put(11, ByteBuffer.allocate(8).putLong(p.profile().profileVersion()).array());
         f.put(12, text("sha256:" + HexFormat.of().formatHex(p.profile().canonicalSha256()))); f.put(13, text(p.bindingSetCommitment()));
         f.put(14, text("sha256:" + "0".repeat(64))); f.put(15, p.effectiveSubjectValue().encode());
-        f.put(16, p.disclosurePolicy().encode()); f.put(17, HybridSdkValue.object(Map.of()).encode()); return new HybridSdkFrame(7, f);
+        f.put(16, p.disclosurePolicy().encode()); f.put(17, p.targetExtensionValue().encode()); return new HybridSdkFrame(7, f);
     }
     private static HybridSdkFrame first(ParsedHybridSdkRequest p, byte[] csr, HybridSdkFrame target) {
         var f = new TreeMap<Integer, byte[]>(); f.put(1, text("zeroecho-hybrid-sdk-v1")); f.put(2, text("race-realm"));

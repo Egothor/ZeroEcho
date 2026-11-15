@@ -566,7 +566,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         Objects.requireNonNull(prepared, "prepared");
         try {
             signing.requireAvailable();
-            Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT).throwIfCancelled();
+            Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
             var parent = signing.newSubmissionId();
             var hybrid = prepared.hybrid();
             if (hybrid.isPresent()) {
@@ -1318,5 +1318,106 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         }
         return new SemanticSigningScope(SemanticSigningKind.valueOf(kind.name()), command.operation(),
                 access, key, authority, subjectAuthority, profile, Optional.empty());
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdk(access, request, parsed, frozenValidity, enrollmentTarget, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK preview failed", failure); }
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdkLifecycle(access, request, parsed, frozenValidity, enrollmentTarget, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK preview failed", failure); }
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdkLifecycle(access, request, parsed, frozenValidity, enrollmentTarget, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK preview failed", failure); }
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
+            zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdkLifecycle(access, request, parsed, frozenValidity, enrollmentTarget, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK preview failed", failure); }
+    }
+
+    @Override public CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityIssuanceRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.request().issuerCaId().value(), request.intent().expectedProfile().profileId());
+        EndEntitySigningPreparation.validateSdkApproval(parsed, approval);
+        EndEntitySigningPreparation.validateCorrelatedSdkBinding(request, parsed, approval);
+        var existing = findIssuance(request);
+        if (existing.isPresent()) return new CorrelatedIssuancePreparation.Existing(existing.orElseThrow());
+        try {
+            cancellation.throwIfCancelled();
+            var domain = endEntity.prepareCorrelatedSdk(access, request, parsed, approval,
+                    signing.newSubmissionId(), signing.signingTtl(), evidence, cancellation);
+            return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
+        } catch (IOException failure) { throw new PkiException("Correlated SDK preparation failed", failure); }
+    }
+
+    @Override public CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.issuerCaId().value(), request.intent().expectedProfile().profileId());
+        EndEntitySigningPreparation.validateSdkApproval(parsed, approval);
+        EndEntitySigningPreparation.validateCorrelatedSdkBinding(request, parsed, approval);
+        var existing = findRenewal(request);
+        if (existing.isPresent()) return new CorrelatedIssuancePreparation.Existing(existing.orElseThrow());
+        try {
+            cancellation.throwIfCancelled();
+            var domain = endEntity.prepareCorrelatedSdk(access, request, parsed, approval,
+                    signing.newSubmissionId(), signing.signingTtl(), evidence, cancellation);
+            return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
+        } catch (IOException failure) { throw new PkiException("Correlated SDK preparation failed", failure); }
+    }
+
+    @Override public CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.issuerCaId().value(), request.intent().expectedProfile().profileId());
+        EndEntitySigningPreparation.validateSdkApproval(parsed, approval);
+        EndEntitySigningPreparation.validateCorrelatedSdkBinding(request, parsed, approval);
+        var existing = findReplacement(request);
+        if (existing.isPresent()) return new CorrelatedIssuancePreparation.Existing(existing.orElseThrow());
+        try {
+            cancellation.throwIfCancelled();
+            var domain = endEntity.prepareCorrelatedSdk(access, request, parsed, approval,
+                    signing.newSubmissionId(), signing.signingTtl(), evidence, cancellation);
+            return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
+        } catch (IOException failure) { throw new PkiException("Correlated SDK preparation failed", failure); }
     }
 }

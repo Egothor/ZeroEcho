@@ -172,8 +172,11 @@ public final class HybridSdkFrame {
             }
             case 3 -> { length(1, 64); length(2, 64); length(5, 64); requirePrimaryProofSyntax(field(3)); length(4, 4627); }
             case 6 -> {
-                identifier(1); if (!java.util.Set.of("direct-mtls-v1", "trusted-proxy-mtls-v1").contains(text(2))) throw invalid();
-                length(3, 64); if (!text(4).equals("admin-http-v1")) throw invalid(); requireAuthenticationValues();
+                identifier(1); length(3, 64);
+                if (java.util.Set.of("direct-mtls-v1", "trusted-proxy-mtls-v1").contains(text(2))) {
+                    if (!text(4).equals("admin-http-v1")) throw invalid();
+                    requireAuthenticationValues();
+                } else requireEnrollmentAuthenticationValues();
             }
             case 7 -> {
                 for (int tag : new int[] {1, 3, 4, 5, 6, 10}) identifier(tag);
@@ -198,6 +201,80 @@ public final class HybridSdkFrame {
             default -> throw invalid();
         }
     }
+    private void requireEnrollmentAuthenticationValues() {
+        String[] keys;
+        String carrier;
+        switch (text(2)) {
+            case "acme-account-jws-v1" -> {
+                carrier = "acme-v1";
+                keys = new String[]{"endpointId", "endpointCommitment", "accountId", "accountKeySha256", "orderId", "orderCommitment", "authorizationCommitment", "identifiers", "requestKind"};
+            }
+            case "est-mtls-v1" -> {
+                carrier = "est-v1";
+                keys = new String[]{"endpointId", "endpointCommitment", "certificateSha256", "canonicalKeySha256", "issuerSerialSha256", "operation", "predecessorId", "requestKind"};
+            }
+            case "scep-cms-v1" -> {
+                carrier = "scep-v1";
+                keys = new String[]{"endpointId", "endpointCommitment", "signerCertificateSha256", "transactionIdSha256", "senderNonceSha256", "nativeMessageSha512", "challengePolicyCommitment", "challengeAuthenticated", "messageType", "requestKind"};
+            }
+            case "cmp-signature-v1", "cmp-pbm-v1" -> {
+                carrier = "cmp-v1";
+                keys = new String[]{"endpointId", "endpointCommitment", "authenticationPolicyCommitment", "manifestCommitment", "transactionIdSha256", "certReqId", "bodyType", "originalWireSha512", "senderNonceSha256", "recipientNonceSha256", "authenticationCredentialId", "authenticationCredentialRevision", "requestKind"};
+            }
+            default -> throw invalid();
+        }
+        if (!text(4).equals(carrier)) throw invalid();
+        var values = HybridSdkValue.decode(field(5)).objectFields();
+        if (!values.keySet().equals(java.util.Set.of(keys))) throw invalid();
+        for (String key : keys) {
+            var value = values.get(key);
+            if (key.equals("identifiers")) { requireAcmeIdentifiers(value); continue; }
+            if (key.equals("challengeAuthenticated")) {
+                if (!Arrays.equals(value.encode(), HybridSdkValue.bool(true).encode())) throw invalid();
+                continue;
+            }
+            if (key.equals("authenticationCredentialRevision")) {
+                if (value.integerValue() < 0) throw invalid(); continue;
+            }
+            String text = value.textValue();
+            boolean empty = key.equals("recipientNonceSha256") || key.equals("predecessorId");
+            if ((!empty && text.isEmpty()) || text.length() > 8192) throw invalid();
+            if (key.endsWith("Sha256") && !(empty && text.isEmpty()) && !text.matches("[0-9a-f]{64}")) throw invalid();
+            if (key.endsWith("Sha512") && !text.matches("sha512:[0-9a-f]{128}")) throw invalid();
+            if (key.equals("certReqId") && (!text.matches("0|[1-9][0-9]{0,19}")
+                    || new java.math.BigInteger(text).bitLength() > 64)) throw invalid();
+            if (key.equals("requestKind") && !text.equals(carrier.equals("cmp-v1") ? "CRMF" : "PKCS10")) throw invalid();
+            if (key.equals("operation") && !java.util.Set.of("simpleenroll", "simplereenroll").contains(text)) throw invalid();
+            if (key.equals("authenticationCredentialId") && (!text.matches("[\\x21-\\x7e]{1,128}"))) throw invalid();
+        }
+        if (carrier.equals("est-v1")) {
+            boolean enroll = values.get("operation").textValue().equals("simpleenroll");
+            if (enroll != values.get("predecessorId").textValue().isEmpty()) throw invalid();
+        }
+    }
+
+    private static void requireAcmeIdentifiers(HybridSdkValue value) {
+        var identifiers = value.listValues();
+        if (identifiers.isEmpty()) throw invalid();
+        String previous = null;
+        for (var identifier : identifiers) {
+            var item = identifier.objectFields();
+            if (!item.keySet().equals(java.util.Set.of("type", "value", "wildcard"))
+                    || !item.get("type").textValue().equals("dns")) throw invalid();
+            String dns = item.get("value").textValue();
+            if (dns.length() > 253 || !dns.matches("[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?")) throw invalid();
+            for (String label : dns.split("\\.", -1)) {
+                if (label.isEmpty() || label.length() > 63 || label.startsWith("-") || label.endsWith("-")) throw invalid();
+            }
+            byte[] wildcard = item.get("wildcard").encode();
+            if (!Arrays.equals(wildcard, HybridSdkValue.bool(false).encode())
+                    && !Arrays.equals(wildcard, HybridSdkValue.bool(true).encode())) throw invalid();
+            String coordinate = dns + "\u0000" + (wildcard[1] == 0 ? "0" : "1");
+            if (previous != null && previous.compareTo(coordinate) >= 0) throw invalid();
+            previous = coordinate;
+        }
+    }
+
     private void requireAuthenticationValues() {
         byte[] encoded = HybridSdkValue.decode(field(5)).encode();
         try (var input = new DataInputStream(new ByteArrayInputStream(encoded))) {

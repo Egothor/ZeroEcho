@@ -141,6 +141,13 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
     /* default */ SdkPrepared prepareSdk(AccessContext access, Object command,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
             boolean preview, CancellationSignal cancellation) throws IOException {
+        return prepareSdk(access, command, parsed, frozenValidity, preview, Optional.empty(), Optional.empty(), cancellation);
+    }
+
+    /* default */ SdkPrepared prepareSdk(AccessContext access, Object command,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
+            boolean preview, Optional<IssuanceIntent> intent, Optional<Object> correlation,
+            CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         PkiId predecessorId;
         String operation;
@@ -154,6 +161,20 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         } else throw new UnsupportedOperationException("Unsupported SDK lifecycle operation");
         var evaluation = status.beginEvaluation();
         Predecessor predecessor = predecessor(predecessorId, cancellation);
+        correlation.ifPresent(value -> {
+            PkiId issuer; String digest;
+            if (value instanceof CorrelatedEndEntityRenewalRequest renewal) {
+                issuer = renewal.issuerCaId(); digest = renewal.predecessorSha256();
+                renewal.originalRequest().ifPresent(original -> {
+                    if (original.kind() != parsed.originalPayload().kind()
+                            || !Arrays.equals(original.der(), parsed.originalPayload().der())) throw reject("SDK_REQUEST_MISMATCH");
+                });
+            } else if (value instanceof CorrelatedEndEntityReplacementRequest replacement) {
+                issuer = replacement.issuerCaId(); digest = replacement.predecessorSha256();
+            } else throw reject("SDK_CORRELATION_INVALID");
+            if (!issuer.equals(predecessor.credential().issuerRef().caId())
+                    || !digest.equals(predecessor.credential().content().sha256())) throw reject("PREDECESSOR_BINDING_MISMATCH");
+        });
         boolean replacement = command instanceof EndEntityReplacementRequest;
         boolean samePrimary = Arrays.equals(parsed.primary().publicKeyInfo().bytes(), predecessor.request().publicKeyInfo().bytes());
         if (!replacement) {
@@ -166,12 +187,13 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         String profile = replacement ? ((EndEntityReplacementRequest) command).profileId()
                 : ((EndEntityProfileBinding) predecessor.credential().profileBinding()).reference().profileId();
         var payload = zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(parsed.primary());
-        if (replacement && !Arrays.equals(((EndEntityReplacementRequest) command).payload().der(), payload.der())) {
+        if (replacement && (((EndEntityReplacementRequest) command).payload().kind() != payload.kind()
+                || !Arrays.equals(((EndEntityReplacementRequest) command).payload().der(), payload.der()))) {
             throw reject("SDK_REQUEST_MISMATCH");
         }
         var issued = issuance.prepareSdk(access, new zeroecho.pki.api.issuance.EndEntityIssuanceRequest(
                 predecessor.credential().issuerRef().caId(), payload, profile, validity), parsed,
-                frozenValidity, preview, evaluation, cancellation);
+                frozenValidity, preview, evaluation, intent, cancellation);
         if (!replacement && (!predecessor.request().subjectRdns().equals(issued.request().subjectRdns())
                 || !predecessor.request().subjectAlternativeNames().equals(issued.request().subjectAlternativeNames())
                 || !Arrays.equals(predecessor.subjectDer(), BcX509ProfileSupport.subject(issued.request().subjectRdns()).getEncoded()))) {

@@ -215,7 +215,9 @@ final class SelectionGatewayTest {
     }
 
     private static PkiOperationExecutor selectionExecutor() {
-        return mock(PkiOperationExecutor.class, withSettings().extraInterfaces(PkiSelectionExecutor.class, PkiConfigurationChoicesSource.class));
+        var executor = mock(PkiOperationExecutor.class, withSettings().extraInterfaces(PkiSelectionExecutor.class, PkiConfigurationChoicesSource.class));
+        when(executor.normalize(any())).thenAnswer(call -> call.getArgument(0));
+        return executor;
     }
     private static void allow(ServerTestSupport.OpenedStore opened, Permission.Action action, Permission.ResourceType type) {
         opened.store().createGrant(ServerTestSupport.grant("allow", "operator", Permission.Effect.ALLOW, action, type,

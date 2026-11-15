@@ -113,6 +113,11 @@ final class CmpHttpHandler implements HttpHandler {
 
     private Response route(HttpExchange exchange, ServerRuntime.CancellationToken cancellation) throws IOException, CmpProtocolException {
         cancellation.throwIfCancelled();
+        String sdkPath = exchange.getRequestURI().getPath();
+        if (sdkPath.startsWith("/pkix/")) {
+            String[] parts = sdkPath.substring(6).split("/", -1);
+            if (parts.length >= 2 && "hybrid-sdk".equals(parts[1])) return sdkRoute(exchange, parts, cancellation);
+        }
         if (!"POST".equals(exchange.getRequestMethod())) {
             return error(405, "CMP requires POST");
         }
@@ -143,6 +148,39 @@ final class CmpHttpHandler implements HttpHandler {
         }
         cancellation.throwIfCancelled();
         return new Response(200, "application/pkixcmp", service.processMessage(endpoint, body, cancellation));
+    }
+
+    private Response sdkRoute(HttpExchange exchange, String[] parts, ServerRuntime.CancellationToken cancellation) throws IOException, CmpProtocolException {
+        if (configuration.hybridSdk().isEmpty()) return error(404, "CMP SDK unavailable");
+        var uri = exchange.getRequestURI();
+        if (!uri.getRawPath().equals(uri.getPath()) || uri.getRawQuery() != null || uri.getFragment() != null
+                || parts.length < 3 || parts[0].isEmpty() || !"v1".equals(parts[2])) return error(404, "CMP SDK endpoint not found");
+        var endpoint = service.find(parts[0]).orElse(null);
+        if (endpoint == null) return error(404, "CMP endpoint not found");
+        int limit = Math.min(configuration.maximumBodyBytes(), CmpProtectedMessage.MAXIMUM_MESSAGE_BYTES);
+        String origin = configuration.hybridSdk().orElseThrow().canonicalOrigin();
+        if (parts.length == 3) {
+            if (!"GET".equals(exchange.getRequestMethod())) return error(405, "CMP SDK capability requires GET");
+            if (!service.hybridSdkAvailable(endpoint)) return error(404, "CMP SDK unavailable");
+            return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.capability("/pkix/" + parts[0] + "/hybrid-sdk/v1", java.util.List.of("ir", "cr", "kur"), origin, limit));
+        }
+        if (parts.length != 4 || !java.util.Set.of("challenge", "accept").contains(parts[3])) return error(404, "CMP SDK endpoint not found");
+        if (!"POST".equals(exchange.getRequestMethod())) return error(405, "CMP SDK requires POST");
+        String type = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (type == null || !HybridSdkHttpCodec.MEDIA_TYPE.equalsIgnoreCase(type.trim())) return error(415, "CMP SDK content type required");
+        byte[] body;
+        try (InputStream input = exchange.getRequestBody()) { body = input.readNBytes(limit + 1); }
+        if (body.length > limit) return error(413, "CMP SDK body exceeds configured limit");
+        boolean accept = parts[3].equals("accept");
+        var fields = HybridSdkHttpCodec.parse(body, limit, accept, java.util.Set.of("messageDer"));
+        byte[] wire = HybridSdkHttpCodec.bytes(fields, "messageDer", 1, CmpProtectedMessage.MAXIMUM_MESSAGE_BYTES);
+        if (!accept) {
+            var challenge = service.challengeSdk(endpoint, wire, HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32), origin, cancellation);
+            return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.challenge(challenge.intentId(), challenge.primaryFrame(), challenge.targetFrame()));
+        }
+        return new Response(200, "application/pkixcmp", service.acceptSdk(endpoint, wire, HybridSdkHttpCodec.text(fields, "intentId"),
+                HybridSdkHttpCodec.text(fields, "sdkRequestId"), HybridSdkHttpCodec.bytes(fields, "primaryProof", 1, 104),
+                HybridSdkHttpCodec.bytes(fields, "alternativeProof", 4627, 4627), origin, cancellation));
     }
 
     private static Response error(int status, String message) { return new Response(status, TEXT, message.getBytes(StandardCharsets.UTF_8)); }

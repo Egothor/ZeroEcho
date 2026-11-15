@@ -34,6 +34,7 @@
 
 package zeroecho.pki.server;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.nio.charset.StandardCharsets;
@@ -88,8 +89,28 @@ class SigningConfigurationCodecTest {
                 SIGNING.replace("[\"key:a\"]", "[\"key:a\",\"key:a\"]")));
     }
 
+    @Test void sdkListenerOptInIsExplicitCanonicalAndBodyBounded() throws Exception {
+        String example = Files.readString(Path.of("..", "documentation", "examples", "configuration", "pki-server-production-example.json"));
+        var document = (zeroecho.pki.application.PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(
+                example.getBytes(StandardCharsets.UTF_8), 1_048_576);
+        var root = new java.util.TreeMap<>(document.fields());
+        var listener = new java.util.TreeMap<>(((zeroecho.pki.application.PkiOperationValue.ObjectValue) root.get("listener")).fields());
+        listener.put("hybridSdk", new zeroecho.pki.application.PkiOperationValue.ObjectValue(java.util.Map.of(
+                "canonicalOrigin", new zeroecho.pki.application.PkiOperationValue.Text("https://sdk.example.invalid:443"))));
+        root.put("listener", new zeroecho.pki.application.PkiOperationValue.ObjectValue(listener));
+        var configured = PkiServerConfigurationCodec.decode(zeroecho.pki.server.http.StrictJson.encode(
+                new zeroecho.pki.application.PkiOperationValue.ObjectValue(root)));
+        assertEquals("https://sdk.example.invalid:443", configured.listener().hybridSdk().orElseThrow().canonicalOrigin());
+        assertTrue(PkiServerConfigurationCodec.decode(example.getBytes(StandardCharsets.UTF_8)).listener().hybridSdk().isEmpty());
+        listener.put("maximumBodyBytes", new zeroecho.pki.application.PkiOperationValue.IntegerValue(8192));
+        root.put("listener", new zeroecho.pki.application.PkiOperationValue.ObjectValue(listener));
+        assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(zeroecho.pki.server.http.StrictJson.encode(
+                new zeroecho.pki.application.PkiOperationValue.ObjectValue(root))));
+        assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration.HybridSdkListener("https://sdk.example.invalid"));
+    }
+
     private static PkiServerConfiguration decode(String signing) throws Exception {
-        String example = Files.readString(Path.of("..", "docs", "pki-server-production-example.json"));
+        String example = Files.readString(Path.of("..", "documentation", "examples", "configuration", "pki-server-production-example.json"));
         return PkiServerConfigurationCodec.decode(example.replace("\"publishers\": []",
                 signing + "\"publishers\": []").getBytes(StandardCharsets.UTF_8));
     }

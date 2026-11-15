@@ -974,7 +974,7 @@ public final class HttpOperationCodec {
             }
             case ServerControlOperation.RegisterEnrollmentProfile.NAME -> {
                 fields.allowed(Set.of("id", "displayName", "certificateProfileId",
-                        "allowedAuthorityIds", "subjectDnPattern", "requiredSanDomains", "requireApproval"));
+                        "allowedAuthorityIds", "subjectDnPattern", "requiredSanDomains", "requireApproval", "sdkProfile"));
                 java.util.Set<String> allowedAuthorityIds = fields.contains("allowedAuthorityIds")
                         ? fields.stringSet("allowedAuthorityIds")
                         : java.util.Set.of();
@@ -988,11 +988,12 @@ public final class HttpOperationCodec {
                 yield new ServerControlOperation.RegisterEnrollmentProfile(new EnrollmentProfile(
                         fields.text("id"), fields.text("displayName"), EnrollmentProfileState.ACTIVE,
                         fields.text("certificateProfileId"), allowedAuthorityIds,
-                        subjectDnPattern, requiredSanDomains, requireApproval));
+                        subjectDnPattern, requiredSanDomains, requireApproval,
+                        fields.contains("sdkProfile") ? Optional.of(fields.text("sdkProfile")) : Optional.empty()));
             }
             case ServerControlOperation.UpdateEnrollmentProfile.NAME -> {
                 fields.allowed(Set.of("id", "displayName", "certificateProfileId",
-                        "allowedAuthorityIds", "subjectDnPattern", "requiredSanDomains", "requireApproval", "state"));
+                        "allowedAuthorityIds", "subjectDnPattern", "requiredSanDomains", "requireApproval", "sdkProfile", "state"));
                 java.util.Set<String> allowedAuthorityIds = fields.contains("allowedAuthorityIds")
                         ? fields.stringSet("allowedAuthorityIds")
                         : java.util.Set.of();
@@ -1009,7 +1010,8 @@ public final class HttpOperationCodec {
                 yield new ServerControlOperation.UpdateEnrollmentProfile(new EnrollmentProfile(
                         fields.text("id"), fields.text("displayName"), state,
                         fields.text("certificateProfileId"), allowedAuthorityIds,
-                        subjectDnPattern, requiredSanDomains, requireApproval));
+                        subjectDnPattern, requiredSanDomains, requireApproval,
+                        fields.contains("sdkProfile") ? Optional.of(fields.text("sdkProfile")) : Optional.empty()));
             }
             case ServerControlOperation.InspectEnrollmentProfile.NAME -> {
                 fields.exact("id");

@@ -160,6 +160,22 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         };
     }
 
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget, CancellationSignal cancellation) {
+        requireOpen.run();
+        return switch (operation) {
+            case PkiSigningOperation.IssueCredential value -> service.previewSdk(access, sdkRequest(value, request), request, frozenValidity, enrollmentTarget, cancellation);
+            case PkiSigningOperation.RenewCredential value -> service.previewSdk(access,
+                    new EndEntityRenewalRequest(value.credentialId(), Optional.empty()), request, frozenValidity, enrollmentTarget, cancellation);
+            case PkiSigningOperation.ReissueCredential value -> service.previewSdk(access,
+                    new EndEntityReissueRequest(value.credentialId()), request, frozenValidity, enrollmentTarget, cancellation);
+            case PkiSigningOperation.ReplaceCredential value -> service.previewSdk(access, sdkReplacement(value, request), request, frozenValidity, enrollmentTarget, cancellation);
+            default -> throw new UnsupportedOperationException("SDK operation is not a supported leaf operation");
+        };
+    }
+
     @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,

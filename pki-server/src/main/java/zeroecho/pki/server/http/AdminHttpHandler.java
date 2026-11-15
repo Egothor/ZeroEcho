@@ -128,6 +128,8 @@ final class AdminHttpHandler implements HttpHandler {
             if (uri.getRawFragment() != null || uri.getRawQuery() != null && !"/admin/v1/requests".equals(uri.getPath())
                     && !uri.getRawPath().matches("/admin/v1/(?:certificate|status)-artifacts/[^/]+/content")) throw malformed(requestId, "route");
             String path = uri.getPath();
+            if ((path.startsWith("/admin/v1/hybrid-sdk") || uri.getRawPath().startsWith("/admin/v1/hybrid-sdk"))
+                    && !uri.getRawPath().equals(path)) throw malformed(requestId, "route");
             if ("/health/live".equals(path)) {
                 response = requireMethod(exchange, "GET")
                         ? HttpResponses.minimal(200, requestId, "health.live", "LIVE")
@@ -186,6 +188,9 @@ final class AdminHttpHandler implements HttpHandler {
         realm.auditTransport("ADMIN_AUTHENTICATION_ACCEPTED", principalId,
                 authenticationDetails(requestId, authenticated.mode(), authenticated.transportPrincipalId(),
                         Optional.of(principalId), "ACCEPTED"));
+        if (path.equals("/admin/v1/hybrid-sdk/v1") || path.startsWith("/admin/v1/hybrid-sdk/v1/")) {
+            return hybridSdk(exchange, path, requestId, authenticated);
+        }
         if ("/admin/v1/backup/upload".equals(path) || "/admin/v1/backup/download".equals(path)) {
             return backupTransfer(exchange, path.endsWith("/upload"), requestId, authenticated);
         }
@@ -221,6 +226,76 @@ final class AdminHttpHandler implements HttpHandler {
         if (requireMethod(exchange, "GET")) return descriptor(requestId, descriptor.orElseThrow());
         if (!requireMethod(exchange, "POST")) return method(requestId, operationId);
         return execute(exchange, requestId, authenticated, operationId);
+    }
+
+    private HttpResponses.Response hybridSdk(HttpsExchange exchange, String path, String trace,
+            PkiServerAuthenticationResult.Authenticated actor) throws IOException {
+        String base = "/admin/v1/hybrid-sdk/v1";
+        if (configuration.listener().hybridSdk().isEmpty() || realm.hybridSdkHttp().isEmpty()) return notFound(trace);
+        if (path.equals(base)) {
+            if (!requireMethod(exchange, "GET")) return method(trace, "hybrid-sdk.capability");
+            return new HttpResponses.Response(200, HybridSdkHttpCodec.capability(base,
+                    java.util.List.of("credential.issue", "credential.renew", "credential.reissue", "credential.replace"),
+                    configuration.listener().hybridSdk().orElseThrow().canonicalOrigin(), configuration.listener().maximumBodyBytes()));
+        }
+        if (!path.equals(base + "/challenge") && !path.equals(base + "/accept")) return notFound(trace);
+        if (!requireMethod(exchange, "POST")) return method(trace, "hybrid-sdk");
+        if (!HybridSdkHttpCodec.MEDIA_TYPE.equalsIgnoreCase(exchange.getRequestHeaders().getFirst("Content-Type"))) {
+            return HttpResponses.failure(415, trace, "hybrid-sdk", "VALIDATION_FAILURE", "UNSUPPORTED_MEDIA_TYPE", "UNSUPPORTED_MEDIA_TYPE", false, false);
+        }
+        try {
+            boolean acceptance = path.endsWith("/accept");
+            var fields = HybridSdkHttpCodec.parse(body(exchange.getRequestBody(), exchange.getRequestHeaders().getFirst("Content-Length")),
+                    configuration.listener().maximumBodyBytes(), acceptance, Set.of("operationId", "arguments", "requestDer"));
+            String operation = HybridSdkHttpCodec.text(fields, "operationId");
+            if (!Set.of("credential.issue", "credential.renew", "credential.reissue", "credential.replace").contains(operation)) {
+                throw new IllegalArgumentException("Unsupported SDK operation");
+            }
+            if (!(fields.get("arguments") instanceof PkiOperationValue.ObjectValue arguments)) throw new IllegalArgumentException("SDK arguments required");
+            var envelopeFields = new LinkedHashMap<String, PkiOperationValue>();
+            envelopeFields.put("version", new PkiOperationValue.IntegerValue(1)); envelopeFields.put("arguments", arguments);
+            // Resolve the existing authorization scope; the SDK wire adds no authority override.
+            PkiOperationValue authority;
+            if (operation.equals("credential.issue")) authority = arguments.fields().get("issuerCaId");
+            else {
+                String name = operation.equals("credential.replace") ? "existingCredentialId" : "credentialId";
+                if (!(arguments.fields().get(name) instanceof PkiOperationValue.Text id)) throw new IllegalArgumentException("SDK predecessor required");
+                var scope = realm.session().resourceScopes().credentialScope(new zeroecho.pki.api.PkiId(id.value()))
+                        .orElseThrow(() -> new IllegalArgumentException("SDK predecessor unavailable"));
+                authority = new PkiOperationValue.Text(scope.authorityId().value());
+            }
+            if (authority == null) throw new IllegalArgumentException("SDK issuer required");
+            envelopeFields.put("authorityId", authority);
+            var envelope = new PkiOperationValue.ObjectValue(envelopeFields);
+            var decoded = HttpOperationCodec.decode(operation, StrictJson.encode(envelope), 262144,
+                    configuration.realm().realmId(), realm.gateway()::descriptor);
+            var request = new ServerOperationGateway.Request(configuration.realm().realmId(), actor.endClientPrincipalId(),
+                    actor.mode(), actor.transportPrincipalId(), actor.credentialEvidence(), decoded.operation(), decoded.resource(),
+                    Permission.Relationship.ANY, decoded.context(), Optional.empty(), trace);
+            byte[] original = HybridSdkHttpCodec.bytes(fields, "requestDer", 1, 1_048_576);
+            var service = realm.hybridSdkHttp().orElseThrow();
+            if (!acceptance) {
+                var challenge = service.challenge(request, envelope, original, HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32));
+                return new HttpResponses.Response(200, HybridSdkHttpCodec.challenge(challenge.intentId(), challenge.primary(), challenge.target()));
+            }
+            Duration timeout = configuration.execution().defaultDeadline();
+            if (timeout.compareTo(configuration.execution().maximumDeadline()) > 0) timeout = configuration.execution().maximumDeadline();
+            if (timeout.compareTo(Duration.ofSeconds(120)) > 0) timeout = Duration.ofSeconds(120);
+            var accepted = service.accept(HybridSdkHttpCodec.text(fields, "intentId"), HybridSdkHttpCodec.text(fields, "sdkRequestId"),
+                    request, envelope, original, HybridSdkHttpCodec.bytes(fields, "primaryProof", 1, 104),
+                    HybridSdkHttpCodec.bytes(fields, "alternativeProof", 4627, 4627), timeout);
+            var response = HttpResponses.administrativeAccepted(trace,
+                    realm.administrativeRequests().projection(accepted, actor.endClientPrincipalId(), true));
+            return new HttpResponses.Response(response.statusCode(), response.body(), false, Optional.empty(),
+                    Optional.of("/admin/v1/requests/" + accepted.requestId()));
+        } catch (zeroecho.pki.server.AdministrativeRequestCoordinator.Conflict conflict) {
+            return HttpResponses.failure(409, trace, "hybrid-sdk", "CONFLICT", "SDK_INTENT_CONFLICT", "SDK_INTENT_CONFLICT", false, false);
+        } catch (zeroecho.pki.server.AdministrativeRequestCoordinator.Capacity full) {
+            return HttpResponses.failure(429, trace, "hybrid-sdk", "OVERLOADED", "SDK_CAPACITY", "SDK_CAPACITY", false, false);
+        } catch (SecurityException denied) { return notFound(trace); }
+        catch (IllegalArgumentException | zeroecho.pki.api.PkiException invalid) {
+            return HttpResponses.failure(400, trace, "hybrid-sdk", "VALIDATION_FAILURE", "SDK_REQUEST_INVALID", "SDK_REQUEST_INVALID", false, false);
+        }
     }
 
     private HttpResponses.Response administrativeRequests(HttpsExchange exchange,String path,String trace,

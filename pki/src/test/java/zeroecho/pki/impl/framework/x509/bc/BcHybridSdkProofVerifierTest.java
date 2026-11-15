@@ -122,6 +122,34 @@ class BcHybridSdkProofVerifierTest {
         assertThrows(PkiException.class, () -> parser.parseHybridSdk(request(nullParameters)));
     }
 
+    @Test void verifiesCanonicalCrmfOriginalAndFreshDualProofsWithoutKindSubstitution() throws Exception {
+        Fixture original = fixture();
+        byte[] crmf = new org.bouncycastle.cert.crmf.CertificateRequestMessageBuilder(java.math.BigInteger.valueOf(7))
+                .setSubject(new org.bouncycastle.asn1.x500.X500Name("CN=Alice Example"))
+                .setPublicKey(org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(original.primary.getPublic().getEncoded()))
+                .addExtension(new ASN1ObjectIdentifier("2.5.29.72"), false, original.alternative.getPublic().getEncoded())
+                .setProofOfPossessionSigningKeySigner(new JcaContentSignerBuilder("SHA384withECDSA").build(original.primary.getPrivate()))
+                .build().getEncoded();
+        var payload = new zeroecho.pki.api.request.X509EnrollmentPayload(
+                zeroecho.pki.api.request.X509EnrollmentPayload.Kind.CRMF, crmf);
+        var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(payload);
+        var fixture = new Fixture(original.primary, original.alternative, crmf);
+        var frame = frame(fixture, parsed);
+        byte[] primary = sign("SHA384withECDSA", fixture.primary, frame.encode(), new byte[0]);
+        byte[] alternative = sign("ML-DSA-87", fixture.alternative, new HybridSdkFrame(2, frame.fields()).encode(), new byte[0]);
+        assertTrue(zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.verify(parsed, frame, primary, alternative, NOW)
+                .matches("sha512:[0-9a-f]{128}"));
+        var substituted = new ParsedHybridSdkRequest(parsed.primary(), parsed.alternativeSubjectPublicKeyInfo(),
+                new zeroecho.pki.api.request.X509EnrollmentPayload(zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10, crmf));
+        assertThrows(PkiException.class, () -> zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.verify(substituted, frame, primary, alternative, NOW));
+        byte[] corrupt = crmf.clone(); corrupt[corrupt.length - 1] ^= 1;
+        assertThrows(PkiException.class, () -> zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(
+                new zeroecho.pki.api.request.X509EnrollmentPayload(payload.kind(), corrupt)));
+        assertThrows(PkiException.class, () -> zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(crmf));
+        byte[] badAlternative = alternative.clone(); badAlternative[0] ^= 1;
+        assertThrows(PkiException.class, () -> zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.verify(parsed, frame, primary, badAlternative, NOW));
+    }
+
     private static Fixture fixture() throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         KeyPairGenerator ec = KeyPairGenerator.getInstance("EC"); ec.initialize(new ECGenParameterSpec("secp384r1"));

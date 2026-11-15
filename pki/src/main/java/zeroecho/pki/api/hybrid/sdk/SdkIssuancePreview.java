@@ -65,6 +65,7 @@ import zeroecho.pki.api.request.SubjectAlternativeName;
  * @param providerEvidence authority snapshot semantic fingerprint
  * @param disclosurePolicy canonical policy disclosure evidence
  * @param lifecycleTarget optional exact predecessor/operation/subject-key target
+ * @param enrollmentTarget optional trusted native enrollment target
  */
 public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPathId,
         String chainPathCommitment, CertificateProfileRef profile, SubjectRef subjectRef,
@@ -72,7 +73,8 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
         EncodedObject primarySubjectSpki, EncodedObject alternativeSubjectSpki,
         IssuerCryptographicBinding issuerBinding, EncodedObject issuerPrimarySpki, Optional<EncodedObject> issuerAlternativeSpki,
         String issuerCertificateSha512,
-        String providerEvidence, HybridSdkValue disclosurePolicy, Optional<SdkLifecycleTarget> lifecycleTarget) {
+        String providerEvidence, HybridSdkValue disclosurePolicy, Optional<SdkLifecycleTarget> lifecycleTarget,
+        Optional<SdkEnrollmentTarget> enrollmentTarget) {
     /** Snapshots finite collections and rejects missing coordinates. */
     public SdkIssuancePreview {
         Objects.requireNonNull(issuerCaId); Objects.requireNonNull(issuerId); Objects.requireNonNull(chainPathId);
@@ -81,6 +83,7 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
         Objects.requireNonNull(validity); Objects.requireNonNull(primarySubjectSpki); Objects.requireNonNull(alternativeSubjectSpki);
         Objects.requireNonNull(issuerBinding); Objects.requireNonNull(issuerPrimarySpki); Objects.requireNonNull(issuerAlternativeSpki); Objects.requireNonNull(issuerCertificateSha512);
         Objects.requireNonNull(providerEvidence); Objects.requireNonNull(disclosurePolicy);
+        Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
         Objects.requireNonNull(lifecycleTarget, "lifecycleTarget");
         lifecycleTarget.ifPresent(target -> {
             if (!target.subjectPrimarySpkiSha512().equals("sha512:" + HexFormat.of().formatHex(HybridSdkFrame.hash(primarySubjectSpki.bytes())))
@@ -88,6 +91,29 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
                 throw new IllegalArgumentException("Lifecycle target subject keys differ from preview");
             }
         });
+    }
+
+    /**
+     * Preserves the administrative lifecycle preview constructor.
+     * @param issuerCaId issuer CA @param issuerId generation @param chainPathId path
+     * @param chainPathCommitment path commitment @param profile approved profile
+     * @param subjectRef subject @param subject ordered RDNs @param subjectAlternativeNames ordered SANs
+     * @param validity absolute bounds @param primarySubjectSpki primary SPKI @param alternativeSubjectSpki alternative SPKI
+     * @param issuerBinding outgoing binding @param issuerPrimarySpki issuer primary SPKI
+     * @param issuerAlternativeSpki issuer alternative SPKI @param issuerCertificateSha512 certificate digest
+     * @param providerEvidence authority fingerprint @param disclosurePolicy disclosure policy
+     * @param lifecycleTarget predecessor and operation evidence
+     */
+    public SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPathId,
+            String chainPathCommitment, CertificateProfileRef profile, SubjectRef subjectRef,
+            List<SubjectRdn> subject, List<SubjectAlternativeName> subjectAlternativeNames, Validity validity,
+            EncodedObject primarySubjectSpki, EncodedObject alternativeSubjectSpki,
+            IssuerCryptographicBinding issuerBinding, EncodedObject issuerPrimarySpki, Optional<EncodedObject> issuerAlternativeSpki,
+            String issuerCertificateSha512, String providerEvidence, HybridSdkValue disclosurePolicy,
+            Optional<SdkLifecycleTarget> lifecycleTarget) {
+        this(issuerCaId, issuerId, chainPathId, chainPathCommitment, profile, subjectRef, subject, subjectAlternativeNames,
+                validity, primarySubjectSpki, alternativeSubjectSpki, issuerBinding, issuerPrimarySpki, issuerAlternativeSpki,
+                issuerCertificateSha512, providerEvidence, disclosurePolicy, lifecycleTarget, Optional.empty());
     }
 
     /**
@@ -113,7 +139,12 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
 
     /** @return strict F7 field-17 object, empty only for ordinary issuance */
     public HybridSdkValue targetExtensionValue() {
-        return lifecycleTarget.map(SdkLifecycleTarget::value).orElseGet(() -> HybridSdkValue.object(Map.of()));
+        HybridSdkValue lifecycle = lifecycleTarget.map(SdkLifecycleTarget::value)
+                .orElseGet(() -> HybridSdkValue.object(Map.of()));
+        return enrollmentTarget.map(target -> HybridSdkValue.object(Map.of(
+                "version", HybridSdkValue.integer(1), "lifecycle", lifecycle, "enrollment", target.value(),
+                "bindingSetInputs", bindingSetInputs())))
+                .orElse(lifecycle);
     }
     /** @return canonical F7 effective subject, SAN and exact absolute validity value */
     public HybridSdkValue effectiveSubjectValue() {
@@ -126,9 +157,11 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
     }
     /** @return SHA-512 commitment binding outgoing algorithms, provider authority and full chain path */
     public String bindingSetCommitment() {
-        var value = HybridSdkValue.object(Map.of("issuerBinding", HybridSdkValue.text(issuerBinding.commitment()),
+        return "sha512:" + HexFormat.of().formatHex(HybridSdkFrame.hash(bindingSetInputs().encode()));
+    }
+    private HybridSdkValue bindingSetInputs() {
+        return HybridSdkValue.object(Map.of("issuerBinding", HybridSdkValue.text(issuerBinding.commitment()),
                 "provider", HybridSdkValue.text(providerEvidence), "path", HybridSdkValue.text(chainPathCommitment)));
-        return "sha512:" + HexFormat.of().formatHex(HybridSdkFrame.hash(value.encode()));
     }
     /** @return exact F8 issuer primary binding; never a client subject binding */
     public HybridSdkFrame primaryIssuerBindingFrame() {

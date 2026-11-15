@@ -276,6 +276,115 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
         @Override public String toString() { return "EnrollmentResult[status=" + status + "]"; }
     }
 
+    /**
+     * Reports configured profile/runtime support without granting enrollment authority.
+     * @param endpoint registered endpoint
+     * @return whether client-owned SDK enrollment is usable
+     */
+    public boolean hybridSdkAvailable(EstEndpoint endpoint) {
+        var policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId());
+        if (policy.isEmpty() || policy.orElseThrow().state() != zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE
+                || policy.orElseThrow().sdkProfile().isEmpty() || realm.enrollmentCoordinator().isEmpty() || realm.session().semanticSigning().isEmpty()) return false;
+        var profile = realm.session().profiles().requireActiveProfile(endpoint.profileId()).definition();
+        return profile.hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature alt
+                && alt.subjectKeySource() == zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
+    }
+
+    /**
+     * Creates only a challenge for client-owned ISSUE/RENEW keys under actual validated TLS identity.
+     * @param endpoint registered endpoint @param operation simpleenroll or simplereenroll
+     * @param requestDer exact PKCS#10 SDK DER @param certificate validated TLS end-client certificate
+     * @param clientNonce exact client nonce @param canonicalOrigin configured listener origin
+     * @return retained immutable SDK challenge
+     * @throws EstProtocolException if authentication context, policy or request is unavailable
+     */
+    public zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(EstEndpoint endpoint, String operation,
+            byte[] requestDer, X509Certificate certificate, byte[] clientNonce, String canonicalOrigin) throws EstProtocolException {
+        try {
+            return realm.enrollmentCoordinator().orElseThrow().challengeSdk(sdkAdmission(endpoint, operation, requestDer, certificate, canonicalOrigin), clientNonce);
+        } catch (IllegalArgumentException | zeroecho.pki.api.PkiException invalid) { throw new EstProtocolException(400, "EST SDK input rejected"); }
+        catch (java.security.GeneralSecurityException | IllegalStateException unavailable) { throw new EstProtocolException(503, "EST SDK enrollment unavailable"); }
+    }
+
+    /**
+     * Accepts both client proofs or retrieves the exact consumed result before fresh renewal/source checks.
+     * Only the same existing authenticated certificate owner is permitted; aliases grant no access.
+     * @param endpoint registered endpoint @param operation original native operation
+     * @param requestDer original typed request @param certificate validated TLS end-client certificate
+     * @param intentId retained intent @param sdkRequestId stable acceptance identity
+     * @param primaryProof client primary proof @param alternativeProof client alternative proof
+     * @param canonicalOrigin configured listener origin @param cancellation transport cancellation
+     * @return ordinary EST pending/error or CMS certificate-chain response
+     * @throws EstProtocolException if proof, ownership, policy or retained state is rejected
+     */
+    public EnrollmentResult acceptSdk(EstEndpoint endpoint, String operation, byte[] requestDer, X509Certificate certificate,
+            String intentId, String sdkRequestId, byte[] primaryProof, byte[] alternativeProof, String canonicalOrigin,
+            CancellationSignal cancellation) throws EstProtocolException {
+        try {
+            var coordinator = realm.enrollmentCoordinator().orElseThrow();
+            var retained = coordinator.retainedSdkIntent(intentId).orElseThrow(() -> new IllegalArgumentException("SDK intent unavailable"));
+            var original = retained.admission(); var nativeAdmission = original.admission(); var requester = sdkRequester(certificate);
+            if (nativeAdmission.protocol() != EnrollmentTransaction.Protocol.EST || !nativeAdmission.endpointId().equals(endpoint.label())
+                    || !original.canonicalOrigin().equals(canonicalOrigin) || nativeAdmission.operation() != sdkOperation(operation)
+                    || !requester.actorId().equals(nativeAdmission.requester().actorId())
+                    || !nativeAdmission.requester().certificate().orElseThrow().sameCredential(requester.certificate().orElseThrow())) {
+                throw new EstProtocolException(403, "EST SDK owner differs");
+            }
+            if (!Arrays.equals(nativeAdmission.payload().der(), requestDer)) throw new IllegalArgumentException("EST SDK request differs");
+            if (retained.state() == zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED) {
+                var read = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, nativeAdmission.endpointId(), requester,
+                        nativeAdmission.transactionId(), nativeAdmission.operation(), nativeAdmission.payload(), nativeAdmission.validity(), nativeAdmission.predecessorId(), nativeAdmission.protocolDeadline());
+                var supplied = new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(read, original.expectedEndpointCommitment(), original.canonicalOrigin(), original.authenticationContext(), original.target(), Optional.empty());
+                return sdkResult(coordinator.admitSdk(supplied, intentId, sdkRequestId, primaryProof, alternativeProof));
+            }
+            var value = coordinator.admitSdk(sdkAdmission(endpoint, operation, requestDer, certificate, canonicalOrigin), intentId, sdkRequestId, primaryProof, alternativeProof);
+            return sdkResult(coordinator.dispatch(value.id(), cancellation));
+        } catch (IllegalArgumentException | zeroecho.pki.api.PkiException invalid) { throw new EstProtocolException(400, "EST SDK input rejected"); }
+        catch (java.security.GeneralSecurityException | IllegalStateException unavailable) { throw new EstProtocolException(503, "EST SDK enrollment unavailable"); }
+    }
+
+    private EnrollmentResult sdkResult(EnrollmentTransaction value) throws EstProtocolException {
+        return switch (value.state()) {
+            case ISSUED -> new EnrollmentResult(200, EstCmsCodec.encodeCertsOnly(retainedChain(value)), Optional.empty());
+            case REJECTED -> new EnrollmentResult(403, new byte[0], Optional.empty()); case EXPIRED -> new EnrollmentResult(410, new byte[0], Optional.empty());
+            case FAILED -> new EnrollmentResult(500, new byte[0], Optional.empty());
+            default -> new EnrollmentResult(202, new byte[0], Optional.of(Math.max(1, realm.enrollmentRuntime().orElseThrow().configuration().budgets().retryAfter().toSeconds())));
+        };
+    }
+    private EnrollmentTransaction.Requester sdkRequester(X509Certificate certificate) throws java.security.cert.CertificateEncodingException {
+        var evidence = CertificateIdentityEvidence.fromCertificate(realm.configuration().realmId(), certificate);
+        return new EnrollmentTransaction.Requester(IssuanceExecutionEvidence.ActorType.EST_CLIENT, evidence.certificateSha256(), IssuanceExecutionEvidence.Authentication.EST_MTLS,
+                Optional.of(evidence), Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(), new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), java.util.Set.of()));
+    }
+    private static EnrollmentTransaction.Operation sdkOperation(String operation) {
+        return switch (operation) { case "simpleenroll" -> EnrollmentTransaction.Operation.ISSUE; case "simplereenroll" -> EnrollmentTransaction.Operation.RENEW;
+            default -> throw new IllegalArgumentException("EST SDK supports client-owned enrollment only"); };
+    }
+    private zeroecho.pki.server.enrollment.EnrollmentSdkAdmission sdkAdmission(EstEndpoint endpoint, String operation, byte[] requestDer,
+            X509Certificate certificate, String canonicalOrigin) throws java.security.GeneralSecurityException, EstProtocolException {
+        var kind = sdkOperation(operation); // Reject serverkeygen before any key allocation or receipt.
+        if (!hybridSdkAvailable(endpoint)) throw new IllegalArgumentException("EST SDK profile unavailable");
+        var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, requestDer));
+        var requester = sdkRequester(certificate); var evidence = requester.certificate().orElseThrow();
+        var snapshot = endpoints.requireCurrent(endpoint);
+        var predecessor = kind == EnrollmentTransaction.Operation.RENEW ? Optional.of(credentialIdFor(certificate)) : Optional.<PkiId>empty();
+        var values = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.ofEntries(
+                java.util.Map.entry("endpointId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(endpoint.label())), java.util.Map.entry("endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(snapshot.commitment())),
+                java.util.Map.entry("certificateSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(evidence.certificateSha256())), java.util.Map.entry("canonicalKeySha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(evidence.canonicalKeySha256())),
+                java.util.Map.entry("issuerSerialSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(evidence.issuerSerialSha256())), java.util.Map.entry("operation", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(operation)),
+                java.util.Map.entry("predecessorId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(predecessor.map(PkiId::value).orElse(""))), java.util.Map.entry("requestKind", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("PKCS10"))));
+        var auth = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(6, java.util.Map.of(1, sdkText(requester.actorId()), 2, sdkText("est-mtls-v1"),
+                3, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(sdkText("sha256:" + evidence.certificateSha256())), 4, sdkText("est-v1"), 5, values.encode()));
+        var profiles = realm.enrollmentProfiles(); var policy = profiles.find(endpoint.enrollmentProfileId()).orElseThrow();
+        String transaction = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(parsed.originalPayload().der()));
+        var target = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "EST", endpoint.label(), snapshot.revision(), snapshot.commitment(), endpoint.enrollmentProfileId(), profiles.revision(endpoint.enrollmentProfileId()),
+                zeroecho.pki.server.enrollment.EnrollmentProfileService.commitment(policy), kind.name(), X509EnrollmentPayload.Kind.PKCS10, transaction,
+                "sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(auth.encode())));
+        var admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, endpoint.label(), requester, transaction, kind, parsed.originalPayload(), Optional.empty(), predecessor);
+        return new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(admission, snapshot.commitment(), canonicalOrigin, auth, target, Optional.empty());
+    }
+    private static byte[] sdkText(String text) { return text.getBytes(java.nio.charset.StandardCharsets.UTF_8); }
+
     private EnrollmentResult enroll(EstEndpoint endpoint, byte[] body, X509Certificate certificate, EnrollmentTransaction.Operation operation,
             CancellationSignal cancellation)
             throws EstProtocolException {
@@ -290,6 +399,15 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
                     Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(),
                     new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), java.util.Set.of()));
             EnrollmentCoordinator coordinator = realm.enrollmentCoordinator().orElseThrow(() -> new IllegalStateException("Enrollment unavailable")); // NOPMD CloseResource - Borrowed realm coordinator; the realm owns its shutdown.
+            String transaction = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(original));
+            var retained = coordinator.find(EnrollmentTransaction.Protocol.EST, endpoint.label(), requester.type(), requester.actorId(), transaction, operation);
+            if (retained.isPresent() && retained.orElseThrow().intent().sdkProof().isPresent()) {
+                var value = retained.orElseThrow();
+                var sdk = coordinator.retainedSdkIntent(value.intent().sdkProof().orElseThrow().intentId()).orElseThrow();
+                if (!Arrays.equals(sdk.originalPayload().der(), original)
+                        || !sdk.admission().admission().requester().certificate().orElseThrow().sameCredential(evidence)) throw new IllegalArgumentException("EST retained SDK owner differs");
+                return sdkResult(coordinator.dispatch(value.id(), cancellation));
+            }
             EnrollmentTransaction value = coordinator.admit(new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, endpoint.label(), requester,
                     HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(original)), operation,
                     new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, original), Optional.empty(),

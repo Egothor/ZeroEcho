@@ -59,6 +59,17 @@ public final class HybridSdkProofs {
     }
 
     /**
+     * Parses an explicitly typed original request without guessing its syntax.
+     * @param payload exact bounded original request
+     * @return primary-proof-verified request; fresh dual proofs remain required
+     * @throws UnsupportedOperationException when the typed syntax is unavailable
+     */
+    public static ParsedHybridSdkRequest parse(zeroecho.pki.api.request.X509EnrollmentPayload payload) {
+        java.util.Objects.requireNonNull(payload, "payload");
+        return new BcX509CertificationRequestParser().parseHybridSdk(payload);
+    }
+
+    /**
      * Verifies both fresh subject-key proofs, without granting issuance authority.
      * @param request verified original request view
      * @param primaryFrame exact retained F1 challenge

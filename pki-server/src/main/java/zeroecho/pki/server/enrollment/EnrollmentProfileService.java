@@ -91,6 +91,13 @@ public final class EnrollmentProfileService {
     }
 
     /**
+     * Returns the immutable current durable policy revision for a frozen SDK target.
+     * @param id existing policy identity
+     * @return positive durable revision
+     */
+    public long revision(String id) { return decode(require(id)).revision(); }
+
+    /**
      * Durably creates a profile; existing identities cannot be overwritten.
      * @param profile non-null immutable profile to persist
      * @throws IllegalStateException if the identity exists or persistence fails
@@ -281,7 +288,7 @@ public final class EnrollmentProfileService {
     private static byte[] encode(EnrollmentProfile profile, long revision) {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 DataOutputStream output = new DataOutputStream(bytes)) {
-            output.writeInt(VERSION);
+            output.writeInt(profile.sdkProfile().isPresent() ? 2 : VERSION);
             output.writeLong(revision);
             write(output, profile.id());
             write(output, profile.displayName());
@@ -294,6 +301,7 @@ public final class EnrollmentProfileService {
             }
             writeCollection(output, profile.requiredSanDomains());
             output.writeBoolean(profile.requireApproval());
+            if (profile.sdkProfile().isPresent()) write(output, profile.sdkProfile().orElseThrow());
             output.flush();
             if (bytes.size() > MAXIMUM_PAYLOAD_BYTES) {
                 throw new IllegalArgumentException("Enrollment profile exceeds payload bound");
@@ -310,7 +318,8 @@ public final class EnrollmentProfileService {
             throw corrupt();
         }
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload))) {
-            if (input.readInt() != VERSION) {
+            int version = input.readInt();
+            if (version != VERSION && version != 2) {
                 throw corrupt();
             }
             long revision = input.readLong();
@@ -330,7 +339,7 @@ public final class EnrollmentProfileService {
             List<String> domains = readCollection(input);
             boolean approval = input.readBoolean();
             EnrollmentProfile profile = new EnrollmentProfile(id, displayName, state, certificateProfileId,
-                    authorityIds, subjectPattern, domains, approval);
+                    authorityIds, subjectPattern, domains, approval, version == 2 ? Optional.of(read(input)) : Optional.empty());
             if (!id.equals(record.recordId()) || input.read() != -1
                     || !Arrays.equals(payload, encode(profile, revision))) {
                 throw corrupt();

@@ -1160,7 +1160,7 @@ public final class ServerControlOperationExecutor {
                 .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
         List<PkiOperationValue> requiredSans = value.requiredSanDomains().stream()
                 .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
-        return object("id", text(value.id()),
+        var ordinary = object("id", text(value.id()),
                 "displayName", text(value.displayName()),
                 FIELD_STATE, text(value.state().name()),
                 "certificateProfileId", text(value.certificateProfileId()),
@@ -1169,6 +1169,10 @@ public final class ServerControlOperationExecutor {
                         .orElse(text("")),
                 "requiredSanDomains", new PkiOperationValue.ListValue(requiredSans),
                 "requireApproval", bool(value.requireApproval()));
+        if (value.sdkProfile().isEmpty()) return ordinary;
+        var fields = new java.util.LinkedHashMap<String, PkiOperationValue>(ordinary.fields());
+        fields.put("sdkProfile", text(value.sdkProfile().orElseThrow()));
+        return new PkiOperationValue.ObjectValue(fields);
     }
 
     private static PkiOperationValue responder(OcspResponderService.Responder value) {
