@@ -109,21 +109,78 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         return operation;
     }
 
-    @Override
-    public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation.IssueCredential operation,
+    @Override public PkiSigningOperation normalizeLifecycle(PkiSigningOperation operation) {
+        requireOpen.run(); Objects.requireNonNull(operation, "operation");
+        if (operation instanceof PkiSigningOperation.RolloverCaCertificate value) {
+            return new PkiSigningOperation.RolloverCaCertificate(value.caId(), value.issuerCaId(),
+                    Optional.of(service.freezeCaHead(value.caId(), value.expectedHead())));
+        }
+        if (operation instanceof PkiSigningOperation.IssueIntermediateCertificate value) {
+            return new PkiSigningOperation.IssueIntermediateCertificate(value.formatId(), value.issuerCaId(), value.subjectCaId(),
+                    value.profileId(), value.requestedValidity(), Optional.of(service.freezeCaHead(value.subjectCaId(), value.expectedHead())));
+        }
+        if (operation instanceof PkiSigningOperation.RotateCaKey value) {
+            CaRecord current = authority(value.caId());
+            requireIssuer(current, value.issuerCaId());
+            CaKeyRotationCommand input = current.kind() == CaKind.ROOT
+                    ? new CaKeyRotationCommand.Root(value.caId(), value.selection(), value.expectedHead(), EMPTY_ATTRIBUTES)
+                    : new CaKeyRotationCommand.Intermediate(value.caId(), value.selection(), value.issuerCaId().orElseThrow(),
+                            value.expectedHead(), EMPTY_ATTRIBUTES);
+            var normalized = service.normalizeCaKeyRotation(input);
+            return new PkiSigningOperation.RotateCaKey(value.caId(), normalized.selection(), value.issuerCaId(), normalized.expectedHead());
+        }
+        return operation;
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation.IssueCredential operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+        return previewSdk((PkiSigningOperation) operation, access, request, frozenValidity, cancellation);
+    }
+
+    @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        return prepareSdk((PkiSigningOperation) operation, access, request, approval, evidence, cancellation);
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
         requireOpen.run();
-        return service.previewSdk(access, sdkRequest(operation, request), request, frozenValidity, cancellation);
+        return switch (operation) {
+            case PkiSigningOperation.IssueCredential value -> service.previewSdk(access, sdkRequest(value, request), request, frozenValidity, cancellation);
+            case PkiSigningOperation.RenewCredential value -> service.previewSdk(access,
+                    new EndEntityRenewalRequest(value.credentialId(), Optional.empty()), request, frozenValidity, cancellation);
+            case PkiSigningOperation.ReissueCredential value -> service.previewSdk(access,
+                    new EndEntityReissueRequest(value.credentialId()), request, frozenValidity, cancellation);
+            case PkiSigningOperation.ReplaceCredential value -> service.previewSdk(access, sdkReplacement(value, request), request, frozenValidity, cancellation);
+            default -> throw new UnsupportedOperationException("SDK operation is not a supported leaf operation");
+        };
     }
 
-    @Override
-    public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
+    @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         requireOpen.run();
-        return service.prepareSdk(access, sdkRequest(operation, request), request, approval, evidence, cancellation);
+        return switch (operation) {
+            case PkiSigningOperation.IssueCredential value -> service.prepareSdk(access, sdkRequest(value, request), request, approval, evidence, cancellation);
+            case PkiSigningOperation.RenewCredential value -> service.prepareSdk(access,
+                    new EndEntityRenewalRequest(value.credentialId(), Optional.empty()), request, approval, evidence, cancellation);
+            case PkiSigningOperation.ReissueCredential value -> service.prepareSdk(access,
+                    new EndEntityReissueRequest(value.credentialId()), request, approval, evidence, cancellation);
+            case PkiSigningOperation.ReplaceCredential value -> service.prepareSdk(access, sdkReplacement(value, request), request, approval, evidence, cancellation);
+            default -> throw new UnsupportedOperationException("SDK operation is not a supported leaf operation");
+        };
+    }
+
+    private static EndEntityReplacementRequest sdkReplacement(PkiSigningOperation.ReplaceCredential operation,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request) {
+        if (!operation.requestId().equals(request.primary().requestId())) throw new IllegalArgumentException("SDK request selection differs");
+        return new EndEntityReplacementRequest(operation.existingCredentialId(),
+                zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(request.primary()), operation.profileId());
     }
 
     private static EndEntityIssuanceRequest sdkRequest(PkiSigningOperation.IssueCredential operation,
@@ -154,24 +211,23 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
             case PkiSigningOperation.IssueIntermediateCertificate value -> service.validateIntermediateIssuance(access,
                     new IntermediateCertIssueCommand(value.formatId(), value.issuerCaId(), value.subjectCaId(),
                             value.profileId(), authority(value.subjectCaId()).issuerKeyRef(),
-                            value.requestedValidity(), EMPTY_ATTRIBUTES), cancellation);
+                            value.requestedValidity(), EMPTY_ATTRIBUTES, value.expectedHead()), cancellation);
             case PkiSigningOperation.RolloverCaCertificate value -> {
                 CaRecord current = authority(value.caId());
                 requireIssuer(current, value.issuerCaId());
                 CaRolloverCommand command = current.kind() == CaKind.ROOT
-                        ? new CaRolloverCommand.Root(value.caId(), Optional.empty(), EMPTY_ATTRIBUTES)
+                        ? new CaRolloverCommand.Root(value.caId(), Optional.empty(), EMPTY_ATTRIBUTES, value.expectedHead())
                         : new CaRolloverCommand.Intermediate(value.caId(), value.issuerCaId().orElseThrow(),
-                                current.issuerKeyRef(), Optional.empty(), EMPTY_ATTRIBUTES);
+                                current.issuerKeyRef(), Optional.empty(), EMPTY_ATTRIBUTES, value.expectedHead());
                 service.validateCaRollover(access, command, cancellation);
             }
             case PkiSigningOperation.RotateCaKey value -> {
                 CaRecord current = authority(value.caId());
                 requireIssuer(current, value.issuerCaId());
                 CaKeyRotationCommand command = current.kind() == CaKind.ROOT
-                        ? new CaKeyRotationCommand.Root(value.caId(), value.newKeyRef().orElseThrow(),
-                                EMPTY_ATTRIBUTES)
-                        : new CaKeyRotationCommand.Intermediate(value.caId(), value.newKeyRef().orElseThrow(),
-                                value.issuerCaId().orElseThrow(), EMPTY_ATTRIBUTES);
+                        ? new CaKeyRotationCommand.Root(value.caId(), value.selection(), value.expectedHead(), EMPTY_ATTRIBUTES)
+                        : new CaKeyRotationCommand.Intermediate(value.caId(), value.selection(),
+                                value.issuerCaId().orElseThrow(), value.expectedHead(), EMPTY_ATTRIBUTES);
                 service.validateCaKeyRotation(access, command, cancellation);
             }
             case PkiSigningOperation.IssueCredential value -> service.validateEndEntity(access,
@@ -211,24 +267,23 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
             case PkiSigningOperation.IssueIntermediateCertificate value -> service.prepareIntermediateIssuance(access,
                     new IntermediateCertIssueCommand(value.formatId(), value.issuerCaId(), value.subjectCaId(),
                             value.profileId(), authority(value.subjectCaId()).issuerKeyRef(),
-                            value.requestedValidity(), EMPTY_ATTRIBUTES), cancellation);
+                            value.requestedValidity(), EMPTY_ATTRIBUTES, value.expectedHead()), cancellation);
             case PkiSigningOperation.RolloverCaCertificate value -> {
                 CaRecord current = authority(value.caId());
                 requireIssuer(current, value.issuerCaId());
                 CaRolloverCommand command = current.kind() == CaKind.ROOT
-                        ? new CaRolloverCommand.Root(value.caId(), Optional.empty(), EMPTY_ATTRIBUTES)
+                        ? new CaRolloverCommand.Root(value.caId(), Optional.empty(), EMPTY_ATTRIBUTES, value.expectedHead())
                         : new CaRolloverCommand.Intermediate(value.caId(), value.issuerCaId().orElseThrow(),
-                                current.issuerKeyRef(), Optional.empty(), EMPTY_ATTRIBUTES);
+                                current.issuerKeyRef(), Optional.empty(), EMPTY_ATTRIBUTES, value.expectedHead());
                 yield service.prepareCaRollover(access, command, cancellation);
             }
             case PkiSigningOperation.RotateCaKey value -> {
                 CaRecord current = authority(value.caId());
                 requireIssuer(current, value.issuerCaId());
                 CaKeyRotationCommand command = current.kind() == CaKind.ROOT
-                        ? new CaKeyRotationCommand.Root(value.caId(), value.newKeyRef().orElseThrow(),
-                                EMPTY_ATTRIBUTES)
-                        : new CaKeyRotationCommand.Intermediate(value.caId(), value.newKeyRef().orElseThrow(),
-                                value.issuerCaId().orElseThrow(), EMPTY_ATTRIBUTES);
+                        ? new CaKeyRotationCommand.Root(value.caId(), value.selection(), value.expectedHead(), EMPTY_ATTRIBUTES)
+                        : new CaKeyRotationCommand.Intermediate(value.caId(), value.selection(),
+                                value.issuerCaId().orElseThrow(), value.expectedHead(), EMPTY_ATTRIBUTES);
                 yield service.prepareCaKeyRotation(access, command, cancellation);
             }
             case PkiSigningOperation.IssueCredential value -> service.prepareEndEntity(access,
@@ -297,6 +352,7 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
                 fields.put("credentialId", new PkiOperationValue.Text(id.value())));
         service.completedStatusObjectId(operation).ifPresent(id ->
                 fields.put("statusObjectId", new PkiOperationValue.Text(id.value())));
+        service.completedCaLifecycleMetadata(operation).forEach((key, value) -> fields.put(key, new PkiOperationValue.Text(value)));
         return new PkiOperationResult("signing.operation", fields);
     }
 

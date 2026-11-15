@@ -97,10 +97,13 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
     // generation. Field 13 retains the existing authority instead of deriving a new one.
     private void publishRootRollover(DomainCommandEncoding.Decoded command, EncodedObject result,
             DomainContinuationStore.Record domain) {
-        if (command.fields().size() == 15) CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
+        if (command.fields().size() >= 15) CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
             else command.requireFields(14);
         RootCommand frozen = RootCommand.decode(command);
         if (frozen.outgoing().isEmpty()) throw new DomainContinuationPublisher.PostconditionFailure("LEGACY_CA_BINDING_RECONCILIATION_REQUIRED");
+        var lifecycle = frozen.lifecycle().orElseThrow(() -> new DomainContinuationPublisher.PostconditionFailure(
+                "LEGACY_CA_LIFECYCLE_RECONCILIATION_REQUIRED"));
+        requireOriginalContext(lifecycle);
         PkiId authorityId = new PkiId(command.field(13));
         X509Certificate certificate = DomainContinuationPublisher.certificate(result);
         requireRootAlgorithms(certificate, frozen.outgoing().orElseThrow());
@@ -121,7 +124,19 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
             publishRootCredential(frozen, der, targets, domain);
             putOrRequireGeneration(generation, frozen.outgoing(), der, frozen.profile(), frozen.format().value());
             putOrRequirePath(path);
-            advanceExistingCa(authorityId, issuerId, path.pathId(), frozen.keyRef());
+            if (lifecycle.operation() == CaLifecycleContext.Operation.ROOT_CANDIDATE) {
+                var binding = store.getIssuerCryptographicBinding(issuerId).orElseThrow(() ->
+                        new DomainContinuationPublisher.PostconditionFailure("CANDIDATE_BINDING_MISSING"));
+                try {
+                    store.registerRootCandidate(new zeroecho.pki.api.ca.RootTrustAnchorTransition(1,
+                            lifecycle.transitionId().orElseThrow(), authorityId, lifecycle.expectedHead(),
+                            lifecycle.originalCredentialId(), lifecycle.originalCertificateSha256(), lifecycle.expectedHead().bindingCommitment(),
+                            issuerId, path.pathId(), credentialId, certificateHash, binding.commitment(), domain.operationId(), domain.commandCommitment()));
+                } catch (IllegalArgumentException conflict) {
+                    throw new DomainContinuationPublisher.PostconditionFailure("ROOT_CANDIDATE_CONTEXT_CONFLICT", conflict);
+                }
+                DomainContinuationPublisher.afterDurablePublication(DomainContinuationPublisher.PublicationFaultPoint.AFTER_CA);
+            } else advanceExistingCa(authorityId, issuerId, path.pathId(), frozen.keyRef(), lifecycle);
         } finally {
             java.util.Arrays.fill(der, (byte) 0);
         }
@@ -129,7 +144,7 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
 
     private void publishRoot(DomainCommandEncoding.Decoded command, EncodedObject result,
             DomainContinuationStore.Record domain) {
-        if (command.fields().size() == 15) CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
+        if (command.fields().size() >= 15) CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
             else command.requireFields(14);
         RootCommand frozen = RootCommand.decode(command);
         if (frozen.outgoing().isEmpty()) throw new DomainContinuationPublisher.PostconditionFailure("LEGACY_CA_BINDING_RECONCILIATION_REQUIRED");
@@ -267,7 +282,7 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
 
     private void publishIntermediate(DomainCommandEncoding.Decoded command, EncodedObject result,
             DomainContinuationStore.Record domain) {
-        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        if (command.fields().size() >= 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
         else command.requireFields(23);
         IntermediateCommand frozen = IntermediateCommand.decode(command);
         if (frozen.outgoing().isEmpty()) throw new DomainContinuationPublisher.PostconditionFailure("LEGACY_CA_BINDING_RECONCILIATION_REQUIRED");
@@ -374,9 +389,13 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
             return;
         }
         if (ROLLOVER_INTERMEDIATE.equals(operation)) {
-            advanceExistingCa(frozen.subjectCaId(), subjectIssuerId, subjectPathId, frozen.subjectKeyRef());
+            advanceExistingCa(frozen.subjectCaId(), subjectIssuerId, subjectPathId, frozen.subjectKeyRef(),
+                    frozen.lifecycle().orElseThrow(() -> new DomainContinuationPublisher.PostconditionFailure("LEGACY_CA_LIFECYCLE_RECONCILIATION_REQUIRED")));
             return;
         }
+        var lifecycle = frozen.lifecycle().orElseThrow(() -> new DomainContinuationPublisher.PostconditionFailure(
+                "LEGACY_CA_LIFECYCLE_RECONCILIATION_REQUIRED"));
+        requireOriginalContext(lifecycle);
         CaRecord current = store.getCa(frozen.subjectCaId())
                 .orElseThrow(() -> new DomainContinuationPublisher.PostconditionFailure("SUBJECT_CA_UNAVAILABLE"));
         if (current.kind() != CaKind.INTERMEDIATE) {
@@ -390,10 +409,10 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
         }
         List<PkiId> issuerIds = new ArrayList<>(current.issuerIds());
         issuerIds.add(subjectIssuerId);
-        if (!store.replaceCa(current, new CaRecord(current.caId(), current.kind(), current.state(),
+        if (!store.compareAndSetCaHead(lifecycle.expectedHead(), new CaRecord(current.caId(), current.kind(), current.state(),
                 current.issuerKeyRef(), current.subjectRef(), issuerIds,
                 current.currentIssuanceIssuerId(), current.issuanceChainPathId()))) {
-            throw new IllegalStateException("CA publication changed concurrently");
+            throw new DomainContinuationPublisher.PostconditionFailure("CA_EXPECTED_HEAD_CONFLICT");
         }
         DomainContinuationPublisher.afterDurablePublication(
                 DomainContinuationPublisher.PublicationFaultPoint.AFTER_CA);
@@ -453,7 +472,23 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
 
     // Exact credential ownership, generation and path have already been checked. Membership
     // therefore proves this publication step finished even after later administrative changes.
-    private void advanceExistingCa(PkiId caId, PkiId issuerId, PkiId pathId, KeyRef keyRef) {
+    private void requireOriginalContext(CaLifecycleContext lifecycle) {
+        var generation = store.getIssuerGeneration(lifecycle.expectedHead().issuerId()).orElseThrow(() ->
+                new DomainContinuationPublisher.PostconditionFailure("ORIGINAL_GENERATION_MISSING"));
+        var credential = store.getCredential(lifecycle.originalCredentialId()).orElseThrow(() ->
+                new DomainContinuationPublisher.PostconditionFailure("ORIGINAL_CREDENTIAL_MISSING"));
+        var binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow(() ->
+                new DomainContinuationPublisher.PostconditionFailure("ORIGINAL_BINDING_MISSING"));
+        if (!generation.authorityId().equals(lifecycle.expectedHead().caId())
+                || !generation.credentialId().equals(credential.credentialId())
+                || !credential.content().sha256().equals(lifecycle.originalCertificateSha256())
+                || !binding.commitment().equals(lifecycle.expectedHead().bindingCommitment())) {
+            throw new DomainContinuationPublisher.PostconditionFailure("ORIGINAL_CA_CONTEXT_DIFFERS");
+        }
+    }
+
+    private void advanceExistingCa(PkiId caId, PkiId issuerId, PkiId pathId, KeyRef keyRef, CaLifecycleContext lifecycle) {
+        requireOriginalContext(lifecycle);
         CaRecord current = store.getCa(caId)
                 .orElseThrow(() -> new DomainContinuationPublisher.PostconditionFailure("ROLLOVER_CA_UNAVAILABLE"));
         if (current.issuerIds().contains(issuerId)) {
@@ -464,9 +499,9 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
         }
         List<PkiId> issuerIds = new ArrayList<>(current.issuerIds());
         issuerIds.add(issuerId);
-        if (!store.replaceCa(current, new CaRecord(caId, current.kind(), current.state(), keyRef, current.subjectRef(),
+        if (!store.compareAndSetCaHead(lifecycle.expectedHead(), new CaRecord(caId, current.kind(), current.state(), keyRef, current.subjectRef(),
                 issuerIds, issuerId, pathId))) {
-            throw new IllegalStateException("CA publication changed concurrently");
+            throw new DomainContinuationPublisher.PostconditionFailure("CA_EXPECTED_HEAD_CONFLICT");
         }
         DomainContinuationPublisher.afterDurablePublication(
                 DomainContinuationPublisher.PublicationFaultPoint.AFTER_CA);
@@ -494,14 +529,15 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
     /** Exact decoded root-publication fields. */
     private record RootCommand(FormatId format, SubjectRef subject, KeyRef keyRef,
             CertificateProfileRef profile, Instant notBefore, Instant notAfter, BigInteger serial,
-            PkiId authorityId, java.util.Optional<CaOutgoingBinding> outgoing) {
+            PkiId authorityId, java.util.Optional<CaOutgoingBinding> outgoing, java.util.Optional<CaLifecycleContext> lifecycle) {
 
         private static RootCommand decode(DomainCommandEncoding.Decoded command) {
             return new RootCommand(new FormatId(command.field(0)), new SubjectRef(command.field(1)),
                     new KeyRef(command.field(3)), DomainContinuationPublisher.profile(command, 4),
                     Instant.parse(command.field(7)), Instant.parse(command.field(8)),
                     new BigInteger(command.field(9)), new PkiId(command.field(13)),
-                    command.fields().size() == 15 ? java.util.Optional.of(CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)))) : java.util.Optional.empty());
+                    command.fields().size() >= 15 ? java.util.Optional.of(CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)))) : java.util.Optional.empty(),
+                    command.fields().size() == 16 ? java.util.Optional.of(CaLifecycleContextCodec.decode(command.field(15))) : java.util.Optional.empty());
         }
     }
 
@@ -513,7 +549,8 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
     private record IntermediateCommand(FormatId format, PkiId issuerCaId, PkiId subjectCaId,
             PkiId parentIssuerId, PkiId parentPathId, String parentPathCommitment, KeyRef subjectKeyRef,
             CertificateProfileRef profile, SubjectRef subject, Instant notBefore, Instant notAfter,
-            BigInteger serial, String publicKeyFingerprint, java.util.Optional<CaOutgoingBinding> outgoing) {
+            BigInteger serial, String publicKeyFingerprint, java.util.Optional<CaOutgoingBinding> outgoing,
+            java.util.Optional<CaLifecycleContext> lifecycle) {
 
         private static IntermediateCommand decode(DomainCommandEncoding.Decoded command) {
             return new IntermediateCommand(new FormatId(command.field(0)), new PkiId(command.field(1)),
@@ -522,7 +559,8 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
                     DomainContinuationPublisher.profile(command, 7),
                     new SubjectRef(command.field(10)), Instant.parse(command.field(11)),
                     Instant.parse(command.field(12)), new BigInteger(command.field(13)), command.field(17),
-                    command.fields().size() == 25 ? java.util.Optional.of(CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)))) : java.util.Optional.empty());
+                    command.fields().size() >= 25 ? java.util.Optional.of(CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)))) : java.util.Optional.empty(),
+                    command.fields().size() == 26 ? java.util.Optional.of(CaLifecycleContextCodec.decode(command.field(25))) : java.util.Optional.empty());
         }
     }
 }

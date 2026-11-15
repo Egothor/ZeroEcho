@@ -230,14 +230,42 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
     }
 
+    @Override public zeroecho.pki.api.ca.CaHeadSnapshot freezeCaHead(PkiId caId,
+            Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expected) {
+        Objects.requireNonNull(caId, "caId"); Objects.requireNonNull(expected, "expected");
+        var head = store.getCaHeadSnapshot(caId).orElseThrow(() -> new PkiException("CA_HEAD_EVIDENCE_MISSING"));
+        if (expected.isPresent() && !expected.orElseThrow().equals(head)) {
+            throw new PkiException("CA_EXPECTED_HEAD_CONFLICT");
+        }
+        return head;
+    }
+
+    @Override public CaKeyRotationCommand normalizeCaKeyRotation(CaKeyRotationCommand command) {
+        Objects.requireNonNull(command, "command");
+        var head = freezeCaHead(command.caId(), command.expectedHead());
+        var retained = store.getIssuerCryptographicBinding(head.issuerId())
+                .orElseThrow(() -> new PkiException("ISSUER_BINDING_MISSING"));
+        if (!retained.commitment().equals(head.bindingCommitment()) || !retained.authorityId().equals(command.caId())) {
+            throw new PkiException("CA_HEAD_BINDING_INCONSISTENT");
+        }
+        var selection = command.selection().effective(retained);
+        return switch (command) {
+            case CaKeyRotationCommand.Root value -> new CaKeyRotationCommand.Root(value.caId(), selection,
+                    Optional.of(head), value.attributes());
+            case CaKeyRotationCommand.Intermediate value -> new CaKeyRotationCommand.Intermediate(value.caId(), selection,
+                    value.issuerCaId(), Optional.of(head), value.attributes());
+        };
+    }
+
     @Override public void validateCaKeyRotation(AccessContext access, zeroecho.pki.api.ca.CaKeyRotationCommand command,
             CancellationSignal cancellation) {
         signing.requireAvailable();
         Objects.requireNonNull(access, ACCESS_ARGUMENT); Objects.requireNonNull(command, "command");
         Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT);
         try {
-            if (command instanceof zeroecho.pki.api.ca.CaKeyRotationCommand.Root input) root.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
-            else if (command instanceof zeroecho.pki.api.ca.CaKeyRotationCommand.Intermediate input) intermediate.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
+            var normalized = normalizeCaKeyRotation(command);
+            if (normalized instanceof zeroecho.pki.api.ca.CaKeyRotationCommand.Root input) root.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
+            else if (normalized instanceof zeroecho.pki.api.ca.CaKeyRotationCommand.Intermediate input) intermediate.orElseThrow(UnsupportedOperationException::new).validateExisting(access, input, cancellation);
         } catch (IOException failure) { throw new PkiException("Input validation failed", failure); }
     }
 
@@ -422,7 +450,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             case CaKeyRotationCommand.Intermediate value -> value.issuerCaId();
         };
         try {
-            domain = switch (command) {
+            domain = switch (normalizeCaKeyRotation(command)) {
                 case CaKeyRotationCommand.Root value -> root.orElseThrow(() -> new IllegalStateException("Root preparation unavailable"))
                         .prepare(access, value, signing.newSubmissionId(), signing.signingTtl(), cancellation);
                 case CaKeyRotationCommand.Intermediate value -> intermediate.orElseThrow(() -> new IllegalStateException("Intermediate preparation unavailable"))
@@ -573,6 +601,57 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             return adoptLeaf(endEntity.prepareSdk(access, request, parsed, approval, signing.newSubmissionId(),
                     signing.signingTtl(), evidence, cancellation), cancellation);
         } catch (IOException failure) { throw new PkiException("SDK preparation failed", failure); }
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdkLifecycle(access, request, parsed, frozenValidity, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK lifecycle preview failed", failure); }
+    }
+
+    @Override public PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return adoptLeaf(endEntity.prepareSdkLifecycle(access, request, parsed, approval, signing.newSubmissionId(),
+                signing.signingTtl(), evidence, cancellation), cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK lifecycle preparation failed", failure); }
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdkLifecycle(access, request, parsed, frozenValidity, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK lifecycle preview failed", failure); }
+    }
+
+    @Override public PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return adoptLeaf(endEntity.prepareSdkLifecycle(access, request, parsed, approval, signing.newSubmissionId(),
+                signing.signingTtl(), evidence, cancellation), cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK lifecycle preparation failed", failure); }
+    }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+            CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return endEntity.previewSdkLifecycle(access, request, parsed, frozenValidity, cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK lifecycle preview failed", failure); }
+    }
+
+    @Override public PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        try { return adoptLeaf(endEntity.prepareSdkLifecycle(access, request, parsed, approval, signing.newSubmissionId(),
+                signing.signingTtl(), evidence, cancellation), cancellation); }
+        catch (IOException failure) { throw new PkiException("SDK lifecycle preparation failed", failure); }
     }
 
     @Override public PreparedSemanticSigningRequest prepareEndEntity(AccessContext access,
@@ -764,8 +843,16 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         if (zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(command.operation())) {
             SignWorkflowStore.CaSubjectProofStep proof = exact.proofStep().orElseThrow(
                     () -> new IllegalArgumentException("Intermediate signing proof candidate is missing"));
+            if (command.fields().size() >= 25
+                    && zeroecho.pki.impl.core.continuation.CaOutgoingBinding.decodeForSubject(command.field(23),
+                            new KeyRef(command.field(6))).alternative().isPresent()
+                    && exact.alternativeProofStep().isEmpty()) {
+                throw new IllegalArgumentException("Hybrid intermediate subject requires both proof roles");
+            }
             FullCrlSigningCommand.requireAdmission(exact.algorithmId(), exact.content().length(), pureEdDsaMaximumTbsBytes);
             FullCrlSigningCommand.requireAdmission(proof.algorithmId(), proof.challenge().length(), pureEdDsaMaximumTbsBytes);
+            exact.alternativeProofStep().ifPresent(alternative -> FullCrlSigningCommand.requireAdmission(
+                    alternative.algorithmId(), alternative.challenge().length(), pureEdDsaMaximumTbsBytes));
         }
         scope(template.kind(), command, exact.accessContext(), exact.keyRef());
         SignWorkflowStore.OuterCommand outer = new SignWorkflowStore.OuterCommand(template.kind(),
@@ -909,6 +996,37 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             return Optional.empty();
         }
         return Optional.of(FullCrlSigningCommand.resultId(operation.result().orElseThrow()));
+    }
+
+    @Override public java.util.Map<String, String> completedCaLifecycleMetadata(SemanticSigningOperation operation) {
+        Objects.requireNonNull(operation, "operation");
+        if (operation.state() != SemanticSigningState.COMPLETED || operation.scope().kind() != SemanticSigningKind.CA) return java.util.Map.of();
+        var domain = store.getDomainContinuation(operation.submissionId().id()).orElseThrow();
+        var command = DomainCommandEncoding.decode(domain.command());
+        if (!command.operation().equals(ROLLOVER_ROOT) || command.fields().size() != 16) return java.util.Map.of();
+        var context = zeroecho.pki.impl.core.continuation.CaLifecycleContextCodec.decode(command.field(15));
+        if (context.transitionId().isEmpty()) return java.util.Map.of();
+        var transition = store.getRootTrustAnchorTransition(context.transitionId().orElseThrow()).orElseThrow();
+        if (!transition.originatingSigningOperationId().equals(domain.operationId())
+                || !transition.commandCommitment().equals(domain.commandCommitment())) {
+            throw new IllegalStateException("Root candidate result evidence differs");
+        }
+        var head = store.getCaHeadSnapshot(transition.caId()).orElseThrow();
+        return java.util.Map.ofEntries(java.util.Map.entry("activationState",
+                        store.getRootTrustAnchorActivation(transition.transitionId()).isPresent() ? "ACTIVATED" : "PENDING_ACTIVATION"),
+                java.util.Map.entry("caId", transition.caId().value()),
+                java.util.Map.entry("transitionId", transition.transitionId().value()),
+                java.util.Map.entry("transitionCommitment", transition.commitment()),
+                java.util.Map.entry("candidateIssuerId", transition.candidateIssuerId().value()),
+                java.util.Map.entry("candidatePathId", transition.candidatePathId().value()),
+                java.util.Map.entry("candidateCredentialId", transition.candidateCredentialId().value()),
+                java.util.Map.entry("downloadCredentialId", transition.candidateCredentialId().value()),
+                java.util.Map.entry("candidateCertificateSha256", transition.candidateCertificateSha256()),
+                java.util.Map.entry("oldCertificateSha256", transition.oldCertificateSha256()),
+                java.util.Map.entry("selectedIssuerId", head.issuerId().value()),
+                java.util.Map.entry("selectedPathId", head.pathId().value()),
+                java.util.Map.entry("selectedHeadEpoch", Long.toString(head.epoch())),
+                java.util.Map.entry("activationOperation", "issuer.path.select"));
     }
 
     @Override public RetainedIssuanceBinding issuanceBinding(CorrelatedEndEntityIssuanceRequest request) {

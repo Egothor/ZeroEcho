@@ -165,6 +165,7 @@ final class SigningRecoveryIntegrityValidator {
         requireConsumed(consumedEnvelopes, envelopeKey);
         SignWorkflowStore.AcceptanceEnvelope envelope = decodeAndProjectEnvelope(
                 envelopeRecord, operationId);
+        FsCodec.requireSigningStateVariant(envelope, readValue(stateRecord));
         new SignWorkflowStore.Workflow(envelope, state);
 
         for (zeroecho.pki.api.content.DurableContentReference candidate : new SignWorkflowStore.Workflow(envelope, state).candidates()) {

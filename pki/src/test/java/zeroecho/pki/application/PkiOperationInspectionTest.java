@@ -109,7 +109,8 @@ final class PkiOperationInspectionTest {
                     "getCa", authority.caId(), Map.of(
                             "caId", text("middle-authority"), "kind", text("INTERMEDIATE"), "state", text("ACTIVE"),
                             "issuerGenerationCount", integer(1),
-                            "currentIssuanceIssuerId", text(generation.issuerId().value())));
+                            "currentIssuanceIssuerId", text(generation.issuerId().value()),
+                            "headEpoch", integer(1), "selectedPathId", text(path.pathId().value())));
             assertProjection(bootstrap, executor, new PkiOperation.InspectCredential(caCredential.credentialId()),
                     "credential.inspect", "getCredential", caCredential.credentialId(),
                     credentialFields(caCredential, caProfile));
@@ -228,7 +229,10 @@ final class PkiOperationInspectionTest {
             status(bootstrap.store, IntermediateCreationFixture.CA, "list-parent", Optional.empty());
             status(bootstrap.store, middle, "list-middle-two", Optional.of(IntermediateCreationFixture.NOW.plusSeconds(600)));
             List<PkiOperationValue> authorities = bootstrap.store.listCas().stream()
-                    .<PkiOperationValue>map(ca -> inspectedValue(executor, new PkiOperation.InspectAuthority(ca.caId())))
+                    .<PkiOperationValue>map(ca -> new PkiOperationValue.ObjectValue(Map.of(
+                            "caId", text(ca.caId().value()), "kind", text(ca.kind().name()),
+                            "state", text(ca.state().name()), "issuerGenerationCount", integer(ca.issuerIds().size()),
+                            "currentIssuanceIssuerId", text(ca.currentIssuanceIssuerId().value()))))
                     .toList();
             List<PkiOperationValue> statuses = bootstrap.store.listStatusObjects(middle).stream()
                     .sorted(java.util.Comparator.comparing(value -> value.statusObjectId().value()))
@@ -533,7 +537,9 @@ final class PkiOperationInspectionTest {
                     executor.execute(operation, CancellationSignal.NONE)).result();
             assertEquals(new PkiOperationResult(name, expected), result);
             assertEquals(operation instanceof PkiOperation.InspectIssuerGeneration
-                    ? List.of(method, "getCredential") : List.of(method), bootstrap.calls);
+                    ? List.of(method, "getCredential", "getRootTrustAnchorTransitionForIssuer")
+                    : operation instanceof PkiOperation.InspectAuthority
+                            ? List.of(method, "getCaHeadSnapshot") : List.of(method), bootstrap.calls);
         } finally {
             bootstrap.stopObserving();
         }
@@ -646,7 +652,11 @@ final class PkiOperationInspectionTest {
                     (proxy, method, arguments) -> {
                         if (expectedMethod != null) {
                             calls.add(method.getName());
-                            if (expectedMethod.equals("getIssuerGeneration") && method.getName().equals("getCredential")) {
+                            if ((expectedMethod.equals("getCa") && method.getName().equals("getCaHeadSnapshot"))
+                                    || (expectedMethod.equals("getIssuerGeneration")
+                                            && method.getName().equals("getRootTrustAnchorTransitionForIssuer"))) {
+                                assertEquals(expectedId, arguments[0], "Lifecycle metadata must belong to the inspected object");
+                            } else if (expectedMethod.equals("getIssuerGeneration") && method.getName().equals("getCredential")) {
                                 assertEquals(generationCredentialId, arguments[0], "Generation profile must come from its stored credential");
                             } else {
                                 assertEquals(expectedMethod, method.getName(), "Inspection must use its authoritative metadata path");

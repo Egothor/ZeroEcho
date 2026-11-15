@@ -212,15 +212,14 @@ public final class HttpOperationCodec {
                 yield new PkiSigningOperation.ReissueCredential(fields.pkiId("credentialId"));
             }
             case PkiSigningOperation.RolloverCaCertificate.NAME -> {
-                fields.allowed(Set.of("caId", "issuerCaId"));
+                fields.allowed(Set.of("caId", "issuerCaId", "expectedHead"));
                 yield new PkiSigningOperation.RolloverCaCertificate(fields.pkiId("caId"),
-                        fields.optionalText("issuerCaId").map(PkiId::new));
+                        fields.optionalText("issuerCaId").map(PkiId::new),fields.head());
             }
             case PkiSigningOperation.RotateCaKey.NAME -> {
-                fields.allowed(Set.of("caId", "newKeyRef", "issuerCaId"));
+                fields.allowed(Set.of("caId", "newKeyRef", "issuerCaId", "newAlternativeKeyRef", "primarySignatureAlgorithmId", "alternativeSignatureAlgorithmId", "expectedHead"));
                 yield new PkiSigningOperation.RotateCaKey(fields.pkiId("caId"),
-                        fields.optionalText("newKeyRef").map(KeyRef::new),
-                        fields.optionalText("issuerCaId").map(PkiId::new));
+                        fields.selection(),fields.optionalText("issuerCaId").map(PkiId::new),fields.head());
             }
             case PkiSigningOperation.GenerateStatus.NAME -> {
                 fields.exact("issuerCaId", "type", "formatId");
@@ -234,10 +233,10 @@ public final class HttpOperationCodec {
                         fields.text("profileId"), fields.optionalText("keyRef").map(KeyRef::new),fields.optionalText("signatureAlgorithmId"));
             }
             case PkiSigningOperation.IssueIntermediateCertificate.NAME -> {
-                fields.allowed(Set.of("formatId", "issuerCaId", "subjectCaId", "profileId", "notBefore", "notAfter"));
+                fields.allowed(Set.of("formatId", "issuerCaId", "subjectCaId", "profileId", "notBefore", "notAfter", "expectedHead"));
                 yield new PkiSigningOperation.IssueIntermediateCertificate(new FormatId(fields.text("formatId")),
                         fields.pkiId("issuerCaId"), fields.pkiId("subjectCaId"), fields.text("profileId"),
-                        requestedValidity(fields));
+                        requestedValidity(fields),fields.head());
             }
             default -> throw new IllegalArgumentException("Signing operation is unsupported");
         };
@@ -435,9 +434,9 @@ public final class HttpOperationCodec {
                 yield new PkiOperation.ListIssuerChainPaths(fields.pkiId("issuerId"));
             }
             case PkiOperation.SelectIssuancePath.NAME -> {
-                fields.exact("caId", "issuerId", "pathId", "reason");
+                fields.allowed(Set.of("caId", "issuerId", "pathId", "reason", "expectedHead", "transitionCommitment", "distributionAcknowledged"));
                 yield new PkiOperation.SelectIssuancePath(fields.pkiId("caId"), fields.pkiId("issuerId"),
-                        fields.pkiId("pathId"), fields.text("reason"));
+                        fields.pkiId("pathId"), fields.text("reason"),fields.head(),fields.optionalText("transitionCommitment"),fields.fields.containsKey("distributionAcknowledged")&&fields.bool("distributionAcknowledged"));
             }
             case PkiOperation.RegisterIssuerChainPath.NAME -> {
                 fields.exact("caId", "issuerId", "parentPathId");
@@ -1354,6 +1353,14 @@ public final class HttpOperationCodec {
                 if (!(item instanceof PkiOperationValue.Text text) || !result.add(text.value())) throw type();
             }
             return Set.copyOf(result);
+        }
+        Optional<zeroecho.pki.api.ca.CaHeadSnapshot> head() {
+            if(fields.containsKey("expectedHead"))consumed.add("expectedHead");
+            return zeroecho.pki.server.LifecycleProjection.head(fields);
+        }
+        zeroecho.pki.api.ca.CaRotationSelection selection() {
+            for(String name:Set.of("newKeyRef","newAlternativeKeyRef","primarySignatureAlgorithmId","alternativeSignatureAlgorithmId"))if(fields.containsKey(name))consumed.add(name);
+            return zeroecho.pki.server.LifecycleProjection.selection(fields);
         }
         Fields object(String name) { consumed.add(name); return of(require(name)); }
         List<Fields> objects(String name) {

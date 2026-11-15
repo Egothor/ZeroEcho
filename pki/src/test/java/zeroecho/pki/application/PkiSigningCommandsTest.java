@@ -227,6 +227,7 @@ final class PkiSigningCommandsTest {
         for (SemanticSigningKind kind : List.of(SemanticSigningKind.CA, SemanticSigningKind.ISSUANCE, SemanticSigningKind.STATUS)) {
             SemanticSigningOperation completed = observation(kind, SemanticSigningState.COMPLETED);
             SemanticSigningService service = proxy(SemanticSigningService.class, (receiver, method, arguments) -> {
+                if (method.getName().equals("completedCaLifecycleMetadata")) return java.util.Map.of();
                 assertEquals("completedStatusObjectId", method.getName());
                 assertSame(completed, arguments[0]);
                 return kind == SemanticSigningKind.STATUS ? Optional.of(statusId) : Optional.empty();

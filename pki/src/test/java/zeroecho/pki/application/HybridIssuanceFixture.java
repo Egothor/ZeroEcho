@@ -102,6 +102,7 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
     final KeyPair rotatedKey;
     final KeyPair childKey;
     final KeyPair altKey;
+    final KeyPair rotatedAltKey;
     PkiStore store;
     String alternativeFault;
     java.util.function.UnaryOperator<PkiStore> storeDecorator = java.util.function.UnaryOperator.identity();
@@ -124,12 +125,14 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         rotatedKey = pair(jcaAlgorithm);
         childKey = pair(childAlgorithm);
         altKey = pair(alternativeAlgorithm);
+        rotatedAltKey = pair(alternativeAlgorithm);
         try (KeyringPassword password = TestKeyringUnlocks.provider().acquire();
                 KeyringStore keys = KeyringStore.create(keyring, password)) {
             put(keys, "root", family, rootKey);
             put(keys, "rotated", family, rotatedKey);
             put(keys, "child", familyOf(childAlgorithm), childKey);
             put(keys, "alt", "ML-DSA", altKey);
+            put(keys, "rotated-alt", "ML-DSA", rotatedAltKey);
             put(keys, "other-alt", "ML-DSA", pair(alternativeAlgorithm));
         }
     }

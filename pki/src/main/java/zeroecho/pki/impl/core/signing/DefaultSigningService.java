@@ -230,6 +230,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
             throw new IllegalArgumentException("Semantic candidate lifecycle must be OPERATION");
         }
         Optional<SignWorkflowStore.CaSubjectProofStep> proofStep = restoreProof(request.proofStep());
+        Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProof = restoreProof(request.alternativeProofStep());
         boolean intermediate = zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(
                 zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command()));
         if (intermediate != proofStep.isPresent()) {
@@ -237,9 +238,10 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
         provider.inputCapabilities().select(request.algorithmId(), candidate.length());
         proofStep.ifPresent(step -> provider.inputCapabilities().select(step.algorithmId(), step.challenge().length()));
+        alternativeProof.ifPresent(step -> provider.inputCapabilities().select(step.algorithmId(), step.challenge().length()));
         Optional<SignWorkflowStore.OuterCommand> paired = Optional.of(outer);
         SignWorkflowStore.AcceptanceCommand command = command(metadata, candidate,
-                deadline(submission.createdAt()), paired, SignWorkflowStore.Mode.NORMAL, proofStep);
+                deadline(submission.createdAt()), paired, SignWorkflowStore.Mode.NORMAL, proofStep, alternativeProof);
         if (outer.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.KEY_PROOF) {
             zeroecho.pki.impl.core.continuation.ManagedKeyProofBindings.requireEnvelope(
                     SignWorkflowStore.AcceptanceEnvelope.from(command));
@@ -251,7 +253,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
             catch (IOException failure) { throw new PkiException("CA proof candidate validation failed", failure); }
         }
         return new DefaultPreparedSigningRequest(metadata, candidate, receipt(command), preparedOwner, paired,
-                SignWorkflowStore.Mode.NORMAL, proofStep);
+                SignWorkflowStore.Mode.NORMAL, proofStep, alternativeProof);
     }
 
     /* default */ void requireAvailable() { requireOpen.run(); }
@@ -288,6 +290,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         SignWorkflowStore.AcceptanceCommand command = validatePrepared(exact);
         provider.inputCapabilities().select(exact.request().signatureAlgorithm().canonicalForm(), exact.candidate().length());
         exact.proofStep().ifPresent(step -> provider.inputCapabilities().select(step.algorithmId(), step.challenge().length()));
+        exact.alternativeProofStep().ifPresent(step -> provider.inputCapabilities().select(step.algorithmId(), step.challenge().length()));
         SignWorkflowStore.AcceptanceResult result = claim.isPresent()
                 ? acceptance.acceptScheduled(command, claim.orElseThrow(), exact::consumeForAccept)
                 : acceptance.accept(command, exact::consumeForAccept);
@@ -414,7 +417,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         DurableContentReference candidate = restore(prepared.candidate());
         Instant deadline = deadline(prepared.request().submissionId().createdAt());
         SignWorkflowStore.AcceptanceCommand command = command(prepared.request(), candidate,
-                deadline, prepared.outer(), prepared.mode(), restoreProof(prepared.proofStep()));
+                deadline, prepared.outer(), prepared.mode(), restoreProof(prepared.proofStep()), restoreProof(prepared.alternativeProofStep()));
         if (!receipt(command).equals(prepared.receipt())) {
             throw new IllegalArgumentException("Prepared signing receipt mismatch");
         }
@@ -425,15 +428,23 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
             DurableContentReference candidate, Instant deadline,
             Optional<SignWorkflowStore.OuterCommand> outer, SignWorkflowStore.Mode mode,
             Optional<SignWorkflowStore.CaSubjectProofStep> proofStep) {
+        return command(request, candidate, deadline, outer, mode, proofStep, Optional.empty());
+    }
+
+    private SignWorkflowStore.AcceptanceCommand command(SigningRequest request,
+            DurableContentReference candidate, Instant deadline,
+            Optional<SignWorkflowStore.OuterCommand> outer, SignWorkflowStore.Mode mode,
+            Optional<SignWorkflowStore.CaSubjectProofStep> proofStep,
+            Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProofStep) {
         return new SignWorkflowStore.AcceptanceCommand(request.submissionId().id(), namespace,
                 provider.configurationCommitment(), request.accessContext(), request.keyRef(),
                 request.fairnessAuthorityId(), request.signatureAlgorithm().canonicalForm(), Encoding.BINARY,
-                request.submissionId().createdAt(), deadline, candidate, outer, mode, proofStep);
+                request.submissionId().createdAt(), deadline, candidate, outer, mode, proofStep, alternativeProofStep);
     }
 
     private Optional<SignWorkflowStore.CaSubjectProofStep> restoreProof(Optional<SignWorkflowStore.CaSubjectProofStep> proofStep) {
         return proofStep.map(step -> new SignWorkflowStore.CaSubjectProofStep(step.operationId(), step.subjectKeyRef(),
-                step.algorithmId(), restore(step.challenge())));
+                step.algorithmId(), restore(step.challenge()), step.role()));
     }
 
     private DurableContentReference restore(DurableContentReference reference) {

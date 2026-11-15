@@ -61,6 +61,16 @@ public interface PkiSigningCommands {
     }
 
     /**
+     * Freezes rotation role selections and the expected head before approval/hash capture.
+     * @param operation immutable selected operation
+     * @return normalized lifecycle command, or unchanged other command
+     * @throws UnsupportedOperationException if required normalization is unavailable
+     */
+    default PkiSigningOperation normalizeLifecycle(PkiSigningOperation operation) {
+        throw new UnsupportedOperationException("Lifecycle normalization unavailable");
+    }
+
+    /**
      * Checks known CA creation, CA lifecycle and ordinary leaf issuance/lifecycle
      * inputs without staging content, allocating a serial, signing, accepting work
      * or publishing metadata. Status-generation commands fail explicitly.
@@ -139,6 +149,36 @@ public interface PkiSigningCommands {
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK preparation unavailable");
+    }
+
+    /**
+     * Purely evaluates only issue, renewal, reissue or replacement SDK operations.
+     * @param operation restricted leaf operation @param access authorized caller
+     * @param request exact parsed client request @param frozenValidity absolute retained bounds, or empty initially
+     * @param cancellation cooperative cancellation @return frozen public subject/issuer/lifecycle coordinates
+     * @throws UnsupportedOperationException for another operation or an unavailable lifecycle service
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+        if (operation instanceof PkiSigningOperation.IssueCredential issue) return previewSdk(issue, access, request, frozenValidity, cancellation);
+        throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
+    }
+
+    /**
+     * Prepares only issue, renewal, reissue or replacement using fresh accepted dual client proof.
+     * @param operation restricted leaf operation @param access authorized caller
+     * @param request exact client request @param approval retained proof and signed target
+     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     * @return caller-owned staged request awaiting acceptance or discard
+     * @throws UnsupportedOperationException for another operation or an unavailable lifecycle service
+     */
+    default PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
+            AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        if (operation instanceof PkiSigningOperation.IssueCredential issue) return prepareSdk(issue, access, request, approval, evidence, cancellation);
+        throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
     }
 
     /**

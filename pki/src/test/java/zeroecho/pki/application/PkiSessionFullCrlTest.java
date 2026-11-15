@@ -604,8 +604,10 @@ class PkiSessionFullCrlTest {
             store.putIssuerChainPath(chain);
             java.util.ArrayList<PkiId> generations = new java.util.ArrayList<>(previous);
             generations.add(issuer);
-            store.putCa(new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, KEY, new SubjectRef("CN=Session CRL"),
-                    generations, issuer, chain.pathId()));
+            CaRecord replacement = new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, KEY, new SubjectRef("CN=Session CRL"),
+                    generations, issuer, chain.pathId());
+            if (previous.isEmpty()) store.putCa(replacement);
+            else assertTrue(store.compareAndSetCaHead(store.getCaHeadSnapshot(CA).orElseThrow(), replacement));
             return issuer;
         }
 

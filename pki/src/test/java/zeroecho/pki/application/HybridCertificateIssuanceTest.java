@@ -35,6 +35,7 @@
 package zeroecho.pki.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -152,9 +153,14 @@ final class HybridCertificateIssuanceTest {
             credentials.add(fixture.current(ca));
             fixture.execute(session, new PkiSigningOperation.RolloverCaCertificate(ca, Optional.empty()));
             credentials.add(fixture.current(ca));
-            fixture.execute(session, new PkiSigningOperation.RotateCaKey(ca,
+            var beforeCandidate = fixture.store.getCaHeadSnapshot(ca).orElseThrow();
+            var candidateResult = fixture.execute(session, new PkiSigningOperation.RotateCaKey(ca,
                     Optional.of(HybridIssuanceFixture.key("rotated")), Optional.empty()));
-            credentials.add(fixture.current(ca));
+            var candidate = new zeroecho.pki.api.PkiId(((PkiOperationValue.Text) candidateResult.result().fields().get("credentialId")).value());
+            credentials.add(candidate);
+            assertEquals("PENDING_ACTIVATION", ((PkiOperationValue.Text) candidateResult.result().fields().get("activationState")).value());
+            assertEquals(beforeCandidate, fixture.store.getCaHeadSnapshot(ca).orElseThrow());
+            assertEquals(credentials.get(1), fixture.current(ca));
             for (int index = 0; index < credentials.size(); index++) {
                 fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey);
             }
@@ -168,17 +174,17 @@ final class HybridCertificateIssuanceTest {
             RootCreationFixture.install(fixture.store, fixture.profile("matrix-root", 4,
                     CertificateProfileKind.ROOT_CA, fixture.mode));
             fixture.execute(session, new PkiSigningOperation.RolloverCaCertificate(ca, Optional.empty()));
-            fixture.verifyRoot(fixture.current(ca), fixture.rotatedKey);
+            fixture.verifyRoot(fixture.current(ca), fixture.rootKey);
             fixture.execute(session, new PkiSigningOperation.CreateIntermediate(X509, ca,
                     new SubjectRef("CN=Ordinary Child,C=CZ"), "matrix-intermediate", Optional.of(HybridIssuanceFixture.key("child"))));
             zeroecho.pki.api.PkiId child = fixture.store.listCas().stream().filter(value -> !value.caId().equals(ca))
                     .findFirst().orElseThrow().caId();
-            fixture.certificate(fixture.current(child)).verify(fixture.rotatedKey.getPublic(), "BC");
+            fixture.certificate(fixture.current(child)).verify(fixture.rootKey.getPublic(), "BC");
             zeroecho.pki.api.PkiId leaf = fixture.issueLeaf(session, ca);
-            fixture.certificate(leaf).verify(fixture.rotatedKey.getPublic(), "BC");
+            fixture.certificate(leaf).verify(fixture.rootKey.getPublic(), "BC");
             fixture.execute(session, new PkiSigningOperation.GenerateStatus(ca,
                     zeroecho.pki.api.status.StatusObjectType.CRL, X509));
-            fixture.verifyCrl(ca, fixture.rotatedKey);
+            fixture.verifyCrl(ca, fixture.rootKey);
         }
         {
             PkiSession session = fixture.open();
@@ -187,6 +193,163 @@ final class HybridCertificateIssuanceTest {
                     fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey);
                 }
             }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,primary", "false,alternative", "false,both",
+            "true,primary", "true,alternative", "true,both"})
+    void explicitHybridRotationPreservesRolesAndRootActivationBoundary(boolean intermediate, String role,
+            @TempDir Path directory) throws Exception {
+        var initialMode = new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
+                HybridIssuanceFixture.key("alt").value());
+        var fixture = new HybridIssuanceFixture(directory, "EC384", "ECDSA", BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),
+                initialMode, "RSA4096", "ML-DSA-87");
+        zeroecho.pki.api.PkiId authority;
+        zeroecho.pki.api.PkiId candidateCredential;
+        byte[] candidateDer;
+        zeroecho.pki.api.ca.CaHeadSnapshot originalHead;
+        try (var session = fixture.open()) {
+            var root = fixture.create(session);
+            String profile = intermediate ? "rotation-child" : "matrix-root";
+            var mode = intermediate ? new HybridCertificateMode.AltSignature(
+                    BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(), HybridIssuanceFixture.key("other-alt").value()) : initialMode;
+            RootCreationFixture.install(fixture.store, fixture.profile(profile, intermediate ? 1 : 2,
+                    intermediate ? CertificateProfileKind.INTERMEDIATE_CA : CertificateProfileKind.ROOT_CA, mode, Set.of("ECDSA", "RSA")));
+            authority = root;
+            if (intermediate) {
+                fixture.execute(session, new PkiSigningOperation.CreateIntermediate(X509, root,
+                        new SubjectRef("CN=Rotating Child,C=CZ"), profile, Optional.of(HybridIssuanceFixture.key("child")),
+                        Optional.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384.canonicalForm())));
+                authority = fixture.store.listCas().stream().filter(ca -> !ca.caId().equals(root)).findFirst().orElseThrow().caId();
+            }
+            originalHead = fixture.store.getCaHeadSnapshot(authority).orElseThrow();
+            var originalBinding = fixture.store.getIssuerCryptographicBinding(originalHead.issuerId()).orElseThrow();
+            byte[] originalDer = fixture.certificate(fixture.current(authority)).getEncoded();
+            boolean primaryChanges = !role.equals("alternative");
+            boolean alternativeChanges = !role.equals("primary");
+            var newPrimaryKey = intermediate ? HybridIssuanceFixture.key("rotated") : HybridIssuanceFixture.key("child");
+            var newPrimaryAlgorithm = intermediate ? BootstrapAlgorithmIdentities.ECDSA_SHA384 : BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384;
+            var selection = new zeroecho.pki.api.ca.CaRotationSelection(1, primaryChanges
+                    ? Optional.of(new zeroecho.pki.api.ca.CaRotationSelection.RoleChange(Optional.of(newPrimaryKey),
+                            Optional.of(newPrimaryAlgorithm.canonicalForm()))) : Optional.empty(), alternativeChanges
+                    ? Optional.of(new zeroecho.pki.api.ca.CaRotationSelection.RoleChange(Optional.of(HybridIssuanceFixture.key("rotated-alt")),
+                            Optional.empty())) : Optional.empty());
+            var operation = new PkiSigningOperation.RotateCaKey(authority, selection, intermediate ? Optional.of(root) : Optional.empty(),
+                    Optional.of(originalHead));
+            var completed = fixture.execute(session, operation);
+            candidateCredential = new zeroecho.pki.api.PkiId(((PkiOperationValue.Text) completed.result().fields().get("credentialId")).value());
+            var after = fixture.store.getCa(authority).orElseThrow();
+            var newIssuer = zeroecho.pki.api.ca.IssuerGeneration.idFor(authority, candidateCredential);
+            var issuedBinding = fixture.store.getIssuerCryptographicBinding(newIssuer).orElseThrow();
+            assertEquals(primaryChanges ? newPrimaryAlgorithm : originalBinding.primary().signatureAlgorithm(), issuedBinding.primary().signatureAlgorithm());
+            assertEquals(primaryChanges ? newPrimaryKey : originalBinding.primary().keyRef(), issuedBinding.primary().keyRef());
+            assertEquals(alternativeChanges ? HybridIssuanceFixture.key("rotated-alt") : originalBinding.alternative().orElseThrow().keyRef(),
+                    issuedBinding.alternative().orElseThrow().keyRef());
+            var certificate = fixture.certificate(candidateCredential);
+            candidateDer = certificate.getEncoded();
+            certificate.verify(intermediate ? fixture.rootKey.getPublic() : primaryChanges ? fixture.childKey.getPublic() : fixture.rootKey.getPublic(), "BC");
+            assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(certificate,
+                    !intermediate && alternativeChanges ? fixture.rotatedAltKey.getPublic() : fixture.altKey.getPublic()));
+            assertArrayEquals(originalDer, fixture.certificate(originalBinding.credentialId()).getEncoded());
+            assertEquals(originalBinding, fixture.store.getIssuerCryptographicBinding(originalHead.issuerId()).orElseThrow());
+            if (intermediate) {
+                assertEquals(newIssuer, after.currentIssuanceIssuerId());
+                assertEquals(originalHead.epoch() + 1, fixture.store.getCaHeadSnapshot(authority).orElseThrow().epoch());
+            } else {
+                assertEquals(originalHead, fixture.store.getCaHeadSnapshot(authority).orElseThrow());
+                assertEquals("PENDING_ACTIVATION", ((PkiOperationValue.Text) completed.result().fields().get("activationState")).value());
+                var transition = fixture.store.getRootTrustAnchorTransitionForIssuer(newIssuer).orElseThrow();
+                assertTrue(fixture.store.getRootTrustAnchorActivation(transition.transitionId()).isEmpty());
+                try (var download = session.repository().openCredential(candidateCredential); var input = download.openStream()) {
+                    assertArrayEquals(certificate.getEncoded(), input.readAllBytes());
+                }
+            }
+        }
+        try (var reopened = fixture.open()) {
+            assertTrue(reopened.signingCommands().isPresent());
+            assertArrayEquals(candidateDer, fixture.certificate(candidateCredential).getEncoded());
+            if (!intermediate) assertEquals(originalHead, fixture.store.getCaHeadSnapshot(authority).orElseThrow());
+        }
+    }
+
+    @Test void purePqcRootRotationPublishesCandidateAndKeepsSelectedIssuer(@TempDir Path directory) throws Exception {
+        var fixture = new HybridIssuanceFixture(directory, "ML-DSA-87", "ML-DSA",
+                BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(), HybridCertificateMode.None.INSTANCE,
+                "ML-DSA-87", "ML-DSA-87");
+        zeroecho.pki.api.PkiId authority;
+        zeroecho.pki.api.PkiId candidate;
+        zeroecho.pki.api.ca.CaHeadSnapshot original;
+        byte[] issued;
+        try (var session = fixture.open()) {
+            authority = fixture.create(session);
+            original = fixture.store.getCaHeadSnapshot(authority).orElseThrow();
+            var result = fixture.execute(session, new PkiSigningOperation.RotateCaKey(authority,
+                    Optional.of(HybridIssuanceFixture.key("rotated")), Optional.empty()));
+            candidate = new zeroecho.pki.api.PkiId(((PkiOperationValue.Text) result.result().fields().get("credentialId")).value());
+            var certificate = fixture.certificate(candidate);
+            certificate.verify(fixture.rotatedKey.getPublic(), "BC");
+            issued = certificate.getEncoded();
+            assertEquals(original, fixture.store.getCaHeadSnapshot(authority).orElseThrow());
+            assertEquals("PENDING_ACTIVATION", ((PkiOperationValue.Text) result.result().fields().get("activationState")).value());
+        }
+        try (var reopened = fixture.open()) {
+            assertTrue(reopened.signingCommands().isPresent());
+            assertEquals(original, fixture.store.getCaHeadSnapshot(authority).orElseThrow());
+            assertArrayEquals(issued, fixture.certificate(candidate).getEncoded());
+        }
+    }
+
+    @Test void existingHybridIntermediateCannotDropAlternativeRoleThroughActiveProfile(@TempDir Path directory) throws Exception {
+        var fixture = new HybridIssuanceFixture(directory, "EC384", "ECDSA", BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),
+                new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
+                        HybridIssuanceFixture.key("alt").value()), "EC384", "ML-DSA-87");
+        var armed = new java.util.concurrent.atomic.AtomicBoolean();
+        var signs = new java.util.concurrent.atomic.AtomicInteger(); var stages = new java.util.concurrent.atomic.AtomicInteger();
+        fixture.signingDecorator = provider -> (zeroecho.pki.spi.crypto.SigningProvider) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{zeroecho.pki.spi.crypto.SigningProvider.class,
+                        zeroecho.pki.spi.crypto.PublicKeyInfoSource.class, zeroecho.pki.spi.crypto.AltSigningCapability.class},
+                (proxy, method, args) -> {
+                    if (armed.get() && method.getName().equals("sign")) signs.incrementAndGet();
+                    try { return method.invoke(provider, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        fixture.storeDecorator = actual -> {
+            var content = (zeroecho.pki.spi.store.StagedContentStore) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class<?>[]{zeroecho.pki.spi.store.StagedContentStore.class}, (proxy, method, args) -> {
+                        if (armed.get() && method.getName().equals("beginContent")) stages.incrementAndGet();
+                        try { return method.invoke(actual.stagedContent(), args); }
+                        catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    });
+            return (PkiStore) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{PkiStore.class},
+                    (proxy, method, args) -> {
+                        if (method.getName().equals("stagedContent")) return content;
+                        try { return method.invoke(actual, args); }
+                        catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    });
+        };
+        try (var session = fixture.open()) {
+            var root = fixture.create(session);
+            RootCreationFixture.install(fixture.store, fixture.profile("mode-child", 1, CertificateProfileKind.INTERMEDIATE_CA,
+                    new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
+                            HybridIssuanceFixture.key("other-alt").value())));
+            fixture.execute(session, new PkiSigningOperation.CreateIntermediate(X509, root, new SubjectRef("CN=Mode Child,C=CZ"),
+                    "mode-child", Optional.of(HybridIssuanceFixture.key("child"))));
+            var child = fixture.store.listCas().stream().filter(ca -> !ca.caId().equals(root)).findFirst().orElseThrow().caId();
+            var before = fixture.store.getCaHeadSnapshot(child).orElseThrow();
+            RootCreationFixture.install(fixture.store, fixture.profile("mode-child", 2, CertificateProfileKind.INTERMEDIATE_CA,
+                    HybridCertificateMode.None.INSTANCE));
+            armed.set(true);
+            for (PkiSigningOperation operation : List.of(new PkiSigningOperation.RolloverCaCertificate(child, Optional.of(root)),
+                    new PkiSigningOperation.RotateCaKey(child, Optional.of(HybridIssuanceFixture.key("rotated")), Optional.of(root)),
+                    new PkiSigningOperation.IssueIntermediateCertificate(X509, root, child, "mode-child", Optional.empty()))) {
+                var failure = org.junit.jupiter.api.Assertions.assertInstanceOf(LocalSigningResult.Failed.class,
+                        session.localSigning().orElseThrow().execute(operation, CancellationSignal.NONE));
+                assertTrue(failure.receipt().isEmpty());
+            }
+            assertEquals(HybridCertificateMode.None.INSTANCE, fixture.store.requireActiveProfile("mode-child").definition().hybridMode());
+            assertEquals(before, fixture.store.getCaHeadSnapshot(child).orElseThrow());
+            assertEquals(0, signs.get()); assertEquals(0, stages.get());
         }
     }
 

@@ -54,6 +54,7 @@ public final class DefaultPreparedSigningRequest implements PreparedSigningReque
     private final Optional<SignWorkflowStore.OuterCommand> outer;
     private final SignWorkflowStore.Mode mode;
     private final Optional<SignWorkflowStore.CaSubjectProofStep> proofStep;
+    private final Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProofStep;
     private int discardedCandidates;
     private boolean destructiveDiscardStarted;
     private final AtomicReference<Custody> custody =
@@ -63,6 +64,13 @@ public final class DefaultPreparedSigningRequest implements PreparedSigningReque
             DurableContentReference candidate, SigningAcceptanceReceipt receipt,
             Object owner, Optional<SignWorkflowStore.OuterCommand> outer, SignWorkflowStore.Mode mode,
             Optional<SignWorkflowStore.CaSubjectProofStep> proofStep) {
+        this(request, candidate, receipt, owner, outer, mode, proofStep, Optional.empty());
+    }
+
+    /* default */ DefaultPreparedSigningRequest(SigningRequest request, DurableContentReference candidate,
+            SigningAcceptanceReceipt receipt, Object owner, Optional<SignWorkflowStore.OuterCommand> outer,
+            SignWorkflowStore.Mode mode, Optional<SignWorkflowStore.CaSubjectProofStep> proofStep,
+            Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProofStep) {
         this.request = Objects.requireNonNull(request, "request");
         this.candidate = Objects.requireNonNull(candidate, "candidate");
         this.receipt = Objects.requireNonNull(receipt, "receipt");
@@ -70,6 +78,7 @@ public final class DefaultPreparedSigningRequest implements PreparedSigningReque
         this.outer = Objects.requireNonNull(outer, "outer");
         this.mode = Objects.requireNonNull(mode, "mode");
         this.proofStep = Objects.requireNonNull(proofStep, "proofStep");
+        this.alternativeProofStep = Objects.requireNonNull(alternativeProofStep, "alternativeProofStep");
     }
 
     @Override public SigningRequest request() { return request; }
@@ -79,8 +88,12 @@ public final class DefaultPreparedSigningRequest implements PreparedSigningReque
     /* default */ Optional<SignWorkflowStore.OuterCommand> outer() { return outer; }
     /* default */ SignWorkflowStore.Mode mode() { return mode; }
     /* default */ Optional<SignWorkflowStore.CaSubjectProofStep> proofStep() { return proofStep; }
+    /* default */ Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProofStep() { return alternativeProofStep; }
     /* default */ List<DurableContentReference> candidates() {
-        return proofStep.isEmpty() ? List.of(candidate) : List.of(candidate, proofStep.orElseThrow().challenge());
+        var candidates = new java.util.ArrayList<DurableContentReference>(); candidates.add(candidate);
+        proofStep.ifPresent(step -> candidates.add(step.challenge()));
+        alternativeProofStep.ifPresent(step -> candidates.add(step.challenge()));
+        return List.copyOf(candidates);
     }
     /* default */ boolean needsDiscardValidation() { return !destructiveDiscardStarted; }
     /* default */ boolean discarded(int index) { return (discardedCandidates & (1 << index)) != 0; }

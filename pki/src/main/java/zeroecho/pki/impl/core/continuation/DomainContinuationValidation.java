@@ -218,8 +218,18 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (CREATE_ROOT.equals(command.operation()) || ROLLOVER_ROOT.equals(command.operation())) {
             // Both operations freeze the authority before signing. Creation derives
             // it from the operation; rollover retains the existing authority.
-            if (command.fields().size() == 15) CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
-            else command.requireFields(14);
+            if (command.fields().size() == 15 || command.fields().size() == 16) {
+                CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
+                if (command.fields().size() == 16) {
+                    var context = CaLifecycleContextCodec.decode(command.field(15));
+                    if (!ROLLOVER_ROOT.equals(command.operation())
+                            || !context.expectedHead().caId().value().equals(command.field(13))
+                            || context.operation() != CaLifecycleContext.Operation.ROOT_ROLLOVER
+                                    && context.operation() != CaLifecycleContext.Operation.ROOT_CANDIDATE) {
+                        throw new IllegalStateException("Root lifecycle context differs");
+                    }
+                }
+            } else command.requireFields(14);
             new FormatId(command.field(0));
             new SubjectRef(command.field(1));
             new KeyRef(command.field(3));
@@ -233,7 +243,7 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (!IntermediateSigningCommand.supports(command.operation())) {
             throw new IllegalStateException("Domain continuation kind and operation differ");
         }
-        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        if (command.fields().size() == 25 || command.fields().size() == 26) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
         else command.requireFields(23);
         new FormatId(command.field(0));
         pkiId(command, 1);

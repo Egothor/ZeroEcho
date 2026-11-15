@@ -605,7 +605,7 @@ public final class SigningReactor implements AutoCloseable {
     private boolean matchesScheduledPool(LanePool pool, Workflow workflow,
             PkiId operationId) {
         KeyRef key = workflow.stage().usesProofKey()
-                ? workflow.envelope().proofStep().orElseThrow().subjectKeyRef() : workflow.envelope().keyRef();
+                ? workflow.activeProofStep().orElseThrow().subjectKeyRef() : workflow.envelope().keyRef();
         synchronized (monitor) {
             SignWorkflowStore.SchedulingCoordinates scheduled = retained.get(operationId);
             return scheduled != null

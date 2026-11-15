@@ -179,7 +179,7 @@ final class AuthorityMetadataCompareAndSetTest {
             };
             List<MetadataCommitResult> outcomes = new ArrayList<>();
             AuthorityMetadataStore authority = new AuthorityMetadataStore(metadata, outcomes::add);
-            assertFalse(authority.replaceCa(original, loser, options().caHistoryPolicy()));
+            assertFalse(authority.compareAndSetHead(store.getCaHeadSnapshot(original.caId()).orElseThrow(), loser, options().caHistoryPolicy()));
             assertEquals(1, outcomes.size());
             assertEquals(MetadataCommitResult.Outcome.NOT_COMMITTED, outcomes.getFirst().outcome());
             assertEquals(Optional.of(MetadataCommitResult.FailureCategory.CONFLICT), outcomes.getFirst().failureCategory());
@@ -209,6 +209,15 @@ final class AuthorityMetadataCompareAndSetTest {
                 } else {
                     assertThrows(IllegalStateException.class,
                             () -> authority.replaceCa(original, replacement, options().caHistoryPolicy()));
+                }
+                assertEquals(1, callbacks.get());
+                assertEquals(before, authorityRows(store));
+                callbacks.set(0);
+                if (category.equals(Optional.of(MetadataCommitResult.FailureCategory.CONFLICT))) {
+                    assertFalse(authority.compareAndSetHead(store.getCaHeadSnapshot(original.caId()).orElseThrow(), original, options().caHistoryPolicy()));
+                } else {
+                    assertThrows(IllegalStateException.class,
+                            () -> authority.compareAndSetHead(store.getCaHeadSnapshot(original.caId()).orElseThrow(), original, options().caHistoryPolicy()));
                 }
                 assertEquals(1, callbacks.get());
                 assertEquals(before, authorityRows(store));

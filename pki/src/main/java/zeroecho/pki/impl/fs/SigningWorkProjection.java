@@ -301,6 +301,7 @@ final class SigningWorkProjection implements AutoCloseable {
         long bytes = Math.addExact(identity.sharedResidentBytes(), 64L);
         bytes = Math.addExact(bytes, coordinateBytes(scheduling.certificate()));
         if (scheduling.proof().isPresent()) { bytes = Math.addExact(bytes, coordinateBytes(scheduling.proof().orElseThrow())); }
+        if (scheduling.alternativeProof().isPresent()) { bytes = Math.addExact(bytes, coordinateBytes(scheduling.alternativeProof().orElseThrow())); }
         return bytes;
     }
 

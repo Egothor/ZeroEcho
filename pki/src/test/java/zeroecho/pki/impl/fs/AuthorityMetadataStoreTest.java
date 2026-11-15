@@ -217,7 +217,9 @@ final class AuthorityMetadataStoreTest {
 
     private static void stage(FilesystemPkiStore store, CaRecord ca, Instant timestamp, boolean history) throws IOException {
         try (MetadataSnapshot snapshot = store.metadataStore().snapshot(); MetadataTransaction transaction = store.metadataStore().beginTransaction()) {
-            AuthorityMetadataStore.stageCa(snapshot, transaction, ca, history, timestamp);
+            var expected = CaLifecycleMetadataCodec.head(snapshot, ca.caId());
+            if (expected.isPresent()) { AuthorityMetadataStore.stageCaFenced(snapshot, transaction, ca, history, timestamp, expected.orElseThrow()); }
+            else { AuthorityMetadataStore.stageCa(snapshot, transaction, ca, history, timestamp); }
             assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
         }
     }

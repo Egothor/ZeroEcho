@@ -214,11 +214,22 @@ final class PkiSessionRootCreationTest {
             CaRecord after = fixture.store.getCa(authority).orElseThrow();
             assertEquals(2, after.issuerIds().size());
             assertEquals(before.issuerIds().getFirst(), after.issuerIds().getFirst());
-            assertEquals(after.issuerIds().getLast(), after.currentIssuanceIssuerId());
-            assertNotEquals(before.issuanceChainPathId(), after.issuanceChainPathId());
-            assertEquals(target, after.issuerKeyRef());
+            if (rotation) {
+                assertEquals(before.currentIssuanceIssuerId(), after.currentIssuanceIssuerId());
+                assertEquals(before.issuanceChainPathId(), after.issuanceChainPathId());
+                assertEquals(before.issuerKeyRef(), after.issuerKeyRef());
+                var transition = fixture.store.getRootTrustAnchorTransitionForIssuer(after.issuerIds().getLast()).orElseThrow();
+                assertTrue(fixture.store.getRootTrustAnchorActivation(transition.transitionId()).isEmpty());
+                var metadata = semantic.completedCaLifecycleMetadata(result);
+                assertEquals("PENDING_ACTIVATION", metadata.get("activationState"));
+                assertEquals(transition.candidateCredentialId().value(), metadata.get("downloadCredentialId"));
+            } else {
+                assertEquals(after.issuerIds().getLast(), after.currentIssuanceIssuerId());
+                assertNotEquals(before.issuanceChainPathId(), after.issuanceChainPathId());
+                assertEquals(target, after.issuerKeyRef());
+            }
             assertEquals(before.subjectRef(), after.subjectRef());
-            Credential selected = fixture.store.getCredential(fixture.store.getIssuerGeneration(after.currentIssuanceIssuerId())
+            Credential selected = fixture.store.getCredential(fixture.store.getIssuerGeneration(after.issuerIds().getLast())
                     .orElseThrow().credentialId()).orElseThrow();
             assertEquals(active, ((CaProfileBinding) selected.profileBinding()).reference());
             X509Certificate certificate = Pkix.parseCertificate(PkiTestRuntime.readContent(fixture.store, selected.content()));

@@ -101,20 +101,22 @@ final class ManagedKeyProofVerifier {
     /* default */ void verifyComposite(SignWorkflowStore.Workflow workflow) {
         if (workflow.state() != SignWorkflowStore.State.DISPATCHED
                 || workflow.stage() != SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                        && workflow.stage() != SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
                 || workflow.leaseUntil().isEmpty()) {
             throw new IllegalArgumentException("CA proof is not claimed for verification");
         }
-        DomainCommandEncoding.Decoded command = CaSubjectProofBindings.requireEnvelope(workflow.envelope());
-        SignWorkflowStore.CaSubjectProofStep step = workflow.envelope().proofStep().orElseThrow();
+        var role = workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                ? SignWorkflowStore.SubjectKeyRole.ALTERNATIVE : SignWorkflowStore.SubjectKeyRole.PRIMARY;
+        DomainCommandEncoding.Decoded command = CaSubjectProofBindings.requireEnvelope(workflow.envelope(), role);
+        SignWorkflowStore.CaSubjectProofStep step = (role == SignWorkflowStore.SubjectKeyRole.PRIMARY
+                ? workflow.envelope().proofStep() : workflow.envelope().alternativeProofStep()).orElseThrow();
         EncodedObject signature = workflow.result().orElseThrow();
         if (signature.encoding() != Encoding.BINARY || signature.byteLength() > 1_048_576) { throw invalid(); }
         FullCrlSigningCommand.requireAdmission(step.algorithmId(), step.challenge().length(), pureEdDsaMaximum);
         try {
             CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), workflow.envelope());
-            DomainCommandEncoding.Decoded ca = DomainCommandEncoding.decode(workflow.envelope().outer().orElseThrow().command());
-            String intent = CaSigningIntent.commitmentOfCanonicalAlgorithm(ca, workflow.envelope().algorithmId());
             byte[] challenge = ManagedKeyProofBindings.readChallenge(store.stagedContent(), step.operationId(), workflow.deadline(),
-                    Optional.of(new ManagedKeyProofChallenge.CaContext(workflow.operationId(), intent)), command, step.challenge());
+                    Optional.of(CaSubjectProofBindings.context(workflow.envelope(), role)), command, step.challenge());
             verify(command, challenge, signature);
         } catch (IOException | GeneralSecurityException failure) {
             throw new PkiException("Managed key proof verification is temporarily unavailable", failure);

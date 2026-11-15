@@ -396,7 +396,7 @@ final class FsSnapshotExporter {
                 copyImportedProfilesAsOf(plan.profiles(), targetRoot.resolve("profiles"));
                 reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
                         options.workflowHistoryPolicy(), options.strictSnapshotExport());
-                new AuthorityRestorer(source, options, plan.authority(), snapshot).restore(targetRoot);
+                new AuthorityRestorer(source, options, plan.authority(), snapshot).restore(targetRoot, at);
                 installRevocationAuthority(targetRoot, stagedRevocationPrefix);
                 try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(
                         targetRoot, options)) {
@@ -487,10 +487,11 @@ final class FsSnapshotExporter {
 
         // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
         @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
-        private void restore(Path targetRoot) throws IOException {
+        private void restore(Path targetRoot, Instant at) throws IOException {
             Set<PkiId> transferred = new HashSet<>();
             source.copySnapshotMetadataTo(snapshot, targetRoot);
             try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(targetRoot, options)) {
+                target.restoreSnapshotLifecycle(snapshot, authority.cas(), at);
                 for (Map.Entry<PkiId, Credential> entry : authority.credentials().entrySet()) {
                     persistCredentialWithIssuer(target, entry.getValue(), transferred, new HashSet<>());
                 }

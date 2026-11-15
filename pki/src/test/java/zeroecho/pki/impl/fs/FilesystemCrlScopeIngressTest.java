@@ -690,8 +690,11 @@ class FilesystemCrlScopeIngressTest {
         Authority authority = rootWithoutCaRecord(store, authorityId, serial);
         List<PkiId> generations = new ArrayList<>(store.getCa(authorityId).map(CaRecord::issuerIds).orElse(List.of()));
         generations.add(authority.generation().issuerId());
-        store.putCa(new CaRecord(authorityId, CaKind.ROOT, CaState.ACTIVE, authority.generation().signingKeyRef(),
-                authority.credential().subjectRef(), generations, authority.generation().issuerId(), authority.path().pathId()));
+        CaRecord replacement = new CaRecord(authorityId, CaKind.ROOT, CaState.ACTIVE, authority.generation().signingKeyRef(),
+                authority.credential().subjectRef(), generations, authority.generation().issuerId(), authority.path().pathId());
+        var expected = store.getCaHeadSnapshot(authorityId);
+        if (expected.isPresent()) { assertTrue(store.compareAndSetCaHead(expected.orElseThrow(), replacement)); }
+        else { store.putCa(replacement); }
         return authority;
     }
 

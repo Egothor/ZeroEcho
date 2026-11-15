@@ -87,8 +87,10 @@ public final class CaSigningIntent {
      */
     public static String commitment(DomainCommandEncoding.Decoded command, AlgorithmIdentity signatureAlgorithm) {
         Objects.requireNonNull(command, "command");
-        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
-        else command.requireFields(23);
+        if (command.fields().size() == 25 || command.fields().size() == 26) {
+            CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+            if (command.fields().size() == 26) CaLifecycleContextCodec.decode(command.field(25));
+        } else command.requireFields(23);
         Objects.requireNonNull(signatureAlgorithm, "signatureAlgorithm");
         if (!IntermediateSigningCommand.supports(command.operation())
                 || signatureAlgorithm.kind() != AlgorithmIdentity.Kind.SIGNATURE) {
@@ -109,8 +111,10 @@ public final class CaSigningIntent {
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public static String commitmentOfCanonicalAlgorithm(DomainCommandEncoding.Decoded command, String algorithm) {
         Objects.requireNonNull(command, "command");
-        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
-        else command.requireFields(23);
+        if (command.fields().size() == 25 || command.fields().size() == 26) {
+            CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+            if (command.fields().size() == 26) CaLifecycleContextCodec.decode(command.field(25));
+        } else command.requireFields(23);
         if (!IntermediateSigningCommand.supports(command.operation()) || Objects.requireNonNull(algorithm, "algorithm").isBlank()) {
             throw invalid();
         }
@@ -132,7 +136,7 @@ public final class CaSigningIntent {
                 field(output, DOMAIN);
                 field(output, command.operation());
                 field(output, algorithm);
-                output.writeInt(FIELD_COUNT + (command.fields().size() == 25 ? 2 : 0));
+                output.writeInt(FIELD_COUNT + command.fields().size() - 23);
                 for (int index = 0; index < command.fields().size(); index++) {
                     if (!isProofField(index)) { field(output, command.field(index)); }
                 }

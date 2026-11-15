@@ -164,6 +164,13 @@ final class RootLifecyclePreparationTest {
             assertNotEquals(replacement.domainTemplate().correlationId(), same.domainTemplate().correlationId());
             assertEquals(RootCreationFixture.REPLACEMENT_KEY, replacement.keyRef());
             assertEquals(RootCreationFixture.KEY, same.keyRef());
+            var replacementContext = zeroecho.pki.impl.core.continuation.CaLifecycleContextCodec.decode(
+                    DomainCommandEncoding.decode(replacement.domainTemplate().command()).field(15));
+            var sameContext = zeroecho.pki.impl.core.continuation.CaLifecycleContextCodec.decode(
+                    DomainCommandEncoding.decode(same.domainTemplate().command()).field(15));
+            assertEquals(zeroecho.pki.impl.core.continuation.CaLifecycleContext.Operation.ROOT_CANDIDATE, replacementContext.operation());
+            assertEquals(zeroecho.pki.impl.core.continuation.CaLifecycleContext.Operation.ROOT_ROLLOVER, sameContext.operation());
+            assertEquals(store.getCaHeadSnapshot(existing.caId()).orElseThrow(), replacementContext.expectedHead());
             assertArrayEquals(fixture.otherKey.getPublic().getEncoded(), certificate(store, replacement).getPublicKey().getEncoded());
             assertArrayEquals(fixture.key.getPublic().getEncoded(), certificate(store, same).getPublicKey().getEncoded());
             // Two subject-key reads plus one distinct retained issuer-key validation during replacement.
@@ -204,10 +211,20 @@ final class RootLifecyclePreparationTest {
             } else {
                 assertEquals(2, current.issuerIds().size());
                 assertEquals(existing.issuerIds().getFirst(), current.issuerIds().getFirst());
-                assertEquals(current.issuerIds().getLast(), current.currentIssuanceIssuerId());
-                assertEquals(RootCreationFixture.REPLACEMENT_KEY, current.issuerKeyRef());
+                assertEquals(existing.currentIssuanceIssuerId(), current.currentIssuanceIssuerId());
+                assertEquals(existing.issuanceChainPathId(), current.issuanceChainPathId());
+                assertEquals(existing.issuerKeyRef(), current.issuerKeyRef());
                 assertEquals(existing.subjectRef(), current.subjectRef());
-                Credential issued = selected(store, current);
+                var candidateIssuer = current.issuerIds().getLast();
+                var transition = store.getRootTrustAnchorTransitionForIssuer(candidateIssuer).orElseThrow();
+                assertTrue(store.getRootTrustAnchorActivation(transition.transitionId()).isEmpty());
+                assertEquals(operation, transition.originatingSigningOperationId());
+                var observation = fixture.semantic(store).find(operation).orElseThrow();
+                var metadata = fixture.semantic(store).completedCaLifecycleMetadata(observation);
+                assertEquals("PENDING_ACTIVATION", metadata.get("activationState"));
+                assertEquals(transition.candidateCredentialId().value(), metadata.get("downloadCredentialId"));
+                assertEquals(transition.commitment(), metadata.get("transitionCommitment"));
+                Credential issued = store.getCredential(transition.candidateCredentialId()).orElseThrow();
                 assertEquals(active, ((CaProfileBinding) issued.profileBinding()).reference());
                 X509Certificate certificate = Pkix.parseCertificate(PkiTestRuntime.readContent(store, issued.content()));
                 certificate.verify(fixture.otherKey.getPublic());

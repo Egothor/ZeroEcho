@@ -118,8 +118,20 @@ final class TwinCertificateIssuanceTest {
         try (PkiSession session = fixture.open()) {
             rootId = fixture.create(session);
             fixture.execute(session, new PkiSigningOperation.RolloverCaCertificate(rootId, Optional.empty()));
-            fixture.execute(session, new PkiSigningOperation.RotateCaKey(rootId,
+            var originalHead = fixture.store.getCaHeadSnapshot(rootId).orElseThrow();
+            var rotated = fixture.execute(session, new PkiSigningOperation.RotateCaKey(rootId,
                     Optional.of(HybridIssuanceFixture.key("rotated")), Optional.empty()));
+            var transition = fixture.store.getRootTrustAnchorTransitionForIssuer(
+                    fixture.store.getCa(rootId).orElseThrow().issuerIds().getLast()).orElseThrow();
+            assertEquals(originalHead, fixture.store.getCaHeadSnapshot(rootId).orElseThrow());
+            assertEquals("PENDING_ACTIVATION", rotated.result().fields().get("activationState")
+                    instanceof PkiOperationValue.Text value ? value.value() : "missing");
+            var receipt = new zeroecho.pki.api.ca.RootTrustAnchorActivation(1, transition.transitionId(),
+                    transition.commitment(), originalHead, transition.candidateIssuerId(), transition.candidatePathId(),
+                    originalHead.epoch() + 1, new zeroecho.pki.api.PkiId("twin-root-activation"), "twin-test",
+                    "a".repeat(64), "b".repeat(64), fixture.store.signingNow(), true);
+            fixture.store.activateRootCandidate(transition.transitionId(), originalHead, receipt);
+            assertEquals(receipt, fixture.store.getRootTrustAnchorActivation(transition.transitionId()).orElseThrow());
             rootCredential = fixture.current(rootId);
             fixture.verifyRoot(rootCredential, fixture.rotatedKey);
             fixture.execute(session, new PkiSigningOperation.CreateIntermediate(X509, rootId,

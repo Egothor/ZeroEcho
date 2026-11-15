@@ -39,6 +39,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.ArrayList;
+import zeroecho.pki.api.ca.CaKind;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -173,7 +174,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 new CaRecord(current.caId(), current.kind(), input.state(), current.issuerKeyRef(), current.subjectRef(),
                         current.issuerIds(), current.currentIssuanceIssuerId(), current.issuanceChainPathId());
             }
-            case PkiOperation.SelectIssuancePath input -> validateSelection(input);
+            case PkiOperation.SelectIssuancePath input -> validateSelection((PkiOperation.SelectIssuancePath) normalize(input));
             case PkiOperation.RevokeCredential input -> store.validateRevocation(
                     new RevocationCommand.RevokePermanently(input.credentialId(), input.reason(), empty), false);
             case PkiOperation.HoldCredential input -> store.validateRevocation(new RevocationCommand.Hold(input.credentialId(), empty), false);
@@ -484,7 +485,20 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     }
 
     private PkiOperationResult inspectAuthority(PkiOperation.InspectAuthority request) {
-        return result(request.name(), authorityFields(store.getCa(request.caId()).orElseThrow(Missing::new)));
+        var authority = store.getCa(request.caId()).orElseThrow(Missing::new);
+        Map<String, PkiOperationValue> values = authorityFields(authority);
+        var head = store.getCaHeadSnapshot(authority.caId()).orElseThrow(Missing::new);
+        values.put("headEpoch", integer(head.epoch())); values.put("selectedPathId", text(head.pathId().value()));
+        if (authority.kind() == CaKind.ROOT) {
+            var pending = new ArrayList<PkiOperationValue>();
+            for (PkiId issuer : authority.issuerIds()) {
+                store.getRootTrustAnchorTransitionForIssuer(issuer)
+                        .filter(transition -> store.getRootTrustAnchorActivation(transition.transitionId()).isEmpty())
+                        .ifPresent(transition -> pending.add(object(rootTransitionFields(transition))));
+            }
+            values.put("pendingRootCandidates", new PkiOperationValue.ListValue(pending));
+        }
+        return result(request.name(), values);
     }
 
     private static Map<String, PkiOperationValue> authorityFields(CaRecord authority) {
@@ -525,7 +539,26 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
 
     private PkiOperationResult inspectIssuerGeneration(PkiOperation.InspectIssuerGeneration request) {
         IssuerGeneration generation = store.getIssuerGeneration(request.issuerId()).orElseThrow(Missing::new);
-        return result(request.name(), generationFields(generation));
+        Map<String, PkiOperationValue> values = generationFields(generation);
+        store.getRootTrustAnchorTransitionForIssuer(generation.issuerId()).ifPresent(transition -> values.putAll(rootTransitionFields(transition)));
+        return result(request.name(), values);
+    }
+
+    private Map<String, PkiOperationValue> rootTransitionFields(zeroecho.pki.api.ca.RootTrustAnchorTransition transition) {
+        Map<String, PkiOperationValue> values = fields();
+        values.put("activationState", text(store.getRootTrustAnchorActivation(transition.transitionId()).isPresent()
+                ? "ACTIVATED" : "PENDING_ACTIVATION"));
+        values.put("transitionId", text(transition.transitionId().value()));
+        values.put("transitionCommitment", text(transition.commitment()));
+        values.put("candidateCredentialId", text(transition.candidateCredentialId().value()));
+        values.put("downloadCredentialId", text(transition.candidateCredentialId().value()));
+        values.put("candidateIssuerId", text(transition.candidateIssuerId().value()));
+        values.put("candidatePathId", text(transition.candidatePathId().value()));
+        values.put("candidateCertificateSha256", text(transition.candidateCertificateSha256()));
+        values.put("oldCertificateSha256", text(transition.oldCertificateSha256()));
+        values.put("expectedHeadEpoch", integer(transition.expectedHead().epoch()));
+        values.put("activationOperation", text(PkiOperation.SelectIssuancePath.NAME));
+        return values;
     }
 
     private Map<String, PkiOperationValue> generationFields(IssuerGeneration generation) {
@@ -596,6 +629,121 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return result(request.name(), authorityFields(store.getCa(request.caId()).orElseThrow(Missing::new)));
     }
 
+    /** {@inheritDoc} */
+    @Override public PkiOperation normalize(PkiOperation operation) {
+        openCheck.run(); Objects.requireNonNull(operation, "operation");
+        if (!(operation instanceof PkiOperation.SelectIssuancePath selected)) return operation;
+        var current = store.getCaHeadSnapshot(selected.caId()).orElseThrow(Missing::new);
+        if (selected.expectedHead().isPresent() && !selected.expectedHead().orElseThrow().equals(current)) throw new Conflict();
+        var normalized = new PkiOperation.SelectIssuancePath(selected.caId(), selected.issuerId(), selected.pathId(), selected.reason(),
+                Optional.of(current), selected.transitionCommitment(), selected.distributionAcknowledged());
+        var selection = validateSelection(normalized);
+        if (requiresRootActivation(selection)) requireRootCandidate(normalized);
+        else if (normalized.transitionCommitment().isPresent() || normalized.distributionAcknowledged()) {
+            throw new ActivationRejected("ROOT_ACTIVATION_TARGET_NOT_A_CANDIDATE");
+        }
+        return normalized;
+    }
+
+    /** {@inheritDoc} */
+    @Override public Optional<PkiOperationResult> observeRootActivation(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation expected, CancellationSignal cancellation) {
+        openCheck.run(); Objects.requireNonNull(cancellation, "cancellation");
+        if (cancellation.isCancelled()) throw new java.util.concurrent.CancellationException("Activation observation cancelled");
+        requireActivationCoordinates(operation, expected);
+        var retained = store.getRootTrustAnchorActivation(expected.transitionId());
+        if (retained.isEmpty()) return Optional.empty();
+        if (!retained.orElseThrow().equals(expected)) throw new Conflict();
+        return Optional.of(activationResult(operation, retained.orElseThrow()));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    public PkiOperationOutcome executeRootActivation(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation evidence, CancellationSignal cancellation) {
+        openCheck.run(); Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(evidence, "evidence"); Objects.requireNonNull(cancellation, "cancellation");
+        boolean commitInvoked = false;
+        try {
+            cancellation.throwIfCancelled();
+            var retained = observeRootActivation(operation, evidence, cancellation);
+            if (retained.isPresent()) return new PkiOperationOutcome.Completed(retained.orElseThrow());
+            var normalized = (PkiOperation.SelectIssuancePath) normalize(operation);
+            if (!normalized.equals(operation)) throw new IllegalArgumentException("Activation must be normalized before approval");
+            var transition = requireRootCandidate(normalized);
+            if (!transition.transitionId().equals(evidence.transitionId())) throw new Conflict();
+            commitInvoked = true;
+            var receipt = store.activateRootCandidate(transition.transitionId(), evidence.expectedHead(), evidence);
+            return new PkiOperationOutcome.Completed(activationResult(operation, receipt));
+        } catch (InterruptedIOException cancelled) {
+            return failure(operation.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+        } catch (RuntimeException problem) {
+            if (commitInvoked) {
+                return problem instanceof IllegalArgumentException
+                        ? failure(operation.name(), PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT")
+                        : failure(operation.name(), PkiOperationFailure.RECOVERY_REQUIRED, "ROOT_ACTIVATION_OUTCOME_UNKNOWN");
+            }
+            return classify(operation.name(), problem);
+        }
+    }
+
+    private void requireActivationCoordinates(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation receipt) {
+        Objects.requireNonNull(operation, "operation"); Objects.requireNonNull(receipt, "receipt");
+        if (!operation.distributionAcknowledged() || !operation.expectedHead().filter(receipt.expectedHead()::equals).isPresent()
+                || !operation.transitionCommitment().filter(receipt.transitionCommitment()::equals).isPresent()
+                || !operation.caId().equals(receipt.expectedHead().caId())
+                || !operation.issuerId().equals(receipt.candidateIssuerId()) || !operation.pathId().equals(receipt.candidatePathId())) throw new Conflict();
+        var transition = store.getRootTrustAnchorTransition(receipt.transitionId()).orElseThrow(Missing::new);
+        if (!transition.commitment().equals(receipt.transitionCommitment())
+                || !transition.expectedHead().equals(receipt.expectedHead())
+                || !transition.candidateIssuerId().equals(operation.issuerId())
+                || !transition.candidatePathId().equals(operation.pathId())) throw new Conflict();
+    }
+
+    private zeroecho.pki.api.ca.RootTrustAnchorTransition requireRootCandidate(PkiOperation.SelectIssuancePath operation) {
+        var transition = store.getRootTrustAnchorTransitionForIssuer(operation.issuerId())
+                .orElseThrow(() -> new ActivationRejected("ROOT_FRESH_ROTATION_CANDIDATE_REQUIRED"));
+        if (!operation.distributionAcknowledged() || operation.transitionCommitment().isEmpty()) {
+            throw new ActivationRejected("ROOT_ACTIVATION_ACKNOWLEDGMENT_REQUIRED");
+        }
+        if (!transition.caId().equals(operation.caId()) || !transition.candidatePathId().equals(operation.pathId())
+                || !operation.expectedHead().filter(transition.expectedHead()::equals).isPresent()
+                || !operation.transitionCommitment().orElseThrow().equals(transition.commitment())) throw new Conflict();
+        return transition;
+    }
+
+    private boolean requiresRootActivation(Selection selection) {
+        if (selection.current().kind() != CaKind.ROOT) return false;
+        var current = store.getIssuerCryptographicBinding(selection.current().currentIssuanceIssuerId()).orElseThrow(Missing::new);
+        var target = store.getIssuerCryptographicBinding(selection.generation().issuerId()).orElseThrow(Missing::new);
+        return !sameAnchorKey(current.primary(), target.primary())
+                || current.alternative().isPresent() != target.alternative().isPresent()
+                || current.alternative().isPresent() && !sameAnchorKey(current.alternative().orElseThrow(), target.alternative().orElseThrow());
+    }
+
+    private static boolean sameAnchorKey(zeroecho.pki.api.ca.IssuerKeyBinding left, zeroecho.pki.api.ca.IssuerKeyBinding right) {
+        return left.subjectSpkiSha256().equals(right.subjectSpkiSha256()) && left.publicKeyAlgorithm().equals(right.publicKeyAlgorithm())
+                && left.signatureAlgorithm().equals(right.signatureAlgorithm())
+                && java.util.Arrays.equals(left.signatureAlgorithmIdentifier().bytes(), right.signatureAlgorithmIdentifier().bytes());
+    }
+
+    private PkiOperationResult activationResult(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation receipt) {
+        var transition = store.getRootTrustAnchorTransition(receipt.transitionId()).orElseThrow(Missing::new);
+        Map<String, PkiOperationValue> values = fields();
+        values.put(TEXT_CA_ID, text(operation.caId().value())); values.put(ISSUER_ID, text(receipt.candidateIssuerId().value()));
+        values.put("pathId", text(receipt.candidatePathId().value())); values.put("activationState", text("ACTIVATED"));
+        values.put("activationEpoch", integer(receipt.newEpoch())); values.put("transitionId", text(receipt.transitionId().value()));
+        values.put("transitionCommitment", text(receipt.transitionCommitment()));
+        values.put("activationRequestId", text(receipt.activationRequestId().value()));
+        values.put("oldCertificateSha256", text(transition.oldCertificateSha256()));
+        values.put("candidateCredentialId", text(transition.candidateCredentialId().value()));
+        values.put("candidateCertificateSha256", text(transition.candidateCertificateSha256()));
+        return result(operation.name(), values);
+    }
+
     private Selection validateSelection(PkiOperation.SelectIssuancePath request) {
         CaRecord current = store.getCa(request.caId()).orElseThrow(Missing::new);
         IssuerGeneration generation = store.getIssuerGeneration(request.issuerId()).orElseThrow(Missing::new);
@@ -605,16 +753,21 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 || !generation.issuerId().equals(path.issuerId())) {
             throw new PkiException("Issuance selection is outside the authority");
         }
+        if (request.expectedHead().isPresent() && !store.getCaHeadSnapshot(request.caId())
+                .filter(request.expectedHead().orElseThrow()::equals).isPresent()) throw new Conflict();
         return new Selection(current, generation, path);
     }
     private record Selection(CaRecord current, IssuerGeneration generation, IssuerChainPath path) { }
 
     private PkiOperationResult selectIssuancePath(PkiOperation.SelectIssuancePath request) {
         Selection selection = validateSelection(request);
+        if (requiresRootActivation(selection)) throw new ActivationRejected("ROOT_ACTIVATION_CONTEXT_REQUIRED");
+        request = (PkiOperation.SelectIssuancePath) normalize(request);
+        selection = validateSelection(request);
         CaRecord current = selection.current(); IssuerGeneration generation = selection.generation(); IssuerChainPath path = selection.path();
         CaRecord replacement = new CaRecord(current.caId(), current.kind(), current.state(), generation.signingKeyRef(),
                 current.subjectRef(), current.issuerIds(), generation.issuerId(), path.pathId());
-        if (!store.replaceCa(current, replacement)) { throw new Conflict(); }
+        if (!store.compareAndSetCaHead(request.expectedHead().orElseThrow(), replacement)) { throw new Conflict(); }
         Map<String, PkiOperationValue> result = fields();
         result.put(TEXT_CA_ID, text(request.caId().value()));
         result.put(ISSUER_ID, text(request.issuerId().value()));
@@ -1032,7 +1185,16 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     }
 
 
+    private static final class ActivationRejected extends PkiException {
+        private static final long serialVersionUID = 1L;
+        private final String code;
+        private ActivationRejected(String code) { super(code); this.code = code; }
+    }
+
     private static PkiOperationOutcome classify(String operation, RuntimeException exception) {
+        if (exception instanceof ActivationRejected rejected) {
+            return failure(operation, PkiOperationFailure.POLICY_REJECTION, rejected.code);
+        }
         if (exception instanceof java.util.concurrent.CancellationException) {
             return failure(operation, PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
         }

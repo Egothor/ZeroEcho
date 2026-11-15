@@ -138,6 +138,52 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         return replace(access, request.request(), Optional.of(request), Optional.of(effective), cancellation);
     }
 
+    /* default */ SdkPrepared prepareSdk(AccessContext access, Object command,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
+            boolean preview, CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        PkiId predecessorId;
+        String operation;
+        Optional<Validity> validity = Optional.empty();
+        if (command instanceof EndEntityRenewalRequest value) {
+            predecessorId = value.existingCredentialId(); operation = "credential.renew"; validity = value.validityOverride();
+        } else if (command instanceof EndEntityReissueRequest value) {
+            predecessorId = value.existingCredentialId(); operation = "credential.reissue";
+        } else if (command instanceof EndEntityReplacementRequest value) {
+            predecessorId = value.existingCredentialId(); operation = "credential.replace";
+        } else throw new UnsupportedOperationException("Unsupported SDK lifecycle operation");
+        var evaluation = status.beginEvaluation();
+        Predecessor predecessor = predecessor(predecessorId, cancellation);
+        boolean replacement = command instanceof EndEntityReplacementRequest;
+        boolean samePrimary = Arrays.equals(parsed.primary().publicKeyInfo().bytes(), predecessor.request().publicKeyInfo().bytes());
+        if (!replacement) {
+            byte[] oldAlternative = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(predecessor.certificate(), "2.5.29.72");
+            if (!samePrimary || !Arrays.equals(oldAlternative, parsed.alternativeSubjectPublicKeyInfo().bytes())) {
+                throw reject("PREDECESSOR_SUBJECT_KEYS_CHANGED");
+            }
+        }
+        if (!replacement || samePrimary) requireReusable(evaluation.resolve(predecessor.credential()));
+        String profile = replacement ? ((EndEntityReplacementRequest) command).profileId()
+                : ((EndEntityProfileBinding) predecessor.credential().profileBinding()).reference().profileId();
+        var payload = zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(parsed.primary());
+        if (replacement && !Arrays.equals(((EndEntityReplacementRequest) command).payload().der(), payload.der())) {
+            throw reject("SDK_REQUEST_MISMATCH");
+        }
+        var issued = issuance.prepareSdk(access, new zeroecho.pki.api.issuance.EndEntityIssuanceRequest(
+                predecessor.credential().issuerRef().caId(), payload, profile, validity), parsed,
+                frozenValidity, preview, evaluation, cancellation);
+        if (!replacement && (!predecessor.request().subjectRdns().equals(issued.request().subjectRdns())
+                || !predecessor.request().subjectAlternativeNames().equals(issued.request().subjectAlternativeNames())
+                || !Arrays.equals(predecessor.subjectDer(), BcX509ProfileSupport.subject(issued.request().subjectRdns()).getEncoded()))) {
+            throw reject("PREDECESSOR_SUBJECT_CHANGED");
+        }
+        var target = new zeroecho.pki.api.hybrid.sdk.SdkLifecycleTarget(1, operation, predecessorId,
+                "sha256:" + predecessor.credential().content().sha256(),
+                "sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.primary().publicKeyInfo().bytes())),
+                "sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.alternativeSubjectPublicKeyInfo().bytes())));
+        return new SdkPrepared(new Prepared(predecessor.credential(), issued), target);
+    }
+
     private Prepared replace(AccessContext access, EndEntityReplacementRequest request,
             Optional<CorrelatedEndEntityReplacementRequest> binding, Optional<IssuanceIntent> intent,
             CancellationSignal cancellation) throws IOException {
@@ -146,6 +192,7 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
         Predecessor predecessor = predecessor(request.existingCredentialId(), cancellation);
+        requireStandardPredecessor(predecessor);
         if (binding.isPresent()) {
             CorrelatedEndEntityReplacementRequest expected = binding.orElseThrow();
             if (!expected.issuerCaId().equals(predecessor.credential().issuerRef().caId())
@@ -190,6 +237,7 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
         Predecessor predecessor = predecessor(id, cancellation);
+        requireStandardPredecessor(predecessor);
         if (binding.isPresent()) {
             CorrelatedEndEntityRenewalRequest expected = binding.orElseThrow();
             if (!expected.issuerCaId().equals(predecessor.credential().issuerRef().caId())
@@ -239,7 +287,7 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         try {
             new StreamingDerReader().validate(der, CredentialContent.MAXIMUM_CERTIFICATE_BYTES);
             X509Certificate certificate = Pkix.parseCertificate(der);
-            requireOriginalSignature(certificate, der, originalIssuer, cancellation);
+            requireOriginalSignature(certificate, der, originalIssuer, credential, binding.reference(), cancellation);
             ParsedCertificationRequest request = BcX509CertificationRequestParser.reconstructForRenewal(certificate,
                     credential.formatId());
             String digest = sha256(der);
@@ -291,7 +339,7 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private void requireOriginalSignature(X509Certificate certificate, byte[] certificateDer, Credential issuer,
-            CancellationSignal cancellation) throws IOException {
+            Credential predecessor, CertificateProfileRef profileReference, CancellationSignal cancellation) throws IOException {
         byte[] der = CredentialContent.materializeForBc(store, issuer.content());
         new StreamingDerReader().validate(der, CredentialContent.MAXIMUM_CERTIFICATE_BYTES);
         X509Certificate issuerCertificate = Pkix.parseCertificate(der);
@@ -300,12 +348,21 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
                 || !certificate.getIssuerX500Principal().equals(issuerCertificate.getSubjectX500Principal())) {
             throw reject("PREDECESSOR_ISSUER_MISMATCH");
         }
+        var retained = store.getIssuerCryptographicBinding(predecessor.issuerRef().issuerId())
+                .orElseThrow(() -> reject("PREDECESSOR_ISSUER_BINDING_MISSING"));
+        if (!retained.credentialId().equals(issuer.credentialId()) || !retained.certificateSha256().equals(sha256(der))
+                || !retained.primary().subjectSpkiSha256().equals(sha256(Pkix.subjectPublicKeyInfo(issuerCertificate)))) {
+            throw reject("PREDECESSOR_ISSUER_MISMATCH");
+        }
         try (RepeatableContent content = new ImmutableByteContent(certificateDer)) {
             StreamingDerReader.SignedObjectLayout layout = new StreamingDerReader().inspectSignedObject(content,
                     StreamingDerReader.SignedObjectKind.CERTIFICATE, cancellation);
             byte[] algorithmDer = element(certificateDer, layout.outerAlgorithmOffset(), layout.outerAlgorithmLength());
             if (!Arrays.equals(algorithmDer, element(certificateDer, layout.tbsAlgorithmOffset(), layout.tbsAlgorithmLength()))) {
                 throw reject("PREDECESSOR_ALGORITHM_MISMATCH");
+            }
+            if (!Arrays.equals(algorithmDer, retained.primary().signatureAlgorithmIdentifier().bytes())) {
+                throw reject("PREDECESSOR_ISSUER_ALGORITHM_MISMATCH");
             }
             AlgorithmIdentifier identifier = Pkix.parseAlgorithmIdentifier(algorithmDer);
             BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
@@ -327,10 +384,33 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         } catch (GeneralSecurityException invalid) {
             throw reject("PREDECESSOR_SIGNATURE_INVALID");
         }
+        var originalProfile = store.getProfileVersion(profileReference.profileId(), profileReference.profileVersion()).orElseThrow();
+        boolean expectedAlternative = originalProfile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature;
+        boolean hasAlternative = certificate.getExtensionValue("2.5.29.72") != null
+                || certificate.getExtensionValue("2.5.29.73") != null || certificate.getExtensionValue("2.5.29.74") != null;
+        if (expectedAlternative != hasAlternative) throw reject("PREDECESSOR_HYBRID_MODE_MISMATCH");
+        if (expectedAlternative) {
+            var alternative = retained.alternative().orElseThrow(() -> reject("PREDECESSOR_ALTERNATIVE_ISSUER_MISSING"));
+            byte[] spki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(issuerCertificate, "2.5.29.72");
+            if (!alternative.subjectSpkiSha256().equals(sha256(spki))
+                    || !Arrays.equals(alternative.signatureAlgorithmIdentifier().bytes(),
+                            zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.73"))
+                    || !Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(spki))) {
+                throw reject("PREDECESSOR_ALTERNATIVE_SIGNATURE_INVALID");
+            }
+        }
     }
 
     private static byte[] element(byte[] encoded, long offset, long length) {
         return Arrays.copyOfRange(encoded, Math.toIntExact(offset), Math.toIntExact(Math.addExact(offset, length)));
+    }
+
+    private static void requireStandardPredecessor(Predecessor predecessor) {
+        // The retained certificate, not a mutable active profile, decides whether
+        // ordinary lifecycle can reuse possession or requires the fresh dual SDK path.
+        if (predecessor.certificate().getExtensionValue("2.5.29.72") != null) {
+            throw reject("SDK_DUAL_PROOF_REQUIRED");
+        }
     }
 
     private static void requireReusable(EffectiveCredentialStatus status) {
@@ -350,6 +430,8 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
     private static PkiException reject(String code) {
         return new PkiException("End-entity lifecycle preparation rejected: code=" + code);
     }
+
+    /* default */ record SdkPrepared(Prepared prepared, zeroecho.pki.api.hybrid.sdk.SdkLifecycleTarget target) { }
 
     /* default */ record Prepared(Credential predecessor, EndEntityIssuancePreparation.Prepared issuance) {
         @Override public String toString() { return "PreparedEndEntityLifecycle[redacted]"; }

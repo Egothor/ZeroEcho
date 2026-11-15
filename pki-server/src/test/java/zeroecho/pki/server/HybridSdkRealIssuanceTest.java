@@ -133,8 +133,76 @@ class HybridSdkRealIssuanceTest {
                 var subject=zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(challenge.target().field(15)).objectFields();
                 assertEquals(Instant.parse(subject.get("notBefore").textValue()),leaf.getNotBefore().toInstant());
                 assertEquals(Instant.parse(subject.get("notAfter").textValue()),leaf.getNotAfter().toInstant());
+                var predecessor=credential(completed);
+                for(String lifecycle:java.util.List.of("credential.renew","credential.reissue","credential.replace")) {
+                    boolean replacement=lifecycle.equals("credential.replace");var subjectKeys=replacement?client():client;
+                    var lifecycleArgs=replacement?arguments("existingCredentialId",predecessor.value(),"requestId",HybridSdkProofs.parse(subjectKeys.csr()).primary().requestId().value(),"profileId","native-leaf"):arguments("credentialId",predecessor.value());
+                    var lifecycleFields=new TreeMap<String,PkiOperationValue>(envelope(lifecycleArgs).fields());lifecycleFields.put("authorityId",new PkiOperationValue.Text(intermediateAuthority.value()));
+                    var lifecycleEnvelope=new PkiOperationValue.ObjectValue(lifecycleFields);var lifecycleRequest=request(realm,lifecycle,lifecycleEnvelope);
+                    assertThrows(RuntimeException.class,()->sdk.submit("ordinary-"+lifecycle,lifecycleRequest,lifecycleEnvelope,Duration.ofSeconds(30)));
+                    if(!replacement) {
+                        var wrongKeys=client();
+                        assertThrows(RuntimeException.class,()->sdk.sdkAdmission().challenge(lifecycleRequest,lifecycleEnvelope,wrongKeys.csr(),new byte[32]));
+                    }
+                    var fresh=sdk.sdkAdmission().challenge(lifecycleRequest,lifecycleEnvelope,subjectKeys.csr(),new byte[32]);
+                    var target=zeroecho.pki.api.hybrid.sdk.HybridSdkValue.decode(fresh.target().field(17)).objectFields();
+                    assertEquals(predecessor.value(),target.get("predecessorId").textValue());assertEquals(lifecycle,target.get("operation").textValue());
+                    var firstProof=sign(subjectKeys.primary(),"SHA384withECDSA",fresh.primary().encode());var secondProof=sign(subjectKeys.alternative(),"ML-DSA-87",new HybridSdkFrame(2,fresh.primary().fields()).encode());
+                    var pending=sdk.sdkAdmission().accept(fresh.intentId(),lifecycle,lifecycleRequest,lifecycleEnvelope,Duration.ofSeconds(30),firstProof,secondProof);
+                    assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,pending.state());assertTrue(pending.receipt().isEmpty());approve(realm,pending);
+                    var issued=certificate(realm,credential(process(sdk,lifecycle)));issued.verify(intermediate.getPublicKey());assertTrue(Pkix.verifyAlternativeSignatureCor3(issued,alternative(intermediate)));
+                    assertArrayEquals(subjectKeys.primary().getPublic().getEncoded(),issued.getPublicKey().getEncoded());assertArrayEquals(subjectKeys.alternative().getPublic().getEncoded(),alternativeSpki(issued));
+                    if(replacement)assertFalse(java.util.Arrays.equals(leaf.getPublicKey().getEncoded(),issued.getPublicKey().getEncoded()));
+                }
                 assertEquals(4,realm.session().repository().authorities(Optional.empty(),100).size());
             }
+        }
+    }
+
+    @Test void approvedRootCandidatesActivateExplicitlyAndLostServerAcknowledgmentReconcilesAfterLaterHeadChange(@TempDir Path directory)throws Exception {
+        var configuration=withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(directory));
+        PkiAdminBootstrap.bootstrap(ManagedKeyGenerationIntegrationTest.withoutSigning(configuration),"administrator","approver","trusted-proxy");
+        var clock=new TestClock();String lostId="activation-lost";long firstEpoch;
+        try(var realm=ServerRealmContext.open(configuration.realm(),dependencies(),clock,new java.security.SecureRandom())) {
+            var keys=realm.session().managedKeyGeneration().orElseThrow();
+            var initialKey=keys.generate("7".repeat(64),ManagedKeyGeneration.Parameters.RSA_4096);
+            for(var template:BuiltInCertificateProfileCatalog.load(getClass().getClassLoader()))if(template.definition().profileId().equals("root-ca")){realm.session().profiles().importBuiltIn(template);realm.session().profiles().activateProfile("root-ca",1);}
+            var initial=submit(realm,"activation-root","ca.create",arguments("formatId","x509","subjectRef","CN=Distributed Example Root","profileId","root-ca","keyRef",initialKey.keyRef().value()));
+            approve(realm,initial);var root=authority(realm,credential(process(realm.administrativeRequests(),initial.requestId())));
+            for(int generation=0;generation<2;generation++) {
+                var old=realm.session().repository().authority(root).orElseThrow();var newKey=keys.generate((generation==0?"8":"9").repeat(64),ManagedKeyGeneration.Parameters.RSA_4096);
+                var rotation=submit(realm,"rotation-"+generation,"ca.rotate",arguments("caId",root.value(),"newKeyRef",newKey.keyRef().value()));
+                var head=LifecycleProjection.head(((PkiOperationValue.ObjectValue)rotation.envelope().fields().get("arguments")).fields()).orElseThrow();
+                approve(realm,rotation);process(realm.administrativeRequests(),rotation.requestId());
+                var unchanged=realm.session().repository().authority(root).orElseThrow();assertEquals(old.currentIssuanceIssuerId(),unchanged.currentIssuanceIssuerId());
+                var candidate=unchanged.issuerIds().stream().filter(id->!old.issuerIds().contains(id)).findFirst().orElseThrow();
+                var inspect=(zeroecho.pki.application.PkiOperationOutcome.Completed)realm.session().operations().execute(new zeroecho.pki.application.PkiOperation.InspectIssuerGeneration(candidate),zeroecho.core.io.CancellationSignal.NONE);
+                var fields=inspect.result().fields();assertEquals("PENDING_ACTIVATION",LifecycleProjection.text(fields,"activationState"));
+                var candidateCertificate=certificate(realm,new PkiId(LifecycleProjection.text(fields,"downloadCredentialId")));candidateCertificate.verify(candidateCertificate.getPublicKey());
+                var args=new TreeMap<>(arguments("caId",root.value(),"issuerId",candidate.value(),"pathId",LifecycleProjection.text(fields,"candidatePathId"),"reason","Distribution completed for Example clients","transitionCommitment",LifecycleProjection.text(fields,"transitionCommitment")).fields());
+                args.put("expectedHead",LifecycleProjection.headValue(head));args.put("distributionAcknowledged",new PkiOperationValue.BooleanValue(true));
+                var selectEnvelope=envelope(new PkiOperationValue.ObjectValue(args));var selectRequest=request(realm,"issuer.path.select",selectEnvelope);
+                var activation=realm.administrativeRequests().submit(generation==0?lostId:"activation-normal",selectRequest,selectEnvelope,Duration.ofSeconds(30));
+                assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,activation.state());assertEquals(old.currentIssuanceIssuerId(),realm.session().repository().authority(root).orElseThrow().currentIssuanceIssuerId());approve(realm,activation);
+                if(generation==0) {
+                    // Exact crash image: real approved gateway commit, but no administrative result acknowledgment.
+                    var dispatched=new AdministrativeRequest(activation.requestId(),activation.revision()+1,activation.operation(),activation.envelope(),activation.actor(),activation.scope(),activation.operationCommitment(),activation.profileCommitment(),activation.targetCommitment(),AdministrativeRequest.State.DISPATCHING,activation.createdAt(),clock.instant(),activation.executionTimeoutMillis(),activation.approvalId(),activation.policyCommitment(),Optional.empty(),Optional.empty(),Optional.empty(),activation.sdkProof());
+                    var control=AdministrativeWorkflowFixture.control(realm);var prior=control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,lostId).orElseThrow();control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(dispatched),Optional.of(prior.commitment()),Optional.empty(),Optional.empty());
+                    var uncertain=realm.administrativeRequests().process(lostId);
+                    assertEquals(AdministrativeRequest.State.RECONCILIATION_REQUIRED,uncertain.state());assertEquals("ROOT_ACTIVATION_OUTCOME_UNKNOWN",uncertain.failureCode().orElseThrow());
+                    assertEquals(old.currentIssuanceIssuerId(),realm.session().repository().authority(root).orElseThrow().currentIssuanceIssuerId());
+                    var selected=(zeroecho.pki.application.PkiOperation.SelectIssuancePath)((AdministrativeOperation.Pki)selectRequest.operation()).operation();
+                    var evidence=new zeroecho.pki.api.ca.RootTrustAnchorActivation(1,new PkiId(LifecycleProjection.text(fields,"transitionId")),selected.transitionCommitment().orElseThrow(),head,candidate,selected.pathId(),head.epoch()+1,new PkiId(lostId),activation.actor().principalId(),activation.policyCommitment().orElseThrow(),activation.operationCommitment(),activation.createdAt(),true);
+                    var approved=new ServerOperationGateway.Request(selectRequest.realmId(),selectRequest.principalId(),selectRequest.authenticationMode(),selectRequest.transportPrincipalId(),selectRequest.credentialEvidence(),selectRequest.operation(),selectRequest.resource(),selectRequest.relationship(),selectRequest.context(),activation.approvalId(),lostId);
+                    var result=assertInstanceOf(ServerOperationGateway.Outcome.Executed.class,realm.gateway().executeRootActivation(approved,evidence,zeroecho.core.io.CancellationSignal.NONE));assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Completed.class,result.outcome());
+                    assertEquals(ApprovalService.State.EXECUTED,realm.approvals().requireCurrent(activation.approvalId().orElseThrow()).state());
+                } else {assertEquals("ACTIVATED",LifecycleProjection.text(process(realm.administrativeRequests(),activation.requestId()).result().orElseThrow().fields(),"activationState"));}
+            }
+            firstEpoch=2;
+        }
+        try(var realm=ServerRealmContext.open(configuration.realm(),dependencies(),clock,new java.security.SecureRandom())) {
+            var recovered=process(realm.administrativeRequests(),lostId);assertEquals(firstEpoch,((PkiOperationValue.IntegerValue)recovered.result().orElseThrow().fields().get("activationEpoch")).value());
+            assertEquals(recovered,realm.administrativeRequests().process(lostId));
         }
     }
 
@@ -171,6 +239,7 @@ class HybridSdkRealIssuanceTest {
     private static PkiOperationValue.ObjectValue envelope(PkiOperationValue.ObjectValue args){
         var fields=new TreeMap<String,PkiOperationValue>();fields.put("version",new PkiOperationValue.IntegerValue(1));fields.put("arguments",args);
         if(args.fields().containsKey("issuerCaId"))fields.put("authorityId",args.fields().get("issuerCaId"));
+        else if(args.fields().containsKey("caId"))fields.put("authorityId",args.fields().get("caId"));
         return new PkiOperationValue.ObjectValue(fields);
     }
     private static PkiOperationValue.ObjectValue arguments(String...values){var result=new TreeMap<String,PkiOperationValue>();for(int i=0;i<values.length;i+=2)result.put(values[i],new PkiOperationValue.Text(values[i+1]));return new PkiOperationValue.ObjectValue(result);}

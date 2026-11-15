@@ -639,8 +639,13 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
      * @param issuerId exact non-null member issuer-generation identifier
      * @param pathId exact non-null matching path identifier
      * @param reason nonblank administrative reason
+     * @param expectedHead exact original selected head, empty only before normalization
+     * @param transitionCommitment root candidate commitment, absent for ordinary same-anchor selection
+     * @param distributionAcknowledged explicit operator acknowledgment, never external trust-store verification
      */
-    record SelectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason) implements PkiOperation {
+    record SelectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason,
+            Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead, Optional<String> transitionCommitment,
+            boolean distributionAcknowledged) implements PkiOperation {
         /** Stable semantic operation name. */
         public static final String NAME = "issuer.path.select";
 
@@ -659,6 +664,20 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
             Objects.requireNonNull(issuerId, "issuerId");
             Objects.requireNonNull(pathId, "pathId");
             requireText(reason, "reason");
+            Objects.requireNonNull(expectedHead, "expectedHead");
+            Objects.requireNonNull(transitionCommitment, "transitionCommitment");
+            if (transitionCommitment.filter(value -> !value.matches("[0-9a-f]{64}")).isPresent()
+                    || distributionAcknowledged && transitionCommitment.isEmpty()) {
+                throw new IllegalArgumentException("Invalid root activation coordinates");
+            }
+        }
+
+        /**
+         * Preserves ordinary selection before head normalization; cannot activate a root candidate.
+         * @param caId authority @param issuerId generation @param pathId path @param reason operator reason
+         */
+        public SelectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason) {
+            this(caId, issuerId, pathId, reason, Optional.empty(), Optional.empty(), false);
         }
 
         /** {@return the stable semantic name {@value #NAME}} */

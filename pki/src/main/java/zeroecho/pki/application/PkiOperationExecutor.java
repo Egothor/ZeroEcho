@@ -46,6 +46,41 @@ import zeroecho.core.io.CancellationSignal;
 public interface PkiOperationExecutor {
 
     /**
+     * Freezes omitted operation fences before approval/hash capture without writes.
+     * @param operation selected immutable operation
+     * @return explicit normalized selection, or unchanged other operation
+     */
+    default PkiOperation normalize(PkiOperation operation) { return java.util.Objects.requireNonNull(operation, "operation"); }
+
+    /**
+     * Activates a root candidate with trusted server-retained execution evidence.
+     * Wire actor/approval values must never be used to construct this evidence.
+     * The default fails closed; ordinary execute does not substitute for this gate.
+     * @param operation exact approved selection and acknowledgment
+     * @param evidence deterministic retained request/actor/approval receipt
+     * @param cancellation cooperative cancellation
+     * @return activation outcome, including explicit unknown-commit recovery classification
+     * @throws UnsupportedOperationException if trusted activation is unavailable
+     */
+    default PkiOperationOutcome executeRootActivation(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Trusted root activation execution context required");
+    }
+
+    /**
+     * Observes an exact committed activation receipt without executing or checking today's head.
+     * @param operation retained approved selection @param expected exact trusted expected receipt
+     * @param cancellation cooperative read cancellation
+     * @return original successful result if the exact receipt committed, otherwise empty
+     * @throws UnsupportedOperationException if receipt observation is unavailable; not evidence of absence
+     * @throws RuntimeException if retained evidence conflicts or cannot be read safely
+     */
+    default java.util.Optional<PkiOperationResult> observeRootActivation(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation expected, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Root activation receipt observation unavailable");
+    }
+
+    /**
      * Checks current input and state without committing the operation or emitting audit writes.
      * Execution must repeat all checks against its then-current authoritative state.
      * @param operation immutable typed input

@@ -511,6 +511,33 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
             TOP_SIGN_CANDIDATE_BINDING, "SIGN_CANDIDATE_BINDING",
             valueSchema(114, FsCodec::writeSignCandidateBinding, FsCodec::readSignCandidateBinding));
 
+    private static final Schema<SignWorkflowStore.AcceptanceEnvelope> DUAL_SIGN_ACCEPTANCE = topLevel(
+            21, "DUAL_SIGN_ACCEPTANCE", valueSchema(133, (writer, value) -> {
+                writeSignAcceptanceEnvelope(writer, value);
+                SignWorkflowStore.CaSubjectProofStep proof = value.alternativeProofStep().orElseThrow();
+                writer.writeValue(PKI_ID, proof.operationId());
+                writer.writeValue(KEY_REF, proof.subjectKeyRef());
+                writer.writeValue(STRING, proof.algorithmId());
+                writer.writeValue(DURABLE_CONTENT, proof.challenge());
+            }, reader -> readSignAcceptanceEnvelope(reader, true)));
+    private static final Schema<SignWorkflowStore.MutableState> DUAL_SIGN_STATE = topLevel(
+            22, "DUAL_SIGN_STATE", valueSchema(134, (writer, value) -> {
+                writeSignMutableState(writer, value);
+                writer.writeBoolean(value.alternativeProofOutcome().isPresent());
+                if (value.alternativeProofOutcome().isPresent()) {
+                    var outcome = value.alternativeProofOutcome().orElseThrow();
+                    writer.writeValue(STRING, outcome.disposition().name());
+                    writer.writeValue(STRING, outcome.detailCode().name());
+                    writer.writeValue(OPTIONAL_INSTANT, outcome.providerUpdatedAt());
+                }
+            }, reader -> {
+                SignWorkflowStore.MutableState base = readSignMutableState(reader);
+                return new SignWorkflowStore.MutableState(base.operationId(), base.state(), base.revision(), base.fence(),
+                        base.leaseUntil(), base.downstreamOperationId(), base.detailCode(), base.result(), base.providerUpdatedAt(),
+                        base.failureCount(), base.nextEligibleAt(), base.reconciliationFailureClass(), base.initialAttemptPhase(),
+                        base.stage(), base.proofOutcome(), readCaProofOutcome(reader));
+            }));
+
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
@@ -523,13 +550,34 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
             Map.entry(TOP_DOMAIN_CONTINUATION, DOMAIN_CONTINUATION),
             Map.entry(TOP_SIGN_MUTABLE_STATE, SIGN_MUTABLE_STATE),
             Map.entry(TOP_SIGN_CANDIDATE_BINDING, SIGN_CANDIDATE_BINDING),
-            Map.entry(18, CA_BASE), Map.entry(19, CA_HEAD), Map.entry(20, CA_MEMBERSHIP));
+            Map.entry(21, DUAL_SIGN_ACCEPTANCE), Map.entry(22, DUAL_SIGN_STATE), Map.entry(18, CA_BASE), Map.entry(19, CA_HEAD), Map.entry(20, CA_MEMBERSHIP));
+
+    @SuppressWarnings("unchecked")
+    private static <T> T decodeCompatible(Schema<?> schema, byte[] encoded, StagedContentStore content) throws IOException {
+        return (T) PayloadDecoder.decode(schema, encoded, content);
+    }
+
+    /* default */ static byte[] encodeSigningState(SignWorkflowStore.AcceptanceEnvelope envelope, SignWorkflowStore.MutableState state) {
+        return encode(envelope.alternativeProofStep().isPresent() ? DUAL_SIGN_STATE : SIGN_MUTABLE_STATE, state);
+    }
+
+    /* default */ static void requireSigningStateVariant(SignWorkflowStore.AcceptanceEnvelope envelope, byte[] bytes) throws IOException {
+        if (bytes.length < 6 || (Byte.toUnsignedInt(bytes[5]) == 22) != envelope.alternativeProofStep().isPresent()) {
+            throw new IOException("Signing mutable-state variant differs from accepted proof roles");
+        }
+    }
 
     private FsCodec() {
         // utility
     }
 
     /* package */ static <T> byte[] encode(final Schema<T> schema, final T value) {
+        if (schema == SIGN_ACCEPTANCE_ENVELOPE && value instanceof SignWorkflowStore.AcceptanceEnvelope envelope
+                && envelope.alternativeProofStep().isPresent()) { return encode(DUAL_SIGN_ACCEPTANCE, envelope); }
+        if (schema == SIGN_MUTABLE_STATE && value instanceof SignWorkflowStore.MutableState state
+                && (state.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF || state.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                    || state.alternativeProofOutcome().isPresent())) { return encode(DUAL_SIGN_STATE, state); }
+
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(value, "value");
         try {
@@ -598,6 +646,10 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
             Schema<?> encodedSchema = TOP_LEVEL_SCHEMAS.get(typeId);
             if (encodedSchema == null) {
                 throw new IOException("unknown top-level type");
+            }
+            if (schema == SIGN_ACCEPTANCE_ENVELOPE && encodedSchema == DUAL_SIGN_ACCEPTANCE
+                    || schema == SIGN_MUTABLE_STATE && encodedSchema == DUAL_SIGN_STATE) {
+                return decodeCompatible(encodedSchema, encoded, stagedContent);
             }
             if (encodedSchema.typeId != schema.typeId) {
                 throw new IOException("top-level type mismatch");
@@ -968,6 +1020,10 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
 
     private static SignWorkflowStore.AcceptanceEnvelope readSignAcceptanceEnvelope(Reader reader)
             throws IOException {
+        return readSignAcceptanceEnvelope(reader, false);
+    }
+
+    private static SignWorkflowStore.AcceptanceEnvelope readSignAcceptanceEnvelope(Reader reader, boolean dual) throws IOException {
         PkiId operationId = reader.readValue(PKI_ID);
         SignWorkflowStore.AcceptanceCommitment commitment =
                 SignWorkflowStore.AcceptanceCommitment.parse(reader.readValue(STRING));
@@ -985,7 +1041,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                 reader.readValue(PKI_ID), reader.readValue(STRING), reader.readValue(ENCODING),
                 reader.readValue(INSTANT), reader.readValue(INSTANT), reader.readValue(DURABLE_CONTENT),
                 reader.readValue(OPTIONAL_OUTER_COMMAND),
-                SignWorkflowStore.Mode.fromPersistentCode(reader.readInt()), readCaProofStep(reader));
+                SignWorkflowStore.Mode.fromPersistentCode(reader.readInt()), readCaProofStep(reader),
+                dual ? Optional.of(new SignWorkflowStore.CaSubjectProofStep(reader.readValue(PKI_ID), reader.readValue(KEY_REF),
+                        reader.readValue(STRING), reader.readValue(DURABLE_CONTENT), SignWorkflowStore.SubjectKeyRole.ALTERNATIVE)) : Optional.empty());
     }
 
     private static Optional<SignWorkflowStore.CaSubjectProofStep> readCaProofStep(Reader reader) throws IOException {

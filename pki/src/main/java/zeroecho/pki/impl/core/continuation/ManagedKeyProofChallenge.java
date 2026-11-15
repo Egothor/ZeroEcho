@@ -52,7 +52,7 @@ import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
 
 /**
- * Strict version-two, big-endian managed-key proof challenge codec. UTF-8 and DER
+ * Strict version-two/three, big-endian managed-key proof challenge codec. UTF-8 and DER
  * fields use unsigned 32-bit byte lengths; the nonce and configuration commitment
  * each occupy exactly 32 unframed bytes. Complete input must end after SPKI DER.
  * Structure is configuration-independent; installed algorithm semantics must be
@@ -63,6 +63,7 @@ public final class ManagedKeyProofChallenge {
     private static final int CONTEXT_PRESENT = 1;
     private static final byte[] MAGIC = "ZEROECHO-MANAGED-KEY-PROOF\0".getBytes(StandardCharsets.US_ASCII);
     private static final int VERSION = 2;
+    private static final int ROLE_CONTEXT_VERSION = 3;
     /** Required nonce length, in bytes. */
     public static final int NONCE_BYTES = 32;
 
@@ -93,8 +94,10 @@ public final class ManagedKeyProofChallenge {
                 ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
         long size = MAGIC.length + 4L + 4L + ManagedKeyProofCommand.utf8Length(operationId.value(), 4096)
                 + 12L + 1L + NONCE_BYTES + 32L + 4L + algorithm.length + 4L + spki.length;
+        boolean roleContext = context.flatMap(CaContext::role).isPresent();
         if (context.isPresent()) {
             size += 4L + ManagedKeyProofCommand.utf8Length(context.orElseThrow().parentId().value(), 4096) + 32L;
+            if (roleContext) size += 33;
         }
         for (int index = 0; index <= 6; index++) {
             size += 4L + ManagedKeyProofCommand.utf8Length(command.field(index), ManagedKeyProofCommand.MAX_COMMAND_BYTES);
@@ -104,13 +107,18 @@ public final class ManagedKeyProofChallenge {
         // Validate the final command bound before allocating the challenge itself.
         ManagedKeyProofCommand.validateComplete(complete(metadata, spki, (int) size, "0".repeat(64)));
         ByteBuffer output = ByteBuffer.allocate((int) size);
-        output.put(MAGIC).putInt(VERSION);
+        output.put(MAGIC).putInt(roleContext ? ROLE_CONTEXT_VERSION : VERSION);
         write(output, operationId.value().getBytes(StandardCharsets.UTF_8));
         output.putLong(deadline.getEpochSecond()).putInt(deadline.getNano());
         output.put((byte) (context.isPresent() ? 1 : 0));
         if (context.isPresent()) {
             write(output, context.orElseThrow().parentId().value().getBytes(StandardCharsets.UTF_8));
             output.put(HexFormat.of().parseHex(context.orElseThrow().intentCommitment().substring("ca-intent:v1:".length())));
+            if (roleContext) {
+                output.put((byte) (context.orElseThrow().role().orElseThrow()
+                        == zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY ? 1 : 2));
+                output.put(HexFormat.of().parseHex(context.orElseThrow().lifecycleContextCommitment().orElseThrow()));
+            }
         }
         output.put(nonce);
         for (int index = 0; index <= 6; index++) {
@@ -134,13 +142,15 @@ public final class ManagedKeyProofChallenge {
         Objects.requireNonNull(challenge, "challenge");
         if (challenge.length == 0 || challenge.length > ManagedKeyProofCommand.MAX_CHALLENGE_BYTES) { throw invalid(); }
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(challenge))) {
-            if (!Arrays.equals(input.readNBytes(MAGIC.length), MAGIC) || input.readInt() != VERSION) { throw invalid(); }
+            if (!Arrays.equals(input.readNBytes(MAGIC.length), MAGIC)) { throw invalid(); }
+            int version = input.readInt();
+            if (version != VERSION && version != ROLE_CONTEXT_VERSION) throw invalid();
             PkiId operationId = new PkiId(readText(input, 4096));
             long seconds = input.readLong();
             int nanos = input.readInt();
             if (nanos < 0 || nanos >= 1_000_000_000) { throw invalid(); }
             Instant deadline = Instant.ofEpochSecond(seconds, nanos);
-            Optional<CaContext> context = readContext(input);
+            Optional<CaContext> context = readContext(input, version);
             requireContext(operationId, deadline, context);
             byte[] nonce = exact(input, NONCE_BYTES);
             List<String> metadata = new ArrayList<>(10);
@@ -194,13 +204,27 @@ public final class ManagedKeyProofChallenge {
      * Acyclic immutable context of an internal CA proof challenge.
      * @param parentId distinct parent signing operation
      * @param intentCommitment exact domain-separated final CA/TBS intent commitment
+     * @param role absent for byte-exact v2; explicit subject role for v3
+     * @param lifecycleContextCommitment absent for v2; frozen lifecycle/TBS context SHA-256 for v3
      */
-    public record CaContext(PkiId parentId, String intentCommitment) {
+    public record CaContext(PkiId parentId, String intentCommitment,
+            Optional<zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole> role,
+            Optional<String> lifecycleContextCommitment) {
         /** Validates canonical bounded context without store or algorithm lookup. */
         public CaContext {
             SigningSubmissionId parent = SigningSubmissionId.parse(Objects.requireNonNull(parentId, "parentId"));
             requireOperation(parentId, parent.namespace());
             if (intentCommitment == null || !intentCommitment.matches("ca-intent:v1:[0-9a-f]{64}")) { throw invalid(); }
+            Objects.requireNonNull(role, "role"); Objects.requireNonNull(lifecycleContextCommitment, "lifecycleContextCommitment");
+            if (role.isPresent() != lifecycleContextCommitment.isPresent()
+                    || lifecycleContextCommitment.filter(value -> !value.matches("[0-9a-f]{64}")).isPresent()) throw invalid();
+        }
+        /**
+         * Preserves the exact existing version-two parent context.
+         * @param parentId parent signing operation @param intentCommitment exact CA/TBS intent
+         */
+        public CaContext(PkiId parentId, String intentCommitment) {
+            this(parentId, intentCommitment, Optional.empty(), Optional.empty());
         }
         @Override public String toString() { return "ManagedKeyProofChallenge.CaContext[redacted]"; }
     }
@@ -267,11 +291,18 @@ public final class ManagedKeyProofChallenge {
         return new IllegalArgumentException("Managed key proof challenge is invalid");
     }
 
-    private static Optional<CaContext> readContext(DataInputStream input) throws IOException {
+    private static Optional<CaContext> readContext(DataInputStream input, int version) throws IOException {
         int contextFlag = input.readUnsignedByte();
-        if (contextFlag > CONTEXT_PRESENT) { throw invalid(); }
-        return contextFlag == CONTEXT_PRESENT
-                ? Optional.of(new CaContext(new PkiId(readText(input, 4096)),
-                        "ca-intent:v1:" + HexFormat.of().formatHex(exact(input, 32)))) : Optional.empty();
+        if (contextFlag > CONTEXT_PRESENT || version == ROLE_CONTEXT_VERSION && contextFlag != CONTEXT_PRESENT) throw invalid();
+        if (contextFlag == 0) return Optional.empty();
+        PkiId parent = new PkiId(readText(input, 4096));
+        String intent = "ca-intent:v1:" + HexFormat.of().formatHex(exact(input, 32));
+        if (version == VERSION) return Optional.of(new CaContext(parent, intent));
+        var role = switch (input.readUnsignedByte()) {
+            case 1 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY;
+            case 2 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE;
+            default -> throw invalid();
+        };
+        return Optional.of(new CaContext(parent, intent, Optional.of(role), Optional.of(HexFormat.of().formatHex(exact(input, 32)))));
     }
 }

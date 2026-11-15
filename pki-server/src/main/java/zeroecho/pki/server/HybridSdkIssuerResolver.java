@@ -49,7 +49,7 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
         var admission=realm.gateway().assessAdministrativeRequest(request);
         var operation=issue(admission.request());
         // Importing client metadata through a second operation is unnecessary: the exact SDK CSR is proof-bound here.
-        if(!operation.requestId().equals(subject.primary().requestId())) throw new IllegalArgumentException("SDK_REQUEST_ID_DIFFERS");
+        requireRequestId(operation,subject);
         var preview=realm.session().signingCommands().orElseThrow().previewSdk(operation,access(request),subject,
                 frozenValidity,CancellationSignal.NONE);
         return new HybridSdkAdmissionService.Context(admission,target(admission,envelope,preview));
@@ -57,15 +57,24 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
 
     SdkIssuancePreview preview(ServerOperationGateway.Request request, ParsedHybridSdkRequest subject, HybridSdkFrame retainedTarget) {
         var operation=issue(request);
-        if(!operation.requestId().equals(subject.primary().requestId())) throw new IllegalArgumentException("SDK_REQUEST_ID_DIFFERS");
+        requireRequestId(operation,subject);
         return realm.session().signingCommands().orElseThrow().previewSdk(operation,access(request),subject,
                 Optional.of(frozenValidity(retainedTarget)),CancellationSignal.NONE);
     }
 
-    static PkiSigningOperation.IssueCredential issue(ServerOperationGateway.Request request) {
+    static PkiSigningOperation issue(ServerOperationGateway.Request request) {
         if(request.operation() instanceof AdministrativeOperation.Signing signing
-                && signing.operation() instanceof PkiSigningOperation.IssueCredential value) return value;
+                && (signing.operation() instanceof PkiSigningOperation.IssueCredential
+                    || signing.operation() instanceof PkiSigningOperation.RenewCredential
+                    || signing.operation() instanceof PkiSigningOperation.ReissueCredential
+                    || signing.operation() instanceof PkiSigningOperation.ReplaceCredential)) return signing.operation();
         throw new UnsupportedOperationException("SDK_ISSUANCE_TARGET_UNSUPPORTED");
+    }
+
+    private static void requireRequestId(PkiSigningOperation operation, ParsedHybridSdkRequest subject) {
+        var id=operation instanceof PkiSigningOperation.IssueCredential issue?Optional.of(issue.requestId()):
+                operation instanceof PkiSigningOperation.ReplaceCredential replace?Optional.of(replace.requestId()):Optional.<zeroecho.pki.api.PkiId>empty();
+        if(id.isPresent()&&!id.orElseThrow().equals(subject.primary().requestId()))throw new IllegalArgumentException("SDK_REQUEST_ID_DIFFERS");
     }
 
     static AccessContext access(ServerOperationGateway.Request request) {
@@ -88,7 +97,7 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
         fields.put(13,text(preview.bindingSetCommitment()));
         fields.put(14,text("sha256:"+admission.policy().map(ApprovalService.Policy::commitment).orElseGet(()->ApprovalService.digest(""))));
         fields.put(15,preview.effectiveSubjectValue().encode());fields.put(16,preview.disclosurePolicy().encode());
-        fields.put(17,HybridSdkValue.object(Map.of()).encode());
+        fields.put(17,preview.targetExtensionValue().encode());
         return new HybridSdkFrame(7,fields);
     }
 

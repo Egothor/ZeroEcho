@@ -67,7 +67,7 @@ final class ServerSigningExecutor implements ServerOperationGateway.SigningExecu
     public PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
         var commands=session.signingCommands();
         if(commands.isEmpty())return operation;
-        var normalized=commands.orElseThrow().normalizeCreation(operation);
+        var normalized=commands.orElseThrow().normalizeLifecycle(commands.orElseThrow().normalizeCreation(operation));
         if(normalized==null || normalized instanceof PkiSigningOperation.CreateAuthority root && root.signatureAlgorithmId().isEmpty()
                 || normalized instanceof PkiSigningOperation.CreateIntermediate child && child.signatureAlgorithmId().isEmpty()) {
             throw new IllegalStateException("Creation algorithm is unresolved");

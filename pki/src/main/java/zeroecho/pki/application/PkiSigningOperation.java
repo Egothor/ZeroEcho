@@ -142,9 +142,10 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param subjectCaId subject intermediate-authority identifier
      * @param profileId nonblank stable certificate-profile identifier
      * @param requestedValidity optional requested validity constrained by the profile and issuer
+     * @param expectedHead original subject head, empty only before normalization
      */
     record IssueIntermediateCertificate(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
-            java.util.Optional<Validity> requestedValidity) implements PkiSigningOperation {
+            java.util.Optional<Validity> requestedValidity, java.util.Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead) implements PkiSigningOperation {
         /** Stable operation name. */
         public static final String NAME = "ca.intermediate.issue";
 
@@ -154,9 +155,20 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
             Objects.requireNonNull(subjectCaId, "subjectCaId");
             requestedValidity = Objects.requireNonNull(requestedValidity, "requestedValidity");
+            Objects.requireNonNull(expectedHead, "expectedHead");
             if (profileId == null || profileId.isBlank()) {
                 throw new IllegalArgumentException(profileIdRequiredMessage());
             }
+        }
+
+        /**
+         * Preserves existing intermediate issuance before head normalization.
+         * @param formatId format @param issuerCaId parent @param subjectCaId subject
+         * @param profileId profile @param requestedValidity requested bounds
+         */
+        public IssueIntermediateCertificate(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
+                java.util.Optional<Validity> requestedValidity) {
+            this(formatId, issuerCaId, subjectCaId, profileId, requestedValidity, java.util.Optional.empty());
         }
 
         @Override
@@ -169,9 +181,11 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * Rolls over one CA credential, keeping the same key and advancing the current issuance generation.
      *
      * @param caId exact certificate-authority identifier
-     * @param issuerCaId optional issuing authority; empty selects the configured issuer
+     * @param issuerCaId optional independently selected parent authority
+     * @param expectedHead original subject head, empty only before normalization
      */
-    record RolloverCaCertificate(PkiId caId, java.util.Optional<PkiId> issuerCaId) implements PkiSigningOperation {
+    record RolloverCaCertificate(PkiId caId, java.util.Optional<PkiId> issuerCaId,
+            java.util.Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead) implements PkiSigningOperation {
         /** Stable operation name. */
         public static final String NAME = "ca.rollover";
 
@@ -179,6 +193,15 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
         public RolloverCaCertificate {
             Objects.requireNonNull(caId, authorityIdParameter());
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
+            Objects.requireNonNull(expectedHead, "expectedHead");
+        }
+
+        /**
+         * Preserves same-key rollover before expected-head normalization.
+         * @param caId subject authority @param issuerCaId optional parent authority
+         */
+        public RolloverCaCertificate(PkiId caId, java.util.Optional<PkiId> issuerCaId) {
+            this(caId, issuerCaId, java.util.Optional.empty());
         }
 
         @Override
@@ -191,10 +214,12 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * Rotates one CA key and issues a new corresponding generation, advancing the current issuance pointers.
      *
      * @param caId exact certificate-authority identifier
-     * @param newKeyRef optional managed replacement key; a managed key must be present
-     * @param issuerCaId optional issuing authority; empty selects the configured issuer
+     * @param selection explicit outgoing role/member changes, resolved before approval
+     * @param issuerCaId optional independently selected parent authority
+     * @param expectedHead original selected head, absent only before normalization
      */
-    record RotateCaKey(PkiId caId, java.util.Optional<KeyRef> newKeyRef, java.util.Optional<PkiId> issuerCaId)
+    record RotateCaKey(PkiId caId, zeroecho.pki.api.ca.CaRotationSelection selection,
+            java.util.Optional<PkiId> issuerCaId, java.util.Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead)
             implements PkiSigningOperation {
         /** Stable operation name. */
         public static final String NAME = "ca.rotate";
@@ -202,9 +227,25 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
         /** Validates the rotation input. */
         public RotateCaKey {
             Objects.requireNonNull(caId, authorityIdParameter());
-            Objects.requireNonNull(newKeyRef, "newKeyRef");
-            if (newKeyRef.isEmpty()) { throw new IllegalArgumentException("A managed replacement key is required"); }
+            Objects.requireNonNull(selection, "selection");
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
+            Objects.requireNonNull(expectedHead, "expectedHead");
+        }
+
+        /**
+         * Constructs the existing primary-key-only operation.
+         * @param caId exact authority @param newKeyRef required managed primary key
+         * @param issuerCaId optional parent authority
+         */
+        public RotateCaKey(PkiId caId, java.util.Optional<KeyRef> newKeyRef, java.util.Optional<PkiId> issuerCaId) {
+            this(caId, zeroecho.pki.api.ca.CaRotationSelection.primaryKey(newKeyRef.orElseThrow(
+                    () -> new IllegalArgumentException("A managed replacement key is required"))),
+                    issuerCaId, java.util.Optional.empty());
+        }
+
+        /** @return explicit primary key override, empty for partial or alternative-only selection */
+        public java.util.Optional<KeyRef> newKeyRef() {
+            return selection.primary().flatMap(zeroecho.pki.api.ca.CaRotationSelection.RoleChange::keyRef);
         }
 
         @Override

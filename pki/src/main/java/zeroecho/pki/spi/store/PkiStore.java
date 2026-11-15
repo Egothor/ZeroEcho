@@ -214,6 +214,50 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      */
     void putCa(CaRecord record);
 
+    /** @param caId logical authority @return exact current immutable epoch fence, empty only when authority is absent */
+    Optional<zeroecho.pki.api.ca.CaHeadSnapshot> getCaHeadSnapshot(PkiId caId);
+
+    /** @param transitionId exact root candidate transition @return retained immutable candidate */
+    Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransition(PkiId transitionId);
+
+    /** @param issuerId exact candidate generation @return retained transition associated with this candidate */
+    Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransitionForIssuer(PkiId issuerId);
+
+    /** @param transitionId exact root transition @return successful immutable activation receipt, if activated */
+    Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> getRootTrustAnchorActivation(PkiId transitionId);
+
+    /**
+     * Atomically registers candidate membership and immutable evidence without selecting it.
+     * Exact replay returns the retained value even after a later legitimate head change.
+     * @param transition completed candidate evidence and original expected head
+     * @return exact newly retained or already retained candidate
+     */
+    zeroecho.pki.api.ca.RootTrustAnchorTransition registerRootCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition);
+
+    /**
+     * Changes an eligible selected head exactly once against every expected coordinate and epoch.
+     * Cross-anchor root selection requires the separate activation operation.
+     * This operation preserves CA state: a replacement state that no longer matches
+     * the authoritative current state is rejected without overwriting its winner.
+     * @param expected exact admitted original head
+     * @param replacement complete replacement CA record
+     * @return false for a stale fence or a replacement state differing from current authority,
+     *         true for an exact successful update or idempotent re-selection
+     */
+    boolean compareAndSetCaHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement);
+
+    /**
+     * Atomically selects a registered root candidate and retains its approved acknowledgment receipt.
+     * Exact receipt replay cannot rewind a later head; altered retries conflict.
+     * @param transitionId registered candidate
+     * @param expected original head fence captured before approval
+     * @param activation complete approved acknowledgment receipt
+     * @return retained activation receipt
+     */
+    zeroecho.pki.api.ca.RootTrustAnchorActivation activateRootCandidate(PkiId transitionId,
+            zeroecho.pki.api.ca.CaHeadSnapshot expected, zeroecho.pki.api.ca.RootTrustAnchorActivation activation);
+
+
     /**
      * Atomically replaces an existing CA record only while its complete value equals
      * {@code expected}.

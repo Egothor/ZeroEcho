@@ -34,6 +34,7 @@
 package zeroecho.pki.server.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -375,6 +376,22 @@ class HttpLifecycleOperationCodecTest {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.RenewCredential.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"credentialId\":\"credential-a\","
                         + "\"unexpected\":true}}"));
+    }
+
+    @Test void rotationAndActivationCommitEveryRoleHeadAndAcknowledgmentAndRejectForgedAuditFields() {
+        String head="{\"version\":1,\"caId\":\"ca-a\",\"epoch\":1,\"issuerId\":\"issuer-a\",\"pathId\":\"path-a\",\"bindingCommitment\":\""+"a".repeat(64)+"\"}";
+        String rotation="{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"caId\":\"ca-a\",\"newAlternativeKeyRef\":\"managed:key;role=alt\",\"alternativeSignatureAlgorithmId\":\"canonical:alt\",\"expectedHead\":"+head+"}}";
+        var original=decode("ca.rotate",rotation);
+        var changed=decode("ca.rotate",rotation.replace("managed:key;role=alt","managed:key;role=primary"));
+        var later=decode("ca.rotate",rotation.replace("\"epoch\":1","\"epoch\":2"));
+        String commitment=DESCRIPTORS.commitment(REALM,original.operation(),original.resource());
+        assertFalse(commitment.equals(DESCRIPTORS.commitment(REALM,changed.operation(),changed.resource())));
+        assertFalse(commitment.equals(DESCRIPTORS.commitment(REALM,later.operation(),later.resource())));
+        String activation="{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"caId\":\"ca-a\",\"issuerId\":\"candidate\",\"pathId\":\"candidate-path\",\"reason\":\"Distributed\",\"expectedHead\":"+head+",\"transitionCommitment\":\""+"b".repeat(64)+"\",\"distributionAcknowledged\":true}}";
+        var acknowledged=decode("issuer.path.select",activation);var notAcknowledged=decode("issuer.path.select",activation.replace("true","false"));
+        assertFalse(DESCRIPTORS.commitment(REALM,acknowledged.operation(),acknowledged.resource()).equals(DESCRIPTORS.commitment(REALM,notAcknowledged.operation(),notAcknowledged.resource())));
+        assertThrows(IllegalArgumentException.class,()->decode("issuer.path.select",activation.replace("\"reason\":","\"actorId\":\"root\",\"reason\":")));
+        assertThrows(IllegalArgumentException.class,()->decode("ca.rotate",rotation.replace("\"epoch\":1","\"actorId\":\"root\",\"epoch\":1")));
     }
 
     private static Object pki(HttpOperationCodec.Decoded decoded) {

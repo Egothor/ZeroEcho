@@ -205,10 +205,76 @@ final class PkiOperationAdministrationTest {
                 assertEquals(new PkiOperationResult("issuer.path.select", Map.of("caId", text(ROOT.value()),
                         "issuerId", text(fixture.second().issuerId().value()),
                         "pathId", text(fixture.secondPath().pathId().value()))), completed(session.operations(), operation));
-                assertEquals(List.of("getCa", "getIssuerGeneration", "getIssuerChainPath", "replaceCa"), bootstrap.calls);
+                assertEquals(1L, bootstrap.calls.stream().filter("compareAndSetCaHead"::equals).count());
+                assertFalse(bootstrap.calls.contains("replaceCa"));
                 assertEquals(expected, bootstrap.store.getCa(ROOT).orElseThrow());
             }
             assertFalse(disabled.issuerKeyRef().equals(expected.issuerKeyRef()));
+        }
+    }
+
+    @Test
+    void trustedRootActivationIsRequiredAndExactReceiptReplaysAfterLaterSameAnchorHeadChange(@TempDir Path temporary) throws Exception {
+        var bootstrap = new ObservedBootstrap();
+        try (var session = open(temporary, bootstrap)) {
+            var initial = fixture(bootstrap.store);
+            var candidate = rootCandidate(bootstrap.store, initial.root(), 4);
+            var transition = candidate.transition();
+            var selection = (PkiOperation.SelectIssuancePath) session.operations().normalize(new PkiOperation.SelectIssuancePath(ROOT,
+                    transition.candidateIssuerId(), transition.candidatePathId(), "distribution acknowledged",
+                    Optional.empty(), Optional.of(transition.commitment()), true));
+            var receipt = activation(selection, transition, "trusted-root-activation");
+            assertFailure(session.operations(), selection, PkiOperationFailure.POLICY_REJECTION, "ROOT_ACTIVATION_CONTEXT_REQUIRED");
+            assertEquals(transition.expectedHead(), bootstrap.store.getCaHeadSnapshot(ROOT).orElseThrow());
+            assertTrue(bootstrap.store.getRootTrustAnchorActivation(transition.transitionId()).isEmpty());
+            assertTrue(session.operations().observeRootActivation(selection, receipt, CancellationSignal.NONE).isEmpty());
+            var result = assertInstanceOf(PkiOperationOutcome.Completed.class,
+                    session.operations().executeRootActivation(selection, receipt, CancellationSignal.NONE)).result();
+            assertEquals(text(transition.candidateIssuerId().value()), result.fields().get("issuerId"));
+            assertEquals(text(transition.candidatePathId().value()), result.fields().get("pathId"));
+            assertEquals(text("ACTIVATED"), result.fields().get("activationState"));
+            assertEquals(new PkiOperationValue.IntegerValue(2), result.fields().get("activationEpoch"));
+            assertEquals(receipt, bootstrap.store.getRootTrustAnchorActivation(transition.transitionId()).orElseThrow());
+            var altered = new zeroecho.pki.api.ca.RootTrustAnchorActivation(receipt.version(), receipt.transitionId(), receipt.transitionCommitment(),
+                    receipt.expectedHead(), receipt.candidateIssuerId(), receipt.candidatePathId(), receipt.newEpoch(), receipt.activationRequestId(),
+                    "another-actor", receipt.approvalPolicyCommitment(), receipt.approvedTargetCommitment(), receipt.acceptedAt(), true);
+            assertEquals(new PkiOperationOutcome.Failed(selection.name(), PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT"),
+                    session.operations().executeRootActivation(selection, altered, CancellationSignal.NONE));
+            var active = bootstrap.store.getCa(ROOT).orElseThrow();
+            var renewed = retainedRoot(bootstrap.store, active, candidate.keys(), 5);
+            var renewedPath = IssuerChainPath.create(ROOT, renewed.issuerId(), List.of(renewed.credentialId()));
+            var members = new ArrayList<>(active.issuerIds()); members.add(renewed.issuerId());
+            assertTrue(bootstrap.store.compareAndSetCaHead(bootstrap.store.getCaHeadSnapshot(ROOT).orElseThrow(),
+                    new CaRecord(ROOT, active.kind(), active.state(), renewed.signingKeyRef(), active.subjectRef(), members, renewed.issuerId(), renewedPath.pathId())));
+            assertEquals(3, bootstrap.store.getCaHeadSnapshot(ROOT).orElseThrow().epoch());
+            assertEquals(new PkiOperationOutcome.Completed(result), session.operations().executeRootActivation(selection, receipt, CancellationSignal.NONE));
+            assertEquals(Optional.of(result), session.operations().observeRootActivation(selection, receipt, CancellationSignal.NONE));
+            assertEquals(renewed.issuerId(), bootstrap.store.getCa(ROOT).orElseThrow().currentIssuanceIssuerId());
+            assertEquals(3, bootstrap.store.getCaHeadSnapshot(ROOT).orElseThrow().epoch());
+        }
+    }
+
+    @Test
+    void approvedRootActivationRejectsStaleEpochEvenWhenSelectedTupleReturnsToOriginal(@TempDir Path temporary) throws Exception {
+        var bootstrap = new ObservedBootstrap();
+        try (var session = open(temporary, bootstrap)) {
+            var initial = fixture(bootstrap.store);
+            var candidate = rootCandidate(bootstrap.store, initial.root(), 4);
+            var transition = candidate.transition();
+            var selection = (PkiOperation.SelectIssuancePath) session.operations().normalize(new PkiOperation.SelectIssuancePath(ROOT,
+                    transition.candidateIssuerId(), transition.candidatePathId(), "approved old head",
+                    Optional.empty(), Optional.of(transition.commitment()), true));
+            var receipt = activation(selection, transition, "stale-root-activation");
+            completed(session.operations(), new PkiOperation.SelectIssuancePath(ROOT, initial.second().issuerId(), initial.secondPath().pathId(), "same-anchor selection"));
+            completed(session.operations(), new PkiOperation.SelectIssuancePath(ROOT, initial.first().issuerId(), initial.firstPath().pathId(), "same-anchor return"));
+            var current = bootstrap.store.getCaHeadSnapshot(ROOT).orElseThrow();
+            assertEquals(transition.expectedHead().issuerId(), current.issuerId());
+            assertEquals(transition.expectedHead().pathId(), current.pathId());
+            assertEquals(3, current.epoch());
+            assertEquals(new PkiOperationOutcome.Failed(selection.name(), PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT"),
+                    session.operations().executeRootActivation(selection, receipt, CancellationSignal.NONE));
+            assertTrue(bootstrap.store.getRootTrustAnchorActivation(transition.transitionId()).isEmpty());
+            assertEquals(current, bootstrap.store.getCaHeadSnapshot(ROOT).orElseThrow());
         }
     }
 
@@ -281,7 +347,8 @@ final class PkiOperationAdministrationTest {
                 CaRecord winner = withState(before, bootstrap.concurrentState);
                 bootstrap.calls.clear();
                 assertFailure(session.operations(), operations.get(index), PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT");
-                assertEquals(1L, bootstrap.calls.stream().filter("replaceCa"::equals).count());
+                String expectedWrite = index == 0 ? "replaceCa" : "compareAndSetCaHead";
+                assertEquals(1L, bootstrap.calls.stream().filter(expectedWrite::equals).count());
                 assertEquals(winner, bootstrap.store.getCa(ROOT).orElseThrow());
             }
         }
@@ -432,6 +499,49 @@ final class PkiOperationAdministrationTest {
         return generation;
     }
 
+    private record RootCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition, java.security.KeyPair keys) { }
+
+    private static RootCandidate rootCandidate(PkiStore store, CaRecord ca, int serial) throws Exception {
+        var generator = java.security.KeyPairGenerator.getInstance("RSA"); generator.initialize(2048);
+        var keys = generator.generateKeyPair();
+        var head = store.getCaHeadSnapshot(ca.caId()).orElseThrow();
+        var generation = retainedRoot(store, ca, keys, serial);
+        var path = IssuerChainPath.create(ca.caId(), generation.issuerId(), List.of(generation.credentialId()));
+        var old = store.getIssuerGeneration(head.issuerId()).orElseThrow();
+        var before = store.getIssuerCryptographicBinding(head.issuerId()).orElseThrow();
+        var after = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow();
+        var operation = new PkiId("admin-candidate-signing-" + serial);
+        var transition = new zeroecho.pki.api.ca.RootTrustAnchorTransition(1, zeroecho.pki.api.ca.RootTrustAnchorTransition.idFor(operation), ca.caId(), head,
+                old.credentialId(), before.certificateSha256(), before.commitment(), generation.issuerId(), path.pathId(), generation.credentialId(),
+                after.certificateSha256(), after.commitment(), operation, "domain:v1:" + "a".repeat(64));
+        return new RootCandidate(store.registerRootCandidate(transition), keys);
+    }
+
+    private static IssuerGeneration retainedRoot(PkiStore store, CaRecord ca, java.security.KeyPair keys, int serial) throws Exception {
+        var name = new org.bouncycastle.asn1.x500.X500Name(ca.subjectRef().value());
+        var builder = new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(name, BigInteger.valueOf(serial),
+                java.util.Date.from(SemanticIssuanceFixture.BEFORE), java.util.Date.from(SemanticIssuanceFixture.AFTER), name, keys.getPublic());
+        byte[] der = builder.build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate())).getEncoded();
+        var credentialId = new PkiId("admin-root-candidate-credential-" + serial);
+        var issuerId = IssuerGeneration.idFor(ca.caId(), credentialId);
+        var path = IssuerChainPath.create(ca.caId(), issuerId, List.of(credentialId));
+        store.putCredential(new Credential(credentialId, new FormatId("x509"), new IssuerRef(ca.caId(), issuerId, path.pathId()), ca.subjectRef(),
+                new Validity(SemanticIssuanceFixture.BEFORE, SemanticIssuanceFixture.AFTER), Integer.toString(serial), new PkiId("admin-candidate-public-key"),
+                new CaProfileBinding(new CertificateProfileRef("profile", 1, new byte[32])), CredentialStatus.ISSUED,
+                PkiTestRuntime.stageCredential(store, der), new SimpleAttributeSet()));
+        var generation = new IssuerGeneration(issuerId, ca.caId(), credentialId, new KeyRef("admin-candidate-key"), IssuerGenerationState.ACTIVE,
+                "0".repeat(64), zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
+        zeroecho.pki.testkit.IssuerBindingFixture.put(store, generation, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256);
+        store.putIssuerChainPath(path); return generation;
+    }
+
+    private static zeroecho.pki.api.ca.RootTrustAnchorActivation activation(PkiOperation.SelectIssuancePath operation,
+            zeroecho.pki.api.ca.RootTrustAnchorTransition transition, String requestId) {
+        return new zeroecho.pki.api.ca.RootTrustAnchorActivation(1, transition.transitionId(), transition.commitment(), operation.expectedHead().orElseThrow(),
+                operation.issuerId(), operation.pathId(), operation.expectedHead().orElseThrow().epoch() + 1, new PkiId(requestId), "bootstrap-admin",
+                "b".repeat(64), "c".repeat(64), IntermediateCreationFixture.NOW, true);
+    }
+
     private record Fixture(CaRecord root, IssuerGeneration first, IssuerChainPath firstPath,
             IssuerGeneration second, IssuerChainPath secondPath, CaRecord child,
             IssuerGeneration childGeneration, IssuerChainPath childPath) { }
@@ -478,10 +588,11 @@ final class PkiOperationAdministrationTest {
                     (proxy, method, arguments) -> {
                         calls.add(method.getName());
                         if (method.getName().equals("getIssuerChainPath") && parentOverride != null) return Optional.of(parentOverride);
-                        if (method.getName().equals("replaceCa")) {
+                        if (method.getName().equals("replaceCa") || method.getName().equals("compareAndSetCaHead")) {
                             if (uncertain) throw new PkiException("private write coordinates", PkiFailureReason.STORE_DURABILITY_UNCONFIRMED);
                             if (concurrentState != null) {
-                                CaRecord expected = (CaRecord) arguments[0];
+                                CaRecord expected = method.getName().equals("replaceCa") ? (CaRecord) arguments[0]
+                                        : store.getCa(((zeroecho.pki.api.ca.CaHeadSnapshot) arguments[0]).caId()).orElseThrow();
                                 assertTrue(store.replaceCa(expected, withState(expected, concurrentState)));
                                 concurrentState = null;
                             }

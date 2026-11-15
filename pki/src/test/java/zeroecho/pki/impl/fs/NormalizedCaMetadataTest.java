@@ -132,6 +132,11 @@ final class NormalizedCaMetadataTest {
             authority.create(AuthorityMetadataCodec.pathKey(path.pathId()), FsCodec.encode(FsCodec.ISSUER_CHAIN_PATH, path));
             ca = new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, generation(0).signingKeyRef(), new SubjectRef("CN=Normalized"),
                     ids, ids.getFirst(), path.pathId());
+            try (MetadataSnapshot snapshot = metadata.snapshot()) {
+                var binding = AuthorityMetadataStore.findBinding(snapshot, ca.currentIssuanceIssuerId()).orElseThrow();
+                authority.create(CaLifecycleMetadataCodec.headKey(ca.caId()), CaLifecycleMetadataCodec.encode(
+                        new zeroecho.pki.api.ca.CaHeadSnapshot(1, ca.caId(), 1, ca.currentIssuanceIssuerId(), ca.issuanceChainPathId(), binding.commitment())));
+            }
             authority.restoreCa(ca, FsHistoryPolicy.onWrite(Optional.empty()));
             try (MetadataSnapshot snapshot = metadata.snapshot()) {
                 assertEquals(ca, AuthorityMetadataStore.ca(snapshot, CA).orElseThrow());
@@ -139,13 +144,13 @@ final class NormalizedCaMetadataTest {
                 AuthorityMetadataStore.validateAll(snapshot);
                 try (RecordingTransaction transaction = new RecordingTransaction(metadata.beginTransaction())) {
                     AuthorityMetadataStore.stageCa(snapshot, transaction, ca, true, Instant.EPOCH);
-                    assertEquals(2, transaction.mutations.size());
+                    assertEquals(4, transaction.mutations.size());
                     int expected = SigningTransactionPayloadCodec.emptyCommitBytes();
                     for (SigningTransactionPayloadCodec.Mutation mutation : transaction.mutations) {
                         expected += SigningTransactionPayloadCodec.encodedCreateBytes(mutation.key(), mutation.content().length);
                     }
                     assertEquals(expected, SigningTransactionPayloadCodec.encodedCommitSize(transaction.mutations));
-                    assertTrue(expected < 1024); // Independent of the full membership count.
+                    assertTrue(expected < 2048); // Four fixed-size head/history rows, independent of membership count.
                     committed(transaction.commit());
                 }
                 CountingSnapshot counted = new CountingSnapshot(snapshot);

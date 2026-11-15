@@ -943,6 +943,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     generation -> validateIssuerGeneration(generation));
             AuthorityMetadataStore.visit(snapshot, AuthorityMetadataCodec.ISSUER_PATH, AuthorityMetadataCodec::path,
                     path -> validateIssuerChainPath(snapshot, path));
+            for (var transition : AuthorityMetadataStore.list(snapshot, CaLifecycleMetadataCodec.TRANSITION, (key, bytes) -> {
+                try { return CaLifecycleMetadataCodec.decodeTransition(bytes); } catch (IOException failure) { throw new IllegalStateException(failure); }
+            })) { validateRootCandidateEvidence(transition); }
+
         }
     }
 
@@ -1217,7 +1221,51 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 CREDENTIAL_SERIAL_NAMESPACE, AuthorityMetadataCodec.CA_BASE, AuthorityMetadataCodec.CA_CURRENT,
                 AuthorityMetadataCodec.CA_HISTORY, AuthorityMetadataCodec.CA_GENERATION_ORDER, AuthorityMetadataCodec.CA_GENERATION_MEMBER,
                 AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec.ISSUER_CRYPTO_BINDING, AuthorityMetadataCodec.ISSUER_PATH,
-                AuthorityMetadataCodec.CREDENTIAL_RECORD, AuthorityMetadataCodec.CREDENTIAL_OWNER_SET));
+                AuthorityMetadataCodec.CREDENTIAL_RECORD, AuthorityMetadataCodec.CREDENTIAL_OWNER_SET,
+                CaLifecycleMetadataCodec.HEAD, CaLifecycleMetadataCodec.HEAD_HISTORY, CaLifecycleMetadataCodec.TRANSITION,
+                CaLifecycleMetadataCodec.ACTIVATION, CaLifecycleMetadataCodec.CANDIDATE_INDEX));
+    }
+
+    /* default */ void restoreSnapshotLifecycle(MetadataSnapshot source, List<CaRecord> cas, Instant at) throws IOException {
+        java.util.Map<PkiId, CaRecord> selected = new java.util.HashMap<>();
+        java.util.Map<PkiId, zeroecho.pki.api.ca.CaHeadSnapshot> heads = new java.util.HashMap<>();
+        for (CaRecord ca : cas) {
+            selected.put(ca.caId(), ca);
+            var head = AuthorityMetadataStore.headAt(source, ca, at, options.caHistoryPolicy());
+            heads.put(ca.caId(), head);
+            restoreLifecycleRow(CaLifecycleMetadataCodec.headKey(ca.caId()), CaLifecycleMetadataCodec.encode(head));
+        }
+        for (var transition : AuthorityMetadataStore.list(source, CaLifecycleMetadataCodec.TRANSITION, (key, bytes) -> {
+            try { return CaLifecycleMetadataCodec.decodeTransition(bytes); } catch (IOException failure) { throw new IllegalStateException(failure); }
+        })) {
+            CaRecord ca = selected.get(transition.caId());
+            boolean include = ca != null && ca.issuerIds().contains(transition.candidateIssuerId());
+            if (!include) {
+                try (var retained = source.get(domainContinuationKey(transition.originatingSigningOperationId())).orElse(null)) {
+                    if (retained != null) { throw new IOException("Historical snapshot would discard retained candidate signing evidence"); }
+                }
+                continue;
+            }
+            byte[] bytes = CaLifecycleMetadataCodec.encode(transition);
+            restoreLifecycleRow(CaLifecycleMetadataCodec.transitionKey(transition.transitionId()), bytes);
+            restoreLifecycleRow(CaLifecycleMetadataCodec.candidateKey(transition.candidateIssuerId()), bytes);
+            var activation = CaLifecycleMetadataCodec.activation(source, transition.transitionId());
+            if (activation.isPresent()) {
+                var receipt = activation.orElseThrow();
+                if (receipt.newEpoch() > heads.get(ca.caId()).epoch()) {
+                    throw new IOException("Historical snapshot would rewind a retained root activation");
+                }
+                restoreLifecycleRow(CaLifecycleMetadataCodec.activationKey(transition.transitionId()), CaLifecycleMetadataCodec.encode(receipt));
+            }
+        }
+    }
+
+    private void restoreLifecycleRow(MetadataKey key, byte[] bytes) throws IOException {
+        try (MetadataTransaction transaction = metadataStore.beginTransaction(); var content = new zeroecho.core.io.ImmutableByteContent(bytes)) {
+            transaction.create(key, content, CancellationSignal.NONE);
+            var result = requireKnownOutcome(transaction.commit());
+            if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) { throw new IOException("Snapshot lifecycle metadata was not committed"); }
+        }
     }
 
     /* default */ void restoreSnapshotCa(CaRecord ca) throws IOException {
@@ -1244,6 +1292,68 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             Objects.requireNonNull(record, "record");
             validateCaCredentialReferences(record);
             try { authorityMetadata().putCa(record, options.caHistoryPolicy()); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        }
+    }
+
+    @Override
+    public Optional<zeroecho.pki.api.ca.CaHeadSnapshot> getCaHeadSnapshot(PkiId caId) {
+        requireStoreUsable();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return CaLifecycleMetadataCodec.head(snapshot, caId); }
+        catch (IOException failure) { throw signingDurabilityFailure(failure); }
+    }
+
+    @Override
+    public Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransition(PkiId transitionId) {
+        requireStoreUsable();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return CaLifecycleMetadataCodec.transition(snapshot, transitionId); }
+        catch (IOException failure) { throw signingDurabilityFailure(failure); }
+    }
+
+    @Override
+    public Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransitionForIssuer(PkiId issuerId) {
+        requireStoreUsable();
+        try { return authorityMetadata().find(CaLifecycleMetadataCodec.candidateKey(issuerId),
+                (key, bytes) -> { try { return CaLifecycleMetadataCodec.decodeTransition(bytes); }
+                    catch (IOException failure) { throw new IllegalStateException("Root candidate metadata invalid", failure); } }); }
+        catch (IOException failure) { throw signingDurabilityFailure(failure); }
+    }
+
+    @Override
+    public Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> getRootTrustAnchorActivation(PkiId transitionId) {
+        requireStoreUsable();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return CaLifecycleMetadataCodec.activation(snapshot, transitionId); }
+        catch (IOException failure) { throw signingDurabilityFailure(failure); }
+    }
+
+    @Override
+    public boolean compareAndSetCaHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
+            requireStoreUsable(); validateCaCredentialReferences(replacement);
+            try { return authorityMetadata().compareAndSetHead(expected, replacement, options.caHistoryPolicy()); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        }
+    }
+
+    @Override
+    public zeroecho.pki.api.ca.RootTrustAnchorTransition registerRootCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
+            requireStoreUsable();
+            try { validateRootCandidateEvidence(transition); return authorityMetadata().registerCandidate(transition, options.caHistoryPolicy()); }
+            catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        }
+    }
+
+    @Override
+    public zeroecho.pki.api.ca.RootTrustAnchorActivation activateRootCandidate(PkiId transitionId,
+            zeroecho.pki.api.ca.CaHeadSnapshot expected, zeroecho.pki.api.ca.RootTrustAnchorActivation activation) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
+            requireStoreUsable();
+            try { validateRootCandidateEvidence(getRootTrustAnchorTransition(transitionId).orElseThrow());
+                return authorityMetadata().activateCandidate(transitionId, expected, activation, options.caHistoryPolicy()); }
             catch (IOException failure) { throw signingDurabilityFailure(failure); }
         }
     }
@@ -3459,6 +3569,29 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    private void validateRootCandidateEvidence(zeroecho.pki.api.ca.RootTrustAnchorTransition transition) throws IOException {
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var path = AuthorityMetadataStore.find(snapshot, AuthorityMetadataCodec.pathKey(transition.candidatePathId()), AuthorityMetadataCodec::path).orElseThrow();
+            var originalCa = AuthorityMetadataStore.ca(snapshot, transition.caId()).orElseThrow();
+            var candidateCredential = requireCredential(snapshot, transition.candidateCredentialId());
+            if (!candidateCredential.subjectRef().equals(originalCa.subjectRef())) { throw new IOException("Root candidate subject differs from its authority"); }
+            if (path.orderedCredentialIds().size() != 1) { throw new IOException("Root candidate must retain its own self-signed path"); }
+            validateIssuerChainPath(snapshot, path);
+            var binding = AuthorityMetadataStore.findBinding(snapshot, transition.candidateIssuerId()).orElseThrow();
+            if (binding.alternative().isPresent()) {
+                var certificate = certificateHolder(requireCredential(snapshot, transition.candidateCredentialId()));
+                byte[] spki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72");
+                var key = Pkix.publicKeyFromSubjectPublicKeyInfo(spki);
+                boolean valid = switch (binding.certificateHybridBaseline()) {
+                    case COR3_SIGNED_WRAPPER -> Pkix.verifyAlternativeSignatureCor3(certificate, key);
+                    case LEGACY_PRE_TBS -> Pkix.verifyAlternativeSignature(certificate, key);
+                    case NONE -> false;
+                };
+                if (!valid) { throw new IOException("Root candidate alternative self-signature is invalid"); }
+            }
+        }
+    }
+
     private CaRecord validateCaCredentialReferences(CaRecord record) {
         try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return validateCaCredentialReferences(snapshot, record); }
         catch (IOException failure) { throw new IllegalStateException("CA credential authority is invalid", failure); }
@@ -4893,7 +5026,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 stagedContent.reserveTransactionalPublication(candidate);
                 try (reservation) {
                     FilesystemStagedContentStore.TransactionalReservation proofReservation = reserveProofCandidate(exact);
-                    try (proofReservation) {
+                    var alternativeReservation = exact.alternativeProofStep().isPresent()
+                            ? stagedContent.reserveTransactionalPublication(exact.alternativeProofStep().orElseThrow().challenge()) : null;
+                    try (proofReservation; alternativeReservation) {
                         try (RepeatableContent ignoredContent = stagedContent.openContent(candidate)) {
                             stagedContent.restoreReference(candidate.storeId(), candidate.contentId(),
                                     candidate.encoding(), candidate.length(), candidate.sha256(),
@@ -4980,6 +5115,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private static List<DurableContentReference> acceptanceCandidates(SignWorkflowStore.AcceptanceCommand command) {
+        if (command.alternativeProofStep().isPresent()) { return List.of(command.candidate(),
+                command.proofStep().orElseThrow().challenge(), command.alternativeProofStep().orElseThrow().challenge()); }
         return command.proofStep().map(proof -> List.of(command.candidate(), proof.challenge()))
                 .orElseGet(() -> List.of(command.candidate()));
     }
@@ -5008,7 +5145,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             throw new IllegalArgumentException(
                     "Signing acceptance timestamps do not match its identifier");
         }
-        command.proofStep().ifPresent(proof -> {
+        java.util.stream.Stream.concat(command.proofStep().stream(), command.alternativeProofStep().stream()).forEach(proof -> {
             SigningSubmissionId step = SigningSubmissionId.parse(proof.operationId());
             step.validate(command.providerNamespace(), signingNow(), options.signingOperationHorizon(), options.signingIdPermittedSkew());
             if (!command.deadline().isAfter(step.createdAt())) {
@@ -5076,7 +5213,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     byteContent(FsCodec.encode(FsCodec.SIGN_ACCEPTANCE_ENVELOPE, envelope)),
                     CancellationSignal.NONE);
             transaction.create(signingStateKey(command.operationId()),
-                    byteContent(FsCodec.encode(FsCodec.SIGN_MUTABLE_STATE, state)),
+                    byteContent(FsCodec.encodeSigningState(envelope, state)),
                     CancellationSignal.NONE);
             for (DurableContentReference candidate : acceptanceCandidates(command)) {
                 SignWorkflowStore.CandidateBinding owned = new SignWorkflowStore.CandidateBinding(candidate.contentId(),
@@ -5973,7 +6110,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     if (current.state() == SignWorkflowStore.State.INTENT
                             || current.state() == SignWorkflowStore.State.DISPATCHED
                             && (current.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
-                                || current.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY)) {
+                                || current.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY
+                                || current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                                || current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF && current.downstreamOperationId().isEmpty())) {
                         SignWorkflowStore.Workflow cancelled = copySignRecord(current,
                                 SignWorkflowStore.State.CANCELLED, current.revision() + 1L, fence,
                                 Optional.empty(), Optional.of("CANCELLED"), Optional.empty(),
@@ -6091,7 +6230,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 StoredSign stored = found.orElseThrow();
                 SignWorkflowStore.Workflow current = stored.record();
                 if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()
-                        || current.stage() != SignWorkflowStore.Stage.CA_PROOF
+                        || current.stage() != SignWorkflowStore.Stage.CA_PROOF && current.stage() != SignWorkflowStore.Stage.CA_ALT_PROOF
                         || current.state() != SignWorkflowStore.State.DISPATCHED && current.state() != SignWorkflowStore.State.CANCELLING) {
                     return Optional.empty();
                 }
@@ -6131,8 +6270,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 SignWorkflowStore.Workflow current = stored.record();
                 if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()
                         || current.state() != SignWorkflowStore.State.DISPATCHED
-                        || current.stage() != SignWorkflowStore.Stage.CA_PROOF_VERIFYING || current.result().isEmpty()
-                        || current.proofOutcome().filter(value -> value.disposition()
+                        || current.stage() != SignWorkflowStore.Stage.CA_PROOF_VERIFYING && current.stage() != SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING || current.result().isEmpty()
+                        || (current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING ? current.alternativeProofOutcome() : current.proofOutcome()).filter(value -> value.disposition()
                                 == zeroecho.pki.spi.crypto.SigningProvider.ObservationState.SUCCEEDED).isEmpty()) {
                     return Optional.empty();
                 }
@@ -6143,7 +6282,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     SignWorkflowStore.MutableState ready = new SignWorkflowStore.MutableState(current.operationId(), current.state(),
                             current.revision() + 1L, fence, Optional.empty(), Optional.empty(), Optional.of("DISPATCHED"),
                             Optional.empty(), Optional.empty(), 0, Optional.empty(), Optional.empty(), old.initialAttemptPhase(),
-                            SignWorkflowStore.Stage.CA_CERTIFICATE_READY, current.proofOutcome());
+                            current.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING && current.alternativeProofStep().isPresent()
+                                    ? SignWorkflowStore.Stage.CA_ALT_PROOF : SignWorkflowStore.Stage.CA_CERTIFICATE_READY,
+                            current.proofOutcome(), current.alternativeProofOutcome());
                     SignTransitionCommit committed = commitSignTransitionAtAdmission(stored, new SignWorkflowStore.Workflow(current.envelope(), ready));
                     result = committed.record();
                     expiry = committed.expiry();
@@ -6162,7 +6303,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             Optional<EncodedObject> result, Optional<Instant> providerTime) {
         return new SignWorkflowStore.Workflow(current.envelope(), new SignWorkflowStore.MutableState(current.operationId(),
                 state, revision, fence, lease, downstream, detail, result, providerTime, 0, Optional.empty(), Optional.empty(),
-                current.initialAttemptPhase(), stage, outcome));
+                current.initialAttemptPhase(), stage,
+                current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF || current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                        ? current.proofOutcome() : outcome,
+                current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF || current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                        ? outcome : current.alternativeProofOutcome()));
     }
 
     @Override
@@ -6275,8 +6420,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                                 signingCandidateBindingKey(stored.reference().contentId()),
                                 stored.bindingRevision(), null));
                         retiredCandidates.add(stored.reference());
-                        if (stored.proofCandidate().isPresent()) {
-                            BoundSignCandidate proof = stored.proofCandidate().orElseThrow();
+                        for (BoundSignCandidate proof : stored.proofCandidates()) {
                             deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
                                     signingCandidateBindingKey(proof.reference().contentId()), proof.bindingRevision(), null));
                             retiredCandidates.add(proof.reference());
@@ -7143,6 +7287,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         SignWorkflowStore.AcceptanceEnvelope envelope = FsCodec.decode(
                 FsCodec.SIGN_ACCEPTANCE_ENVELOPE, readMetadataValue(storedEnvelope),
                 stagedContent);
+        FsCodec.requireSigningStateVariant(envelope, readMetadataValue(storedState));
         SignWorkflowStore.Workflow record = new SignWorkflowStore.Workflow(envelope, state);
         validateSignRecord(submissionId, record);
         DurableContentReference reference = envelope.candidate();
@@ -7156,9 +7301,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 || !constantTimeAsciiEquals(binding.sha256(), reference.sha256())) {
             throw new IllegalStateException("Signing candidate binding is inconsistent");
         }
-        Optional<BoundSignCandidate> proofCandidate = Optional.empty();
-        if (envelope.proofStep().isPresent()) {
-            DurableContentReference proof = envelope.proofStep().orElseThrow().challenge();
+        List<BoundSignCandidate> proofCandidates = new ArrayList<>();
+        for (var step : java.util.stream.Stream.concat(envelope.proofStep().stream(), envelope.alternativeProofStep().stream()).toList()) {
+            DurableContentReference proof = step.challenge();
             MetadataSnapshot.Record proofRecord = snapshot.get(signingCandidateBindingKey(proof.contentId()))
                     .orElseThrow(() -> new IllegalStateException("CA proof candidate binding is missing"));
             SignWorkflowStore.CandidateBinding proofBinding = FsCodec.decode(FsCodec.SIGN_CANDIDATE_BINDING, readMetadataValue(proofRecord));
@@ -7166,10 +7311,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     || proof.length() != proofBinding.length() || !proof.sha256().equals(proofBinding.sha256())) {
                 throw new IllegalStateException("CA proof candidate binding differs");
             }
-            proofCandidate = Optional.of(new BoundSignCandidate(proof, proofRecord.recordRevision()));
+            proofCandidates.add(new BoundSignCandidate(proof, proofRecord.recordRevision()));
         }
         return new StoredSign(record, storedState.recordRevision(),
-                storedEnvelope.recordRevision(), storedBinding.recordRevision(), reference, proofCandidate);
+                storedEnvelope.recordRevision(), storedBinding.recordRevision(), reference, List.copyOf(proofCandidates));
     }
 
     private Optional<SignWorkflowStore.CandidateBinding> readCandidateBinding(String candidateId) {
@@ -7222,7 +7367,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         record.envelope().keyRef(), record.envelope().fairnessAuthorityId(),
                         record.envelope().algorithmId(), record.envelope().signatureEncoding(),
                         record.createdAt(), record.deadline(), record.envelope().candidate(),
-                        record.envelope().outer(), record.mode(), record.envelope().proofStep()).commitment()), record,
+                        record.envelope().outer(), record.mode(), record.envelope().proofStep(), record.alternativeProofStep()).commitment()), record,
                 "ACCEPTANCE_COMMITMENT_MISMATCH");
 
         requireValidSignRecord(record.revision() >= record.fence(), record, "REVISION_FENCE_ORDER_INVALID");
@@ -7263,8 +7408,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try (MetadataTransaction transaction =
                 metadataStore.beginSigningProgressTransaction()) {
             transaction.replace(signingStateKey(replacement.submissionId()), current.recordRevision(),
-                    byteContent(FsCodec.encode(FsCodec.SIGN_MUTABLE_STATE,
-                            replacement.mutableState())), CancellationSignal.NONE);
+                    byteContent(FsCodec.encodeSigningState(replacement.envelope(), replacement.mutableState())), CancellationSignal.NONE);
             return requireKnownOutcome(transaction.commit()).outcome()
                     == MetadataCommitResult.Outcome.COMMITTED;
         } catch (MetadataStoreException failure) {
@@ -7352,6 +7496,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             appendSigningEvidence(workflow, workflow.envelope().proofStep().orElseThrow().operationId(),
                     Optional.of(proof.detailCode().name()), proofDisposition, proof.providerUpdatedAt());
         });
+        workflow.alternativeProofOutcome().ifPresent(proof -> {
+            var disposition = switch (proof.disposition()) {
+                case SUCCEEDED -> zeroecho.pki.application.SigningExecutionEvidence.Outcome.SIGNED;
+                case CANCELLED -> zeroecho.pki.application.SigningExecutionEvidence.Outcome.CANCELLED;
+                case FAILED, UNRECOVERABLE -> zeroecho.pki.application.SigningExecutionEvidence.Outcome.FAILED;
+                case PENDING, RETRYABLE_UNKNOWN -> throw new IllegalStateException("Retained alternative proof outcome is not terminal");
+            };
+            appendSigningEvidence(workflow, workflow.alternativeProofStep().orElseThrow().operationId(),
+                    Optional.of(proof.detailCode().name()), disposition, proof.providerUpdatedAt());
+        });
     }
 
     // The apparently unused result deliberately validates overflow or representability before any side effect.
@@ -7402,7 +7556,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         SigningTransactionPayloadCodec.Mutation replace = new SigningTransactionPayloadCodec.Mutation(
                 SigningTransactionPayloadCodec.MutationKind.REPLACE,
                 signingStateKey(replacement.submissionId()), current.recordRevision(),
-                FsCodec.encode(FsCodec.SIGN_MUTABLE_STATE, replacement.mutableState()));
+                FsCodec.encodeSigningState(replacement.envelope(), replacement.mutableState()));
         return List.of(replace);
     }
 
@@ -7517,8 +7671,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 new SigningTransactionPayloadCodec.Mutation(
                         SigningTransactionPayloadCodec.MutationKind.REPLACE,
                         signingStateKey(replacement.submissionId()), current.recordRevision(),
-                        FsCodec.encode(FsCodec.SIGN_MUTABLE_STATE,
-                                replacement.mutableState())));
+                        FsCodec.encodeSigningState(replacement.envelope(), replacement.mutableState())));
         try {
             MetadataCommitResult result = metadataStore.directSigningProgressCommit(mutations);
             return result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
@@ -7615,7 +7768,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             SignWorkflowStore.InitialAttemptPhase phase) {
         SignWorkflowStore.MutableState mutable = new SignWorkflowStore.MutableState(current.operationId(), state,
                 revision, fence, leaseUntil, downstreamOperationId, detailCode, result, providerUpdatedAt,
-                failureCount, nextEligibleAt, failureClass, phase, current.stage(), current.proofOutcome());
+                failureCount, nextEligibleAt, failureClass, phase, current.stage(), current.proofOutcome(), current.alternativeProofOutcome());
         return new SignWorkflowStore.Workflow(current.envelope(), mutable);
     }
 
@@ -8004,7 +8157,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private record StoredSign(SignWorkflowStore.Workflow record, long recordRevision,
             long envelopeRevision, long bindingRevision,
-            DurableContentReference reference, Optional<BoundSignCandidate> proofCandidate) {
+            DurableContentReference reference, List<BoundSignCandidate> proofCandidates) {
     }
 
     private record BoundSignCandidate(DurableContentReference reference, long bindingRevision) { }
@@ -8143,8 +8296,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             case DISPATCHED -> {
                 requireValidSignRecord(record.fence() > 0L && record.revision() >= record.fence(), record,
                         "DISPATCH_REVISION_INVALID");
-                boolean verifying = record.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING;
-                boolean ready = record.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY;
+                boolean verifying = record.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                        || record.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING;
+                boolean ready = record.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY
+                        || record.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF && record.downstreamOperationId().isEmpty();
                 requireValidSignRecord(validActiveClaimOrRetry(record, verifying || ready
                         || record.mode() == SignWorkflowStore.Mode.BOUNDED_OBSERVATION
                         && record.initialAttemptPhase() == SignWorkflowStore.InitialAttemptPhase.OBSERVATION_OWED)
@@ -8771,7 +8926,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         Optional<String> detail = Optional.of(verifying ? "DISPATCHED"
                 : target == SignWorkflowStore.State.CANCELLED ? "CANCELLED" : outcome.detailCode().name());
         return caStageRecord(current, target,
-                verifying ? SignWorkflowStore.Stage.CA_PROOF_VERIFYING : current.stage(), Optional.of(outcome),
+                verifying ? (current.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF
+                        ? SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING : SignWorkflowStore.Stage.CA_PROOF_VERIFYING) : current.stage(), Optional.of(outcome),
                 current.revision() + 1L, fence, Optional.empty(), current.downstreamOperationId(), detail,
                 verifying ? signature : Optional.empty(), verifying ? Optional.empty() : outcome.providerUpdatedAt());
     }

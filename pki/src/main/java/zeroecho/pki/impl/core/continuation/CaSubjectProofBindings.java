@@ -56,26 +56,62 @@ public final class CaSubjectProofBindings {
      * @return exact frozen proof command
      */
     public static DomainCommandEncoding.Decoded requireEnvelope(SignWorkflowStore.AcceptanceEnvelope envelope) {
-        SignWorkflowStore.CaSubjectProofStep step = envelope.proofStep().orElseThrow(CaSubjectProofBindings::invalid);
+        return requireEnvelope(envelope, SignWorkflowStore.SubjectKeyRole.PRIMARY);
+    }
+
+    /**
+     * Validates exact descriptor, algorithm and SPKI commitments for a selected subject role.
+     * @param envelope complete admitted intermediate command @param role required subject role
+     * @return exact nested command for that role
+     */
+    public static DomainCommandEncoding.Decoded requireEnvelope(SignWorkflowStore.AcceptanceEnvelope envelope,
+            SignWorkflowStore.SubjectKeyRole role) {
         IntermediateSigningCommand.requireEnvelope(envelope);
-        DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(envelope.outer().orElseThrow().command());
-        DomainCommandEncoding.Decoded proof = IntermediateSigningCommand.validate(command);
-        if (!command.field(18).equals(step.operationId().value())
-                || !command.field(6).equals(step.subjectKeyRef().value())
+        var command = DomainCommandEncoding.decode(envelope.outer().orElseThrow().command());
+        if (IntermediateSigningCommand.alternativeProof(command).isPresent() != envelope.alternativeProofStep().isPresent()) {
+            throw invalid();
+        }
+        var step = (role == SignWorkflowStore.SubjectKeyRole.PRIMARY ? envelope.proofStep() : envelope.alternativeProofStep())
+                .orElseThrow(CaSubjectProofBindings::invalid);
+        var proof = role == SignWorkflowStore.SubjectKeyRole.PRIMARY ? IntermediateSigningCommand.validate(command)
+                : IntermediateSigningCommand.alternativeProof(command).orElseThrow(CaSubjectProofBindings::invalid);
+        if (step.role() != role || !proof.field(5).equals(step.subjectKeyRef().value())
                 || !proof.field(8).equals(step.algorithmId())
-                || command.fields().size() == 23 && !envelope.algorithmId().equals(step.algorithmId())) { throw invalid(); }
-        if (command.fields().size() == 25) {
+                || !proof.field(6).equals(envelope.providerNamespace())
+                || !proof.field(7).equals(java.util.HexFormat.of().formatHex(envelope.providerConfigurationCommitment().bytes()))) throw invalid();
+        if (role == SignWorkflowStore.SubjectKeyRole.PRIMARY && !command.field(18).equals(step.operationId().value())) throw invalid();
+        if (role == SignWorkflowStore.SubjectKeyRole.ALTERNATIVE && !IntermediateSigningCommand.alternativeProofId(command)
+                .orElseThrow(CaSubjectProofBindings::invalid).equals(step.operationId())) throw invalid();
+        if (command.fields().size() == 23 && !envelope.algorithmId().equals(step.algorithmId())) throw invalid();
+        if (command.fields().size() >= 25) {
             var outgoing = CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
             var incoming = CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14)));
-            if (!incoming.primary().signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())) throw invalid();
-            if (!outgoing.primary().keyRef().equals(step.subjectKeyRef())
-                    || !outgoing.primary().signatureAlgorithm().canonicalForm().equals(step.algorithmId())
-                    || !java.util.HexFormat.of().formatHex(outgoing.primary().signatureAlgorithmIdentifier().bytes()).equals(proof.field(9))) {
-                throw invalid();
-            }
+            var selected = role == SignWorkflowStore.SubjectKeyRole.PRIMARY ? outgoing.primary()
+                    : outgoing.alternative().orElseThrow(CaSubjectProofBindings::invalid);
+            if (!incoming.primary().signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())
+                    || !selected.keyRef().equals(step.subjectKeyRef())
+                    || !selected.signatureAlgorithm().canonicalForm().equals(step.algorithmId())
+                    || !java.util.HexFormat.of().formatHex(selected.signatureAlgorithmIdentifier().bytes()).equals(proof.field(9))
+                    || !selected.subjectSpkiSha256().equals(proof.field(11))) throw invalid();
         }
         ManagedKeyProofBindings.requireCandidate(proof, step.challenge());
         return proof;
+    }
+
+    /**
+     * Derives the exact signed proof role/context without reading current authority state.
+     * @param envelope immutable admitted parent @param role selected child subject role
+     * @return byte-exact v2 context for single proof, explicit v3 context for dual proof
+     */
+    public static ManagedKeyProofChallenge.CaContext context(SignWorkflowStore.AcceptanceEnvelope envelope,
+            SignWorkflowStore.SubjectKeyRole role) {
+        var command = DomainCommandEncoding.decode(envelope.outer().orElseThrow().command());
+        String intent = CaSigningIntent.commitmentOfCanonicalAlgorithm(command, envelope.algorithmId());
+        if (envelope.alternativeProofStep().isEmpty()) return new ManagedKeyProofChallenge.CaContext(envelope.operationId(), intent);
+        String lifecycle = command.fields().size() == 26
+                ? CaLifecycleContextCodec.commitment(CaLifecycleContextCodec.decode(command.field(25)))
+                : intent.substring("ca-intent:v1:".length());
+        return new ManagedKeyProofChallenge.CaContext(envelope.operationId(), intent, Optional.of(role), Optional.of(lifecycle));
     }
 
     /**
@@ -88,32 +124,43 @@ public final class CaSubjectProofBindings {
      * @throws IOException if content integrity or canonical DER validation fails
      */
     public static void requireLiveCandidates(StagedContentStore store, SignWorkflowStore.AcceptanceEnvelope envelope) throws IOException {
-        DomainCommandEncoding.Decoded proof = requireEnvelope(envelope);
-        DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(envelope.outer().orElseThrow().command());
-        SignWorkflowStore.CaSubjectProofStep step = envelope.proofStep().orElseThrow();
-        String intent = CaSigningIntent.commitmentOfCanonicalAlgorithm(command, envelope.algorithmId());
-        byte[] challenge = ManagedKeyProofBindings.readChallenge(store, step.operationId(), envelope.deadline(),
-                Optional.of(new ManagedKeyProofChallenge.CaContext(envelope.operationId(), intent)), proof, step.challenge());
-        ManagedKeyProofChallenge.Decoded decoded = ManagedKeyProofChallenge.decode(challenge);
+        var command = DomainCommandEncoding.decode(envelope.outer().orElseThrow().command());
         byte[] tbs;
         try (RepeatableContent content = store.openContent(envelope.candidate()); InputStream input = content.openStream()) {
             int length = Math.toIntExact(envelope.candidate().length());
             tbs = input.readNBytes(length);
             if (tbs.length != length || input.read() != -1
-                    || !ContentCommitment.sha256(tbs).sha256().equals(command.field(22))) { throw invalid(); }
+                    || !ContentCommitment.sha256(tbs).sha256().equals(command.field(22))) throw invalid();
         }
-        StreamingDerReader.CertificateTbsLayout layout = new StreamingDerReader()
-                .inspectUnsignedCertificateTbs(tbs, 1_048_576);
-        byte[] spki = decoded.spki();
-        byte[] algorithm = command.fields().size() == 25
-                ? CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14))).primary().signatureAlgorithmIdentifier().bytes()
-                : ManagedKeyProofCommand.hex(proof.field(9), 1, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
-        if (!Arrays.equals(tbs, layout.subjectPublicKeyInfoOffset(),
-                    Math.addExact(layout.subjectPublicKeyInfoOffset(), layout.subjectPublicKeyInfoLength()),
-                    spki, 0, spki.length)
-                || !Arrays.equals(tbs, layout.algorithmOffset(),
-                    Math.addExact(layout.algorithmOffset(), layout.algorithmLength()), algorithm, 0, algorithm.length)) {
-            throw invalid();
+        var layout = new StreamingDerReader().inspectUnsignedCertificateTbs(tbs, 1_048_576);
+        requireLiveRole(store, envelope, SignWorkflowStore.SubjectKeyRole.PRIMARY, command, tbs, layout);
+        if (envelope.alternativeProofStep().isPresent()) {
+            requireLiveRole(store, envelope, SignWorkflowStore.SubjectKeyRole.ALTERNATIVE, command, tbs, layout);
+        }
+    }
+
+    private static void requireLiveRole(StagedContentStore store, SignWorkflowStore.AcceptanceEnvelope envelope,
+            SignWorkflowStore.SubjectKeyRole role, DomainCommandEncoding.Decoded command, byte[] tbs,
+            StreamingDerReader.CertificateTbsLayout layout) throws IOException {
+        var proof = requireEnvelope(envelope, role);
+        var step = (role == SignWorkflowStore.SubjectKeyRole.PRIMARY ? envelope.proofStep() : envelope.alternativeProofStep()).orElseThrow();
+        byte[] challenge = ManagedKeyProofBindings.readChallenge(store, step.operationId(), envelope.deadline(),
+                Optional.of(context(envelope, role)), proof, step.challenge());
+        byte[] spki = ManagedKeyProofChallenge.decode(challenge).spki();
+        if (role == SignWorkflowStore.SubjectKeyRole.PRIMARY) {
+            byte[] algorithm = command.fields().size() >= 25
+                    ? CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14))).primary().signatureAlgorithmIdentifier().bytes()
+                    : ManagedKeyProofCommand.hex(proof.field(9), 1, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
+            if (!Arrays.equals(tbs, layout.subjectPublicKeyInfoOffset(),
+                        Math.addExact(layout.subjectPublicKeyInfoOffset(), layout.subjectPublicKeyInfoLength()), spki, 0, spki.length)
+                    || !Arrays.equals(tbs, layout.algorithmOffset(), Math.addExact(layout.algorithmOffset(), layout.algorithmLength()),
+                        algorithm, 0, algorithm.length)) throw invalid();
+        } else {
+            // The temporary SIGNED wrapper is only a structural view of the already bounded TBS.
+            // No signature is trusted or published through this parsing path.
+            var certificate = zeroecho.pkix.Pkix.parseCertificate(zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, new byte[] {0}, false));
+            byte[] exact = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72");
+            if (!Arrays.equals(exact, spki)) throw invalid();
         }
     }
 

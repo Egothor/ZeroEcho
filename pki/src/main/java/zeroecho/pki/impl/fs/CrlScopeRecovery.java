@@ -223,7 +223,7 @@ final class CrlScopeRecovery {
                 envelope.operationId(), envelope.providerNamespace(), envelope.providerConfigurationCommitment(),
                 envelope.accessContext(), envelope.keyRef(), envelope.fairnessAuthorityId(), envelope.algorithmId(),
                 envelope.signatureEncoding(), envelope.createdAt(), envelope.deadline(), envelope.candidate(),
-                envelope.outer(), envelope.mode(), envelope.proofStep());
+                envelope.outer(), envelope.mode(), envelope.proofStep(), envelope.alternativeProofStep());
         try (RepeatableContent content = store.stagedContent().openContent(envelope.candidate())) {
             SignAcceptanceCrlScope exact = SignAcceptanceCrlScope.derive(store, accepted, content)
                     .orElseThrow(() -> invalid("Retained root candidate has no certificate scope"));

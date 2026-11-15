@@ -83,6 +83,31 @@ public interface SemanticSigningService {
     default String creationSignatureAlgorithm() { throw new UnsupportedOperationException("Creation unavailable"); }
 
     /**
+     * Freezes omitted rotation members and the expected original selected head.
+     * This pure operation never generates keys, signs, stages or authorizes use.
+     * @param command explicit role selection and optional caller-supplied head fence
+     * @return complete selector and authoritative expected head
+     * @throws UnsupportedOperationException if normalization is unavailable
+     * @throws PkiException if the supplied expected head is stale or evidence is absent
+     */
+    default zeroecho.pki.api.ca.CaKeyRotationCommand normalizeCaKeyRotation(
+            zeroecho.pki.api.ca.CaKeyRotationCommand command) {
+        throw new UnsupportedOperationException("CA rotation normalization unavailable");
+    }
+
+    /**
+     * Captures or checks one expected CA head before approval without staging/signing.
+     * @param caId logical subject authority @param expected supplied fence, or empty initially
+     * @return exact authoritative generation/path/binding/epoch fence
+     * @throws PkiException if a supplied fence is stale or current evidence is absent
+     * @throws UnsupportedOperationException if this pure domain seam is unavailable
+     */
+    default zeroecho.pki.api.ca.CaHeadSnapshot freezeCaHead(PkiId caId,
+            Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expected) {
+        throw new UnsupportedOperationException("CA head normalization unavailable");
+    }
+
+    /**
      * Validates current input and policy without serial allocation, signing, staging or acceptance.
      * @param access trusted invocation context
      * @param command typed operation input
@@ -462,6 +487,87 @@ public interface SemanticSigningService {
     }
 
     /**
+     * Evaluates an SDK renewal target with exact predecessor and both subject keys.
+     * @param access authorized caller @param request typed lifecycle selection
+     * @param parsed exact proof-bound client request @param frozenValidity absolute retained bounds, or empty initially
+     * @param cancellation cooperative cancellation @return immutable public lifecycle preview
+     * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
+    }
+
+    /**
+     * Revalidates fresh dual proof and the exact approved renewal snapshot before alternative signing.
+     * @param access authorized caller @param request typed lifecycle selection
+     * @param parsed proof-bound client request @param approval retained proof accepted at its original acceptance time
+     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     * @return caller-owned staged lifecycle request
+     * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     */
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
+    }
+
+    /**
+     * Evaluates an SDK reissue target with exact predecessor and both subject keys.
+     * @param access authorized caller @param request typed lifecycle selection
+     * @param parsed exact proof-bound client request @param frozenValidity absolute retained bounds, or empty initially
+     * @param cancellation cooperative cancellation @return immutable public lifecycle preview
+     * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
+    }
+
+    /**
+     * Revalidates fresh dual proof and the exact approved reissue snapshot before alternative signing.
+     * @param access authorized caller @param request typed lifecycle selection
+     * @param parsed proof-bound client request @param approval retained proof accepted at its original acceptance time
+     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     * @return caller-owned staged lifecycle request
+     * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     */
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
+    }
+
+    /**
+     * Evaluates an SDK replacement target with exact predecessor and both subject keys.
+     * @param access authorized caller @param request typed lifecycle selection
+     * @param parsed exact proof-bound client request @param frozenValidity absolute retained bounds, or empty initially
+     * @param cancellation cooperative cancellation @return immutable public lifecycle preview
+     * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+            CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
+    }
+
+    /**
+     * Revalidates fresh dual proof and the exact approved replacement snapshot before alternative signing.
+     * @param access authorized caller @param request typed lifecycle selection
+     * @param parsed proof-bound client request @param approval retained proof accepted at its original acceptance time
+     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     * @return caller-owned staged lifecycle request
+     * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     */
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
+    }
+
+    /**
      * Verifies and prepares one end-entity certificate using the current
      * authoritative issuer generation and active profile. No signature or durable
      * acceptance occurs. The returned value exclusively owns staged TBS content
@@ -708,6 +814,17 @@ public interface SemanticSigningService {
      * @throws IllegalStateException if a matching completion result is malformed
      */
     Optional<PkiId> completedStatusObjectId(SemanticSigningOperation operation);
+
+    /**
+     * Projects public candidate/activation and selected-head coordinates from retained completion evidence.
+     * This read-only projection does not activate the root or install external trust.
+     * @param operation completed semantic observation
+     * @return immutable named public coordinates, empty for noncandidate operations
+     * @throws RuntimeException if matching retained lifecycle evidence is inconsistent
+     */
+    default java.util.Map<String, String> completedCaLifecycleMetadata(SemanticSigningOperation operation) {
+        return java.util.Map.of();
+    }
 
 
     /**

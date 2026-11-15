@@ -57,6 +57,8 @@ public sealed interface CaRolloverCommand {
     Optional<Validity> requestedValidity();
     /** {@return immutable universal attributes} */
     AttributeSet attributes();
+    /** @return exact expected original selected head, absent only before normalization */
+    Optional<CaHeadSnapshot> expectedHead();
 
     /**
      * Root rollover using the authoritative current key. Execution must separately
@@ -66,8 +68,9 @@ public sealed interface CaRolloverCommand {
      * @param caId root CA identifier, strict UTF-8 at most 4,096 bytes
      * @param requestedValidity optional requested validity
      * @param attributes immutable universal attributes, possibly empty
+     * @param expectedHead optional expected original selected head
      */
-    record Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes) implements CaRolloverCommand {
+    record Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes, Optional<CaHeadSnapshot> expectedHead) implements CaRolloverCommand {
         /**
          * Validates local structure without resolving authority state.
          * @throws IllegalArgumentException if a component is null or the CA identifier is invalid
@@ -76,6 +79,14 @@ public sealed interface CaRolloverCommand {
             CaCommandInputs.identifier(caId);
             CaCommandInputs.required(requestedValidity);
             CaCommandInputs.required(attributes);
+            CaCommandInputs.required(expectedHead);
+        }
+        /**
+         * Preserves same-key rollover inputs before head normalization.
+         * @param caId authority @param requestedValidity requested bounds @param attributes immutable attributes
+         */
+        public Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes) {
+            this(caId, requestedValidity, attributes, Optional.empty());
         }
         /** {@return a diagnostic representation without command coordinates or attributes} */
         @Override public String toString() { return "CaRolloverCommand.Root[redacted]"; }
@@ -90,9 +101,10 @@ public sealed interface CaRolloverCommand {
      * @param keyRef expected current key, strict UTF-8 at most 1,048,576 bytes
      * @param requestedValidity optional requested validity
      * @param attributes immutable universal attributes, possibly empty
+     * @param expectedHead optional expected original selected head
      */
     record Intermediate(PkiId caId, PkiId issuerCaId, KeyRef keyRef,
-            Optional<Validity> requestedValidity, AttributeSet attributes) implements CaRolloverCommand {
+            Optional<Validity> requestedValidity, AttributeSet attributes, Optional<CaHeadSnapshot> expectedHead) implements CaRolloverCommand {
         /**
          * Validates local structure without resolving authority state.
          * @throws IllegalArgumentException if any component is null, bounded text is invalid
@@ -103,6 +115,16 @@ public sealed interface CaRolloverCommand {
             CaCommandInputs.key(keyRef);
                 CaCommandInputs.required(requestedValidity);
             CaCommandInputs.required(attributes);
+            CaCommandInputs.required(expectedHead);
+        }
+        /**
+         * Preserves existing same-key intermediate rollover before head normalization.
+         * @param caId subject authority @param issuerCaId parent authority @param keyRef expected subject key
+         * @param requestedValidity requested bounds @param attributes immutable attributes
+         */
+        public Intermediate(PkiId caId, PkiId issuerCaId, KeyRef keyRef,
+                Optional<Validity> requestedValidity, AttributeSet attributes) {
+            this(caId, issuerCaId, keyRef, requestedValidity, attributes, Optional.empty());
         }
         /** {@return a diagnostic representation without command coordinates or attributes} */
         @Override public String toString() { return "CaRolloverCommand.Intermediate[redacted]"; }

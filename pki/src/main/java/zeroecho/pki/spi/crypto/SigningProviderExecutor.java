@@ -198,19 +198,20 @@ public final class SigningProviderExecutor {
                 && left.deadline().equals(right.deadline())
                 && sameCandidate(left.candidate(), right.candidate())
                 && sameProof(left.proofStep(), right.proofStep())
+                && sameProof(left.alternativeProofStep(), right.alternativeProofStep())
                 && sameOuter(left.outer(), right.outer());
     }
 
     private static void requireProviderStage(SignWorkflowStore.Stage stage) {
         if (stage != SignWorkflowStore.Stage.SINGLE && stage != SignWorkflowStore.Stage.CA_PROOF
-                && stage != SignWorkflowStore.Stage.CA_CERTIFICATE) {
+                && stage != SignWorkflowStore.Stage.CA_ALT_PROOF && stage != SignWorkflowStore.Stage.CA_CERTIFICATE) {
             throw new IllegalArgumentException("Signing stage is not provider-call eligible");
         }
     }
 
     private static ProviderStep providerStep(SignWorkflowStore.Workflow workflow) {
-        if (workflow.stage() == SignWorkflowStore.Stage.CA_PROOF) {
-            SignWorkflowStore.CaSubjectProofStep proof = workflow.envelope().proofStep().orElseThrow();
+        if (workflow.stage() == SignWorkflowStore.Stage.CA_PROOF || workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF) {
+            SignWorkflowStore.CaSubjectProofStep proof = workflow.activeProofStep().orElseThrow();
             return new ProviderStep(proof.operationId(), proof.subjectKeyRef(), proof.algorithmId(), proof.challenge());
         }
         return new ProviderStep(workflow.operationId(), workflow.envelope().keyRef(), workflow.envelope().algorithmId(),
@@ -223,7 +224,8 @@ public final class SigningProviderExecutor {
         SignWorkflowStore.CaSubjectProofStep first = left.orElseThrow();
         SignWorkflowStore.CaSubjectProofStep second = right.orElseThrow();
         return first.operationId().equals(second.operationId()) && first.subjectKeyRef().equals(second.subjectKeyRef())
-                && first.algorithmId().equals(second.algorithmId()) && sameCandidate(first.challenge(), second.challenge());
+                && first.algorithmId().equals(second.algorithmId()) && first.role() == second.role()
+                && sameCandidate(first.challenge(), second.challenge());
     }
 
     private record ProviderStep(PkiId operationId, zeroecho.pki.api.KeyRef keyRef, String algorithmId,

@@ -87,10 +87,17 @@ public final class IntermediateSigningCommand {
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public static DomainCommandEncoding.Decoded validate(DomainCommandEncoding.Decoded command) {
         if (!supports(command.operation())) { throw invalid(); }
-        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        if (command.fields().size() >= 25) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
         else command.requireFields(23);
         requireBound(command.operation(), command.fields());
-        if (command.fields().size() == 25) CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14)));
+        if (command.fields().size() == 26) {
+            var context = CaLifecycleContextCodec.decode(command.field(25));
+            if (CREATE.equals(command.operation()) || !context.expectedHead().caId().value().equals(command.field(2))
+                    || ISSUE.equals(command.operation()) != (context.operation() == CaLifecycleContext.Operation.INTERMEDIATE_ISSUE)
+                    || context.operation() == CaLifecycleContext.Operation.ROOT_CANDIDATE
+                    || context.operation() == CaLifecycleContext.Operation.ROOT_ROLLOVER) throw invalid();
+        }
+        if (command.fields().size() >= 25) CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14)));
         ManagedKeyProofCommand.positiveLength(command.field(21), 1_048_576);
         ManagedKeyProofCommand.hex(command.field(22), 32, 32);
         try {
@@ -101,6 +108,13 @@ public final class IntermediateSigningCommand {
             byte[] bytes = Base64.getUrlDecoder().decode(encoded);
             if (!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(encoded)) { throw invalid(); }
             EncodedObject nested = new EncodedObject(Encoding.BINARY, bytes);
+            var proofContainer = DomainCommandEncoding.decode(nested);
+            if (proofContainer.operation().equals("CA_SUBJECT_PROOFS_V1")) {
+                proofContainer.requireFields(4);
+                if (!proofContainer.field(0).equals(command.field(18))) throw invalid();
+                nested = proofBytes(proofContainer.field(1));
+                validateAlternative(command, proofContainer);
+            }
             DomainCommandEncoding.Decoded proof = DomainContinuationValidation.validate(
                     DomainContinuationTemplate.create(DomainContinuationStore.Kind.KEY_PROOF, nested));
             ManagedKeyProofChallenge.requireOperation(proofId, proof.field(6));
@@ -113,6 +127,67 @@ public final class IntermediateSigningCommand {
             DomainAttributeEncoding.decode(command.field(20));
             return proof;
         } catch (IllegalArgumentException malformed) { throw invalid(); }
+    }
+
+    /**
+     * Returns the optional independently bound alternative subject proof command.
+     * @param command complete intermediate continuation
+     * @return alternative role command only for the explicit dual-proof container
+     * @throws IllegalStateException if nested role evidence is inconsistent
+     */
+    public static Optional<DomainCommandEncoding.Decoded> alternativeProof(DomainCommandEncoding.Decoded command) {
+        var container = DomainCommandEncoding.decode(proofBytes(command.field(19)));
+        if (!container.operation().equals("CA_SUBJECT_PROOFS_V1")) return Optional.empty();
+        container.requireFields(4);
+        return Optional.of(validateAlternative(command, container));
+    }
+
+    /**
+     * Returns the alternative provider step identity without consulting current state.
+     * @param command exact captured intermediate command
+     * @return distinct alternative step identity when the dual container is present
+     */
+    public static Optional<PkiId> alternativeProofId(DomainCommandEncoding.Decoded command) {
+        var container = DomainCommandEncoding.decode(proofBytes(command.field(19)));
+        return container.operation().equals("CA_SUBJECT_PROOFS_V1")
+                ? Optional.of(new PkiId(container.requireFields(4).field(2))) : Optional.empty();
+    }
+
+    /**
+     * Encodes two separate subject proof commands in the existing excluded proof field.
+     * @param primaryId distinct primary provider step @param primary exact primary proof
+     * @param alternativeId distinct alternative provider step @param alternative exact alternative proof
+     * @return canonical explicit version-one proof container
+     */
+    public static String encodeProofs(PkiId primaryId, EncodedObject primary, PkiId alternativeId, EncodedObject alternative) {
+        if (primaryId.equals(alternativeId)) throw invalid();
+        return encodeProof(DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, "CA_SUBJECT_PROOFS_V1",
+                primaryId.value(), encodeProof(primary), alternativeId.value(), encodeProof(alternative)).command());
+    }
+
+    private static DomainCommandEncoding.Decoded validateAlternative(DomainCommandEncoding.Decoded command,
+            DomainCommandEncoding.Decoded container) {
+        if (command.fields().size() < 25 || container.field(2).equals(command.field(18))) throw invalid();
+        var outgoing = CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        var key = outgoing.alternative().orElseThrow(IntermediateSigningCommand::invalid);
+        var proof = DomainContinuationValidation.validate(DomainContinuationTemplate.create(
+                DomainContinuationStore.Kind.KEY_PROOF, proofBytes(container.field(3))));
+        ManagedKeyProofChallenge.requireOperation(new PkiId(container.field(2)), proof.field(6));
+        ManagedKeyProofRequest expected = new ManagedKeyProofRequest.CaSubject(new PkiId(command.field(1)),
+                CREATE.equals(command.operation()) ? Optional.empty() : Optional.of(new PkiId(command.field(2))),
+                command.field(7), key.keyRef());
+        if (!ManagedKeyProofCommand.decodePrefix(proof).equals(expected)
+                || !proof.field(8).equals(key.signatureAlgorithm().canonicalForm())
+                || !proof.field(9).equals(HexFormat.of().formatHex(key.signatureAlgorithmIdentifier().bytes()))
+                || !proof.field(11).equals(key.subjectSpkiSha256())) throw invalid();
+        return proof;
+    }
+
+    private static EncodedObject proofBytes(String encoded) {
+        if (encoded.isEmpty() || encoded.length() > ManagedKeyProofCommand.MAX_COMMAND_BYTES) throw invalid();
+        byte[] bytes = Base64.getUrlDecoder().decode(encoded);
+        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(encoded)) throw invalid();
+        return new EncodedObject(Encoding.BINARY, bytes);
     }
 
     /**
@@ -176,7 +251,7 @@ public final class IntermediateSigningCommand {
     }
 
     private static void requireBound(String operation, List<String> fields) {
-        if (!supports(operation) || (fields.size() != 23 && fields.size() != 25)) { throw invalid(); }
+        if (!supports(operation) || (fields.size() != 23 && fields.size() != 25 && fields.size() != 26)) { throw invalid(); }
         long bytes = 13L + operation.length();
         for (String field : fields) {
             bytes += 4L + ManagedKeyProofCommand.utf8Length(field, ManagedKeyProofCommand.MAX_COMMAND_BYTES);

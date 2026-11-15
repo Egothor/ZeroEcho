@@ -78,7 +78,7 @@ public final class PkiCli {
     private static final java.time.Duration REMOTE_POLL_INTERVAL = java.time.Duration.ofMillis(100);
     private static final RemoteExchangeFactory DEFAULT_EXCHANGE_FACTORY = target ->
             JdkHttpExchange.open(target.baseUri(), PkiRemoteTls.createContext(target, System::getenv));
-    private static final Set<String> BOOLEAN_ARGUMENT_VALUES = Set.of("requireApproval");
+    private static final Set<String> BOOLEAN_ARGUMENT_VALUES = Set.of("requireApproval","distributionAcknowledged");
     private static final Set<String> SET_ARGUMENT_VALUES = Set.of("allowedAuthorityIds", "requiredSanDomains");
     private static final Map<String, String> OPERATION_ARGUMENT_NAMES = Map.ofEntries(
             Map.entry("--profile-file", "profileFile"), Map.entry("--profile-id", "profileId"),
@@ -390,6 +390,8 @@ public final class PkiCli {
             PkiOperationValue value;
             if ("limit".equals(name) || "offset".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)) {
                 value = new PkiOperationValue.IntegerValue(parseLong(raw));
+            } else if ("expectedHead".equals(name)) {
+                value=PkiCliJson.parseArgument(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             } else if (BOOLEAN_ARGUMENT_VALUES.contains(name)) {
                 value = new PkiOperationValue.BooleanValue(Boolean.parseBoolean(raw));
             } else if (SET_ARGUMENT_VALUES.contains(name)) {
@@ -512,12 +514,13 @@ public final class PkiCli {
         writer.println("  ca.intermediate.issue --format-id <id> --issuer-ca-id <id> --subject-ca-id <id>"
                 + " --profile-id <id>");
         writer.println("  ca.rollover --ca-id <id> [--issuer-ca-id <id>]");
-        writer.println("  ca.rotate --ca-id <id> --new-key-ref <ref> [--issuer-ca-id <id>]");
+        writer.println("  ca.rotate --ca-id <id> [--new-key-ref <ref>] [--new-alternative-key-ref <ref>] [--primary-signature-algorithm-id <canonical>] [--alternative-signature-algorithm-id <canonical>] [--issuer-ca-id <id>] [--expected-head <JSON>]");
         writer.println("  issuer.generation.inspect --issuer-id <id>");
         writer.println("  issuer.path.inspect --path-id <id>");
         writer.println("  issuer.path.list --issuer-id <id>");
         writer.println("  issuer.path.register --ca-id <id> --issuer-id <id> --parent-path-id <id>");
-        writer.println("  issuer.path.select --ca-id <id> --issuer-id <id> --path-id <id> --reason <reason>");
+        writer.println("  Root cross-anchor activation requires an approved remote server request; local execution has no server approval context.");
+        writer.println("  issuer.path.select --ca-id <id> --issuer-id <id> --path-id <id> --reason <reason> [--expected-head <JSON>] [--transition-commitment <sha256>] [--distribution-acknowledged true]");
         writer.println("  credential.revoke --credential-id <id> --reason <permanent-reason>");
         writer.println("                    [--justification <operator-justification-or-ticket>]");
         writer.println("  credential.hold --credential-id <id> [--justification <operator-justification-or-ticket>]");

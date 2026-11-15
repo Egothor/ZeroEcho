@@ -336,29 +336,29 @@ final class PkiOperationRegistry {
     }
 
     private PkiSigningOperation issueIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        requireFields(arguments, Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectCaId", PROFILE_ID));
+        if(!arguments.fields().keySet().containsAll(Set.of(FORMAT_ID,ISSUER_CA_ID,"subjectCaId",PROFILE_ID))||!Set.of(FORMAT_ID,ISSUER_CA_ID,"subjectCaId",PROFILE_ID,"expectedHead").containsAll(arguments.fields().keySet()))throw new IllegalArgumentException(INVALID_ARGUMENTS);
         return new PkiSigningOperation.IssueIntermediateCertificate(new FormatId(text(arguments, FORMAT_ID)),
                 new PkiId(text(arguments, ISSUER_CA_ID)), new PkiId(text(arguments, "subjectCaId")),
-                text(arguments, PROFILE_ID), java.util.Optional.empty());
+                text(arguments, PROFILE_ID), java.util.Optional.empty(),CliLifecycleArguments.head(arguments.fields()));
     }
 
     private PkiSigningOperation rolloverCa(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
-        if (!supplied.contains(AUTHORITY_ID) || !Set.of(AUTHORITY_ID, ISSUER_CA_ID).containsAll(supplied)) {
+        if (!supplied.contains(AUTHORITY_ID) || !Set.of(AUTHORITY_ID, ISSUER_CA_ID, "expectedHead").containsAll(supplied)) {
             throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         return new PkiSigningOperation.RolloverCaCertificate(new PkiId(text(arguments, AUTHORITY_ID)),
-                optionalText(arguments, ISSUER_CA_ID).map(PkiId::new));
+                optionalText(arguments, ISSUER_CA_ID).map(PkiId::new),CliLifecycleArguments.head(arguments.fields()));
     }
 
     private PkiSigningOperation rotateCaKey(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
-        if (!supplied.contains(AUTHORITY_ID) || !Set.of(AUTHORITY_ID, "newKeyRef", ISSUER_CA_ID).containsAll(supplied)) {
+        if (!supplied.contains(AUTHORITY_ID) || !Set.of(AUTHORITY_ID, "newKeyRef", ISSUER_CA_ID,"newAlternativeKeyRef","primarySignatureAlgorithmId","alternativeSignatureAlgorithmId","expectedHead").containsAll(supplied)) {
             throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         return new PkiSigningOperation.RotateCaKey(new PkiId(text(arguments, AUTHORITY_ID)),
-                optionalText(arguments, "newKeyRef").map(KeyRef::new),
-                optionalText(arguments, ISSUER_CA_ID).map(PkiId::new));
+                CliLifecycleArguments.selection(arguments.fields()),
+                optionalText(arguments, ISSUER_CA_ID).map(PkiId::new),CliLifecycleArguments.head(arguments.fields()));
     }
 
     private PkiOperation inspectIssuerGeneration(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
@@ -383,10 +383,10 @@ final class PkiOperationRegistry {
     }
 
     private PkiOperation selectIssuancePath(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        requireFields(arguments, Set.of(AUTHORITY_ID, ISSUER_ID, "pathId", FAILURE_REASON));
+        if(!arguments.fields().keySet().containsAll(Set.of(AUTHORITY_ID,ISSUER_ID,"pathId",FAILURE_REASON))||!Set.of(AUTHORITY_ID,ISSUER_ID,"pathId",FAILURE_REASON,"expectedHead","transitionCommitment","distributionAcknowledged").containsAll(arguments.fields().keySet()))throw new IllegalArgumentException(INVALID_ARGUMENTS);
         return new PkiOperation.SelectIssuancePath(new PkiId(text(arguments, AUTHORITY_ID)),
                 new PkiId(text(arguments, ISSUER_ID)), new PkiId(text(arguments, "pathId")),
-                text(arguments, FAILURE_REASON));
+                text(arguments, FAILURE_REASON),CliLifecycleArguments.head(arguments.fields()),optionalText(arguments,"transitionCommitment"),arguments.fields().containsKey("distributionAcknowledged")&&bool(arguments,"distributionAcknowledged"));
     }
 
     private PkiOperation revoke(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {

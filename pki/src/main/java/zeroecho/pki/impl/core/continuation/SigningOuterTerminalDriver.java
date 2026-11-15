@@ -98,7 +98,8 @@ public final class SigningOuterTerminalDriver
     @Override public void advance(SignWorkflowStore.Workflow workflow) {
         SignWorkflowStore.Workflow exact = Objects.requireNonNull(workflow, "workflow");
         if (exact.state() == SignWorkflowStore.State.DISPATCHED
-                && exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING) {
+                && (exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                        || exact.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING)) {
             advanceCaProof(exact);
             return;
         }

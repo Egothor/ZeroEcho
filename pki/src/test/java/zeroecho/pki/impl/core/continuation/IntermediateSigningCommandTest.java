@@ -196,6 +196,39 @@ final class IntermediateSigningCommandTest {
         assertThrows(IllegalStateException.class, () -> IntermediateSigningCommand.template("CREATE_ROOT", "creation", fields));
     }
 
+    @Test void dualProofContainerBindsIndependentAlternativeRoleAndRejectsSwappedProofs() {
+        var original = DomainCommandEncoding.decode(valid(IntermediateSigningCommand.ISSUE).command());
+        var primary = nested(original.fields());
+        var alternateFields = new ArrayList<>(primary.fields());
+        alternateFields.set(5, "alternative-key"); alternateFields.set(11, "2".repeat(64));
+        var alternative = DomainCommandEncoding.template(DomainContinuationStore.Kind.KEY_PROOF,
+                ManagedKeyProofCommand.OPERATION, alternateFields.toArray(String[]::new)).command();
+        var primaryBytes = DomainCommandEncoding.template(DomainContinuationStore.Kind.KEY_PROOF,
+                ManagedKeyProofCommand.OPERATION, primary.fields().toArray(String[]::new)).command();
+        var primaryId = new PkiId(original.field(18));
+        var alternativeId = new PkiId("zsign:v1:" + NAMESPACE + ":0:" + "2".repeat(32));
+        var primaryKey = new zeroecho.pki.api.ca.IssuerKeyBinding(new KeyRef("child-key"),
+                BootstrapAlgorithmIdentities.ED25519_PUBLIC_KEY, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
+                new EncodedObject(Encoding.DER, java.util.HexFormat.of().parseHex(primary.field(9))), primary.field(11));
+        var alternativeKey = new zeroecho.pki.api.ca.IssuerKeyBinding(new KeyRef("alternative-key"),
+                primaryKey.publicKeyAlgorithm(), primaryKey.signatureAlgorithm(), primaryKey.signatureAlgorithmIdentifier(), "2".repeat(64));
+        var incomingKey = new zeroecho.pki.api.ca.IssuerKeyBinding(new KeyRef("parent-key"),
+                primaryKey.publicKeyAlgorithm(), primaryKey.signatureAlgorithm(), primaryKey.signatureAlgorithmIdentifier(), HASH);
+        var fields = new ArrayList<>(original.fields());
+        fields.add(new CaOutgoingBinding(primaryKey, Optional.of(alternativeKey), HASH).encodeForSubject());
+        fields.add(new CaOutgoingBinding(incomingKey, Optional.empty(), HASH).encodeForSubject());
+        fields.set(19, IntermediateSigningCommand.encodeProofs(primaryId, primaryBytes, alternativeId, alternative));
+        var dual = new DomainCommandEncoding.Decoded(original.operation(), fields);
+        assertEquals(primary, IntermediateSigningCommand.validate(dual));
+        assertEquals(alternateFields, IntermediateSigningCommand.alternativeProof(dual).orElseThrow().fields());
+        assertEquals(Optional.of(alternativeId), IntermediateSigningCommand.alternativeProofId(dual));
+        fields.set(19, IntermediateSigningCommand.encodeProofs(primaryId, alternative, alternativeId, primaryBytes));
+        assertThrows(IllegalStateException.class, () -> IntermediateSigningCommand.validate(
+                new DomainCommandEncoding.Decoded(original.operation(), fields)));
+        assertThrows(IllegalStateException.class,
+                () -> IntermediateSigningCommand.encodeProofs(primaryId, primaryBytes, primaryId, alternative));
+    }
+
     private static DomainCommandEncoding.Decoded nested(List<String> fields) {
         return DomainCommandEncoding.decode(new EncodedObject(Encoding.BINARY, Base64.getUrlDecoder().decode(fields.get(19))));
     }

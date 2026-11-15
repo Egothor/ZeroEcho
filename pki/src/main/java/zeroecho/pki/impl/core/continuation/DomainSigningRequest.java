@@ -54,12 +54,14 @@ import zeroecho.pki.api.content.DurableContentReference;
  * @param ttl positive operation lifetime
  * @param signatureEncoding requested signature encoding
  * @param domainTemplate durable outer-operation template
- * @param proofStep optional parent-owned internal CA proof candidate
+ * @param proofStep optional parent-owned primary subject proof candidate
+ * @param alternativeProofStep optional distinct alternative subject proof candidate
  */
 public record DomainSigningRequest(PkiId operationId, AccessContext accessContext, KeyRef keyRef,
         String algorithmId, Encoding signatureEncoding,
         DurableContentReference content, Duration ttl,
-        DomainContinuationTemplate domainTemplate, Optional<SignWorkflowStore.CaSubjectProofStep> proofStep) {
+        DomainContinuationTemplate domainTemplate, Optional<SignWorkflowStore.CaSubjectProofStep> proofStep,
+        Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProofStep) {
     /** Validates mandatory immutable inputs. */
     public DomainSigningRequest {
         Objects.requireNonNull(operationId, "operationId");
@@ -71,11 +73,33 @@ public record DomainSigningRequest(PkiId operationId, AccessContext accessContex
         Objects.requireNonNull(signatureEncoding, "signatureEncoding");
         Objects.requireNonNull(domainTemplate, "domainTemplate");
         proofStep = Objects.requireNonNull(proofStep, "proofStep");
+        alternativeProofStep = Objects.requireNonNull(alternativeProofStep, "alternativeProofStep");
         proofStep.ifPresent(step -> step.requireParent(operationId));
+        alternativeProofStep.ifPresent(step -> step.requireParent(operationId));
+        if (alternativeProofStep.isPresent() && (proofStep.isEmpty()
+                || alternativeProofStep.orElseThrow().operationId().equals(proofStep.orElseThrow().operationId()))) {
+            throw new IllegalArgumentException("Alternative proof requires a distinct primary proof step");
+        }
     }
-    /** {@return both caller-owned candidates, final TBS first and optional proof second} */
+    /**
+     * Retains the existing single-proof or ordinary request contract.
+     * @param operationId exact operation @param accessContext trusted access
+     * @param keyRef issuer key @param algorithmId exact issuer algorithm
+     * @param signatureEncoding signature encoding @param content final candidate TBS
+     * @param ttl signing lifetime @param domainTemplate immutable continuation
+     * @param proofStep optional primary subject proof
+     */
+    public DomainSigningRequest(PkiId operationId, AccessContext accessContext, KeyRef keyRef,
+            String algorithmId, Encoding signatureEncoding, DurableContentReference content, Duration ttl,
+            DomainContinuationTemplate domainTemplate, Optional<SignWorkflowStore.CaSubjectProofStep> proofStep) {
+        this(operationId, accessContext, keyRef, algorithmId, signatureEncoding, content, ttl, domainTemplate, proofStep, Optional.empty());
+    }
+    /** {@return caller-owned final TBS and required proof challenges in role order} */
     public List<DurableContentReference> candidates() {
-        return proofStep.isEmpty() ? List.of(content) : List.of(content, proofStep.orElseThrow().challenge());
+        var candidates = new java.util.ArrayList<DurableContentReference>(); candidates.add(content);
+        proofStep.ifPresent(step -> candidates.add(step.challenge()));
+        alternativeProofStep.ifPresent(step -> candidates.add(step.challenge()));
+        return List.copyOf(candidates);
     }
 
 }

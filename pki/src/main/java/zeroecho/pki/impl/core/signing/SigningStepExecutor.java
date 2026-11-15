@@ -157,7 +157,10 @@ public final class SigningStepExecutor {
         RepeatableContent content;
         try {
             content = store.stagedContent().openContent(workflow.stage() == SignWorkflowStore.Stage.CA_PROOF
-                    ? workflow.envelope().proofStep().orElseThrow().challenge() : workflow.envelope().candidate());
+                    ? workflow.envelope().proofStep().orElseThrow().challenge()
+                    : workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF
+                            ? workflow.envelope().alternativeProofStep().orElseThrow().challenge()
+                            : workflow.envelope().candidate());
         } catch (IOException | RuntimeException failure) {
             transitionFailure(workflow, CONTENT_INTEGRITY_FAILURE, cancellation, progress);
             return;
@@ -236,7 +239,7 @@ public final class SigningStepExecutor {
 
     private void acceptTerminal(Workflow workflow, OperationObservation observation,
             CancellationSignal cancellation, Runnable progress) {
-        if (workflow.stage() == SignWorkflowStore.Stage.CA_PROOF) {
+        if (workflow.stage() == SignWorkflowStore.Stage.CA_PROOF || workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF) {
             store.checkpointCaProof(workflow.operationId(), workflow.revision(), workflow.fence(),
                     new SignWorkflowStore.CaSubjectProofOutcome(observation.state(), observation.detailCode(),
                             Optional.of(observation.updatedAt())), observation.signature()).ifPresent(changed -> {
@@ -347,10 +350,12 @@ public final class SigningStepExecutor {
             transitionFailure(exact, PROVIDER_ID_MISMATCH, cancellation, progress);
             return;
         }
-        if (exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING) {
+        if (exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                || exact.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING) {
             verifyCaProof(exact, cancellation, progress);
         } else if (source.state() == SignWorkflowStore.State.INTENT
-                || source.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY) {
+                || source.stage() == SignWorkflowStore.Stage.CA_CERTIFICATE_READY
+                || source.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF && source.downstreamOperationId().isEmpty()) {
             dispatch(exact, cancellation, progress);
         } else if (source.state() == SignWorkflowStore.State.DISPATCHED) {
             if (exact.mode() == SignWorkflowStore.Mode.BOUNDED_OBSERVATION

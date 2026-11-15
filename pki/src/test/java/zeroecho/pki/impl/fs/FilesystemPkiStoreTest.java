@@ -1708,7 +1708,6 @@ public final class FilesystemPkiStoreTest {
 
     @Test void configuredPrivatePublicRulesSurviveStoreOpenCopiesAndReopenWithoutManagedKeyReads(@TempDir Path parent) throws Exception {
         var fixture = new RootCreationFixture(); Path target = parent.resolve("target");
-        PkiId issuer = createCurrentBoundIssuer(target, fixture);
         var contributed = new zeroecho.pki.testkit.TestX509AlgorithmBindingProvider();
         var rules = new zeroecho.pki.impl.framework.x509.X509BindingRuleProvider() {
             @Override public List<zeroecho.pki.impl.framework.x509.X509BindingRule> rules() { return contributed.rules(); }
@@ -1725,26 +1724,14 @@ public final class FilesystemPkiStoreTest {
         assertTrue(new zeroecho.pki.spi.store.PkiStoreRuntimeDependencies(java.time.Clock.systemUTC()).issuerAlgorithmEvidenceVerifier().isEmpty());
         var options = FsPkiStoreOptions.defaults().withIssuerAlgorithmEvidenceVerifier(captured).withInitialCrlNumber(BigInteger.TEN).withCredentialSearch(Optional.empty());
         assertSame(captured, options.issuerAlgorithmEvidenceVerifier().orElseThrow());
+        var descriptors = new java.util.ArrayList<>(zeroecho.pki.impl.framework.x509.StandardX509Bindings.descriptors());
+        descriptors.addAll(zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings.descriptors());
+        descriptors.addAll(contributed.bindings());
+        String registry = zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry.create(descriptors).commitment();
+        PkiId issuer = createCurrentBoundIssuer(target, fixture, options, registry, Optional.of(contributed.bindings().getFirst()));
         int before = fixture.provider.lookups.get();
         try (var store = new FilesystemPkiStore(target, options)) {
-            var generation = store.getIssuerGeneration(issuer).orElseThrow(); var good = store.getIssuerCryptographicBinding(issuer).orElseThrow();
-            var descriptor = contributed.bindings().getFirst();
-            byte[] algorithm = zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(zeroecho.pkix.AlgorithmIdentifier.absent(descriptor.oid()));
-            var key = new IssuerKeyBinding(good.primary().keyRef(), good.primary().publicKeyAlgorithm(), descriptor.algorithmIdentity(), new EncodedObject(Encoding.DER, algorithm), good.primary().subjectSpkiSha256());
-            var descriptors = new java.util.ArrayList<>(zeroecho.pki.impl.framework.x509.StandardX509Bindings.descriptors());
-            descriptors.addAll(zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings.descriptors());
-            descriptors.addAll(contributed.bindings());
-            String registry = zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry.create(descriptors).commitment();
-            var privateGeneration = new IssuerGeneration(generation.issuerId(), generation.authorityId(), generation.credentialId(),
-                    generation.signingKeyRef(), generation.state(), generation.profilePolicyCommitment(), registry);
-            var privateBinding = new IssuerCryptographicBinding(1, good.issuerId(), good.authorityId(), good.credentialId(), good.formatId(), key, Optional.empty(),
-                    good.certificateSha256(), good.profile(), registry, good.certificateHybridBaseline(), good.evidenceSha256());
-            try (var snapshot = store.metadataStore().snapshot(); var row = snapshot.get(AuthorityMetadataCodec.bindingKey(issuer)).orElseThrow();
-                    var generationRow = snapshot.get(AuthorityMetadataCodec.generationKey(issuer)).orElseThrow(); var transaction = store.metadataStore().beginTransaction()) {
-                transaction.delete(row.key(), row.recordRevision()); transaction.delete(generationRow.key(), generationRow.recordRevision());
-                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
-            }
-            store.putIssuerGeneration(privateGeneration, privateBinding);
+            assertEquals(registry, store.getIssuerCryptographicBinding(issuer).orElseThrow().bindingSetCommitment());
         }
         assertThrows(RuntimeException.class, () -> new FilesystemPkiStore(target, FsPkiStoreOptions.defaults()));
         var config = new zeroecho.pki.spi.ProviderConfig("fs", Map.of("root", target.toString()));
@@ -1756,10 +1743,15 @@ public final class FilesystemPkiStoreTest {
     }
 
     private static PkiId createCurrentBoundIssuer(Path root, RootCreationFixture fixture) throws Exception {
+        return createCurrentBoundIssuer(root, fixture, FsPkiStoreOptions.defaults(), fixture.bindings.commitment(), Optional.empty());
+    }
+
+    private static PkiId createCurrentBoundIssuer(Path root, RootCreationFixture fixture, FsPkiStoreOptions options,
+            String registry, Optional<zeroecho.pki.api.algorithm.X509AlgorithmBinding> selected) throws Exception {
         PkiId ca = new PkiId("ca:current"), cert = new PkiId("cert:current");
         PkiId issuer = IssuerGeneration.idFor(ca, cert);
         IssuerChainPath path = IssuerChainPath.create(ca, issuer, List.of(cert));
-        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
             CertificateProfileRef profile = fixture.initialize(store);
             X500Name name = new X500Name("CN=Current Root,C=CZ,O=Frozen Organization");
             Instant start = Instant.parse("2020-01-01T00:00:00Z"), end = Instant.parse("2040-01-01T00:00:00Z");
@@ -1774,9 +1766,17 @@ public final class FilesystemPkiStoreTest {
             store.putCredential(credential);
             String profileHash = java.util.HexFormat.of().formatHex(profile.canonicalSha256());
             IssuerGeneration generation = new IssuerGeneration(issuer, ca, cert, RootCreationFixture.KEY, IssuerGenerationState.ACTIVE,
-                    profileHash, fixture.bindings.commitment());
+                    profileHash, registry);
             var binding = IssuerBindingResolver.create(generation, der, "x509", zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
-                    Optional.empty(), fixture.provider, fixture.verification, IssuerCryptographicBinding.HybridSignatureBaseline.NONE, profile, fixture.bindings.commitment());
+                    Optional.empty(), fixture.provider, fixture.verification, IssuerCryptographicBinding.HybridSignatureBaseline.NONE, profile, registry);
+            if (selected.isPresent()) {
+                var descriptor = selected.orElseThrow();
+                byte[] algorithm = zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(zeroecho.pkix.AlgorithmIdentifier.absent(descriptor.oid()));
+                var key = new IssuerKeyBinding(binding.primary().keyRef(), binding.primary().publicKeyAlgorithm(), descriptor.algorithmIdentity(),
+                        new EncodedObject(Encoding.DER, algorithm), binding.primary().subjectSpkiSha256());
+                binding = IssuerBindingResolver.createCaptured(generation, der, "x509", key, Optional.empty(),
+                        IssuerCryptographicBinding.HybridSignatureBaseline.NONE, profile, registry);
+            }
             store.putIssuerGeneration(generation, binding); store.putIssuerChainPath(path);
             store.putCa(new CaRecord(ca, CaKind.ROOT, CaState.ACTIVE, RootCreationFixture.KEY, credential.subjectRef(), List.of(issuer), issuer, path.pathId()));
         }

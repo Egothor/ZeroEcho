@@ -172,6 +172,24 @@ final class PkiSessionManagedKeyProofTest {
             CertificateProfileRef active = issuance.activateLifecycleVersionTwo(fixture.store);
             rollover = new CaRolloverCommand.Intermediate(before.caId(), IntermediateCreationFixture.CA, target, Optional.empty(), new SimpleAttributeSet());
             rotate = new CaKeyRotationCommand.Intermediate(before.caId(), target, IntermediateCreationFixture.CA, new SimpleAttributeSet());
+            if (rotation) {
+                var normalized = semantic.normalizeCaKeyRotation(rotate);
+                var head = fixture.store.getCaHeadSnapshot(before.caId()).orElseThrow();
+                assertEquals(Optional.of(head), normalized.expectedHead());
+                assertEquals(target, normalized.newKeyRef());
+                var retained = fixture.store.getIssuerCryptographicBinding(head.issuerId()).orElseThrow();
+                assertEquals(retained.primary().signatureAlgorithm().canonicalForm(), normalized.selection().primary()
+                        .orElseThrow().signatureAlgorithmId().orElseThrow());
+                var stale = new zeroecho.pki.api.ca.CaHeadSnapshot(1, head.caId(), head.epoch() + 1,
+                        head.issuerId(), head.pathId(), head.bindingCommitment());
+                assertThrows(PkiException.class, () -> semantic.normalizeCaKeyRotation(new CaKeyRotationCommand.Intermediate(
+                        before.caId(), normalized.selection(), IntermediateCreationFixture.CA, Optional.of(stale), new SimpleAttributeSet())));
+                var normalizedOperation = (PkiSigningOperation.RotateCaKey) session.signingCommands().orElseThrow()
+                        .normalizeLifecycle(new PkiSigningOperation.RotateCaKey(before.caId(), Optional.of(target),
+                                Optional.of(IntermediateCreationFixture.CA)));
+                assertEquals(normalized.selection(), normalizedOperation.selection());
+                assertEquals(normalized.expectedHead(), normalizedOperation.expectedHead());
+            }
             assertThrows(PkiException.class, () -> {
                 if (rotation) semantic.prepareCaKeyRotation(IntermediateCreationFixture.ACCESS, rotate, () -> true);
                 else semantic.prepareCaRollover(IntermediateCreationFixture.ACCESS, rollover, () -> true);

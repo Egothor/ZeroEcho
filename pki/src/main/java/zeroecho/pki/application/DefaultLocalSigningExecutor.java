@@ -194,9 +194,9 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
     private LocalSigningResult drive(String name, SigningAcceptanceReceipt receipt, CancellationSignal cancellation) {
         PkiId id = receipt.operationId();
-        // The only continuation edges are proof -> verification -> certificate-ready.
+        // A dual subject adds one proof/verification pair before certificate-ready.
         // No revision, eligibility or provider observation can cause an open-ended retry.
-        for (int stage = 0; stage < 3; stage++) {
+        for (int stage = 0; stage < 5; stage++) {
             requireOpen.run();
             SemanticSigningOperation observation = semantic.find(id).orElseThrow();
             Workflow workflow = store.getSignWorkflow(id).orElseThrow();
@@ -254,7 +254,10 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
 
     private static boolean forward(SignWorkflowStore.Stage before, SignWorkflowStore.Stage after) {
         return before == SignWorkflowStore.Stage.CA_PROOF && after == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
-                || before == SignWorkflowStore.Stage.CA_PROOF_VERIFYING && after == SignWorkflowStore.Stage.CA_CERTIFICATE_READY;
+                || before == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                        && (after == SignWorkflowStore.Stage.CA_CERTIFICATE_READY || after == SignWorkflowStore.Stage.CA_ALT_PROOF)
+                || before == SignWorkflowStore.Stage.CA_ALT_PROOF && after == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                || before == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING && after == SignWorkflowStore.Stage.CA_CERTIFICATE_READY;
     }
 
     private LocalSigningResult audited(String name, Optional<PkiId> requested, LocalSigningResult result) {

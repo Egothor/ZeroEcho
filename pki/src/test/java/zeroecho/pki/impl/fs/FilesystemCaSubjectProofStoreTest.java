@@ -106,6 +106,31 @@ final class FilesystemCaSubjectProofStoreTest {
     private static final Duration LEASE = Duration.ofSeconds(5);
 
     @Test
+    void dualWorkflowCannotRetainAlternativeSuccessBeforePrimaryVerification(@TempDir Path root) throws Exception {
+        var fixture = new IntermediateCreationFixture();
+        try (var store = open(root)) {
+            fixture.initialize(store, 2);
+            var prepared = prepare(store, fixture);
+            var original = prepared.command();
+            var alternative = new SignWorkflowStore.CaSubjectProofStep(fixture.submission(store).id(),
+                    IntermediateCreationFixture.PARENT_KEY, original.algorithmId(),
+                    PkiTestRuntime.operationReference(store.stagedContent(), Encoding.BINARY, new byte[] { 4, 5, 6 }),
+                    SignWorkflowStore.SubjectKeyRole.ALTERNATIVE);
+            var command = new SignWorkflowStore.AcceptanceCommand(original.operationId(), original.providerNamespace(),
+                    original.providerConfigurationCommitment(), original.accessContext(), original.keyRef(), original.fairnessAuthorityId(),
+                    original.algorithmId(), original.signatureEncoding(), original.createdAt(), original.deadline(), original.candidate(),
+                    original.outer(), original.mode(), original.proofStep(), Optional.of(alternative));
+            var envelope = SignWorkflowStore.AcceptanceEnvelope.from(command);
+            var impossible = new SignWorkflowStore.MutableState(original.operationId(), SignWorkflowStore.State.DISPATCHED,
+                    2, 1, Optional.empty(), Optional.of(original.proofStep().orElseThrow().operationId()), Optional.of("DISPATCHED"),
+                    Optional.empty(), Optional.empty(), 0, Optional.empty(), Optional.empty(),
+                    SignWorkflowStore.InitialAttemptPhase.NOT_APPLICABLE, SignWorkflowStore.Stage.CA_PROOF,
+                    Optional.empty(), Optional.of(signed()));
+            assertThrows(IllegalArgumentException.class, () -> new Workflow(envelope, impossible));
+        }
+    }
+
+    @Test
     void oneAcceptanceOwnsBothCandidatesAndReopensVerifierBeforeCertificateReadiness(@TempDir Path root)
             throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();

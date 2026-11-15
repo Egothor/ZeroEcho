@@ -694,7 +694,7 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.ListIssuerChainPaths value -> "issuer=" + atom(value.issuerId().value());
             case PkiOperation.SelectIssuancePath value -> "ca=" + atom(value.caId().value()) + ";issuer="
                     + atom(value.issuerId().value()) + ";path=" + atom(value.pathId().value()) + ";reason="
-                    + atom(value.reason());
+                    + atom(value.reason()) + lifecycleCommitment(new AdministrativeOperation.Pki(value));
             case PkiOperation.RegisterIssuerChainPath value -> "ca=" + atom(value.caId().value()) + ";issuer="
                     + atom(value.issuerId().value()) + ";parentPath=" + atom(value.parentPathId().value());
             case PkiOperation.InspectRevocation value -> "credential=" + atom(value.credentialId().value());
@@ -769,6 +769,12 @@ public final class OperationSecurityDescriptors {
         if (!valid) throw new SecurityException("Operation security scope does not match typed arguments");
     }
 
+    private static String lifecycleCommitment(AdministrativeOperation operation) {
+        var fields=LifecycleProjection.arguments(new zeroecho.pki.application.PkiOperationValue.ObjectValue(Map.of()),operation);
+        if(fields.fields().isEmpty())return "";
+        return ";lifecycle="+atom(java.util.HexFormat.of().formatHex(zeroecho.pki.server.http.StrictJson.encode(fields)));
+    }
+
     private static String canonicalSigning(PkiSigningOperation operation) {
         return switch (operation) {
             case PkiSigningOperation.CreateAuthority value -> "format=" + atom(value.formatId().value()) + ";subject="
@@ -782,10 +788,10 @@ public final class OperationSecurityDescriptors {
                     + ";request=" + atom(value.requestId().value()) + ";profile=" + atom(value.profileId());
             case PkiSigningOperation.ReissueCredential value -> "credential=" + atom(value.credentialId().value());
             case PkiSigningOperation.RolloverCaCertificate value -> "ca=" + atom(value.caId().value()) + ";issuer="
-                    + atom(value.issuerCaId().map(zeroecho.pki.api.PkiId::value).orElse(""));
+                    + atom(value.issuerCaId().map(zeroecho.pki.api.PkiId::value).orElse("")) + lifecycleCommitment(new AdministrativeOperation.Signing(value));
             case PkiSigningOperation.RotateCaKey value -> "ca=" + atom(value.caId().value()) + ";newKeyRef="
                     + atom(value.newKeyRef().map(zeroecho.pki.api.KeyRef::value).orElse("")) + ";issuer="
-                    + atom(value.issuerCaId().map(zeroecho.pki.api.PkiId::value).orElse(""));
+                    + atom(value.issuerCaId().map(zeroecho.pki.api.PkiId::value).orElse("")) + lifecycleCommitment(new AdministrativeOperation.Signing(value));
             case PkiSigningOperation.CreateIntermediate value -> "format=" + atom(value.formatId().value()) + ";issuer="
                     + atom(value.issuerCaId().value()) + ";subject=" + atom(value.subjectRef().value())
                     + ";profile=" + atom(value.profileId()) + ";keyRef="
@@ -794,7 +800,7 @@ public final class OperationSecurityDescriptors {
             case PkiSigningOperation.IssueIntermediateCertificate value -> "format=" + atom(value.formatId().value())
                     + ";issuer=" + atom(value.issuerCaId().value()) + ";subject=" + atom(value.subjectCaId().value())
                     + ";profile=" + atom(value.profileId()) + ";validity="
-                    + atom(value.requestedValidity().map(v -> v.notBefore() + "/" + v.notAfter()).orElse(""));
+                    + atom(value.requestedValidity().map(v -> v.notBefore() + "/" + v.notAfter()).orElse("")) + lifecycleCommitment(new AdministrativeOperation.Signing(value));
             case PkiSigningOperation.GenerateStatus value -> "issuer=" + atom(value.issuerCaId().value()) + ";type="
                     + value.type().name() + ";format=" + atom(value.formatId().value());
         };

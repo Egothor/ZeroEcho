@@ -88,7 +88,7 @@ final class CaContinuationPublisherConcurrencyTest {
     private static final PkiId MIDDLE = new PkiId("middle-authority");
 
     @Test
-    void rootRolloverConflictRetainsPublishingAndRetriesWithoutSigning(@TempDir Path root) throws Exception {
+    void rootRolloverStaleHeadRemainsConflictWithoutSigning(@TempDir Path root) throws Exception {
         KeyPair key = DomainContinuationPublisherRecoveryTest.rsa();
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             DomainContinuationStore.Record creation = rootOperation(store, key, "CREATE_ROOT", null, 10, "root-key");
@@ -98,13 +98,13 @@ final class CaContinuationPublisherConcurrencyTest {
             advance(store, rootOperation(store, key, "ROLLOVER_ROOT", caId, 11, "root-key"));
             DomainContinuationStore.Record pending = rootOperation(store, key, "ROLLOVER_ROOT", caId, 12, "new-root-key");
             CaRecord winner = select(store, store.getCa(caId).orElseThrow(), first, CaState.ACTIVE);
-            assertConflictThenRetry(store, pending, winner, true);
-            assertEquals(3, store.getCa(caId).orElseThrow().issuerIds().size());
+            assertStaleHeadConflictIsTerminal(store, pending, winner);
+            assertEquals(2, store.getCa(caId).orElseThrow().issuerIds().size());
         }
     }
 
     @Test
-    void intermediateIssuanceConflictRetainsWinnerSelectionAndRetriesWithoutSigning(@TempDir Path root) throws Exception {
+    void intermediateIssuanceStaleHeadRetainsWinnerWithoutSigning(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
             initializeMiddle(store, fixture);
@@ -112,8 +112,8 @@ final class CaContinuationPublisherConcurrencyTest {
             CaRecord current = store.getCa(MIDDLE).orElseThrow();
             CaRecord winner = select(store, current, current.issuerIds().getLast(), CaState.ACTIVE);
             DomainContinuationStore.Record pending = intermediateOperation(store, fixture, "ISSUE_INTERMEDIATE", 11);
-            assertConflictThenRetry(store, pending, winner, false);
-            assertEquals(3, store.getCa(MIDDLE).orElseThrow().issuerIds().size());
+            assertStaleHeadConflictIsTerminal(store, pending, winner);
+            assertEquals(2, store.getCa(MIDDLE).orElseThrow().issuerIds().size());
             assertEquals(0, fixture.provider.dispatches);
         }
     }
@@ -234,39 +234,34 @@ final class CaContinuationPublisherConcurrencyTest {
         }
     }
 
-    private static void assertConflictThenRetry(FilesystemPkiStore store, DomainContinuationStore.Record pending,
-            CaRecord winner, boolean selectsNew) {
+    private static void assertStaleHeadConflictIsTerminal(FilesystemPkiStore store, DomainContinuationStore.Record pending,
+            CaRecord winner) {
         List<Boolean> outcomes = new ArrayList<>();
         byte[] signature = store.getSignWorkflow(pending.operationId()).orElseThrow().result().orElseThrow().bytes();
         PkiStore observed = decorator(store, (method, arguments) -> {
-            if (method.getName().equals("replaceCa")) {
-                if (outcomes.isEmpty()) assertTrue(store.replaceCa((CaRecord) arguments[0], winner));
-                boolean committed = store.replaceCa((CaRecord) arguments[0], (CaRecord) arguments[1]);
+            if (method.getName().equals("compareAndSetCaHead")) {
+                if (outcomes.isEmpty()) replaceCurrent(store, winner);
+                boolean committed = store.compareAndSetCaHead(
+                        (zeroecho.pki.api.ca.CaHeadSnapshot) arguments[0], (CaRecord) arguments[1]);
                 outcomes.add(committed);
                 return committed;
             }
             return invoke(store, method, arguments);
         });
-        assertThrows(IllegalStateException.class, () -> advance(observed, pending));
+        advance(observed, pending);
         assertEquals(List.of(false), outcomes);
         assertEquals(winner, store.getCa(winner.caId()).orElseThrow());
-        assertEquals(DomainContinuationStore.State.PUBLISHING,
+        assertEquals(DomainContinuationStore.State.FAILED,
                 store.getDomainContinuation(pending.operationId()).orElseThrow().state());
+        assertEquals(Optional.of("CA_EXPECTED_HEAD_CONFLICT"),
+                store.getDomainContinuation(pending.operationId()).orElseThrow().detailCode());
         SignWorkflowStore.Workflow signing = store.getSignWorkflow(pending.operationId()).orElseThrow();
-        assertEquals(SignWorkflowStore.State.SUCCEEDED, signing.state());
+        assertEquals(SignWorkflowStore.State.RETIRED, signing.state());
         assertArrayEquals(signature, signing.result().orElseThrow().bytes());
         advance(observed, pending);
-        assertEquals(List.of(false, true), outcomes);
-        assertEquals(DomainContinuationStore.State.COMPLETED,
-                store.getDomainContinuation(pending.operationId()).orElseThrow().state());
-        CaRecord completed = store.getCa(winner.caId()).orElseThrow();
-        assertEquals(winner.issuerIds(), completed.issuerIds().subList(0, winner.issuerIds().size()));
-        assertEquals(winner.issuerIds().size() + 1, completed.issuerIds().size());
-        assertEquals(selectsNew ? completed.issuerIds().getLast() : winner.currentIssuanceIssuerId(),
-                completed.currentIssuanceIssuerId());
-        advance(observed, pending);
-        assertEquals(List.of(false, true), outcomes);
-        assertEquals(completed, store.getCa(winner.caId()).orElseThrow());
+        assertEquals(List.of(false), outcomes, "A stale frozen command cannot retarget on retry");
+        assertEquals(winner, store.getCa(winner.caId()).orElseThrow());
+        assertArrayEquals(signature, store.getSignWorkflow(pending.operationId()).orElseThrow().result().orElseThrow().bytes());
     }
 
     private static void assertCompletedWithUnchangedCa(PkiStore store, DomainContinuationStore.Record pending, CaRecord later) {
@@ -356,7 +351,16 @@ final class CaContinuationPublisherConcurrencyTest {
     }
 
     private static void replaceCurrent(PkiStore store, CaRecord replacement) {
-        assertTrue(store.replaceCa(store.getCa(replacement.caId()).orElseThrow(), replacement));
+        CaRecord current = store.getCa(replacement.caId()).orElseThrow();
+        if (!current.currentIssuanceIssuerId().equals(replacement.currentIssuanceIssuerId())
+                || !current.issuanceChainPathId().equals(replacement.issuanceChainPathId())) {
+            CaRecord selection = new CaRecord(replacement.caId(), replacement.kind(), current.state(),
+                    replacement.issuerKeyRef(), replacement.subjectRef(), replacement.issuerIds(),
+                    replacement.currentIssuanceIssuerId(), replacement.issuanceChainPathId());
+            assertTrue(store.compareAndSetCaHead(store.getCaHeadSnapshot(current.caId()).orElseThrow(), selection));
+            current = selection;
+        }
+        assertTrue(store.replaceCa(current, replacement));
     }
 
     private static PkiStore decorator(PkiStore store, StoreCall call) {

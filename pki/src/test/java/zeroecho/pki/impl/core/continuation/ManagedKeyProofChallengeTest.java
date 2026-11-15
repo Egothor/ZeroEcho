@@ -36,6 +36,7 @@ package zeroecho.pki.impl.core.continuation;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -113,6 +114,29 @@ final class ManagedKeyProofChallengeTest {
         DomainContinuationTemplate template = DomainCommandEncoding.template(DomainContinuationStore.Kind.KEY_PROOF,
                 ManagedKeyProofCommand.OPERATION, decoded.command().fields().toArray(String[]::new));
         assertEquals(decoded.command(), DomainContinuationValidation.validate(template));
+    }
+
+    @Test void roleContextBindsIndependentSubjectProofAndRejectsInvalidRoleEncoding() {
+        var parent = new PkiId("zsign:v1:store.provider:0:" + "1".repeat(32));
+        var primary = new ManagedKeyProofChallenge.CaContext(parent, "ca-intent:v1:" + "2".repeat(64),
+                Optional.of(zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY), Optional.of("3".repeat(64)));
+        var alternative = new ManagedKeyProofChallenge.CaContext(parent, primary.intentCommitment(),
+                Optional.of(zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE), primary.lifecycleContextCommitment());
+        byte[] first = ManagedKeyProofChallenge.encode(OPERATION, java.time.Instant.ofEpochSecond(60), Optional.of(primary),
+                metadata(), new byte[32], SPKI);
+        byte[] second = ManagedKeyProofChallenge.encode(OPERATION, java.time.Instant.ofEpochSecond(60), Optional.of(alternative),
+                metadata(), new byte[32], SPKI);
+        assertEquals(Optional.of(primary), ManagedKeyProofChallenge.decode(first).context());
+        assertEquals(Optional.of(alternative), ManagedKeyProofChallenge.decode(second).context());
+        assertNotEquals(ManagedKeyProofChallenge.decode(first).command().field(13),
+                ManagedKeyProofChallenge.decode(second).command().field(13));
+        int roleOffset = "ZEROECHO-MANAGED-KEY-PROOF\0".getBytes(StandardCharsets.US_ASCII).length + 4
+                + 4 + OPERATION.value().getBytes(StandardCharsets.UTF_8).length + 12 + 1
+                + 4 + parent.value().getBytes(StandardCharsets.UTF_8).length + 32;
+        byte[] invalidRole = first.clone(); invalidRole[roleOffset] = 0;
+        assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.decode(invalidRole));
+        assertThrows(IllegalArgumentException.class, () -> new ManagedKeyProofChallenge.CaContext(parent,
+                primary.intentCommitment(), primary.role(), Optional.empty()));
     }
 
     @Test void rejectsEveryTruncationBadHeaderFramingUtf8AndTrailingData() {

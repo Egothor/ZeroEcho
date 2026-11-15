@@ -61,7 +61,9 @@ import zeroecho.pki.testkit.*;
 
 /** Actual retained proofs cannot authorize a different snapshot selected by a later policy read. */
 final class SdkPreparedSnapshotBindingTest {
-    @Test void rejectsProfileChangeBetweenPreviewAndActualPreparationBeforeSigningOrStaging(@TempDir Path path) throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"issue", "renew", "reissue", "replace"})
+    void rejectsProfileChangeBetweenPreviewAndActualPreparationBeforeSigningOrStaging(String kind, @TempDir Path path) throws Exception {
         var fixture = new HybridIssuanceFixture(path, "EC384", "ECDSA", BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),
                 new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
                         HybridIssuanceFixture.key("alt").value()), "EC384", "ML-DSA-87");
@@ -92,10 +94,19 @@ final class SdkPreparedSnapshotBindingTest {
                     .addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
                     .build(new JcaContentSignerBuilder("SHA384withECDSA").setProvider("BC").build(primary.getPrivate())).getEncoded();
             var parsed = HybridSdkProofs.parse(csr);
-            var operation = new PkiSigningOperation.IssueCredential(ca, parsed.primary().requestId(), "sdk-race");
+            var client = new Client(primary, alternative, csr, parsed);
+            PkiId predecessor = kind.equals("issue") ? null : completeSdk(session,
+                    new PkiSigningOperation.IssueCredential(ca, parsed.primary().requestId(), "sdk-race"), client);
+            PkiSigningOperation operation = switch (kind) {
+                case "issue" -> new PkiSigningOperation.IssueCredential(ca, parsed.primary().requestId(), "sdk-race");
+                case "renew" -> new PkiSigningOperation.RenewCredential(predecessor);
+                case "reissue" -> new PkiSigningOperation.ReissueCredential(predecessor);
+                case "replace" -> new PkiSigningOperation.ReplaceCredential(predecessor, parsed.primary().requestId(), "sdk-race");
+                default -> throw new AssertionError(kind);
+            };
             var commands = session.signingCommands().orElseThrow();
             var preview = commands.previewSdk(operation, RootCreationFixture.ACCESS, parsed, Optional.empty(), CancellationSignal.NONE);
-            var target = target(preview);
+            var target = target(preview, operation);
             var first = first(parsed, csr, target);
             byte[] primaryProof = sign(primary, "SHA384withECDSA", first.encode());
             byte[] alternativeProof = sign(alternative, "ML-DSA-87", new HybridSdkFrame(2, first.fields()).encode());
@@ -111,6 +122,311 @@ final class SdkPreparedSnapshotBindingTest {
             assertEquals(0, stages.get());
         }
     }
+    @Test void lifecycleKeepsBothSubjectKeysAndVerifiesOriginalIssuerAfterBothIssuerRolesRotate(@TempDir Path path) throws Exception {
+        var fixture = fixture(path);
+        var oldKeysUnavailable = new AtomicBoolean();
+        fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    KeyRef key = null;
+                    if (method.getName().equals("dispatch")) key = ((SigningProvider.SignRequest) args[0]).keyRef();
+                    else if (method.getName().equals("resolvePublicKeyInfo") || method.getName().equals("sign")) key = (KeyRef) args[0];
+                    if (oldKeysUnavailable.get() && (HybridIssuanceFixture.key("child").equals(key)
+                            || HybridIssuanceFixture.key("other-alt").equals(key))) {
+                        throw new IllegalStateException("Retired issuer managed key unavailable");
+                    }
+                    return invoke(provider, method, args);
+                });
+        byte[] originalBytes;
+        PkiId renewed, reissued, replacement;
+        try (var session = fixture.open()) {
+            PkiId root = fixture.create(session);
+            RootCreationFixture.install(fixture.store, fixture.profile("sdk-child", 1, CertificateProfileKind.INTERMEDIATE_CA,
+                    new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
+                            HybridIssuanceFixture.key("other-alt").value())));
+            fixture.execute(session, new PkiSigningOperation.CreateIntermediate(HybridIssuanceFixture.X509, root,
+                    new SubjectRef("CN=SDK Child,C=CZ"), "sdk-child", Optional.of(HybridIssuanceFixture.key("child")),
+                    Optional.of(BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm())));
+            PkiId child = fixture.store.listCas().stream().filter(ca -> !ca.caId().equals(root)).findFirst().orElseThrow().caId();
+            RootCreationFixture.install(fixture.store, leaf(1));
+            var client = client();
+            PkiId original = completeSdk(session, new PkiSigningOperation.IssueCredential(child, client.parsed().primary().requestId(), "sdk-race"), client);
+            originalBytes = fixture.certificate(original).getEncoded();
+            var old = fixture.store.getCredential(original).orElseThrow();
+            var oldBinding = fixture.store.getIssuerCryptographicBinding(old.issuerRef().issuerId()).orElseThrow();
+            var head = fixture.store.getCaHeadSnapshot(child).orElseThrow();
+            var selection = new zeroecho.pki.api.ca.CaRotationSelection(1,
+                    Optional.of(new zeroecho.pki.api.ca.CaRotationSelection.RoleChange(Optional.of(HybridIssuanceFixture.key("rotated")), Optional.empty())),
+                    Optional.of(new zeroecho.pki.api.ca.CaRotationSelection.RoleChange(Optional.of(HybridIssuanceFixture.key("rotated-alt")), Optional.empty())));
+            fixture.execute(session, new PkiSigningOperation.RotateCaKey(child, selection, Optional.of(root), Optional.of(head)));
+            oldKeysUnavailable.set(true);
+            var renew = new PkiSigningOperation.RenewCredential(original);
+            var preview = session.signingCommands().orElseThrow().previewSdk((PkiSigningOperation) renew, RootCreationFixture.ACCESS,
+                    client.parsed(), Optional.empty(), CancellationSignal.NONE);
+            assertNotEquals(old.issuerRef().issuerId(), preview.issuerId());
+            assertEquals(original, preview.lifecycleTarget().orElseThrow().predecessorId());
+            assertArrayEquals(client.primary().getPublic().getEncoded(), preview.primarySubjectSpki().bytes());
+            assertArrayEquals(client.alternative().getPublic().getEncoded(), preview.alternativeSubjectSpki().bytes());
+            renewed = completeSdk(session, renew, client);
+            reissued = completeSdk(session, new PkiSigningOperation.ReissueCredential(renewed), client);
+            for (PkiId id : List.of(renewed, reissued)) {
+                var certificate = fixture.certificate(id);
+                certificate.verify(fixture.rotatedKey.getPublic(), "BC");
+                assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(certificate, fixture.rotatedAltKey.getPublic()));
+                assertArrayEquals(client.primary().getPublic().getEncoded(), certificate.getPublicKey().getEncoded());
+                assertArrayEquals(client.alternative().getPublic().getEncoded(), zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72"));
+            }
+            var newClient = client();
+            replacement = completeSdk(session, new PkiSigningOperation.ReplaceCredential(reissued, newClient.parsed().primary().requestId(), "sdk-race"), newClient);
+            var replaced = fixture.certificate(replacement);
+            replaced.verify(fixture.rotatedKey.getPublic(), "BC");
+            assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(replaced, fixture.rotatedAltKey.getPublic()));
+            assertArrayEquals(newClient.primary().getPublic().getEncoded(), replaced.getPublicKey().getEncoded());
+            assertArrayEquals(newClient.alternative().getPublic().getEncoded(), zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(replaced, "2.5.29.72"));
+            assertArrayEquals(originalBytes, fixture.certificate(original).getEncoded());
+            assertEquals(oldBinding, fixture.store.getIssuerCryptographicBinding(old.issuerRef().issuerId()).orElseThrow());
+        }
+        try (var reopened = fixture.open()) {
+            assertTrue(reopened.signingCommands().isPresent());
+            for (PkiId id : List.of(renewed, reissued, replacement)) {
+                var certificate = fixture.certificate(id);
+                certificate.verify(fixture.rotatedKey.getPublic(), "BC");
+                assertTrue(zeroecho.pkix.Pkix.verifyAlternativeSignatureCor3(certificate, fixture.rotatedAltKey.getPublic()));
+            }
+        }
+    }
+
+    @Test void rejectsChangedRenewalTupleAndRevokedPrimaryReuseButAllowsNewReplacementKeys(@TempDir Path path) throws Exception {
+        var fixture = fixture(path);
+        var armed = new AtomicBoolean(); var signs = new AtomicInteger();
+        fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    if (armed.get() && method.getName().equals("sign")) signs.incrementAndGet();
+                    return invoke(provider, method, args);
+                });
+        try (var session = fixture.open()) {
+            PkiId root = fixture.create(session); RootCreationFixture.install(fixture.store, leaf(1));
+            var old = client();
+            PkiId credential = completeSdk(session, new PkiSigningOperation.IssueCredential(root, old.parsed().primary().requestId(), "sdk-race"), old);
+            var changedAlternative = client(old.primary(), HybridIssuanceFixture.pair("ML-DSA-87"));
+            var changedPrimary = client(HybridIssuanceFixture.pair("EC384"), old.alternative());
+            armed.set(true);
+            var commands = session.signingCommands().orElseThrow();
+            assertThrows(PkiException.class, () -> commands.previewSdk((PkiSigningOperation) new PkiSigningOperation.RenewCredential(credential),
+                    RootCreationFixture.ACCESS, changedAlternative.parsed(), Optional.empty(), CancellationSignal.NONE));
+            assertThrows(PkiException.class, () -> commands.previewSdk((PkiSigningOperation) new PkiSigningOperation.ReissueCredential(credential),
+                    RootCreationFixture.ACCESS, changedPrimary.parsed(), Optional.empty(), CancellationSignal.NONE));
+            assertThrows(PkiException.class, () -> commands.prepare(new PkiSigningOperation.RenewCredential(credential),
+                    RootCreationFixture.ACCESS, Optional.empty(), CancellationSignal.NONE));
+            fixture.store.transitionRevocation(new zeroecho.pki.api.revocation.RevocationCommand.RevokePermanently(credential,
+                    zeroecho.pki.api.revocation.RevocationReason.KEY_COMPROMISE, new zeroecho.pki.impl.core.attr.SimpleAttributeSet()), HybridIssuanceFixture.CLOCK.instant());
+            assertThrows(PkiException.class, () -> commands.previewSdk(new PkiSigningOperation.ReplaceCredential(credential,
+                    changedAlternative.parsed().primary().requestId(), "sdk-race"), RootCreationFixture.ACCESS,
+                    changedAlternative.parsed(), Optional.empty(), CancellationSignal.NONE));
+            assertEquals(0, signs.get());
+            var fresh = client();
+            PkiId replacement = completeSdk(session, new PkiSigningOperation.ReplaceCredential(credential, fresh.parsed().primary().requestId(), "sdk-race"), fresh);
+            fixture.certificate(replacement).verify(fixture.rootKey.getPublic(), "BC");
+            assertEquals(1, signs.get());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"wrong-operation", "wrong-predecessor", "wrong-alternative-proof"})
+    void rejectsProofTargetSubstitutionBeforeAnyAlternativeSigning(String fault, @TempDir Path path) throws Exception {
+        var fixture = fixture(path);
+        var armed = new AtomicBoolean(); var signs = new AtomicInteger(); var stages = new AtomicInteger();
+        fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    if (armed.get() && method.getName().equals("sign")) signs.incrementAndGet();
+                    return invoke(provider, method, args);
+                });
+        fixture.storeDecorator = actual -> proxy(PkiStore.class, actual, (method, args) -> { },
+                proxy(StagedContentStore.class, actual.stagedContent(), (method, args) -> {
+                    if (armed.get() && method.getName().equals("beginContent")) stages.incrementAndGet();
+                }));
+        try (var session = fixture.open()) {
+            PkiId root = fixture.create(session); RootCreationFixture.install(fixture.store, leaf(1));
+            var client = client();
+            PkiId predecessor = completeSdk(session, new PkiSigningOperation.IssueCredential(root, client.parsed().primary().requestId(), "sdk-race"), client);
+            PkiSigningOperation operation = new PkiSigningOperation.RenewCredential(predecessor);
+            var commands = session.signingCommands().orElseThrow();
+            var preview = commands.previewSdk(operation, RootCreationFixture.ACCESS, client.parsed(), Optional.empty(), CancellationSignal.NONE);
+            var target = target(preview, operation);
+            if (!fault.equals("wrong-alternative-proof")) {
+                var fields = new TreeMap<>(target.fields()); var lifecycle = preview.lifecycleTarget().orElseThrow();
+                var changed = new SdkLifecycleTarget(1, fault.equals("wrong-operation") ? "credential.reissue" : lifecycle.operation(),
+                        fault.equals("wrong-predecessor") ? new PkiId("x509:" + "0".repeat(64)) : lifecycle.predecessorId(),
+                        lifecycle.predecessorSha256(), lifecycle.subjectPrimarySpkiSha512(), lifecycle.subjectAlternativeSpkiSha512());
+                fields.put(1, text(changed.operation())); fields.put(17, changed.value().encode()); target = new HybridSdkFrame(7, fields);
+            }
+            var valid = approval(preview, target, client);
+            byte[] alternative = valid.alternativeProof();
+            if (fault.equals("wrong-alternative-proof")) alternative = sign(HybridIssuanceFixture.pair("ML-DSA-87"), "ML-DSA-87",
+                    new HybridSdkFrame(2, valid.primaryFrame().fields()).encode());
+            var retained = new SdkIssuanceApproval(preview, valid.primaryFrame(), target, valid.primaryProof(), alternative,
+                    valid.expectedF3(), valid.proofAcceptedAt());
+            armed.set(true);
+            assertThrows(PkiException.class, () -> commands.prepareSdk(operation, RootCreationFixture.ACCESS, client.parsed(),
+                    retained, Optional.empty(), CancellationSignal.NONE));
+            assertEquals(0, signs.get()); assertEquals(0, stages.get());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"native", "alternative"})
+    void rejectsInvalidOriginalSignaturesAtStorageOrLifecycleBoundary(String fault, @TempDir Path path) throws Exception {
+        var fixture = fixture(path); var armed = new AtomicBoolean(); var signs = new AtomicInteger();
+        fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    if (armed.get() && method.getName().equals("sign")) signs.incrementAndGet();
+                    return invoke(provider, method, args);
+                });
+        try (var session = fixture.open()) {
+            PkiId root = fixture.create(session); RootCreationFixture.install(fixture.store, leaf(1)); var client = client();
+            PkiId original = completeSdk(session, new PkiSigningOperation.IssueCredential(root, client.parsed().primary().requestId(), "sdk-race"), client);
+            var metadata = fixture.store.getCredential(original).orElseThrow(); var certificate = fixture.certificate(original);
+            var builder = new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(certificate.getIssuerX500Principal(),
+                    certificate.getSerialNumber().add(java.math.BigInteger.ONE), certificate.getNotBefore(), certificate.getNotAfter(),
+                    certificate.getSubjectX500Principal(), certificate.getPublicKey());
+            var holder = new org.bouncycastle.cert.X509CertificateHolder(certificate.getEncoded());
+            for (var oid : holder.getExtensions().getExtensionOIDs()) {
+                var extension = holder.getExtension(oid);
+                if (fault.equals("alternative") && oid.getId().equals("2.5.29.74")) {
+                    byte[] alternative = ASN1BitString.getInstance(extension.getExtnValue().getOctets()).getBytes(); alternative[0] ^= 1;
+                    builder.addExtension(oid, extension.isCritical(), new DERBitString(alternative));
+                } else builder.addExtension(extension);
+            }
+            byte[] der = builder.build(new JcaContentSignerBuilder("SHA384withECDSA").setProvider("BC")
+                    .build(fault.equals("native") ? fixture.rotatedKey.getPrivate() : fixture.rootKey.getPrivate())).getEncoded();
+            if (fault.equals("alternative")) zeroecho.pkix.Pkix.parseCertificate(der).verify(fixture.rootKey.getPublic(), "BC");
+            var id = new PkiId("x509:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(der)));
+            var content = PkiTestRuntime.stageCredential(fixture.store, der);
+            var corrupted = new zeroecho.pki.api.credential.Credential(id, metadata.formatId(), metadata.issuerRef(),
+                    metadata.subjectRef(), metadata.validity(), certificate.getSerialNumber().add(java.math.BigInteger.ONE).toString(),
+                    metadata.publicKeyId(), metadata.profileBinding(), metadata.status(), content, metadata.attributes());
+            if (fault.equals("native")) {
+                var rejected = assertThrows(IllegalStateException.class, () -> fixture.store.putCredential(corrupted));
+                assertEquals("X.509 credential issuer signature differs", rejected.getMessage());
+                assertEquals(0, signs.get());
+                return;
+            }
+            fixture.store.putCredential(corrupted);
+            armed.set(true);
+            var failure = assertThrows(PkiException.class, () -> session.signingCommands().orElseThrow().previewSdk(
+                    (PkiSigningOperation) new PkiSigningOperation.RenewCredential(id), RootCreationFixture.ACCESS, client.parsed(),
+                    Optional.empty(), CancellationSignal.NONE));
+            assertTrue(failure.getMessage().contains(fault.equals("native") ? "PREDECESSOR_SIGNATURE_INVALID"
+                    : "PREDECESSOR_ALTERNATIVE_SIGNATURE_INVALID"));
+            assertEquals(0, signs.get());
+        }
+    }
+
+    @Test void activeSingleKeyProfileCannotBypassHybridPredecessorDualProofRequirement(@TempDir Path path) throws Exception {
+        var fixture = fixture(path); var armed = new AtomicBoolean(); var signs = new AtomicInteger(); var stages = new AtomicInteger();
+        fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{SigningProvider.class, PublicKeyInfoSource.class, AltSigningCapability.class}, (ignored, method, args) -> {
+                    if (armed.get() && method.getName().equals("sign")) signs.incrementAndGet();
+                    return invoke(provider, method, args);
+                });
+        fixture.storeDecorator = actual -> proxy(PkiStore.class, actual, (method, args) -> { },
+                proxy(StagedContentStore.class, actual.stagedContent(), (method, args) -> {
+                    if (armed.get() && method.getName().equals("beginContent")) stages.incrementAndGet();
+                }));
+        try (var session = fixture.open()) {
+            PkiId root = fixture.create(session); RootCreationFixture.install(fixture.store, leaf(1)); var client = client();
+            PkiId predecessor = completeSdk(session, new PkiSigningOperation.IssueCredential(root, client.parsed().primary().requestId(), "sdk-race"), client);
+            PkiId ordinaryRequest = session.requests().orElseThrow().store(client.parsed().primary(),
+                    zeroecho.pki.api.request.RequestStorePolicy.STORE_ALWAYS);
+            assertEquals(client.parsed().primary().requestId(), ordinaryRequest);
+            var operations = List.<PkiSigningOperation>of(new PkiSigningOperation.RenewCredential(predecessor),
+                    new PkiSigningOperation.ReissueCredential(predecessor),
+                    new PkiSigningOperation.ReplaceCredential(predecessor, client.parsed().primary().requestId(), "sdk-race"));
+            var commands = session.signingCommands().orElseThrow(); var approvals = new ArrayList<SdkIssuanceApproval>();
+            for (var operation : operations) {
+                var preview = commands.previewSdk(operation, RootCreationFixture.ACCESS, client.parsed(), Optional.empty(), CancellationSignal.NONE);
+                approvals.add(approval(preview, target(preview, operation), client));
+            }
+            var base = leaf(2);
+            RootCreationFixture.install(fixture.store, new CertificateProfileDefinition(base.certificateType(), base.profileId(), base.profileVersion(),
+                    base.formatId(), base.displayName(), base.maximumValidity(), base.approvalRequirement(), base.subjectPolicy(),
+                    base.certificatePolicy(), base.algorithmBindingPolicy(), base.confirmationPolicy(), HybridCertificateMode.None.INSTANCE));
+            armed.set(true);
+            for (int index = 0; index < operations.size(); index++) {
+                var operation = operations.get(index); var accepted = approvals.get(index);
+                var ordinary = assertThrows(PkiException.class, () -> commands.prepare(operation, RootCreationFixture.ACCESS,
+                        Optional.empty(), CancellationSignal.NONE));
+                assertTrue(ordinary.getMessage().contains("SDK_DUAL_PROOF_REQUIRED"));
+                assertThrows(PkiException.class, () -> commands.prepareSdk(operation, RootCreationFixture.ACCESS, client.parsed(),
+                        accepted, Optional.empty(), CancellationSignal.NONE));
+            }
+            assertEquals(HybridCertificateMode.None.INSTANCE, fixture.store.requireActiveProfile("sdk-race").definition().hybridMode());
+            assertEquals(0, signs.get()); assertEquals(0, stages.get());
+        }
+    }
+
+    private static HybridIssuanceFixture fixture(Path path) throws Exception {
+        return new HybridIssuanceFixture(path, "EC384", "ECDSA", BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),
+                new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
+                        HybridIssuanceFixture.key("alt").value()), "EC384", "ML-DSA-87");
+    }
+
+    private record Client(KeyPair primary, KeyPair alternative, byte[] csr, ParsedHybridSdkRequest parsed) { }
+
+    private static Client client() throws Exception {
+        return client(HybridIssuanceFixture.pair("EC384"), HybridIssuanceFixture.pair("ML-DSA-87"));
+    }
+
+    private static Client client(KeyPair primary, KeyPair alternative) throws Exception {
+        var extensions = new ExtensionsGenerator();
+        extensions.addExtension(new ASN1ObjectIdentifier("2.5.29.72"), false, alternative.getPublic().getEncoded());
+        byte[] csr = new JcaPKCS10CertificationRequestBuilder(new javax.security.auth.x500.X500Principal("CN=Client"), primary.getPublic())
+                .addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
+                .build(new JcaContentSignerBuilder("SHA384withECDSA").setProvider("BC").build(primary.getPrivate())).getEncoded();
+        return new Client(primary, alternative, csr, HybridSdkProofs.parse(csr));
+    }
+
+    private static SdkIssuanceApproval approval(SdkIssuancePreview preview, HybridSdkFrame target, Client client) throws Exception {
+        var original = first(client.parsed(), client.csr(), target);
+        var fields = new TreeMap<>(original.fields());
+        for (int tag = 3; tag <= 6; tag++) { byte[] nonce = new byte[32]; new SecureRandom().nextBytes(nonce); fields.put(tag, nonce); }
+        var frame = new HybridSdkFrame(1, fields);
+        byte[] primary = sign(client.primary(), "SHA384withECDSA", frame.encode());
+        byte[] alternative = sign(client.alternative(), "ML-DSA-87", new HybridSdkFrame(2, frame.fields()).encode());
+        return new SdkIssuanceApproval(preview, frame, target, primary, alternative,
+                HybridSdkProofs.verify(client.parsed(), frame, primary, alternative, HybridIssuanceFixture.CLOCK.instant()),
+                HybridIssuanceFixture.CLOCK.instant());
+    }
+
+    private static PkiId completeSdk(PkiSession session, PkiSigningOperation operation, Client client) throws Exception {
+        var commands = session.signingCommands().orElseThrow();
+        var preview = commands.previewSdk(operation, RootCreationFixture.ACCESS, client.parsed(), Optional.empty(), CancellationSignal.NONE);
+        var proof = approval(preview, target(preview, operation), client);
+        var prepared = commands.prepareSdk(operation, RootCreationFixture.ACCESS, client.parsed(), proof, Optional.empty(), CancellationSignal.NONE);
+        var accepted = session.semanticSigning().orElseThrow().accept(prepared);
+        var result = assertInstanceOf(LocalSigningResult.Completed.class,
+                session.localSigning().orElseThrow().complete(accepted.receipt().operationId(), CancellationSignal.NONE));
+        var id = new PkiId(((PkiOperationValue.Text) result.result().fields().get("credentialId")).value());
+        assertEquals(preview.validity().notBefore(), session.repository().credential(id).orElseThrow().validity().notBefore());
+        assertEquals(preview.validity().notAfter(), session.repository().credential(id).orElseThrow().validity().notAfter());
+        return id;
+    }
+
+    private static HybridSdkFrame target(SdkIssuancePreview preview, PkiSigningOperation operation) {
+        var fields = new TreeMap<>(target(preview).fields());
+        Map<String, HybridSdkValue> arguments = switch (operation) {
+            case PkiSigningOperation.IssueCredential value -> Map.of("issuerCaId", HybridSdkValue.text(value.issuerCaId().value()),
+                    "requestId", HybridSdkValue.text(value.requestId().value()), "profileId", HybridSdkValue.text(value.profileId()));
+            case PkiSigningOperation.RenewCredential value -> Map.of("credentialId", HybridSdkValue.text(value.credentialId().value()));
+            case PkiSigningOperation.ReissueCredential value -> Map.of("credentialId", HybridSdkValue.text(value.credentialId().value()));
+            case PkiSigningOperation.ReplaceCredential value -> Map.of("existingCredentialId", HybridSdkValue.text(value.existingCredentialId().value()),
+                    "requestId", HybridSdkValue.text(value.requestId().value()), "profileId", HybridSdkValue.text(value.profileId()));
+            default -> throw new AssertionError("Unsupported test lifecycle operation");
+        };
+        fields.put(1, text(operation.name())); fields.put(2, HybridSdkValue.object(arguments).encode());
+        fields.put(17, preview.targetExtensionValue().encode());
+        return new HybridSdkFrame(7, fields);
+    }
+
     private static CertificateProfileDefinition leaf(long version) {
         var base = CertificateProfileDocumentCodec.parse(H7ProfileDocuments.noSanOrEkuProfile());
         var source = (LeafCertificatePolicy) base.certificatePolicy();

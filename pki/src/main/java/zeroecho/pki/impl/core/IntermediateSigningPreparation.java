@@ -219,6 +219,12 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
 
     private byte[] validatedTbs(X509Certificate parent, ManagedKeyProofPreparation.ProofPlan proof,
             ValidatedCaCertificateRequest approved, boolean signAlternative) throws IOException {
+        return validatedTbs(parent, proof, approved, signAlternative, Optional.empty());
+    }
+
+    private byte[] validatedTbs(X509Certificate parent, ManagedKeyProofPreparation.ProofPlan proof,
+            ValidatedCaCertificateRequest approved, boolean signAlternative,
+            Optional<zeroecho.pki.impl.core.continuation.CaOutgoingBinding> subjectOutgoing) throws IOException {
         AlgorithmIdentity signature = issuerSignature(approved.issuerCaId());
         AlgorithmIdentifier algorithm = algorithm(parent, approved);
         Validity validity = wholeSecondValidity(approved.validity());
@@ -234,7 +240,13 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
             var ca = store.getCa(approved.issuerCaId()).orElseThrow(() -> reject("ISSUER_MISSING"));
             var parentBinding = issuerBinding(IssuerAuthorities.current(store, ca)).alternative()
                     .orElseThrow(() -> reject("ALT_ISSUER_BINDING_MISSING"));
-            byte[] subjectAlternative = keys.resolvePublicKeyInfo(new KeyRef(mode.altKeyRef())).bytes();
+            KeyRef subjectAlternativeRef = subjectOutgoing.flatMap(value -> value.alternative())
+                    .map(zeroecho.pki.api.ca.IssuerKeyBinding::keyRef).orElseGet(() -> new KeyRef(mode.altKeyRef()));
+            byte[] subjectAlternative = keys.resolvePublicKeyInfo(subjectAlternativeRef).bytes();
+            if (subjectOutgoing.isPresent() && !hash(subjectAlternative).equals(subjectOutgoing.orElseThrow()
+                    .alternative().orElseThrow(() -> reject("ALT_SUBJECT_ROLE_MISSING")).subjectSpkiSha256())) {
+                throw reject("ALT_SUBJECT_KEY_CHANGED");
+            }
             var altAlgorithm = Pkix.parseAlgorithmIdentifier(parentBinding.signatureAlgorithmIdentifier().bytes());
             builder.addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.subjectAltPublicKeyInfo(subjectAlternative))
                     .addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureAlgorithm(altAlgorithm));
@@ -347,7 +359,8 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         Objects.requireNonNull(input, "input");
         return prepareExisting(access, new ExistingRequest(input.subjectCaId(), input.issuerCaId(), input.keyRef(),
                 Optional.of(new ExplicitProfile(input.formatId(), input.profileId())), true,
-                input.requestedValidity(), input.attributes(), ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE),
+                input.requestedValidity(), input.attributes(), ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE,
+                Optional.empty(), input.expectedHead()),
                 submission, ttl, cancellation);
     }
 
@@ -370,7 +383,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         Objects.requireNonNull(input, "input");
         return prepareExisting(access, new ExistingRequest(input.caId(), input.issuerCaId(), input.keyRef(),
                 Optional.empty(), true, input.requestedValidity(), input.attributes(),
-                ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE), submission, ttl, cancellation);
+                ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE, Optional.empty(), input.expectedHead()), submission, ttl, cancellation);
     }
 
     /**
@@ -389,15 +402,36 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
     public DomainSigningRequest prepare(AccessContext access, CaKeyRotationCommand.Intermediate input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(input, "input");
-        return prepareExisting(access, new ExistingRequest(input.caId(), input.issuerCaId(), input.newKeyRef(),
-                Optional.empty(), false, Optional.empty(), input.attributes(),
-                ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE), submission, ttl, cancellation);
+        return prepareExisting(access, rotationRequest(input), submission, ttl, cancellation);
     }
 
     private record ExplicitProfile(FormatId formatId, String profileId) { }
     private record ExistingRequest(PkiId subjectCaId, PkiId issuerCaId, KeyRef keyRef,
             Optional<ExplicitProfile> profile, boolean requireCurrentKey, Optional<Validity> requestedValidity,
-            AttributeSet attributes, ValidatedCaCertificateRequest.Operation operation) { }
+            AttributeSet attributes, ValidatedCaCertificateRequest.Operation operation,
+            Optional<zeroecho.pki.api.ca.CaRotationSelection> selection,
+            Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead) {
+        private ExistingRequest(PkiId subjectCaId, PkiId issuerCaId, KeyRef keyRef,
+                Optional<ExplicitProfile> profile, boolean requireCurrentKey, Optional<Validity> requestedValidity,
+                AttributeSet attributes, ValidatedCaCertificateRequest.Operation operation) {
+            this(subjectCaId, issuerCaId, keyRef, profile, requireCurrentKey, requestedValidity, attributes, operation,
+                    Optional.empty(), Optional.empty());
+        }
+    }
+
+    private ExistingRequest rotationRequest(CaKeyRotationCommand.Intermediate input) {
+        CaRecord subject = store.getCa(input.caId()).orElseThrow(() -> reject("SUBJECT_MISSING"));
+        var binding = store.getIssuerCryptographicBinding(subject.currentIssuanceIssuerId())
+                .orElseThrow(() -> reject("SUBJECT_BINDING_MISSING"));
+        var effective = input.selection().effective(binding);
+        if (input.expectedHead().isPresent() && !input.expectedHead().orElseThrow().equals(
+                store.getCaHeadSnapshot(input.caId()).orElseThrow(() -> reject("CA_HEAD_EVIDENCE_MISSING")))) {
+            throw reject("CA_EXPECTED_HEAD_CONFLICT");
+        }
+        return new ExistingRequest(input.caId(), input.issuerCaId(), effective.primary().orElseThrow().keyRef().orElseThrow(),
+                Optional.empty(), false, Optional.empty(), input.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE,
+                Optional.of(effective), input.expectedHead());
+    }
 
     private DomainSigningRequest prepareExisting(AccessContext access, ExistingRequest input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -417,8 +451,8 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         ValidatedCaCertificateRequest approved = existing.approved(); BigInteger serial = approved.serial();
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(parent, approved);
-        byte[] tbs = validatedTbs(parent, proof, approved, true);
-        List<String> fields = List.of(formatId.value(), ca.caId().value(),
+        byte[] tbs = validatedTbs(parent, proof, approved, true, Optional.of(existing.outgoing()));
+        List<String> fields = new ArrayList<>(List.of(formatId.value(), ca.caId().value(),
                 subject.caId().value(), generation.issuerId().value(), path.pathId().value(), path.pathCommitment(), input.keyRef().value(),
                 profile.reference().profileId(), Long.toString(profile.reference().profileVersion()),
                 HexFormat.of().formatHex(profile.reference().canonicalSha256()), subject.subjectRef().value(),
@@ -426,7 +460,8 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 generation.signingKeyRef().value(), issuer.content().contentId(), issuer.content().sha256(),
                 hash(proof.publicKeyInfo().bytes()), "", "",
                 DomainAttributeEncoding.encode(input.attributes()), Integer.toString(tbs.length), hash(tbs),
-                outgoing(profile, input.keyRef(), proof).encodeForSubject(), incoming(generation));
+                existing.outgoing().encodeForSubject(), incoming(generation)));
+        fields.add(zeroecho.pki.impl.core.continuation.CaLifecycleContextCodec.encode(existing.lifecycle()));
         return stage(access, submission, ttl, generation, input.operation().name(), fields, proof, tbs, cancellation);
     }
 
@@ -473,16 +508,17 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         if (command instanceof IntermediateCertIssueCommand value) {
             input = new ExistingRequest(value.subjectCaId(), value.issuerCaId(), value.keyRef(),
                     Optional.of(new ExplicitProfile(value.formatId(), value.profileId())), true,
-                    value.requestedValidity(), value.attributes(), ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE);
+                    value.requestedValidity(), value.attributes(), ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE,
+                    Optional.empty(), value.expectedHead());
         } else if (command instanceof CaRolloverCommand.Intermediate value) {
             input = new ExistingRequest(value.caId(), value.issuerCaId(), value.keyRef(), Optional.empty(), true,
-                    value.requestedValidity(), value.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE);
+                    value.requestedValidity(), value.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE,
+                    Optional.empty(), value.expectedHead());
         } else if (command instanceof CaKeyRotationCommand.Intermediate value) {
-            input = new ExistingRequest(value.caId(), value.issuerCaId(), value.newKeyRef(), Optional.empty(), false,
-                    Optional.empty(), value.attributes(), ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE);
+            input = rotationRequest(value);
         } else { throw new UnsupportedOperationException("Unsupported intermediate lifecycle input"); }
         ExistingIntermediate existing = readExisting(input, BigInteger.ONE, cancellation);
-        validatedTbs(existing.parent(), existing.proof(), existing.approved(), false);
+        validatedTbs(existing.parent(), existing.proof(), existing.approved(), false, Optional.of(existing.outgoing()));
         cancellation.throwIfCancelled();
     }
 
@@ -491,6 +527,10 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         if (!input.attributes().ids().isEmpty()) { throw reject("ATTRIBUTES_NOT_SUPPORTED"); }
         EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
         CaRecord subject = existingSubject(input);
+        var capturedHead = store.getCaHeadSnapshot(subject.caId()).orElseThrow(() -> reject("CA_HEAD_EVIDENCE_MISSING"));
+        if (input.expectedHead().isPresent() && !input.expectedHead().orElseThrow().equals(capturedHead)
+                || !capturedHead.issuerId().equals(subject.currentIssuanceIssuerId())
+                || !capturedHead.pathId().equals(subject.issuanceChainPathId())) throw reject("CA_EXPECTED_HEAD_CONFLICT");
         CaRecord ca = store.getCa(input.issuerCaId()).orElseThrow(() -> reject("ISSUER_MISSING"));
         if (!ca.caId().equals(input.issuerCaId()) || ca.state() != CaState.ACTIVE) { throw reject("ISSUER_INACTIVE"); }
         IssuerGeneration generation = IssuerAuthorities.current(store, ca);
@@ -510,7 +550,15 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
         var subjectGeneration = IssuerAuthorities.current(store, subject);
         var subjectBinding = store.getIssuerCryptographicBinding(subjectGeneration.issuerId())
                 .orElseThrow(() -> reject("SUBJECT_BINDING_MISSING"));
-        ManagedKeyProofPreparation.ProofPlan proof = proofs.withSignature(subjectBinding.primary().signatureAlgorithm().canonicalForm())
+        if ((profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature)
+                != subjectBinding.alternative().isPresent()) {
+            throw reject("HYBRID_MODE_CHANGE_UNSUPPORTED");
+        }
+        if (!capturedHead.bindingCommitment().equals(subjectBinding.commitment())) throw reject("CA_EXPECTED_HEAD_CONFLICT");
+        var effectiveSelection = input.selection().orElseGet(() ->
+                zeroecho.pki.api.ca.CaRotationSelection.primaryKey(subjectBinding.primary().keyRef()).effective(subjectBinding));
+        String selectedSubjectAlgorithm = effectiveSelection.primary().orElseThrow().signatureAlgorithmId().orElseThrow();
+        ManagedKeyProofPreparation.ProofPlan proof = proofs.withSignature(selectedSubjectAlgorithm)
                 .plan(new ManagedKeyProofRequest.CaSubject(ca.caId(), Optional.of(subject.caId()), profileId, input.keyRef()), cancellation);
         if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource subjectKeys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
         IssuerBindingResolver.resolve(store, subjectGeneration,
@@ -530,14 +578,23 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 formatId, ca.caId(), subject.caId(), subjectRdns, proof.publicKeyInfo(), input.requestedValidity(),
                 evaluation.evaluationTime(), Optional.of(parent.getNotAfter().toInstant()), serial, authority)
                 .withFrozenPublication(generation.issuerId(), path.pathId(), path.pathCommitment(), input.keyRef());
+        var outgoing = outgoing(profile, input.keyRef(), proof, Optional.of(effectiveSelection));
+        var lifecycle = new zeroecho.pki.impl.core.continuation.CaLifecycleContext(1,
+                input.selection().isPresent() ? zeroecho.pki.impl.core.continuation.CaLifecycleContext.Operation.INTERMEDIATE_ROTATION
+                        : input.operation() == ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE
+                                ? zeroecho.pki.impl.core.continuation.CaLifecycleContext.Operation.INTERMEDIATE_ISSUE
+                                : zeroecho.pki.impl.core.continuation.CaLifecycleContext.Operation.INTERMEDIATE_ROLLOVER,
+                capturedHead, currentSubject.credentialId(), currentSubject.content().sha256(), Optional.empty());
         return new ExistingIntermediate(subject, ca, generation, path, issuer, profile, proof, parent,
-                subjectPrincipal, formatId, approved);
+                subjectPrincipal, formatId, approved, outgoing, lifecycle);
     }
 
     private record ExistingIntermediate(CaRecord subject, CaRecord ca, IssuerGeneration generation,
             IssuerChainPath path, Credential issuer, ActiveCertificateProfile profile,
             ManagedKeyProofPreparation.ProofPlan proof, X509Certificate parent,
-            X500Principal subjectPrincipal, FormatId formatId, ValidatedCaCertificateRequest approved) { }
+            X500Principal subjectPrincipal, FormatId formatId, ValidatedCaCertificateRequest approved,
+            zeroecho.pki.impl.core.continuation.CaOutgoingBinding outgoing,
+            zeroecho.pki.impl.core.continuation.CaLifecycleContext lifecycle) { }
 
     private X509Certificate path(IssuerChainPath path, Credential issuer, X500Principal childSubject,
             Instant now, CancellationSignal cancellation) throws IOException {
@@ -623,6 +680,12 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
 
     private zeroecho.pki.impl.core.continuation.CaOutgoingBinding outgoing(ActiveCertificateProfile profile,
             KeyRef keyRef, ManagedKeyProofPreparation.ProofPlan proof) throws IOException {
+        return outgoing(profile, keyRef, proof, Optional.empty());
+    }
+
+    private zeroecho.pki.impl.core.continuation.CaOutgoingBinding outgoing(ActiveCertificateProfile profile,
+            KeyRef keyRef, ManagedKeyProofPreparation.ProofPlan proof,
+            Optional<zeroecho.pki.api.ca.CaRotationSelection> selection) throws IOException {
         if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)) throw reject("PUBLIC_KEY_SOURCE_MISSING");
         var primary = IssuerBindingResolver.createKey(keyRef, authority.resolveIdentity(proof.metadata().get(8)),
                 proof.publicKeyInfo().bytes(), reference -> {
@@ -631,8 +694,12 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
                 }, authority);
         Optional<zeroecho.pki.api.ca.IssuerKeyBinding> alternative = Optional.empty();
         if (profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature mode) {
-            KeyRef reference = new KeyRef(mode.altKeyRef());
-            alternative = Optional.of(IssuerBindingResolver.createKey(reference, authority.resolveIdentity(mode.altSignatureAlgorithmId()),
+            var selected = selection.flatMap(value -> value.alternative());
+            KeyRef reference = selected.flatMap(zeroecho.pki.api.ca.CaRotationSelection.RoleChange::keyRef)
+                    .orElseGet(() -> new KeyRef(mode.altKeyRef()));
+            String selectedAlgorithm = selected.flatMap(zeroecho.pki.api.ca.CaRotationSelection.RoleChange::signatureAlgorithmId)
+                    .orElse(mode.altSignatureAlgorithmId());
+            alternative = Optional.of(IssuerBindingResolver.createKey(reference, authority.resolveIdentity(selectedAlgorithm),
                     keys.resolvePublicKeyInfo(reference).bytes(), keys, authority));
         }
         return new zeroecho.pki.impl.core.continuation.CaOutgoingBinding(primary, alternative, bindings.commitment());
@@ -705,28 +772,66 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
             byte[] tbs, CancellationSignal cancellation) throws IOException {
         AlgorithmIdentity signature = issuerBinding(parent).primary().signatureAlgorithm();
         String intent = CaSigningIntent.commitment(new DomainCommandEncoding.Decoded(operation, immutableFields), signature);
+        var captured = zeroecho.pki.impl.core.continuation.CaOutgoingBinding.decodeForSubject(immutableFields.get(23),
+                new KeyRef(immutableFields.get(6)));
+        Optional<ManagedKeyProofPreparation.ProofPlan> alternativePlan = Optional.empty();
+        if (captured.alternative().isPresent()) {
+            var selected = captured.alternative().orElseThrow();
+            alternativePlan = Optional.of(proofs.withSignature(selected.signatureAlgorithm().canonicalForm())
+                    .plan(new ManagedKeyProofRequest.CaSubject(parent.authorityId(),
+                            IntermediateSigningCommand.CREATE.equals(operation) ? Optional.empty()
+                                    : Optional.of(new PkiId(immutableFields.get(2))), immutableFields.get(7), selected.keyRef()), cancellation));
+        }
+        String lifecycle = immutableFields.size() == 26
+                ? zeroecho.pki.impl.core.continuation.CaLifecycleContextCodec.commitment(
+                        zeroecho.pki.impl.core.continuation.CaLifecycleContextCodec.decode(immutableFields.get(25)))
+                : intent.substring("ca-intent:v1:".length());
         SigningSubmissionId step = proofs.newStep(submission);
+        var primaryContext = alternativePlan.isEmpty() ? new ManagedKeyProofChallenge.CaContext(submission.id(), intent)
+                : new ManagedKeyProofChallenge.CaContext(submission.id(), intent,
+                        Optional.of(SignWorkflowStore.SubjectKeyRole.PRIMARY), Optional.of(lifecycle));
         ManagedKeyProofPreparation.FrozenChallenge proof = proofs.challenge(plan, step, submission.createdAt().plus(ttl),
-                Optional.of(new ManagedKeyProofChallenge.CaContext(submission.id(), intent)), cancellation);
+                Optional.of(primaryContext), cancellation);
+        Optional<SigningSubmissionId> alternativeStep = alternativePlan.map(ignored -> proofs.newStep(submission));
+        Optional<ManagedKeyProofPreparation.FrozenChallenge> alternativeProof = Optional.empty();
+        if (alternativePlan.isPresent()) {
+            alternativeProof = Optional.of(proofs.challenge(alternativePlan.orElseThrow(), alternativeStep.orElseThrow(),
+                    submission.createdAt().plus(ttl), Optional.of(new ManagedKeyProofChallenge.CaContext(submission.id(), intent,
+                            Optional.of(SignWorkflowStore.SubjectKeyRole.ALTERNATIVE), Optional.of(lifecycle))), cancellation));
+        }
         List<String> fields = new ArrayList<>(immutableFields);
         fields.set(18, step.id().value());
-        fields.set(19, IntermediateSigningCommand.encodeProof(DomainCommandEncoding.template(DomainContinuationStore.Kind.KEY_PROOF,
-                ManagedKeyProofCommand.OPERATION, proof.command().fields().toArray(String[]::new)).command()));
+        var primaryCommand = DomainCommandEncoding.template(DomainContinuationStore.Kind.KEY_PROOF,
+                ManagedKeyProofCommand.OPERATION, proof.command().fields().toArray(String[]::new)).command();
+        fields.set(19, alternativeProof.isEmpty() ? IntermediateSigningCommand.encodeProof(primaryCommand)
+                : IntermediateSigningCommand.encodeProofs(step.id(), primaryCommand, alternativeStep.orElseThrow().id(),
+                        DomainCommandEncoding.template(DomainContinuationStore.Kind.KEY_PROOF, ManagedKeyProofCommand.OPERATION,
+                                alternativeProof.orElseThrow().command().fields().toArray(String[]::new)).command()));
         DomainContinuationTemplate template = IntermediateSigningCommand.template(operation, "intermediate." + hash(
                 submission.id().value().getBytes(StandardCharsets.UTF_8)), fields);
         DurableContentReference content = null;
         DurableContentReference challenge = null;
+        DurableContentReference alternativeChallenge = null;
         try {
             content = stageCandidate(tbs, Encoding.DER, cancellation);
             challenge = stageCandidate(proof.content().bytes(), Encoding.BINARY, cancellation);
+            if (alternativeProof.isPresent()) alternativeChallenge = stageCandidate(alternativeProof.orElseThrow().content().bytes(), Encoding.BINARY, cancellation);
             cancellation.throwIfCancelled();
             SignWorkflowStore.CaSubjectProofStep descriptor = new SignWorkflowStore.CaSubjectProofStep(step.id(),
                     new KeyRef(proof.command().field(5)), proof.command().field(8), challenge);
+            Optional<SignWorkflowStore.CaSubjectProofStep> alternativeDescriptor = Optional.empty();
+            if (alternativeProof.isPresent()) {
+                var exact = alternativeProof.orElseThrow();
+                alternativeDescriptor = Optional.of(new SignWorkflowStore.CaSubjectProofStep(alternativeStep.orElseThrow().id(),
+                        new KeyRef(exact.command().field(5)), exact.command().field(8), alternativeChallenge,
+                        SignWorkflowStore.SubjectKeyRole.ALTERNATIVE));
+            }
             return new DomainSigningRequest(submission.id(), access, parent.signingKeyRef(), signature.canonicalForm(),
-                    Encoding.BINARY, content, ttl, template, Optional.of(descriptor));
+                    Encoding.BINARY, content, ttl, template, Optional.of(descriptor), alternativeDescriptor);
         } catch (IOException | RuntimeException | Error primary) {
             retireAfterFailure(content, primary);
             retireAfterFailure(challenge, primary);
+            retireAfterFailure(alternativeChallenge, primary);
             throw primary;
         }
     }

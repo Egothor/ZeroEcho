@@ -488,6 +488,20 @@ final class DomainContinuationPublisherRecoveryTest {
             template = DomainCommandEncoding.template(template.kind(), decoded.operation(), fields.toArray(String[]::new));
             decoded = DomainCommandEncoding.decode(template.command());
         }
+        if (template.kind() == DomainContinuationStore.Kind.CA
+                && (decoded.operation().equals("ROLLOVER_ROOT") || decoded.operation().equals(IntermediateSigningCommand.ROLLOVER)
+                        || decoded.operation().equals(IntermediateSigningCommand.ISSUE))) {
+            PkiId ca = new PkiId(decoded.field(root ? 13 : 2));
+            var head = store.getCaHeadSnapshot(ca).orElseThrow();
+            var old = store.getCredential(store.getIssuerGeneration(head.issuerId()).orElseThrow().credentialId()).orElseThrow();
+            var context = new CaLifecycleContext(1, root ? CaLifecycleContext.Operation.ROOT_ROLLOVER
+                    : decoded.operation().equals(IntermediateSigningCommand.ISSUE) ? CaLifecycleContext.Operation.INTERMEDIATE_ISSUE
+                            : CaLifecycleContext.Operation.INTERMEDIATE_ROLLOVER,
+                    head, old.credentialId(), old.content().sha256(), Optional.empty());
+            var fields = new java.util.ArrayList<>(decoded.fields()); fields.add(CaLifecycleContextCodec.encode(context));
+            template = DomainCommandEncoding.template(template.kind(), decoded.operation(), fields.toArray(String[]::new));
+            decoded = DomainCommandEncoding.decode(template.command());
+        }
         boolean issuance = template.kind() == DomainContinuationStore.Kind.ISSUANCE;
         DurableContentReference tbs = zeroecho.pki.testkit.PkiTestRuntime.operationReference(store.stagedContent(),
                 Encoding.DER, certificate.toASN1Structure().getTBSCertificate().getEncoded());

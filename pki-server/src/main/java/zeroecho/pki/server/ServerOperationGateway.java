@@ -533,7 +533,16 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         return descriptor;
     }
 
+    Outcome executeRootActivation(Request request, zeroecho.pki.api.ca.RootTrustAnchorActivation evidence, CancellationSignal cancellation) {
+        return execute(request,cancellation,null,Objects.requireNonNull(evidence,"evidence"));
+    }
+
     private Outcome execute(Request request, CancellationSignal cancellation, BackupTransferChannel channel) {
+        return execute(request,cancellation,channel,null);
+    }
+
+    private Outcome execute(Request request, CancellationSignal cancellation, BackupTransferChannel channel,
+            zeroecho.pki.api.ca.RootTrustAnchorActivation activation) {
         openCheck.run();
         Request exact = Objects.requireNonNull(request, "request");
         Objects.requireNonNull(cancellation, "cancellation");
@@ -663,6 +672,12 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 backend = revocationExecutor.orElseThrow().executePendingConfirmationRevocation(
                         revocation, evidence, cancellation);
                 wakeAfterCommittedRevocation(backend);
+            } else if(activation!=null) {
+                if(!(pki.operation() instanceof PkiOperation.SelectIssuancePath selected)
+                        ||!activation.actorId().equals(principal.principalId())
+                        ||!activation.approvedTargetCommitment().equals(commitment)
+                        ||claimedApproval.isEmpty())throw new SecurityException("Trusted activation context differs");
+                backend=executor.executeRootActivation(selected,activation,cancellation);
             } else if (selectionOperation(pki.operation())) {
                 zeroecho.pki.application.PkiSelectionExecutor selection = selectionExecutor();
                 Permission.Context selectionContext = exact.context();
@@ -1183,19 +1198,18 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 : resourceScopes.statusObjectAuthority(sourceId);
     }
 
+    private AdministrativeOperation normalizeOperation(AdministrativeOperation operation) {
+        if(operation instanceof AdministrativeOperation.Signing signing)return new AdministrativeOperation.Signing(signingExecutor.normalizeCreation(signing.operation()));
+        if(operation instanceof AdministrativeOperation.Pki pki)return new AdministrativeOperation.Pki(executor.normalize(pki.operation()));
+        return operation;
+    }
     private Request normalizeCreationRequest(Request request) {
-        AdministrativeOperation operation=request.operation();
-        if(operation instanceof AdministrativeOperation.Signing signing) {
-            operation=new AdministrativeOperation.Signing(signingExecutor.normalizeCreation(signing.operation()));
-        } else if(operation instanceof AdministrativeOperation.Control wrapper
-                && wrapper.operation() instanceof ServerControlOperation.RequestApproval approval
-                && approval.targetOperation() instanceof AdministrativeOperation.Signing target) {
-            operation=new AdministrativeOperation.Control(new ServerControlOperation.RequestApproval(approval.approvalId(),
-                    new AdministrativeOperation.Signing(signingExecutor.normalizeCreation(target.operation())),approval.targetResource()));
+        AdministrativeOperation operation=normalizeOperation(request.operation());
+        if(operation instanceof AdministrativeOperation.Control wrapper&&wrapper.operation() instanceof ServerControlOperation.RequestApproval approval) {
+            operation=new AdministrativeOperation.Control(new ServerControlOperation.RequestApproval(approval.approvalId(),normalizeOperation(approval.targetOperation()),approval.targetResource()));
         }
         if(operation.equals(request.operation()))return request;
-        return new Request(request.realmId(),request.principalId(),request.authenticationMode(),request.transportPrincipalId(),
-                request.credentialEvidence(),operation,request.resource(),request.relationship(),request.context(),request.approvalId(),request.correlationId());
+        return new Request(request.realmId(),request.principalId(),request.authenticationMode(),request.transportPrincipalId(),request.credentialEvidence(),operation,request.resource(),request.relationship(),request.context(),request.approvalId(),request.correlationId());
     }
 
     private Request authoritativeRequest(Request request) {

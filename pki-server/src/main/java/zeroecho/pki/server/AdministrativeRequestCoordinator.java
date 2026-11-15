@@ -271,6 +271,17 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         synchronized(control) { if(closed.get() || !inFlight.add(id)) return find(id).orElseThrow(); }
         try {
             var current=find(id).orElseThrow();
+            var activation=activationSelection(current);
+            if(activation.isPresent()&&(current.state()==AdministrativeRequest.State.DISPATCHING
+                    ||current.state()==AdministrativeRequest.State.RECONCILIATION_REQUIRED)) {
+                try {
+                    var observed=realm.session().operations().observeRootActivation(activation.orElseThrow(),activationEvidence(current,activation.orElseThrow()),CancellationSignal.NONE);
+                    if(observed.isPresent())return outcome(current,new PkiOperationOutcome.Completed(observed.orElseThrow()));
+                } catch(RuntimeException unavailable) {
+                    return activationUnknown(current);
+                }
+                return activationUnknown(current);
+            }
             if(current.terminal()) return current;
             if(current.receipt().isPresent()) {
                 if(current.sdkProof().isPresent())sdkAdmission.validateIntegrity(current);
@@ -322,7 +333,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             }
             var dispatched=update(current,AdministrativeRequest.State.DISPATCHING,Optional.empty(),Optional.empty(),Optional.empty());
             write(current,dispatched,Optional.empty(),Optional.empty());
-            var outcome=realm.gateway().execute(request,cancellation);
+            var outcome=activation.isPresent()?realm.gateway().executeRootActivation(request,activationEvidence(current,activation.orElseThrow()),cancellation)
+                    :realm.gateway().execute(request,cancellation);
             if(outcome instanceof ServerOperationGateway.Outcome.Executed executed) return outcome(dispatched,executed.outcome());
             if(outcome instanceof ServerOperationGateway.Outcome.ControlExecuted executed
                     && executed.outcome() instanceof ServerControlOperationOutcome.Ordinary ordinary) return outcome(dispatched,ordinary.outcome());
@@ -357,6 +369,33 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         if(current.failureCode().filter("SIGNING_OBSERVATION_UNAVAILABLE"::equals).isPresent()) return current;
         var next=update(current,current.state(),current.receipt(),Optional.empty(),Optional.of("SIGNING_OBSERVATION_UNAVAILABLE"));
         write(current,next,Optional.empty(),Optional.empty());return next;
+    }
+
+    private Optional<PkiOperation.SelectIssuancePath> activationSelection(AdministrativeRequest retained) {
+        if(!retained.operation().equals(PkiOperation.SelectIssuancePath.NAME))return Optional.empty();
+        var operation=request(retained).operation();
+        if(operation instanceof AdministrativeOperation.Pki pki&&pki.operation() instanceof PkiOperation.SelectIssuancePath selected
+                &&selected.transitionCommitment().isPresent()&&selected.distributionAcknowledged())return Optional.of(selected);
+        return Optional.empty();
+    }
+
+    private zeroecho.pki.api.ca.RootTrustAnchorActivation activationEvidence(AdministrativeRequest retained,PkiOperation.SelectIssuancePath selected) {
+        var approval=realm.approvals().requireCurrent(retained.approvalId().orElseThrow());
+        if(!approval.operationCommitment().equals(retained.operationCommitment())||!retained.policyCommitment().filter(approval.policyCommitment()::equals).isPresent())throw new SecurityException("Activation approval target differs");
+        var inspected=realm.session().operations().execute(new PkiOperation.InspectIssuerGeneration(selected.issuerId()),CancellationSignal.NONE);
+        if(!(inspected instanceof PkiOperationOutcome.Completed complete))throw new IllegalStateException("Activation transition unavailable");
+        var fields=complete.result().fields();
+        if(!LifecycleProjection.text(fields,"transitionCommitment").equals(selected.transitionCommitment().orElseThrow()))throw new SecurityException("Activation transition differs");
+        var head=selected.expectedHead().orElseThrow();
+        return new zeroecho.pki.api.ca.RootTrustAnchorActivation(1,new zeroecho.pki.api.PkiId(LifecycleProjection.text(fields,"transitionId")),
+                selected.transitionCommitment().orElseThrow(),head,selected.issuerId(),selected.pathId(),Math.addExact(head.epoch(),1),
+                new zeroecho.pki.api.PkiId(retained.requestId()),retained.actor().principalId(),retained.policyCommitment().orElseThrow(),
+                retained.operationCommitment(),retained.createdAt(),true);
+    }
+
+    private AdministrativeRequest activationUnknown(AdministrativeRequest retained) {
+        if(retained.state()==AdministrativeRequest.State.RECONCILIATION_REQUIRED)return retained;
+        return finish(retained,AdministrativeRequest.State.RECONCILIATION_REQUIRED,Optional.empty(),"ROOT_ACTIVATION_OUTCOME_UNKNOWN");
     }
 
     private AdministrativeRequest reconcile(AdministrativeRequest current) {
@@ -432,10 +471,11 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             case PkiSigningOperation.CreateIntermediate value -> value.signatureAlgorithmId();
             default -> Optional.empty();
         }:Optional.empty();
-        if(algorithm.isEmpty())return envelope;
+
         var fields=new LinkedHashMap<>(envelope.fields());
         var arguments=new LinkedHashMap<>(((PkiOperationValue.ObjectValue)fields.get("arguments")).fields());
-        arguments.put("signatureAlgorithmId",text(algorithm.orElseThrow()));
+        if(algorithm.isPresent())arguments.put("signatureAlgorithmId",text(algorithm.orElseThrow()));
+        arguments=new LinkedHashMap<>(LifecycleProjection.arguments(new PkiOperationValue.ObjectValue(arguments),operation).fields());
         fields.put("arguments",new PkiOperationValue.ObjectValue(arguments));
         return new PkiOperationValue.ObjectValue(fields);
     }
@@ -578,7 +618,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         while(!closed.get()) {
             try {
                 var page=control.protocolRecords(ServerControlStore.ADMINISTRATIVE_REQUEST,scanOffset,PAGE);
-                for(var record:page.values()) { if(closed.get()) break;var value=AdministrativeRequestCodec.decode(record);if(!value.terminal()) process(value.requestId()); }
+                for(var record:page.values()) { if(closed.get()) break;var value=AdministrativeRequestCodec.decode(record);if(!value.terminal()||value.state()==AdministrativeRequest.State.RECONCILIATION_REQUIRED&&activationSelection(value).isPresent()) process(value.requestId()); }
                 scanOffset=page.hasMore()?page.nextOffset():0;
                 wake.tryAcquire(1000,java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch(InterruptedException stopped) { if(closed.get()) break; }

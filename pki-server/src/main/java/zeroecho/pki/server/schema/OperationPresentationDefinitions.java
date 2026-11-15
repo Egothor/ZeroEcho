@@ -178,10 +178,14 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
                                 Map.entry(TEXT_ISSUER_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", ""))
                         ))),
-                new Presentation("ca.rotate", "Rotate CA key", "Rotate the signing key of an authority.", TEXT_AUTHORITIES,
+                new Presentation("ca.rotate", "Rotate CA keys", "Prepare an exact outgoing-key generation; a changed root anchor requires separately approved activation.", TEXT_AUTHORITIES,
                         new TransportSemantics(TEXT_AUTHORITY, TEXT_CA_ID, Map.ofEntries(
                                 Map.entry(TEXT_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
-                                Map.entry("newKeyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", "")),
+                                Map.entry("newKeyRef", new FieldSemantics(TEXT_TEXT, "key", false, false, false, "", "", "")),
+                                Map.entry("newAlternativeKeyRef", new FieldSemantics(TEXT_TEXT, "key", false, false, false, "", "", "")),
+                                Map.entry("primarySignatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
+                                Map.entry("alternativeSignatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
+                                Map.entry("expectedHead", new FieldSemantics("json", "", false, false, false, "", "Exact immutable selected-head fence; omitted coordinates are captured before approval.", "")),
                                 Map.entry(TEXT_ISSUER_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", ""))
                         ))),
                 new Presentation("issuer.generation.inspect", "Inspect issuer generation", "Show one issuer generation.", TEXT_ISSUERS,
@@ -196,7 +200,7 @@ final class OperationPresentationDefinitions {
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry(TEXT_ISSUER_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_ISSUER, false, false, false, "", "", ""))
                         ))),
-                new Presentation("issuer.path.select", "Select issuance path", "Select the active issuance path for an authority.", TEXT_ISSUERS,
+                new Presentation("issuer.path.select", "Select issuance path", "Activate an approved root candidate only after acknowledging distribution, or select a permitted existing path.", TEXT_ISSUERS,
                         new TransportSemantics(TEXT_AUTHORITY, TEXT_CA_ID, Map.ofEntries(
                                 Map.entry(TEXT_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
                                 Map.entry(TEXT_ISSUER_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_ISSUER, false, false, false, "", "", "")),

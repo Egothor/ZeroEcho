@@ -1250,8 +1250,37 @@ final class EndEntitySigningLifecycleTest {
             ids.add(generation.issuerId());
             return List.copyOf(ids);
         }).orElse(List.of(generation.issuerId()));
-        store.putCa(new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, keyRef, credential.subjectRef(), generations,
-                generation.issuerId(), path.pathId()));
+        var previous = store.getCa(CA);
+        var replacement = new CaRecord(CA, CaKind.ROOT, CaState.ACTIVE, keyRef, credential.subjectRef(), generations,
+                generation.issuerId(), path.pathId());
+        if (previous.isEmpty()) {
+            store.putCa(replacement);
+        } else {
+            var expected = store.getCaHeadSnapshot(CA).orElseThrow();
+            var oldBinding = store.getIssuerCryptographicBinding(expected.issuerId()).orElseThrow();
+            var nextBinding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow();
+            if (oldBinding.primary().subjectSpkiSha256().equals(nextBinding.primary().subjectSpkiSha256())) {
+                assertTrue(store.compareAndSetCaHead(expected, replacement));
+            } else {
+                var operation = zeroecho.pki.api.orch.SigningSubmissionId.create(store.signingNamespace() + ".issuer-fixture",
+                        store.signingNow(), new SecureRandom()).id();
+                var oldCredential = store.getCredential(oldBinding.credentialId()).orElseThrow();
+                var command = DomainCommandEncoding.template(zeroecho.pki.spi.store.DomainContinuationStore.Kind.CA,
+                        "FIXTURE_ROOT_KEY_REPLACEMENT", expected.caId().value(), Long.toString(expected.epoch()), generation.issuerId().value());
+                var transition = new zeroecho.pki.api.ca.RootTrustAnchorTransition(1,
+                        zeroecho.pki.api.ca.RootTrustAnchorTransition.idFor(operation), CA, expected, oldCredential.credentialId(),
+                        oldCredential.content().sha256(), oldBinding.commitment(), generation.issuerId(), path.pathId(), id,
+                        credential.content().sha256(), nextBinding.commitment(), operation, command.commandCommitment());
+                store.registerRootCandidate(transition);
+                String policy = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                        .digest("issuer-fixture-activation-policy".getBytes(StandardCharsets.UTF_8)));
+                String target = command.commandCommitment().substring("domain:v1:".length());
+                var activation = new zeroecho.pki.api.ca.RootTrustAnchorActivation(1, transition.transitionId(), transition.commitment(),
+                        expected, generation.issuerId(), path.pathId(), expected.epoch() + 1, new PkiId("fixture-activate-" + serial),
+                        "issuer-fixture", policy, target, store.signingNow(), true);
+                store.activateRootCandidate(transition.transitionId(), expected, activation);
+            }
+        }
     }
 
     private static DomainCommandEncoding.Decoded command(PkiStore store, PkiId operationId) {
