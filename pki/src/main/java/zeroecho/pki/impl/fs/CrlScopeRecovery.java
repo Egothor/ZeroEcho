@@ -203,6 +203,11 @@ final class CrlScopeRecovery {
             throws IOException {
         SignWorkflowStore.OuterCommand outer = workflow.envelope().outer().orElseThrow();
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command());
+        if (outer.kind() == DomainContinuationStore.Kind.ISSUANCE && command.operation().equals(
+                zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+            validateManagedOcspCommand(store, workflow, owner, reservation, signing, command);
+            return;
+        }
         boolean issuance = outer.kind() == DomainContinuationStore.Kind.ISSUANCE;
         boolean root = !issuance && root(command);
         PkiId authority = new PkiId(command.field(root ? 13 : issuance ? 0 : 1));
@@ -214,6 +219,79 @@ final class CrlScopeRecovery {
                 "Retained signing reservation differs from its accepted command");
         if (root) { validateRootCommand(store, workflow, owner, reservation, command, authority); }
         else { validateIssuerCommand(store, workflow, reservation, command, authority, issuance); }
+    }
+
+    private static void validateManagedOcspCommand(FilesystemPkiStore store, SignWorkflowStore.Workflow workflow,
+            CrlScopeOwner owner, ScopeSerialReservation reservation, ScopeSerialReservation.SigningOwner signing,
+            DomainCommandEncoding.Decoded decoded) throws IOException {
+        var command = new zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand(decoded.fields());
+        var envelope = workflow.envelope();
+        var domain = store.getDomainContinuation(workflow.operationId()).orElseThrow();
+        var authority = new PkiId(decoded.field(1));
+        var generation = store.getIssuerGeneration(new PkiId(decoded.field(2))).orElseThrow();
+        var path = store.getIssuerChainPath(new PkiId(decoded.field(4))).orElseThrow();
+        var binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow();
+        var issuer = store.getCredential(generation.credentialId()).orElseThrow();
+        var issuerCertificate = store.certificateHolder(issuer);
+        var capturedScope = CrlScope.of(issuerCertificate.getSubjectX500Principal().getEncoded(), issuerCertificate.getPublicKey().getEncoded());
+        require(owner.authorityId().equals(authority) && owner.scope().equals(capturedScope) && reservation.scope().equals(capturedScope)
+                && envelope.fairnessAuthorityId().equals(authority) && authority.equals(generation.authorityId())
+                && authority.equals(path.authorityId()) && path.issuerId().equals(generation.issuerId())
+                && path.orderedCredentialIds().getFirst().equals(generation.credentialId())
+                && path.pathCommitment().equals(decoded.field(5)) && generation.credentialId().value().equals(decoded.field(3))
+                && binding.commitment().equals(decoded.field(14)) && binding.primary().keyRef().equals(envelope.keyRef())
+                && binding.primary().signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())
+                && envelope.outer().orElseThrow().commandCommitment().equals("domain:v1:" + signing.commandCommitment())
+                && envelope.candidate().sha256().equals(decoded.field(16))
+                && reservation.serial().toString().equals(decoded.field(24)),
+                "Retained responder reservation differs from its accepted command");
+        if (domain.state() == DomainContinuationStore.State.FAILED || domain.state() == DomainContinuationStore.State.EXPIRED) {
+            require(domain.result().isEmpty() && domain.signingContent().isEmpty(), "Terminal responder payload metadata differs");
+            zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope, SignWorkflowStore.SubjectKeyRole.PRIMARY);
+            zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope, SignWorkflowStore.SubjectKeyRole.ALTERNATIVE);
+            return;
+        }
+        byte[] tbs;
+        java.security.cert.X509Certificate candidate;
+        try {
+            if (domain.result().isPresent()) {
+                var result = domain.result().orElseThrow();
+                require(domain.state() == DomainContinuationStore.State.COMPLETED
+                        && result.encoding() == zeroecho.pki.api.Encoding.DER && result.byteLength() <= 1_048_576,
+                        "Retained responder result differs");
+                candidate = zeroecho.pkix.Pkix.parseCertificate(result.bytes());
+                tbs = candidate.getTBSCertificate();
+                require(workflow.result().isPresent() && java.util.Arrays.equals(result.bytes(),
+                        zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, workflow.result().orElseThrow().bytes(), false)),
+                        "Retained responder signature differs");
+            } else {
+                try (var content = store.stagedContent().openContent(envelope.candidate()); var input = content.openStream()) {
+                    tbs = input.readNBytes(1_048_577);
+                    require(tbs.length <= 1_048_576 && input.read() == -1, "Retained responder candidate exceeds its bound");
+                }
+                candidate = zeroecho.pkix.Pkix.parseCertificate(zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, new byte[]{0}, false));
+            }
+            var scope = CrlScope.of(issuerCertificate.getSubjectX500Principal().getEncoded(),
+                    issuerCertificate.getPublicKey().getEncoded());
+            require(owner.authorityId().equals(authority) && owner.scope().equals(scope) && reservation.scope().equals(scope)
+                    && envelope.fairnessAuthorityId().equals(authority) && authority.equals(generation.authorityId())
+                    && authority.equals(path.authorityId()) && path.issuerId().equals(generation.issuerId())
+                    && path.pathCommitment().equals(decoded.field(5)) && generation.credentialId().value().equals(decoded.field(3))
+                    && binding.commitment().equals(decoded.field(14)) && binding.primary().keyRef().equals(envelope.keyRef())
+                    && binding.primary().signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())
+                    && envelope.outer().orElseThrow().commandCommitment().equals("domain:v1:" + signing.commandCommitment())
+                    && sha256(tbs).equals(decoded.field(16)) && envelope.candidate().sha256().equals(decoded.field(16))
+                    && tbs.length == envelope.candidate().length() && reservation.serial().equals(candidate.getSerialNumber())
+                    && candidate.getSerialNumber().toString().equals(decoded.field(24))
+                    && candidate.getIssuerX500Principal().equals(issuerCertificate.getSubjectX500Principal())
+                    && candidate.getNotBefore().toInstant().equals(java.time.Instant.parse(decoded.field(10)))
+                    && candidate.getNotAfter().toInstant().equals(java.time.Instant.parse(decoded.field(11)))
+                    && sha256(zeroecho.pkix.Pkix.subjectPublicKeyInfo(candidate))
+                        .equals(command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256()),
+                    "Retained responder reservation differs from its accepted command");
+        } catch (java.security.cert.CertificateEncodingException invalid) {
+            throw invalid("Retained responder candidate is invalid");
+        }
     }
 
     private static void validateRetainedRootCandidate(FilesystemPkiStore store,

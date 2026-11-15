@@ -232,7 +232,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         Optional<SignWorkflowStore.CaSubjectProofStep> proofStep = restoreProof(request.proofStep());
         Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProof = restoreProof(request.alternativeProofStep());
         boolean intermediate = zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(
-                zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command()));
+                zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command()))
+                || zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command())
+                    .equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION);
         if (intermediate != proofStep.isPresent()) {
             throw new IllegalArgumentException("Intermediate signing requires its internal proof candidate");
         }
@@ -248,8 +250,14 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
         if (intermediate) {
             SignWorkflowStore.AcceptanceEnvelope envelope = SignWorkflowStore.AcceptanceEnvelope.from(command);
-            zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireEnvelope(envelope);
-            try { zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope); }
+            boolean responder = zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.supports(envelope);
+            if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope,
+                    SignWorkflowStore.SubjectKeyRole.PRIMARY);
+            else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireEnvelope(envelope);
+            try {
+                if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope);
+                else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope);
+            }
             catch (IOException failure) { throw new PkiException("CA proof candidate validation failed", failure); }
         }
         return new DefaultPreparedSigningRequest(metadata, candidate, receipt(command), preparedOwner, paired,

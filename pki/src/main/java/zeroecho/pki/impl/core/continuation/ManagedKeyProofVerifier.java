@@ -107,16 +107,19 @@ final class ManagedKeyProofVerifier {
         }
         var role = workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
                 ? SignWorkflowStore.SubjectKeyRole.ALTERNATIVE : SignWorkflowStore.SubjectKeyRole.PRIMARY;
-        DomainCommandEncoding.Decoded command = CaSubjectProofBindings.requireEnvelope(workflow.envelope(), role);
+        boolean responder = OcspResponderSubjectProofBindings.supports(workflow.envelope());
+        DomainCommandEncoding.Decoded command = responder ? OcspResponderSubjectProofBindings.requireEnvelope(workflow.envelope(), role)
+                : CaSubjectProofBindings.requireEnvelope(workflow.envelope(), role);
         SignWorkflowStore.CaSubjectProofStep step = (role == SignWorkflowStore.SubjectKeyRole.PRIMARY
                 ? workflow.envelope().proofStep() : workflow.envelope().alternativeProofStep()).orElseThrow();
         EncodedObject signature = workflow.result().orElseThrow();
         if (signature.encoding() != Encoding.BINARY || signature.byteLength() > 1_048_576) { throw invalid(); }
         FullCrlSigningCommand.requireAdmission(step.algorithmId(), step.challenge().length(), pureEdDsaMaximum);
         try {
-            CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), workflow.envelope());
+            if (responder) OcspResponderSubjectProofBindings.requireLiveCandidates(store.stagedContent(), workflow.envelope());
+            else CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), workflow.envelope());
             byte[] challenge = ManagedKeyProofBindings.readChallenge(store.stagedContent(), step.operationId(), workflow.deadline(),
-                    Optional.of(CaSubjectProofBindings.context(workflow.envelope(), role)), command, step.challenge());
+                    responder ? Optional.empty() : Optional.of(CaSubjectProofBindings.context(workflow.envelope(), role)), command, step.challenge());
             verify(command, challenge, signature);
         } catch (IOException | GeneralSecurityException failure) {
             throw new PkiException("Managed key proof verification is temporarily unavailable", failure);

@@ -167,7 +167,8 @@ public final class HttpOperationCodec {
                         : "Authority-scoped operation requires authorityId");
             }
             validateAuthority(signing, authority);
-            scope = new Permission.Scope(realmId, authority, Optional.empty(), profile(signing));
+            scope = new Permission.Scope(realmId, authority,
+                    signing instanceof PkiSigningOperation.IssueOcspResponderCertificate provision ? Optional.of(provision.request().intent().expectedIssuerId()) : Optional.empty(), profile(signing));
             objectId = objectId(signing);
         } else {
             ServerControlOperation control = control(operationId, arguments, realmId, authority, descriptors);
@@ -192,6 +193,11 @@ public final class HttpOperationCodec {
                 yield new PkiSigningOperation.CreateAuthority(new FormatId(fields.text("formatId")),
                         new SubjectRef(fields.text("subjectRef")), fields.text("profileId"),
                         new KeyRef(fields.text("keyRef")),fields.optionalText("signatureAlgorithmId"));
+            }
+            case PkiSigningOperation.IssueOcspResponderCertificate.NAME -> {
+                var input = zeroecho.pki.server.OcspProvisioningProjection.decode(fields.fields);
+                fields.consumed.addAll(fields.fields.keySet());
+                yield new PkiSigningOperation.IssueOcspResponderCertificate(input);
             }
             case PkiSigningOperation.IssueCredential.NAME -> {
                 fields.exact("issuerCaId", "requestId", "profileId");
@@ -244,6 +250,7 @@ public final class HttpOperationCodec {
 
     private static void validateAuthority(PkiSigningOperation operation, Optional<PkiId> authority) {
         Optional<PkiId> embedded = switch (operation) {
+            case PkiSigningOperation.IssueOcspResponderCertificate value -> Optional.of(value.request().authorityId());
             case PkiSigningOperation.IssueCredential value -> Optional.of(value.issuerCaId());
             case PkiSigningOperation.GenerateStatus value -> Optional.of(value.issuerCaId());
             case PkiSigningOperation.RolloverCaCertificate value -> Optional.of(value.caId());
@@ -259,6 +266,7 @@ public final class HttpOperationCodec {
 
     private static Optional<String> profile(PkiSigningOperation operation) {
         return switch (operation) {
+            case PkiSigningOperation.IssueOcspResponderCertificate value -> Optional.of(value.request().intent().expectedProfile().profileId());
             case PkiSigningOperation.IssueCredential value -> Optional.of(value.profileId());
             case PkiSigningOperation.ReplaceCredential value -> Optional.of(value.profileId());
             case PkiSigningOperation.CreateIntermediate value -> Optional.of(value.profileId());
@@ -801,13 +809,14 @@ public final class HttpOperationCodec {
                         "signatureBindingId", "signatureBindingCommitment", "responderIdForm",
                         "responseValidityMillis", "noncePolicy", "maximumNonceBytes", "acceptedHashes",
                         "maximumRequestBytes", "maximumEntries", "cacheLifetimeMillis",
-                        "requestAuthenticationMode", "requesterTrustPolicy"));
+                        "requestAuthenticationMode", "requesterTrustPolicy", "hybridSdk"));
                 OcspResponderService.RequestAuthenticationMode authenticationMode =
                         OcspResponderService.RequestAuthenticationMode.valueOf(
                                 fields.text("requestAuthenticationMode"));
                 Optional<OcspResponderService.RequesterTrustPolicy> trustPolicy = fields.contains(
                         "requesterTrustPolicy") ? Optional.of(requesterTrustPolicy(
                                 fields.object("requesterTrustPolicy"))) : Optional.empty();
+                Optional<OcspResponderService.SdkConfiguration> sdk=fields.contains("hybridSdk")?Optional.of(ocspSdk(fields.object("hybridSdk"))):Optional.empty();
                 yield new ServerControlOperation.RegisterOcspResponder(new OcspResponderService.Registration(
                         fields.text("responderId"), fields.text("alias"),
                         fields.pkiId("authorityId"), fields.pkiId("issuerId"),
@@ -822,7 +831,7 @@ public final class HttpOperationCodec {
                         fields.enumSet("acceptedHashes", OcspResponseService.CertIdHash.class),
                         fields.integer("maximumRequestBytes"), fields.integer("maximumEntries"),
                         Duration.ofMillis(fields.longValue("cacheLifetimeMillis")), authenticationMode,
-                        trustPolicy));
+                        trustPolicy,sdk));
             }
             case ServerControlOperation.InspectOcspResponder.NAME -> {
                 fields.exact("responderId"); yield new ServerControlOperation.InspectOcspResponder(fields.text("responderId"));
@@ -1239,6 +1248,13 @@ public final class HttpOperationCodec {
         } finally {
             Arrays.fill(decoded, (byte) 0);
         }
+    }
+
+    private static OcspResponderService.SdkConfiguration ocspSdk(Fields fields) {
+        fields.allowed(Set.of("profile","alternativeKeyRef","alternativeSignatureAlgorithm","alternativeSignatureBindingId","alternativeSignatureBindingCommitment"));
+        var value=new OcspResponderService.SdkConfiguration(fields.text("profile"),new KeyRef(fields.text("alternativeKeyRef")),
+                fields.text("alternativeSignatureAlgorithm"),fields.optionalText("alternativeSignatureBindingId"),fields.text("alternativeSignatureBindingCommitment"));
+        fields.complete();return value;
     }
 
     private static Optional<zeroecho.pki.api.Validity> requestedValidity(Fields fields) {

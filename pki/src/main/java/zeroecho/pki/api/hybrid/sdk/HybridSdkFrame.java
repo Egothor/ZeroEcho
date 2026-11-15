@@ -48,7 +48,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 
-/** Strict immutable F1/F2/F3/F6/F7/F8/F9 registry of zeroecho-hybrid-sdk-v1. */
+/** Strict immutable F1/F2/F3/F4/F5/F6/F7/F8/F9 registry of zeroecho-hybrid-sdk-v1. */
 public final class HybridSdkFrame {
     private static final byte[] DOMAIN = "ZeroEcho-Hybrid-SDK".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] PRIMARY_ALGORITHM = HexFormat.of().parseHex("300a06082a8648ce3d040303");
@@ -60,7 +60,7 @@ public final class HybridSdkFrame {
 
     /**
      * Creates one validated canonical frame.
-     * @param kind registered frame kind (1, 2, 3, 6, 7, 8 or 9)
+     * @param kind registered frame kind (1 through 9)
      * @param fields exact contiguous tag registry with borrowed values
      * @throws IllegalArgumentException for malformed values or exceeded bounds
      */
@@ -170,6 +170,7 @@ public final class HybridSdkFrame {
                 for (int tag = 11; tag <= 14; tag++) length(tag, 64); length(17, 64);
                 if (!Arrays.equals(field(15), PRIMARY_ALGORITHM) || !Arrays.equals(field(16), ALTERNATIVE_ALGORITHM)) throw invalid();
             }
+            case 4, 5 -> requireOcspEvidenceValues();
             case 3 -> { length(1, 64); length(2, 64); length(5, 64); requirePrimaryProofSyntax(field(3)); length(4, 4627); }
             case 6 -> {
                 identifier(1); length(3, 64);
@@ -200,6 +201,58 @@ public final class HybridSdkFrame {
             }
             default -> throw invalid();
         }
+    }
+    private void requireOcspEvidenceValues() {
+        if (!text(1).equals("zeroecho-hybrid-sdk-v1")) throw invalid(); identifier(2); requireOrigin(text(3)); length(4, 32);
+        for (int tag = 5; tag <= 8; tag++) length(tag, 64);
+        for (int tag = 9; tag <= 11; tag++) identifier(tag);
+        if (!text(12).matches("(?:sha256:)?[0-9a-f]{64}") || !text(13).matches("[0-9a-f]{64}")) throw invalid();
+        var roles = HybridSdkValue.decode(field(14)).objectFields();
+        if (!roles.keySet().equals(java.util.Set.of("primary", "alternative"))) throw invalid();
+        requireOcspRole(roles.get("primary"), PRIMARY_ALGORITHM); requireOcspRole(roles.get("alternative"), ALTERNATIVE_ALGORITHM);
+        long produced = time(15), update = time(16), next = time(17), issued = time(18), expires = time(19);
+        if (update > produced || next <= update || issued < produced || expires <= issued || expires > next
+                || issued > Long.MAX_VALUE - 120 || expires > issued + 120) throw invalid();
+        var nonce = HybridSdkValue.decode(field(20)).objectFields();
+        if (!nonce.keySet().equals(java.util.Set.of("present", "value"))) throw invalid();
+        byte[] present = nonce.get("present").encode(), value = nonce.get("value").encode();
+        if ((!Arrays.equals(present, HybridSdkValue.bool(true).encode()) && !Arrays.equals(present, HybridSdkValue.bool(false).encode()))
+                || value[0] != 4 || Arrays.equals(present, HybridSdkValue.bool(false).encode()) && value.length != 5) throw invalid();
+        var statuses = HybridSdkValue.decode(field(21)).listValues();
+        if (statuses.isEmpty() || statuses.size() > 819) throw invalid();
+        var ids = new java.util.HashSet<String>();
+        for (var status : statuses) {
+            var entry = status.objectFields();
+            if (!entry.keySet().equals(java.util.Set.of("certIdDer", "status", "revocationTime", "reason"))) throw invalid();
+            byte[] cert = entry.get("certIdDer").encode(); if (cert[0] != 4 || cert.length <= 5 || !ids.add(ocspCertIdIdentity(Arrays.copyOfRange(cert, 5, cert.length)))) throw invalid();
+            String state = entry.get("status").textValue(), revoked = entry.get("revocationTime").textValue(); long reason = entry.get("reason").integerValue();
+            if (!java.util.Set.of("GOOD", "REVOKED", "UNKNOWN").contains(state)) throw invalid();
+            if (state.equals("REVOKED")) {
+                var instant = java.time.Instant.parse(revoked);
+                if (!instant.toString().equals(revoked) || instant.getNano() != 0 || reason < -1 || reason > 10 || reason == 7) throw invalid();
+            } else if (!revoked.isEmpty() || reason != -1) throw invalid();
+        }
+    }
+    private static String ocspCertIdIdentity(byte[] bytes) {
+        try {
+            var id = org.bouncycastle.asn1.ocsp.CertID.getInstance(bytes);
+            if (!Arrays.equals(bytes, id.getEncoded("DER")) || bytes.length > 108) throw invalid();
+            var algorithm = id.getHashAlgorithm();
+            int length = switch (algorithm.getAlgorithm().getId()) { case "1.3.14.3.2.26" -> 20; case "2.16.840.1.101.3.4.2.1" -> 32; default -> throw invalid(); };
+            if (algorithm.getParameters() != null && !(algorithm.getParameters() instanceof org.bouncycastle.asn1.ASN1Null)
+                    || id.getIssuerNameHash().getOctets().length != length || id.getIssuerKeyHash().getOctets().length != length
+                    || id.getSerialNumber().getValue().signum() <= 0 || id.getSerialNumber().getValue().bitLength() > 160) throw invalid();
+            return algorithm.getAlgorithm().getId() + ":" + HexFormat.of().formatHex(id.getIssuerNameHash().getOctets())
+                    + ":" + HexFormat.of().formatHex(id.getIssuerKeyHash().getOctets()) + ":" + id.getSerialNumber().getValue();
+        } catch (IOException malformed) { throw invalid(); }
+    }
+    static void requireOcspRole(HybridSdkValue value, byte[] algorithm) {
+        var role = value.objectFields();
+        if (!role.keySet().equals(java.util.Set.of("spki", "publicKeyAlgorithm", "signatureAlgorithm", "algorithmIdentifier"))) throw invalid();
+        if (zeroecho.core.spec.AlgorithmIdentity.parse(role.get("publicKeyAlgorithm").textValue(), java.util.List.of()).kind() != zeroecho.core.spec.AlgorithmIdentity.Kind.PUBLIC_KEY
+                || zeroecho.core.spec.AlgorithmIdentity.parse(role.get("signatureAlgorithm").textValue(), java.util.List.of()).kind() != zeroecho.core.spec.AlgorithmIdentity.Kind.SIGNATURE) throw invalid();
+        if (!Arrays.equals(role.get("algorithmIdentifier").encode(), HybridSdkValue.bytes(algorithm).encode())) throw invalid();
+        byte[] spki = role.get("spki").encode(); if (spki[0] != 4 || spki.length <= 5) throw invalid();
     }
     private void requireEnrollmentAuthenticationValues() {
         String[] keys;
@@ -292,7 +345,7 @@ public final class HybridSdkFrame {
             if (input.available() != 0) throw invalid();
         } catch (IOException malformed) { throw invalid(); }
     }
-    private static void requirePrimaryProofSyntax(byte[] bytes) {
+    static void requirePrimaryProofSyntax(byte[] bytes) {
         if (bytes.length < 8 || bytes.length > 104) throw invalid();
         try {
             new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(bytes, 104);
@@ -319,6 +372,6 @@ public final class HybridSdkFrame {
     private void identifier(int tag) { HybridSdkValue.requireIdentifier(text(tag)); }
     private String text(int tag) { return HybridSdkValue.text(field(tag)); }
     private void length(int tag, int required) { if (field(tag).length != required) throw invalid(); }
-    private static int count(int kind) { return switch (kind) { case 1, 2, 7 -> 17; case 3, 6, 8, 9 -> 5; default -> throw invalid(); }; }
+    private static int count(int kind) { return switch (kind) { case 1, 2, 7 -> 17; case 4, 5 -> 21; case 3, 6, 8, 9 -> 5; default -> throw invalid(); }; }
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("SDK_FRAME_INVALID"); }
 }

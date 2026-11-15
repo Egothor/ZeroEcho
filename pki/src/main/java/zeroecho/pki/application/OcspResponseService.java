@@ -69,6 +69,140 @@ public interface OcspResponseService {
         throw new UnsupportedOperationException("Pure OCSP signing metadata validation unavailable");
     }
 
+    /**
+     * Frozen server-managed responder role; this value grants no signing authority.
+     * @param keyRef existing nonexportable managed key
+     * @param signatureAlgorithm exact canonical outgoing signature identity
+     * @param signatureBindingId optional configured binding; must be exactly default-equivalent because raw signing carries no binding selector
+     */
+    record SdkSigningRole(KeyRef keyRef, String signatureAlgorithm, Optional<String> signatureBindingId) {
+        /** Validates complete immutable role selection. */
+        public SdkSigningRole {
+            Objects.requireNonNull(keyRef, "keyRef"); Objects.requireNonNull(signatureBindingId, "signatureBindingId");
+            if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) throw new IllegalArgumentException("SDK OCSP role invalid");
+        }
+    }
+
+    /**
+     * Trusted native-service responder authorization captured before a query. No caller JSON
+     * or bundle may create this authority. The service verifies immutable store coordinates,
+     * public key metadata, delegation and both role plans; it never follows today's CA head.
+     * @param realmId configured trusted realm
+     * @param canonicalOrigin explicitly configured HTTPS origin
+     * @param authorityId exact logical issuer CA
+     * @param issuerId immutable issuer generation
+     * @param issuerCredentialId immutable issuer certificate
+     * @param chainPathId immutable selected issuer path
+     * @param pathCommitment full path commitment
+     * @param issuerBindingCommitment exact raw lowercase issuer binding SHA256
+     * @param responderCredentialId directly delegated hybrid OCSP-signing leaf
+     * @param responseChain exact responder followed by issuer path, at most 32 credentials
+     * @param primary dedicated managed P384 responder role
+     * @param alternative dedicated managed ML-DSA-87 responder role
+     * @param issuerCertificateBaselines independently frozen encoding baseline per issuer-path certificate
+     * @param responderId existing native responder-ID representation
+     */
+    record SdkResponderBinding(String realmId, String canonicalOrigin, PkiId authorityId, PkiId issuerId,
+            PkiId issuerCredentialId, PkiId chainPathId, String pathCommitment, String issuerBindingCommitment,
+            PkiId responderCredentialId, List<PkiId> responseChain, SdkSigningRole primary, SdkSigningRole alternative,
+            List<zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline> issuerCertificateBaselines, ResponderId responderId) {
+        /** Owns bounded immutable identifiers and rejects incomplete role/path coordinates. */
+        public SdkResponderBinding {
+            if (realmId == null || realmId.isBlank()) throw new IllegalArgumentException("SDK OCSP realm invalid");
+            zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.requireOrigin(canonicalOrigin);
+            Objects.requireNonNull(authorityId, "authorityId"); Objects.requireNonNull(issuerId, "issuerId"); Objects.requireNonNull(issuerCredentialId, "issuerCredentialId");
+            Objects.requireNonNull(chainPathId, "chainPathId"); Objects.requireNonNull(responderCredentialId, "responderCredentialId");
+            if (pathCommitment == null || !pathCommitment.matches("[0-9a-f]{64}") || issuerBindingCommitment == null || !issuerBindingCommitment.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("SDK OCSP commitment invalid");
+            responseChain = List.copyOf(responseChain); issuerCertificateBaselines = List.copyOf(issuerCertificateBaselines);
+            Objects.requireNonNull(primary, "primary"); Objects.requireNonNull(alternative, "alternative"); Objects.requireNonNull(responderId, "responderId");
+            if (responseChain.size() < 2 || responseChain.size() > 32 || new java.util.HashSet<>(responseChain).size() != responseChain.size()
+                    || !responseChain.getFirst().equals(responderCredentialId) || !responseChain.get(1).equals(issuerCredentialId)
+                    || issuerCertificateBaselines.size() != responseChain.size() - 1 || primary.keyRef().equals(alternative.keyRef())) throw new IllegalArgumentException("SDK OCSP chain/roles invalid");
+        }
+    }
+
+    /**
+     * Authorized native query with independent fresh SDK nonce. Times and statuses are service-owned.
+     * @param responder trusted frozen responder authorization
+     * @param originalRequestDer exact native request, at most one MiB
+     * @param clientNonce fresh locally generated 32-byte SDK nonce, separate from native nonce
+     * @param nextUpdateAfter positive whole-second native response interval; evidence life is at most 120 seconds
+     */
+    record SdkCommand(SdkResponderBinding responder, byte[] originalRequestDer, byte[] clientNonce, java.time.Duration nextUpdateAfter) {
+        /** Defensively owns bounded native query values. */
+        public SdkCommand {
+            Objects.requireNonNull(responder, "responder"); Objects.requireNonNull(originalRequestDer, "originalRequestDer"); Objects.requireNonNull(clientNonce, "clientNonce");
+            Objects.requireNonNull(nextUpdateAfter, "nextUpdateAfter");
+            if (originalRequestDer.length == 0 || originalRequestDer.length > 1048576 || clientNonce.length != 32
+                    || nextUpdateAfter.isNegative() || nextUpdateAfter.isZero() || nextUpdateAfter.getNano() != 0) throw new IllegalArgumentException("SDK OCSP query invalid");
+            originalRequestDer = originalRequestDer.clone(); clientNonce = clientNonce.clone();
+        }
+        /** @return independent original native request bytes */
+        @Override public byte[] originalRequestDer() { return originalRequestDer.clone(); }
+        /** @return independent fresh SDK nonce bytes */
+        @Override public byte[] clientNonce() { return clientNonce.clone(); }
+    }
+
+    /**
+     * Produces a complete native response and separate two-role SDK evidence from one status view.
+     * No response DER, status or production time is accepted from the caller. No partial bundle
+     * is returned on cancellation, pending or uncertain signing custody.
+     * @param command genuine authorized native query and immutable responder binding
+     * @param cancellation originating cancellation signal
+     * @return self-verified complete evidence bundle
+     * @throws UnsupportedOperationException if SDK response construction is unavailable
+     * @throws SigningPendingException for inconclusive bounded signing
+     * @throws PkiException for invalid binding, bounds or signatures
+     */
+    default zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence respondSdk(SdkCommand command, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK OCSP evidence unavailable");
+    }
+
+    /**
+     * Validates trusted registration coordinates and existing managed responder roles without a listener origin.
+     * Performs no signing, status lookup or durable mutation. CA key-reference/SPKI collisions and
+     * managed custody are checked; no exhaustive historical client-key-purpose ledger is claimed.
+     * @param authorityId authorized logical issuer CA
+     * @param issuerId exact immutable issuer generation
+     * @param responderCredentialId directly delegated responder credential
+     * @param chainPathId exact immutable issuer path
+     * @param primary existing managed primary role
+     * @param alternative existing managed alternative role
+     * @param responderId native responder identity representation
+     * @param cancellation originating cancellation
+     * @throws UnsupportedOperationException if SDK metadata validation is unavailable
+     * @throws PkiException for inconsistent or unauthorized public evidence
+     */
+    default void validateSdkResponderMetadata(PkiId authorityId, PkiId issuerId, PkiId responderCredentialId,
+            PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative, ResponderId responderId, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK OCSP metadata validation unavailable");
+    }
+
+    /**
+     * Captures a validated SDK responder binding from authoritative immutable store evidence.
+     * Caller authorization and realm/origin configuration remain the trusted native service's duty.
+     * This pure operation derives chain, binding commitment and explicit persisted baselines;
+     * it signs nothing, opens no status snapshot, changes no metadata and never follows the CA head.
+     * @param trustedRealm independently configured realm
+     * @param canonicalOrigin independently configured listener origin
+     * @param authorityId authorized logical issuer CA
+     * @param issuerId exact immutable issuer generation
+     * @param responderCredentialId directly delegated responder credential
+     * @param chainPathId exact immutable issuer path
+     * @param primary existing managed primary role
+     * @param alternative existing managed alternative role
+     * @param responderId native responder identity representation
+     * @param cancellation originating cancellation
+     * @return complete immutable binding derived from the owned store and public provider metadata
+     * @throws UnsupportedOperationException if authoritative capture is unavailable
+     * @throws PkiException for inconsistent or unauthorized public evidence
+     */
+    default SdkResponderBinding captureSdkResponderBinding(String trustedRealm, String canonicalOrigin, PkiId authorityId,
+            PkiId issuerId, PkiId responderCredentialId, PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative,
+            ResponderId responderId, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("SDK OCSP binding capture unavailable");
+    }
+
     /** Supported RFC CertID digest identities. */
     enum CertIdHash {
         /** SHA-1 CertID digest used by the mandatory OCSP interoperability profile. */

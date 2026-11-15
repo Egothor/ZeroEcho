@@ -1027,4 +1027,65 @@ public interface SemanticSigningService {
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         throw new UnsupportedOperationException("Correlated SDK preparation unavailable");
     }
+
+    /**
+     * Prepares a canonical managed responder issuance; default support is unavailable.
+     * @param access authorized caller @param request frozen managed responder selection
+     * @param evidence trusted execution evidence @param cancellation cancellation
+     * @return retained existing operation or exclusively owned candidate
+     * @throws UnsupportedOperationException if managed responder issuance is unavailable
+     */
+    default CorrelatedIssuancePreparation prepareManagedOcspResponder(AccessContext access,
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Managed OCSP responder issuance unavailable");
+    }
+
+    /**
+     * Validates a managed responder target before approval without signing, allocating a serial or staging content.
+     * It grants no permission; the caller must already have issuer/profile authorization.
+     * @param access authorized caller @param request exact selected target @param evidence trusted execution evidence
+     * @param cancellation cooperative cancellation @throws RuntimeException if policy or frozen selection differs
+     */
+    default void validateManagedOcspResponder(AccessContext access,
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        throw new UnsupportedOperationException("Managed OCSP responder validation unavailable");
+    }
+    /**
+     * Observes canonical managed responder issuance without signing.
+     * @param request exact managed responder target @return retained canonical operation
+     * @throws UnsupportedOperationException if unavailable
+     */
+    default Optional<SemanticSigningOperation> findManagedOcspResponder(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        throw new UnsupportedOperationException("Managed OCSP responder lookup unavailable");
+    }
+    /**
+     * Observes the authoritative acceptance receipt after exact canonical target validation.
+     * @param request exact managed responder target @return receipt of retained accepted work, or empty
+     * @throws UnsupportedOperationException if managed responder provisioning is unavailable
+     */
+    default Optional<zeroecho.pki.api.signing.SigningAcceptanceReceipt> findManagedOcspResponderReceipt(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        throw new UnsupportedOperationException("Managed OCSP responder receipt lookup unavailable");
+    }
+    /**
+     * Resolves the canonical provisioning binding and actual public key digests without signing.
+     * @param request exact managed responder target @return canonical retained selection and both public SPKI digests
+     * @throws UnsupportedOperationException if managed responder provisioning is unavailable
+     */
+    default zeroecho.pki.api.issuance.ManagedOcspResponderProvisioningBinding managedOcspResponderProvisioningBinding(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        throw new UnsupportedOperationException("Managed OCSP responder binding unavailable");
+    }
+    /**
+     * Derives the retained immutable binding using actual managed public keys.
+     * @param request exact managed responder target @return stable core binding
+     * @throws UnsupportedOperationException if unavailable
+     */
+    default RetainedIssuanceBinding managedOcspResponderBinding(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        throw new UnsupportedOperationException("Managed OCSP responder binding unavailable");
+    }
 }

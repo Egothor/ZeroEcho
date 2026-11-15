@@ -106,7 +106,7 @@ final class OcspHttpHandler implements HttpHandler {
     }
 
     @Override public void handle(HttpExchange exchange) throws IOException {
-        String requestId = "unavailable-request"; boolean admitted = false;
+        String requestId = "unavailable-request"; boolean admitted = false; boolean sdkExchange=false;
         OcspResponderService.Responder auditedResponder = null;
         Optional<String> transportPrincipal = Optional.empty();
         Optional<String> requesterPrincipal = Optional.empty();
@@ -115,17 +115,25 @@ final class OcspHttpHandler implements HttpHandler {
             if (!ready.getAsBoolean()) { transportFailure(exchange, 503); return; }
             requireHeadersBounded(exchange.getRequestHeaders());
             transportPrincipal = validateTransport(exchange, requestId);
-            Route route = route(exchange);
+            Route route = route(exchange);sdkExchange=route.sdk();
             if (!runtime.tryAdmit()) { audit(requestId, Optional.empty(), transportPrincipal, Optional.empty(),
                     "OVERLOAD"); transportFailure(exchange, 429); return; }
             admitted = true;
             OcspResponderService.Responder responder = activeResponder(route.alias());
             auditedResponder = responder;
+            if(route.sdk() && responder.hybridSdk().isEmpty())throw new UnknownAlias();
+            if(route.capability()) {
+                sendSdk(exchange,SdkOcspHttpCodec.capability(configuration.hybridSdk().orElseThrow().canonicalOrigin(),configuration.maximumBodyBytes(),
+                        Math.min(configuration.maximumBodyBytes(),responder.maximumRequestBytes()),Math.min(819,responder.maximumEntries())),requestId);
+                return;
+            }
             audit(requestId, Optional.of(responder), transportPrincipal, Optional.empty(), "ACCEPTED");
             int maximumRequestBytes = Math.min(configuration.maximumBodyBytes(), responder.maximumRequestBytes());
-            byte[] request = route.encoded().orElseGet(() -> read(exchange, maximumRequestBytes));
+            SdkOcspHttpCodec.Query sdkQuery=route.sdk()?SdkOcspHttpCodec.decode(read(exchange,configuration.maximumBodyBytes()),
+                    configuration.maximumBodyBytes(),maximumRequestBytes):null;
+            byte[] request = route.sdk()?sdkQuery.requestDer():route.encoded().orElseGet(() -> read(exchange, maximumRequestBytes));
             if (request.length > maximumRequestBytes) { transportFailure(exchange, 413); return; }
-            OcspRequestParser.Parsed parsed = OcspRequestParser.parse(request, responder.maximumEntries(),
+            OcspRequestParser.Parsed parsed = OcspRequestParser.parse(request, route.sdk()?Math.min(819,responder.maximumEntries()):responder.maximumEntries(),
                     responder.acceptedHashes(), responder.maximumNonceBytes(),
                     responder.requesterTrustPolicy().map(OcspResponderService.RequesterTrustPolicy
                             ::maximumSignerCertificates).orElse(16),
@@ -133,6 +141,12 @@ final class OcspHttpHandler implements HttpHandler {
                             ::maximumSignerChainBytes).orElse(maximumRequestBytes));
             validateNonce(responder.noncePolicy(), parsed.nonce());
             requireAuthenticationMode(responder.requestAuthenticationMode(), parsed.signedRequest());
+            if(route.sdk()) {
+                var execution=executeSdk(responder,parsed,sdkQuery);
+                requesterPrincipal=execution.requesterPrincipal();
+                sendSdk(exchange,SdkOcspHttpCodec.encode(execution.evidence()),requestId);
+                audit(requestId,Optional.of(responder),transportPrincipal,requesterPrincipal,"SDK_RESPONDED");return;
+            }
             Execution execution = execute(responder, parsed);
             requesterPrincipal = execution.requesterPrincipal();
             send(exchange, responder, execution.response(), parsed.nonce().isPresent(),
@@ -142,26 +156,23 @@ final class OcspHttpHandler implements HttpHandler {
                     "RESPONDED_GOOD_" + response.goodCount()
                     + "_REVOKED_" + response.revokedCount() + "_UNKNOWN_" + response.unknownCount());
         } catch (SignatureRequired required) { audit(requestId, Optional.ofNullable(auditedResponder),
-                transportPrincipal, requesterPrincipal, "SIGNATURE_REQUIRED"); protocolFailure(exchange,
-                        OCSP_SIG_REQUIRED);
+                transportPrincipal, requesterPrincipal, "SIGNATURE_REQUIRED"); protocolOrSdkFailure(exchange,sdkExchange,OCSP_SIG_REQUIRED,401);
         } catch (OcspRequesterService.UnauthorizedException unauthorized) { audit(requestId,
                 Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
-                "REQUESTER_UNAUTHORIZED_" + unauthorized.classification()); protocolFailure(exchange,
-                        OCSP_UNAUTHORIZED);
+                "REQUESTER_UNAUTHORIZED_" + unauthorized.classification()); protocolOrSdkFailure(exchange,sdkExchange,OCSP_UNAUTHORIZED,403);
         } catch (OcspRequesterService.UnavailableException unavailable) { audit(requestId,
                 Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
-                "REQUESTER_AUTHORITY_UNAVAILABLE"); protocolFailure(exchange, OCSP_TRY_LATER);
+                "REQUESTER_AUTHORITY_UNAVAILABLE"); protocolOrSdkFailure(exchange,sdkExchange,OCSP_TRY_LATER,503);
         } catch (UnknownAlias unavailable) { audit(requestId, Optional.empty(), transportPrincipal, requesterPrincipal, "UNKNOWN_RESPONDER"); transportFailure(exchange, 404);
         } catch (InactiveResponder inactive) { audit(requestId, Optional.empty(), transportPrincipal, requesterPrincipal, "INACTIVE_RESPONDER"); transportFailure(exchange, 503);
         } catch (MethodFailure method) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "METHOD_REJECTED"); transportFailure(exchange, 405);
         } catch (MediaFailure media) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MEDIA_REJECTED"); transportFailure(exchange, 406);
-        } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MALFORMED"); protocolFailure(exchange, OCSP_MALFORMED_REQUEST);
+        } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MALFORMED"); protocolOrSdkFailure(exchange,sdkExchange,OCSP_MALFORMED_REQUEST,400);
         } catch (RejectedExecutionException overload) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "OVERLOAD"); transportFailure(exchange, 429);
         } catch (zeroecho.pki.api.SigningExecutionException signingFailure) { int status = signingFailureStatus(signingFailure); audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, status == 429 ? "OVERLOAD" : "UNAVAILABLE"); transportFailure(exchange, status);
         } catch (OcspResponseService.SigningPendingException pending) { audit(requestId,
                 Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
-                "SIGNING_PENDING"); protocolFailure(exchange,
-                        OCSP_TRY_LATER);
+                "SIGNING_PENDING"); protocolOrSdkFailure(exchange,sdkExchange,OCSP_TRY_LATER,503);
         } catch (TimeoutException deadline) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "DEADLINE"); transportFailure(exchange, 504);
         } catch (RuntimeException failure) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "UNAVAILABLE"); transportFailure(exchange, 503);
         } finally { if (admitted) runtime.releaseAdmission(); exchange.close(); }
@@ -194,17 +205,43 @@ final class OcspHttpHandler implements HttpHandler {
                 parsed.nonce(), parsed.requests());
         ServerRuntime.Submitted<Execution> submitted = runtime.submit(cancellation -> {
             cancellation.throwIfCancelled();
-            Optional<String> requester = parsed.signedRequest().map(value -> requesters.authenticate(responder,
-                    value, parsed.requests()).principalId());
-            cancellation.throwIfCancelled();
-            if (responder.noncePolicy() == OcspResponderService.NoncePolicy.REQUIRED
-                    && !nonceReplay.accept(responder.responderId(), parsed.nonce().orElseThrow(), clock.instant(),
-                            responder.responseValidity())) {
-                throw new IllegalArgumentException("OCSP nonce was already used");
-            }
+            Optional<String> requester = authenticateNative(responder,parsed,cancellation);
             return new Execution(TransportCancellationGateway.respondOcsp(
                     realm.session().ocsp().orElseThrow(), command, cancellation), requester);
         });
+        return await(submitted);
+    }
+
+    private Optional<String> authenticateNative(OcspResponderService.Responder responder,OcspRequestParser.Parsed parsed,
+            zeroecho.core.io.CancellationSignal cancellation) throws java.io.InterruptedIOException {
+        var requester=parsed.signedRequest().map(value->requesters.authenticate(responder,value,parsed.requests()).principalId());
+        cancellation.throwIfCancelled();
+        if(responder.noncePolicy()==OcspResponderService.NoncePolicy.REQUIRED
+                && !nonceReplay.accept(responder.responderId(),parsed.nonce().orElseThrow(),clock.instant(),responder.responseValidity())) {
+            throw new IllegalArgumentException("OCSP nonce was already used");
+        }
+        return requester;
+    }
+
+    private SdkExecution executeSdk(OcspResponderService.Responder responder,OcspRequestParser.Parsed parsed,
+            SdkOcspHttpCodec.Query query) throws TimeoutException {
+        var submitted=runtime.submit(cancellation->{
+            cancellation.throwIfCancelled();
+            var requester=authenticateNative(responder,parsed,cancellation);
+            var sdk=responder.hybridSdk().orElseThrow();
+            var service=realm.session().ocsp().orElseThrow();
+            var binding=service.captureSdkResponderBinding(realm.configuration().realmId().value(),configuration.hybridSdk().orElseThrow().canonicalOrigin(),
+                    responder.authorityId(),responder.issuerId(),responder.responderCredentialId(),responder.chainPathId(),
+                    new OcspResponseService.SdkSigningRole(responder.signingKeyRef(),responder.signatureAlgorithm(),responder.signatureBindingId()),
+                    new OcspResponseService.SdkSigningRole(sdk.alternativeKeyRef(),sdk.alternativeSignatureAlgorithm(),sdk.alternativeSignatureBindingId()),
+                    responder.responderIdForm(),cancellation);
+            return new SdkExecution(TransportCancellationGateway.respondSdkOcsp(service,
+                    new OcspResponseService.SdkCommand(binding,query.requestDer(),query.clientNonce(),responder.responseValidity()),cancellation),requester);
+        });
+        return await(submitted);
+    }
+
+    private <T> T await(ServerRuntime.Submitted<T> submitted) throws TimeoutException {
         try {
             return submitted.future().get(configuration.maximumStreamDuration().toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException failure) {
@@ -270,6 +307,21 @@ final class OcspHttpHandler implements HttpHandler {
         String path = exchange.getRequestURI().getRawPath();
         if (exchange.getRequestURI().getRawQuery() != null || path.indexOf('%') >= 0) throw new IllegalArgumentException();
         String[] part = path.split("/", -1);
+        if(part.length==5 && part[0].isEmpty() && part[1].equals("ocsp") && part[2].matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+                && part[3].equals("hybrid-sdk") && part[4].equals("v1")) {
+            if(configuration.hybridSdk().isEmpty())throw new UnknownAlias();
+            String method=exchange.getRequestMethod();
+            if(!method.equals("GET")&&!method.equals("POST"))throw new MethodFailure();
+            var accept=exchange.getRequestHeaders().get("Accept");
+            if(accept!=null&&(accept.size()!=1||!(accept.getFirst().equals("*/*")||accept.getFirst().equalsIgnoreCase(SdkOcspHttpCodec.MEDIA))))throw new MediaFailure();
+            requireBodyFraming(exchange.getRequestHeaders());
+            if(method.equals("POST")) {
+                var type=exchange.getRequestHeaders().get("Content-Type");
+                if(type==null||type.size()!=1||!type.getFirst().equalsIgnoreCase(SdkOcspHttpCodec.MEDIA))throw new MediaFailure();
+            } else if(exchange.getRequestHeaders().containsKey("Content-Length")
+                    && !exchange.getRequestHeaders().getFirst("Content-Length").equals("0"))throw new IllegalArgumentException("SDK capability carries no body");
+            return new Route(part[2],Optional.empty(),true,method.equals("GET"));
+        }
         if (part.length != 3 && part.length != 4 || !"".equals(part[0]) || !"ocsp".equals(part[1])
                 || !part[2].matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")) throw new UnknownAlias();
         if (part.length == 3) {
@@ -278,11 +330,11 @@ final class OcspHttpHandler implements HttpHandler {
             List<String> type = exchange.getRequestHeaders().get("Content-Type");
             if (type == null || type.size() != 1 || !MEDIA_REQUEST.equalsIgnoreCase(type.getFirst())) throw new IllegalArgumentException();
             requireBodyFraming(exchange.getRequestHeaders());
-            return new Route(part[2], Optional.empty());
+            return new Route(part[2], Optional.empty(),false,false);
         }
         if (!"GET".equals(exchange.getRequestMethod())) throw new MethodFailure();
         requireAccept(exchange.getRequestHeaders());
-        return new Route(part[2], Optional.of(OcspRequestParser.decodeGet(part[3], configuration.maximumBodyBytes())));
+        return new Route(part[2], Optional.of(OcspRequestParser.decodeGet(part[3], configuration.maximumBodyBytes())),false,false);
     }
 
     private void requireHeadersBounded(Headers headers) {
@@ -353,6 +405,14 @@ final class OcspHttpHandler implements HttpHandler {
         try (OutputStream output = exchange.getResponseBody()) { output.write(response.der()); }
     }
 
+    private static void sendSdk(HttpExchange exchange,byte[] body,String requestId) throws IOException {
+        var headers=exchange.getResponseHeaders();headers.set("Content-Type",SdkOcspHttpCodec.MEDIA);headers.set("Cache-Control","no-store");
+        headers.set("Pragma","no-cache");headers.set("X-Content-Type-Options","nosniff");headers.set(RequestIds.HEADER,requestId);
+        exchange.sendResponseHeaders(200,body.length);try(var out=exchange.getResponseBody()){out.write(body);}
+    }
+    private static void protocolOrSdkFailure(HttpExchange exchange,boolean sdk,int nativeStatus,int httpStatus) throws IOException {
+        if(sdk)transportFailure(exchange,httpStatus);else protocolFailure(exchange,nativeStatus);
+    }
     private static void protocolFailure(HttpExchange exchange, int status) throws IOException {
         byte[] body = protocolFailureBody(status);
         exchange.getResponseHeaders().set("Content-Type", MEDIA_RESPONSE); exchange.getResponseHeaders().set("Cache-Control", "no-store");
@@ -383,7 +443,8 @@ final class OcspHttpHandler implements HttpHandler {
         try { return '"' + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)) + '"'; }
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
-    private record Route(String alias, Optional<byte[]> encoded) { Route { encoded = encoded.map(byte[]::clone); } }
+    private record Route(String alias, Optional<byte[]> encoded,boolean sdk,boolean capability) { Route { encoded = encoded.map(byte[]::clone); } }
+    private record SdkExecution(zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence evidence,Optional<String> requesterPrincipal) { }
     private record Execution(OcspResponseService.Response response, Optional<String> requesterPrincipal) {
         Execution { java.util.Objects.requireNonNull(response); requesterPrincipal = java.util.Objects.requireNonNull(requesterPrincipal); }
     }

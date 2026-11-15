@@ -226,9 +226,13 @@ final class SigningRecoveryIntegrityValidator {
                     || candidate.length() != binding.length() || !candidate.sha256().equals(binding.sha256())) { throw malformed(); }
         }
         if (envelope.proofStep().isPresent()) {
-            zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireEnvelope(envelope);
+            boolean responder = zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.supports(envelope);
+            if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope,
+                    SignWorkflowStore.SubjectKeyRole.PRIMARY);
+            else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireEnvelope(envelope);
             if (state.state() != SignWorkflowStore.State.RETIRED && state.state() != SignWorkflowStore.State.EXPIRED) {
-                zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
+                if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
+                else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
             }
         }
 

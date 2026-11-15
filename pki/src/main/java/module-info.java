@@ -42,6 +42,7 @@ module zeroecho.pki {
     requires tools.jackson.core;
     requires java.net.http;
     requires java.logging;
+    requires org.bouncycastle.pkix;
 
     // Public PKI API.
     exports zeroecho.pki.api;

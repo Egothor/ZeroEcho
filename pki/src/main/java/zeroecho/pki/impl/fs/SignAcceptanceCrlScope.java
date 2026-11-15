@@ -81,6 +81,9 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
         boolean issuance = outer.kind() == DomainContinuationStore.Kind.ISSUANCE;
         if (!issuance && !"x509".equals(command.field(0))) { return Optional.empty(); }
         X509Certificate candidate = candidate(accepted, content);
+        if (issuance && command.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+            return managedOcspScope(store, accepted, command, candidate);
+        }
         boolean root = !issuance && (CREATE_ROOT.equals(command.operation())
                 || "ROLLOVER_ROOT".equals(command.operation()));
         requireCandidateFields(candidate, command, accepted, issuance, root);
@@ -112,6 +115,34 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
         } catch (CertificateEncodingException failure) {
             throw new IllegalArgumentException("Signing candidate is not a complete canonical TBSCertificate", failure);
         }
+    }
+
+    private static Optional<SignAcceptanceCrlScope> managedOcspScope(FilesystemPkiStore store,
+            SignWorkflowStore.AcceptanceCommand accepted, DomainCommandEncoding.Decoded decoded,
+            X509Certificate candidate) throws IOException {
+        var command = new zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand(decoded.fields());
+        var authority = new PkiId(decoded.field(1));
+        var generation = store.getIssuerGeneration(new PkiId(decoded.field(2))).orElseThrow(SignAcceptanceCrlScope::invalid);
+        var path = store.getIssuerChainPath(new PkiId(decoded.field(4))).orElseThrow(SignAcceptanceCrlScope::invalid);
+        var binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow(SignAcceptanceCrlScope::invalid);
+        var issuer = store.getCredential(generation.credentialId()).orElseThrow(SignAcceptanceCrlScope::invalid);
+        var issuerCertificate = store.certificateHolder(issuer);
+        require(accepted.fairnessAuthorityId().equals(authority) && generation.authorityId().equals(authority)
+                && path.authorityId().equals(authority) && path.issuerId().equals(generation.issuerId())
+                && path.orderedCredentialIds().getFirst().equals(generation.credentialId())
+                && path.pathCommitment().equals(decoded.field(5)) && generation.credentialId().value().equals(decoded.field(3))
+                && binding.commitment().equals(decoded.field(14)) && binding.primary().keyRef().equals(accepted.keyRef())
+                && binding.primary().signatureAlgorithm().canonicalForm().equals(accepted.algorithmId())
+                && accepted.candidate().sha256().equals(decoded.field(16))
+                && candidate.getSerialNumber().toString().equals(decoded.field(24))
+                && candidate.getNotBefore().toInstant().equals(Instant.parse(decoded.field(10)))
+                && candidate.getNotAfter().toInstant().equals(Instant.parse(decoded.field(11)))
+                && sha256(candidate.getPublicKey().getEncoded()).equals(command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256())
+                && candidate.getIssuerX500Principal().equals(issuerCertificate.getSubjectX500Principal()));
+        CrlScope scope = scope(issuerCertificate);
+        return Optional.of(new SignAcceptanceCrlScope(List.of(new CrlScopeOwner(scope, authority)),
+                new ScopeSerialReservation(scope, candidate.getSerialNumber(), new ScopeSerialReservation.SigningOwner(
+                        accepted.operationId(), accepted.outer().orElseThrow().commandCommitment().substring("domain:v1:".length())))));
     }
 
     // The bounded DER reader establishes canonical TLV encodings first. This

@@ -581,6 +581,147 @@ public final class EndEntitySigningPreparation {
     }
 
     /**
+     * Resolves the canonical core slot binding from actual managed public keys without signing.
+     * @param request exact proposed managed responder target @param cancellation cancellation
+     * @return canonical retained binding @throws IOException if managed public evidence is unavailable
+     */
+    public zeroecho.pki.api.issuance.RetainedIssuanceBinding managedOcspResponderBinding(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request, CancellationSignal cancellation) throws IOException {
+        return managedOcspResponderProvisioningBinding(request, cancellation).retainedBinding();
+    }
+
+    /**
+     * Resolves one actual managed subject tuple and its canonical issuance binding without signing.
+     * @param request immutable proposed target @param cancellation cancellation signal
+     * @return exact retained binding and both actual SPKI digests @throws IOException if public key evidence is unavailable
+     */
+    public zeroecho.pki.api.issuance.ManagedOcspResponderProvisioningBinding managedOcspResponderProvisioningBinding(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request, CancellationSignal cancellation) throws IOException {
+        var selected = validation.managedOcspSelection(request, cancellation); var intent = selected.intent();
+        return new zeroecho.pki.api.issuance.ManagedOcspResponderProvisioningBinding(
+                new zeroecho.pki.api.issuance.RetainedIssuanceBinding(request.authorityId(), intent.issuanceId(), intent.expectedProfile(),
+                        intent.expectedIssuerId(), intent.expectedChainPathId(), intent.expectedChainPathCommitment(), intent.commandCommitment()),
+                selected.primary().subjectSpkiSha256(), selected.alternative().subjectSpkiSha256());
+    }
+
+    /**
+     * Performs all unsigned managed responder policy checks before an approval is requested.
+     * @param access authorized caller @param request exact managed target @param cancellation cancellation signal
+     * @throws IOException if immutable public key or issuer evidence is unavailable
+     */
+    public void validateManagedOcsp(AccessContext access,
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request, CancellationSignal cancellation) throws IOException {
+        var selected = validation.managedOcspSelection(request, cancellation);
+        validation.withoutSerialAllocation().prepareManagedOcsp(access, request, selected, cancellation);
+    }
+
+    /**
+     * Freezes a dedicated managed responder leaf and both purpose-specific subject proofs.
+     * @param access authorized caller @param request immutable managed target @param proofs session-owned proof preparer
+     * @param submission new parent identity @param ttl finite signing lifetime @param evidence trusted publication evidence
+     * @param cancellation cancellation signal @return exclusively owned three-candidate preparation
+     * @throws IOException if managed public evidence or staging is unavailable
+     */
+    public DomainSigningRequest prepareManagedOcsp(AccessContext access,
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request, ManagedKeyProofPreparation proofs,
+            SigningSubmissionId submission, Duration ttl, Optional<IssuanceExecutionEvidence> evidence,
+            CancellationSignal cancellation) throws IOException {
+        var selected = validation.managedOcspSelection(request, cancellation);
+        var approved = validation.prepareManagedOcsp(access, request, selected, cancellation);
+        validateEvidence(evidence, access, request.authorityId().value(), approved.request().profileId());
+        var issuerAlternative = approved.issuerBinding().alternative().orElseThrow();
+        var altAlgorithm = Pkix.parseAlgorithmIdentifier(issuerAlternative.signatureAlgorithmIdentifier().bytes());
+        var builder = leafBuilder(approved)
+                .addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.subjectAltPublicKeyInfo(selected.alternativeSpki().bytes()))
+                .addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureAlgorithm(altAlgorithm));
+        byte[] transcript = builder.buildAlternativeSignatureTbs(approved.signatureBinding());
+        var authority = validation.authority();
+        var plan = authority.plan(issuerAlternative.signatureAlgorithm(), issuerAlternative.publicKeyAlgorithm(),
+                zeroecho.core.spi.AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
+                zeroecho.pki.spi.crypto.SigningProvider.class);
+        authority.authorize(plan, plan.executor(), zeroecho.core.spi.AlgorithmExecutionCapability.Direction.SIGN);
+        if (!(plan.executor() instanceof zeroecho.pki.spi.crypto.AltSigningCapability signer)) throw new PkiException("ALT_SIGNING_CAPABILITY_UNAVAILABLE");
+        byte[] signature;
+        try { signature = signer.sign(issuerAlternative.keyRef(), issuerAlternative.signatureAlgorithm().canonicalForm(), transcript); }
+        catch (java.security.GeneralSecurityException invalid) { throw new PkiException("ALT_SIGNING_FAILED", invalid); }
+        byte[] issuerAltSpki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(Pkix.parseCertificate(approved.issuerDer()), "2.5.29.72");
+        var verifier = Pkix.verifier(issuerAltSpki, altAlgorithm);
+        try (var output = verifier.contentStream()) { output.write(transcript); }
+        if (!verifier.verify(signature)) throw new PkiException("ALT_SIGNATURE_INVALID");
+        byte[] tbs = builder.addExtension(zeroecho.pki.impl.hybrid.AltSignatureExtensions.altSignatureValue(signature))
+                .buildTbs(approved.signatureBinding());
+        if (tbs.length > CredentialContent.MAXIMUM_CERTIFICATE_BYTES) throw new PkiException("CERTIFICATE_TOO_LARGE");
+        var intent = selected.intent();
+        var fields = new ArrayList<>(List.of("1", request.authorityId().value(), intent.expectedIssuerId().value(),
+                approved.issuerBinding().credentialId().value(), intent.expectedChainPathId().value(), intent.expectedChainPathCommitment(),
+                intent.expectedProfile().profileId(), Long.toString(intent.expectedProfile().profileVersion()),
+                HexFormat.of().formatHex(intent.expectedProfile().canonicalSha256()),
+                zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.encodeSubject(approved.request().subjectRdns()),
+                approved.request().validity().notBefore().toString(), approved.request().validity().notAfter().toString(),
+                zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.encodeKey(selected.primary()),
+                zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.encodeKey(selected.alternative()),
+                approved.issuerBinding().commitment(), authority.semanticFingerprint(), sha256(tbs), intent.issuanceId(),
+                intent.commandCommitment(), DomainAttributeEncoding.encode(evidence.map(IssuanceExecutionEvidence::attributes)
+                        .orElseGet(() -> new zeroecho.pki.impl.core.attr.SimpleAttributeSet(List.of())))));
+        String operation = zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION;
+        var parentFields = new ArrayList<>(fields); parentFields.add(approved.serial().toString());
+        String parentIntent = "ocsp-intent:v1:" + sha256(DomainCommandEncoding.template(DomainContinuationStore.Kind.ISSUANCE,
+                operation, parentFields.toArray(String[]::new)).command().bytes());
+        String target = sha256(DomainCommandEncoding.template(DomainContinuationStore.Kind.ISSUANCE,
+                "OCSP_RESPONDER_FROZEN_TARGET_V1", parentFields.toArray(String[]::new)).command().bytes());
+        var primaryStep = proofs.newStep(submission);
+        var alternativeStep = proofs.newStep(submission);
+        while (alternativeStep.id().equals(primaryStep.id())) alternativeStep = proofs.newStep(submission);
+        var primaryProof = responderProof(proofs, selected.primary(), request, submission, primaryStep, ttl, parentIntent, target,
+                zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY, cancellation);
+        var alternativeProof = responderProof(proofs, selected.alternative(), request, submission, alternativeStep, ttl, parentIntent, target,
+                zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE, cancellation);
+        fields.add(primaryStep.id().value()); fields.add(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.encodeProof(primaryProof.command()));
+        fields.add(alternativeStep.id().value()); fields.add(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.encodeProof(alternativeProof.command()));
+        fields.add(approved.serial().toString());
+        var command = new zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand(fields);
+        var template = DomainCommandEncoding.correlatedTemplate(DomainContinuationStore.Kind.ISSUANCE,
+                CorrelatedIssuanceIdentity.correlationId(request.authorityId(), intent.issuanceId()), operation, command.fields().toArray(String[]::new));
+        var candidates = new ArrayList<DurableContentReference>();
+        try {
+            var content = stageManagedBytes(tbs, Encoding.DER, cancellation); candidates.add(content);
+            var primaryContent = stageManagedBytes(primaryProof.content().bytes(), Encoding.BINARY, cancellation); candidates.add(primaryContent);
+            var alternativeContent = stageManagedBytes(alternativeProof.content().bytes(), Encoding.BINARY, cancellation); candidates.add(alternativeContent);
+            return new DomainSigningRequest(submission.id(), access, approved.keyRef(), approved.signature().canonicalForm(), Encoding.BINARY,
+                    content, ttl, template, Optional.of(new zeroecho.pki.spi.store.SignWorkflowStore.CaSubjectProofStep(primaryStep.id(),
+                            selected.primary().keyRef(), selected.primary().signatureAlgorithm().canonicalForm(), primaryContent)),
+                    Optional.of(new zeroecho.pki.spi.store.SignWorkflowStore.CaSubjectProofStep(alternativeStep.id(), selected.alternative().keyRef(),
+                            selected.alternative().signatureAlgorithm().canonicalForm(), alternativeContent,
+                            zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE)));
+        } catch (IOException | RuntimeException | Error failure) {
+            for (var content : candidates) try { store.stagedContent().retireUnownedContent(content); }
+                catch (IOException | RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    private static ManagedKeyProofPreparation.FrozenChallenge responderProof(ManagedKeyProofPreparation proofs,
+            zeroecho.pki.api.ca.IssuerKeyBinding binding, zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+            SigningSubmissionId parent, SigningSubmissionId step, Duration ttl, String intent, String target,
+            zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role, CancellationSignal cancellation) throws IOException {
+        var plan = proofs.withSignature(binding.signatureAlgorithm().canonicalForm()).plan(
+                new zeroecho.pki.api.signing.ManagedKeyProofRequest.OcspResponderCandidate(request.authorityId(),
+                        request.intent().expectedProfile(), binding.keyRef(),
+                        new zeroecho.pki.api.signing.ManagedOcspResponderProofTarget(parent.id(), intent, target, role)), cancellation);
+        return proofs.challenge(plan, step, parent.createdAt().plus(ttl), Optional.empty(), cancellation);
+    }
+
+    private DurableContentReference stageManagedBytes(byte[] bytes, Encoding encoding, CancellationSignal cancellation) throws IOException {
+        cancellation.throwIfCancelled();
+        try (ContentSink sink = store.stagedContent().beginContent(encoding, DurableContentReference.Lifecycle.OPERATION);
+                var output = sink.outputStream()) {
+            output.write(bytes);
+            cancellation.throwIfCancelled();
+            return sink.complete();
+        }
+    }
+
+    /**
      * Checks retained proof/target consistency without current-policy reads or signing.
      * @param parsed exact original client request @param approval retained proof and public target
      * @throws PkiException if either proof or the immutable target differs

@@ -227,7 +227,15 @@ public final class ManagedKeyProofPreparation {
         byte[] nonce = new byte[ManagedKeyProofChallenge.NONCE_BYTES];
         random.nextBytes(nonce);
         cancellation.throwIfCancelled();
-        byte[] challenge = ManagedKeyProofChallenge.encode(step.id(), deadline, context, metadata, nonce, spki);
+        byte[] challenge;
+        if (ManagedKeyProofCommand.decodePrefix(new DomainCommandEncoding.Decoded(ManagedKeyProofCommand.OPERATION, metadata))
+                instanceof ManagedKeyProofRequest.OcspResponderCandidate candidate) {
+            if (context.isPresent()) throw new IllegalArgumentException("Responder candidate cannot use a CA proof context");
+            var target = candidate.target();
+            challenge = ManagedKeyProofChallenge.encodeCandidate(step.id(), deadline,
+                    new ManagedKeyProofChallenge.ResponderCandidateContext(target.parentOperationId(), target.parentIntentCommitment(),
+                            target.role(), target.frozenTargetCommitment()), metadata, nonce, spki);
+        } else challenge = ManagedKeyProofChallenge.encode(step.id(), deadline, context, metadata, nonce, spki);
         provider.inputCapabilities().select(signature.canonicalForm(), challenge.length);
         if ((signature.equals(BootstrapAlgorithmIdentities.ED25519_SIGNATURE)
                 || signature.equals(BootstrapAlgorithmIdentities.ED448_SIGNATURE)) && challenge.length > pureEdDsaMaximum) {

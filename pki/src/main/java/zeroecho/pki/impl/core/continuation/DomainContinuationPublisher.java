@@ -74,6 +74,7 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.SignWorkflowStore;
 
 /** Reconstructs, validates, and idempotently publishes one durable domain result. */
 final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
@@ -152,6 +153,10 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
 
     private void publishIssuance(DomainCommandEncoding.Decoded command, EncodedObject result,
             DomainContinuationStore.Record domain) {
+        if (command.operation().equals(OcspResponderCertificateCommand.OPERATION)) {
+            publishManagedOcsp(new OcspResponderCertificateCommand(command.fields()), result, domain);
+            return;
+        }
         IssuancePublication frozen = IssuancePublication.decode(command);
         IssuerGeneration generation = store.getIssuerGeneration(frozen.issuerId())
                 .orElseThrow(() -> new PostconditionFailure("ISSUER_GENERATION_UNAVAILABLE"));
@@ -205,6 +210,68 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         // independent durable predecessor transition before outer completion.
         if (frozen.supersessionReason().isPresent()) {
             ensureSuperseded(frozen.predecessor().orElseThrow());
+        }
+    }
+
+    private void publishManagedOcsp(OcspResponderCertificateCommand command, EncodedObject result,
+            DomainContinuationStore.Record domain) {
+        var fields = command.fields();
+        var authority = new PkiId(fields.get(1));
+        var issuerId = new PkiId(fields.get(2));
+        var generation = store.getIssuerGeneration(issuerId).orElseThrow(() -> new PostconditionFailure("ISSUER_GENERATION_UNAVAILABLE"));
+        var path = store.getIssuerChainPath(new PkiId(fields.get(4))).orElseThrow(() -> new PostconditionFailure("ISSUER_PATH_UNAVAILABLE"));
+        requireFrozenIssuer(generation, path, authority, issuerId, fields.get(5));
+        var binding = store.getIssuerCryptographicBinding(issuerId).orElseThrow();
+        if (!binding.commitment().equals(fields.get(14)) || !generation.credentialId().value().equals(fields.get(3))) {
+            throw new PostconditionFailure("FROZEN_ISSUER_BINDING_DIFFERS");
+        }
+        var issuer = store.getCredential(generation.credentialId()).orElseThrow();
+        var certificate = certificate(result);
+        try {
+            if (!sha256(certificate.getTBSCertificate()).equals(fields.get(16))
+                    || !certificate.getSerialNumber().toString().equals(fields.get(24))
+                    || !certificate.getSubjectX500Principal().equals(zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(
+                            OcspResponderCertificateCommand.decodeSubject(fields.get(9))))
+                    || !certificate.getNotBefore().toInstant().equals(Instant.parse(fields.get(10)))
+                    || !certificate.getNotAfter().toInstant().equals(Instant.parse(fields.get(11)))
+                    || !sha256(Pkix.subjectPublicKeyInfo(certificate)).equals(command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256())
+                    || !sha256(zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72"))
+                            .equals(command.subjectBinding(SignWorkflowStore.SubjectKeyRole.ALTERNATIVE).subjectSpkiSha256())
+                    || certificate.getBasicConstraints() >= 0 || certificate.getKeyUsage() == null || !certificate.getKeyUsage()[0]
+                    || certificate.getKeyUsage().length > 5 && certificate.getKeyUsage()[5]
+                    || !java.util.List.of("1.3.6.1.5.5.7.3.9").equals(certificate.getExtendedKeyUsage())) {
+                throw new PostconditionFailure("ISSUED_OCSP_CERTIFICATE_DIFFERS");
+            }
+        } catch (java.security.cert.CertificateException | java.io.IOException invalid) {
+            throw new PostconditionFailure("ISSUED_OCSP_CERTIFICATE_DIFFERS", invalid);
+        }
+        verifyIssuerSignature(certificate, issuer.content());
+        String issuance = fields.get(17);
+        int marker = issuance.lastIndexOf(":r");
+        String slot = issuance.substring("ocsp-prov:".length(), marker);
+        String revision = issuance.substring(marker + 2);
+        var attributes = SimpleAttributeSet.builder().putAll(command.executionAttributes());
+        putIntent(attributes, new IssuanceIntent(issuance, fields.get(18), command.profile(), issuerId, path.pathId(), path.pathCommitment()));
+        attributes.put(new zeroecho.pki.api.attr.AttributeId("urn:zeroecho:pki:ocsp-provision-core-slot:v1"), new AttributeValue.StringValue(slot));
+        attributes.put(new zeroecho.pki.api.attr.AttributeId("urn:zeroecho:pki:ocsp-provision-revision:v1"), new AttributeValue.StringValue(revision));
+        byte[] der = result.bytes();
+        var id = new PkiId("x509:" + sha256(der));
+        var existing = store.getCredential(id);
+        DurableContentReference content = existing.map(Credential::content).orElseGet(() -> persist(der));
+        boolean published = false;
+        try {
+            var credential = new Credential(id, new FormatId("x509"), new IssuerRef(authority, issuerId, path.pathId()),
+                    new SubjectRef(zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subjectRefString(
+                            OcspResponderCertificateCommand.decodeSubject(fields.get(9)))),
+                    new Validity(Instant.parse(fields.get(10)), Instant.parse(fields.get(11))), certificate.getSerialNumber().toString(),
+                    new PkiId("spki:" + command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256()),
+                    new EndEntityProfileBinding(command.profile()), CredentialStatus.ISSUED, content, attributes.build());
+            existing.ifPresent(value -> requireCanonicalIssuanceCredential(value, credential, der));
+            store.putCredentialFromSigning(credential, domain.operationId(), domain.commandCommitment());
+            published = true;
+        } finally {
+            Arrays.fill(der, (byte) 0);
+            if (existing.isEmpty()) releaseUnlessPublished(content, published);
         }
     }
 

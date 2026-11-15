@@ -1025,6 +1025,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             return Optional.empty();
         }
         return switch (signing.operation()) {
+            case PkiSigningOperation.IssueOcspResponderCertificate issue -> Optional.of(issue.request().intent().expectedProfile().profileId());
             case PkiSigningOperation.IssueCredential issue -> Optional.of(issue.profileId());
             case PkiSigningOperation.ReplaceCredential replace -> Optional.of(replace.profileId());
             case PkiSigningOperation.RenewCredential renew -> resourceScopes.credentialScope(renew.credentialId())

@@ -84,6 +84,8 @@ final class ManagedKeyProofCommandTest {
                     assertEquals(ManagedKeyProofPurpose.CA_SUBJECT_KEY, scope.keyProof().orElseThrow().purpose());
                     assertEquals(Optional.empty(), scope.keyProof().orElseThrow().responderCredentialId());
                 }
+                case ManagedKeyProofRequest.OcspResponderCandidate candidate ->
+                    throw new AssertionError("Legacy purpose fixture must not fabricate a pre-certificate responder target: " + candidate.getClass().getSimpleName());
                 case ManagedKeyProofRequest.OcspResponder ignored -> {
                     assertEquals(List.of("OCSP_RESPONDER_KEY", "authority", "", "", "responder", "key"), fields);
                     assertEquals(Optional.empty(), scope.subjectAuthorityId());

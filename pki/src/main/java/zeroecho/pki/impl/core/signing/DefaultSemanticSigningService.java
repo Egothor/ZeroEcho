@@ -934,6 +934,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             return Optional.empty();
         }
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.orElseThrow().command());
+        if (command.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) return Optional.of(command);
         return "ISSUE_END_ENTITY".equals(command.operation()) && !command.field(15).isEmpty()
                 ? Optional.of(command) : Optional.empty();
     }
@@ -955,6 +956,9 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         }
         Optional<SignWorkflowStore.Workflow> retained = signing.workflow(domain.operationId());
         if (retained.isEmpty()) {
+            if (proposed.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+                throw new PkiException("Managed OCSP provisioning requires reconciliation");
+            }
             return Optional.empty();
         }
         SignWorkflowStore.Workflow winner = retained.orElseThrow();
@@ -970,6 +974,10 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
 
     private static boolean sameIssuanceIntent(DomainCommandEncoding.Decoded proposed,
             DomainCommandEncoding.Decoded existing) {
+        if (proposed.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+            return existing.operation().equals(proposed.operation()) && proposed.field(17).equals(existing.field(17))
+                    && proposed.field(18).equals(existing.field(18));
+        }
         if (!proposed.operation().equals(existing.operation())
                 || !proposed.field(15).equals(existing.field(15))
                 || !proposed.field(16).equals(existing.field(16))) {
@@ -1136,12 +1144,29 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
                 new DomainContinuationTemplate(domain.kind(), domain.correlationId(), domain.command(),
                         domain.commandCommitment()));
         requireCorrelatedBinding(binding, operation, predecessor, command);
-        // A concurrent purge can remove the workflow after the correlation read.
-        return signing.workflow(domain.operationId()).map(workflow -> snapshot(workflow, domain));
+        // Managed provisioning correlations remain uniqueness evidence even if a workflow is unexpectedly missing.
+        var retainedWorkflow = signing.workflow(domain.operationId());
+        if (operation.equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION) && retainedWorkflow.isEmpty()) {
+            throw new PkiException("Managed OCSP provisioning requires reconciliation");
+        }
+        // A concurrent purge can remove ordinary workflows after the correlation read.
+        return retainedWorkflow.map(workflow -> snapshot(workflow, domain));
     }
 
     private static void requireCorrelatedBinding(RetainedIssuanceBinding binding, String operation,
             Optional<PkiId> predecessor, DomainCommandEncoding.Decoded command) {
+        if (operation.equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+            var exact = new zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand(command.fields());
+            if (!operation.equals(command.operation()) || !binding.authorityId().value().equals(command.field(1))
+                    || !binding.expectedIssuerId().value().equals(command.field(2))
+                    || !binding.expectedChainPathId().value().equals(command.field(4))
+                    || !binding.expectedChainPathCommitment().equals(command.field(5))
+                    || !binding.expectedProfile().equals(exact.profile()) || !binding.issuanceId().equals(command.field(17))
+                    || !binding.effectiveCommitment().equals(command.field(18))) {
+                throw new PkiException("Issuance correlation conflict: code=ISSUANCE_CONFLICT");
+            }
+            return;
+        }
         if (!operation.equals(command.operation())
                 || predecessor.isPresent() && !predecessor.orElseThrow().value().equals(command.field(23))
                 || !binding.authorityId().value().equals(command.field(0))
@@ -1216,6 +1241,12 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         if (zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(command.operation())) {
             zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.requireEnvelope(envelope);
         }
+        if (zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.supports(envelope)) {
+            zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope,
+                    SignWorkflowStore.SubjectKeyRole.PRIMARY);
+            zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope,
+                    SignWorkflowStore.SubjectKeyRole.ALTERNATIVE);
+        }
         SemanticSigningScope scope = scope(domain.kind(), command, envelope.accessContext(), envelope.keyRef());
         SigningOperationState signingState = DefaultSigningService.operationState(workflow);
         if ((domain.state() == DomainContinuationStore.State.PUBLISHING
@@ -1270,6 +1301,18 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         switch (kind) { // NOPMD - ExhaustiveSwitchHasDefault: statement definite assignment requires a fallback because KEY_PROOF returns.
             case KEY_PROOF -> { return ManagedKeyProofCommand.scope(command, access, key); }
             case ISSUANCE -> {
+                if (command.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+                    var managed = new zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand(command.fields());
+                    EndEntitySigningPreparation.validateEvidence(IssuanceExecutionEvidence.decode(managed.executionAttributes()),
+                            access, command.field(1), command.field(6));
+                    var issuer = store.getIssuerCryptographicBinding(new PkiId(command.field(2))).orElseThrow();
+                    if (!issuer.commitment().equals(command.field(14)) || !issuer.primary().keyRef().equals(key)
+                            || !issuer.credentialId().value().equals(command.field(3))) {
+                        throw new IllegalArgumentException("Managed responder issuer signing key differs");
+                    }
+                    return new SemanticSigningScope(SemanticSigningKind.ISSUANCE, command.operation(), access, key,
+                            Optional.of(new PkiId(command.field(1))), Optional.empty(), Optional.of(command.field(6)), Optional.empty());
+                }
                 EndEntitySigningPreparation.validateEvidence(
                         IssuanceExecutionEvidence.decode(DomainAttributeEncoding.decode(command.field(22))),
                         access, command.field(0), command.field(4));
@@ -1420,4 +1463,73 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             return new CorrelatedIssuancePreparation.Prepared(adoptLeaf(domain, cancellation));
         } catch (IOException failure) { throw new PkiException("Correlated SDK preparation failed", failure); }
     }
+    @Override public RetainedIssuanceBinding managedOcspResponderBinding(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        signing.requireAvailable();
+        try { return endEntity.managedOcspResponderBinding(request, CancellationSignal.NONE); }
+        catch (IOException failure) { throw new PkiException("Managed OCSP binding unavailable", failure); }
+    }
+
+    @Override public zeroecho.pki.api.issuance.ManagedOcspResponderProvisioningBinding managedOcspResponderProvisioningBinding(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        signing.requireAvailable();
+        try { return endEntity.managedOcspResponderProvisioningBinding(request, CancellationSignal.NONE); }
+        catch (IOException failure) { throw new PkiException("Managed OCSP binding unavailable", failure); }
+    }
+
+    @Override public void validateManagedOcspResponder(AccessContext access,
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.authorityId().value(), request.intent().expectedProfile().profileId());
+        try { endEntity.validateManagedOcsp(access, request, cancellation); }
+        catch (IOException failure) { throw new PkiException("Managed responder validation failed", failure); }
+    }
+
+    @Override public CorrelatedIssuancePreparation prepareManagedOcspResponder(AccessContext access,
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+            Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
+        signing.requireAvailable();
+        EndEntitySigningPreparation.validateEvidence(evidence, access, request.authorityId().value(), request.intent().expectedProfile().profileId());
+        try { cancellation.throwIfCancelled(); }
+        catch (IOException failure) { throw new PkiException("Managed responder preparation cancelled", failure); }
+        var existing = findManagedOcspResponder(request);
+        if (existing.isPresent()) return new CorrelatedIssuancePreparation.Existing(existing.orElseThrow());
+        DomainSigningRequest domain;
+        try {
+            domain = endEntity.prepareManagedOcsp(access, request,
+                    managedKeyProof.orElseThrow(() -> new PkiException("Managed key proof unavailable")),
+                    signing.newSubmissionId(), signing.signingTtl(), evidence, cancellation);
+        } catch (IOException failure) { throw new PkiException("Managed responder preparation failed", failure); }
+        try {
+            cancellation.throwIfCancelled();
+            return new CorrelatedIssuancePreparation.Prepared(prepare(domain, request.authorityId()));
+        } catch (IOException | RuntimeException | Error failure) {
+            var candidates = new java.util.ArrayList<zeroecho.pki.api.content.DurableContentReference>();
+            candidates.add(domain.content());
+            domain.proofStep().ifPresent(step -> candidates.add(step.challenge()));
+            domain.alternativeProofStep().ifPresent(step -> candidates.add(step.challenge()));
+            for (var content : candidates) try { store.stagedContent().retireUnownedContent(content); }
+                catch (IOException | RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            if (failure instanceof IOException cancelled) throw new PkiException("Managed responder preparation cancelled", cancelled);
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            throw (Error) failure;
+        }
+    }
+    @Override public Optional<SemanticSigningOperation> findManagedOcspResponder(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        var binding = managedOcspResponderBinding(request);
+        return findCorrelated(binding, zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION,
+                request.expectedPredecessorCredentialId());
+    }
+
+    @Override public Optional<SigningAcceptanceReceipt> findManagedOcspResponderReceipt(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
+        return findManagedOcspResponder(request).map(operation -> {
+            var workflow = signing.workflow(operation.submissionId().id())
+                    .orElseThrow(() -> new PkiException("Managed OCSP provisioning requires reconciliation"));
+            return SigningAcceptanceReceipt.parse(workflow.operationId(), workflow.envelope().acceptanceCommitment().encoded());
+        });
+    }
+
 }

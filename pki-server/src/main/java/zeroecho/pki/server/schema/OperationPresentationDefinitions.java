@@ -679,6 +679,22 @@ final class OperationPresentationDefinitions {
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("accountId", new FieldSemantics(TEXT_TEXT, "acmeAccount", false, false, false, "", "", ""))
                         ))),
+                new Presentation("ocsp.responder.issue-certificate", "Issue managed OCSP responder certificate",
+                        "Issue or explicitly renew one dedicated managed responder certificate; repeated requests reuse canonical work.", "ocsp",
+                        new TransportSemantics("authority","authorityId",Map.ofEntries(
+                                Map.entry("authorityId",new FieldSemantics(TEXT_PKI_ID,TEXT_AUTHORITY,false,false,false,"","","")),
+                                Map.entry("issuerId",new FieldSemantics(TEXT_PKI_ID,TEXT_ISSUER,false,false,false,"","Exact issuer generation.","")),
+                                Map.entry("primaryKeyRef",new FieldSemantics(TEXT_TEXT,"key",true,false,false,"","Existing dedicated P-384 responder key.","")),
+                                Map.entry("alternativeKeyRef",new FieldSemantics(TEXT_TEXT,"key",true,false,false,"","Existing dedicated ML-DSA-87 responder key.","")),
+                                Map.entry("subject",new FieldSemantics("json","",false,false,false,"","Ordered rdns array of type/value objects.","")),
+                                Map.entry("profileId",new FieldSemantics(TEXT_TEXT,TEXT_PROFILE,false,false,false,"","Dedicated managed OCSP profile.","")),
+                                Map.entry("profileVersion",new FieldSemantics(TEXT_INTEGER,"",false,false,false,"","Frozen profile version.","")),
+                                Map.entry("profileSha256",new FieldSemantics(TEXT_TEXT,"",false,false,true,"","Exact profile SHA-256.","")),
+                                Map.entry("chainPathId",new FieldSemantics(TEXT_PKI_ID,"path",false,false,false,"","Frozen issuer chain path.","")),
+                                Map.entry("chainPathCommitment",new FieldSemantics(TEXT_TEXT,"",false,false,true,"","Full chain-path SHA-256.","")),
+                                Map.entry("notBefore",new FieldSemantics(TEXT_INSTANT,"",false,false,false,"","Absolute validity start.","")),
+                                Map.entry("notAfter",new FieldSemantics(TEXT_INSTANT,"",false,false,false,"","Absolute validity end.","")),
+                                Map.entry("expectedPredecessorCredentialId",new FieldSemantics(TEXT_PKI_ID,TEXT_CREDENTIAL,false,false,false,"","Only for explicit same-key renewal of the current completed certificate.",""))))),
                 new Presentation("ocsp.responder.register", "Register OCSP responder", "Register an OCSP responder.", "ocsp",
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("responderId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
@@ -701,7 +717,8 @@ final class OperationPresentationDefinitions {
                                 Map.entry("maximumEntries", new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry("cacheLifetimeMillis", new FieldSemantics(TEXT_LONG, "", false, false, false, "", "", "")),
                                 Map.entry("requestAuthenticationMode", new FieldSemantics(TEXT_ENUM, "", false, false, false, "", "", "")),
-                                Map.entry("requesterTrustPolicy", new FieldSemantics("json", "", false, false, false, "", "Optional JSON requester trust policy.", ""))
+                                Map.entry("requesterTrustPolicy", new FieldSemantics("json", "", false, false, false, "", "Optional JSON requester trust policy.", "")),
+                                Map.entry("hybridSdk",new FieldSemantics("json","",false,false,false,"","Optional zeroecho-hybrid-sdk-v1 dedicated alternative role.",""))
                         ))),
                 new Presentation("ocsp.responder.inspect", "Inspect OCSP responder", "Show one OCSP responder.", "ocsp",
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(

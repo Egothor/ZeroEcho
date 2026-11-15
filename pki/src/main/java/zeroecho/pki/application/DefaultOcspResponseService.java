@@ -45,6 +45,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.OptionalLong;
 import java.util.Objects;
 import java.util.Optional;
@@ -107,9 +108,16 @@ final class DefaultOcspResponseService implements OcspResponseService {
     private final SigningProvider provider;
     private final X509AuthoritySnapshot authority;
     private final Runnable requireOpen;
+    private final java.time.Clock clock;
 
     /* default */ DefaultOcspResponseService(PkiStore store, SigningService signing, SigningProvider provider,
             X509AuthoritySnapshot authority, Runnable requireOpen) {
+        this(store, signing, provider, authority, requireOpen, java.time.Clock.systemUTC());
+    }
+
+    /* default */ DefaultOcspResponseService(PkiStore store, SigningService signing, SigningProvider provider,
+            X509AuthoritySnapshot authority, Runnable requireOpen, java.time.Clock clock) {
+        this.clock = Objects.requireNonNull(clock, "clock");
         this.store = Objects.requireNonNull(store, "store");
         this.signing = Objects.requireNonNull(signing, "signing");
         this.provider = Objects.requireNonNull(provider, "provider");
@@ -159,6 +167,245 @@ final class DefaultOcspResponseService implements OcspResponseService {
             throw new PkiException("OCSP response generation failed: code=OCSP_RESPONSE_FAILED");
         }
     }
+
+    @Override public void validateSdkResponderMetadata(PkiId authorityId, PkiId issuerId, PkiId responderCredentialId,
+            PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative, ResponderId responderId, CancellationSignal cancellation) {
+        captureSdkMaterial(authorityId, issuerId, responderCredentialId, chainPathId, primary, alternative, responderId, cancellation);
+    }
+
+    @Override public SdkResponderBinding captureSdkResponderBinding(String trustedRealm, String canonicalOrigin, PkiId authorityId,
+            PkiId issuerId, PkiId responderCredentialId, PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative,
+            ResponderId responderId, CancellationSignal cancellation) {
+        var material = captureSdkMaterial(authorityId, issuerId, responderCredentialId, chainPathId, primary, alternative, responderId, cancellation);
+        return new SdkResponderBinding(trustedRealm, canonicalOrigin, authorityId, issuerId, material.issuerCredentialId(), chainPathId,
+                material.pathCommitment(), material.bindingCommitment(), responderCredentialId, material.chain(), primary, alternative, material.baselines(), responderId);
+    }
+
+    private SdkCapturedMaterial captureSdkMaterial(PkiId authorityId, PkiId issuerId, PkiId responderCredentialId,
+            PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative, ResponderId responderId, CancellationSignal cancellation) {
+        requireOpen.run(); Objects.requireNonNull(cancellation, "cancellation"); Objects.requireNonNull(responderId, "responderId");
+        Objects.requireNonNull(primary, "primary"); Objects.requireNonNull(alternative, "alternative");
+        try {
+            cancellation.throwIfCancelled();
+            var generation = store.getIssuerGeneration(issuerId).orElseThrow();
+            var binding = store.getIssuerCryptographicBinding(issuerId).orElseThrow();
+            var path = store.getIssuerChainPath(chainPathId).orElseThrow();
+            if (!generation.authorityId().equals(authorityId) || !binding.authorityId().equals(authorityId)
+                    || !binding.credentialId().equals(generation.credentialId()) || !path.authorityId().equals(authorityId)
+                    || !path.issuerId().equals(issuerId) || path.orderedCredentialIds().size() > 31
+                    || !path.orderedCredentialIds().getFirst().equals(generation.credentialId())) throw new IllegalArgumentException("SDK issuer path differs");
+            var responder = store.getCredential(responderCredentialId).orElseThrow();
+            if (!(responder.profileBinding() instanceof zeroecho.pki.api.credential.EndEntityProfileBinding)
+                    || !responder.issuerRef().caId().equals(authorityId) || !responder.issuerRef().issuerId().equals(issuerId)
+                    || !responder.issuerRef().chainPathId().equals(chainPathId)) throw new IllegalArgumentException("SDK delegated responder differs");
+            var baselines = new ArrayList<zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline>();
+            var issuerPath = new ArrayList<byte[]>(); PkiId nextGeneration = issuerId;
+            for (var credentialId : path.orderedCredentialIds()) {
+                cancellation.throwIfCancelled();
+                var exactGeneration = store.getIssuerGeneration(nextGeneration).orElseThrow();
+                var exactBinding = store.getIssuerCryptographicBinding(nextGeneration).orElseThrow();
+                var credential = store.getCredential(credentialId).orElseThrow();
+                if (!exactGeneration.credentialId().equals(credentialId) || !exactBinding.credentialId().equals(credentialId)) throw new IllegalArgumentException("SDK historical generation differs");
+                baselines.add(exactBinding.certificateHybridBaseline()); issuerPath.add(certificate(credentialId).getEncoded());
+                nextGeneration = credential.issuerRef().issuerId();
+            }
+            var certificate = certificate(responderCredentialId);
+            var first = sdkRole(primary, Pkix.subjectPublicKeyInfo(certificate), false);
+            var second = sdkRole(alternative, zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate,
+                    zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO), true);
+            requireDedicatedSdkRoles(primary, alternative, first.spki(), second.spki(), cancellation);
+            var roles = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("primary", first.value(), "alternative", second.value()));
+            zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.validateResponder(issuerPath, baselines, certificate.getEncoded(), roles, sdkNow());
+            cancellation.throwIfCancelled();
+            var chain = new ArrayList<PkiId>(); chain.add(responderCredentialId); chain.addAll(path.orderedCredentialIds());
+            return new SdkCapturedMaterial(generation.credentialId(), path.pathCommitment(), binding.commitment(), List.copyOf(chain), List.copyOf(baselines));
+        } catch (Exception invalid) { throw new PkiException("SDK OCSP binding validation failed: code=SDK_OCSP_BINDING_INVALID"); }
+    }
+    private record SdkCapturedMaterial(PkiId issuerCredentialId, String pathCommitment, String bindingCommitment,
+            List<PkiId> chain, List<zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline> baselines) { }
+
+    @Override public zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence respondSdk(SdkCommand query, CancellationSignal cancellation) {
+        requireOpen.run(); Objects.requireNonNull(query, "query"); Objects.requireNonNull(cancellation, "cancellation");
+        try {
+            cancellation.throwIfCancelled(); var selected = query.responder();
+            java.time.Instant captured = sdkNow();
+            var certificates = new HashMap<PkiId,X509Certificate>();
+            var issuer = certificate(selected.issuerCredentialId(), certificates); var responder = certificate(selected.responderCredentialId(), certificates);
+            var chain = new ArrayList<X509Certificate>();
+            for (var id : selected.responseChain()) { cancellation.throwIfCancelled(); chain.add(certificate(id, certificates)); }
+            requireSdkStoreBinding(selected);
+            var primary = sdkRole(selected.primary(), Pkix.subjectPublicKeyInfo(responder), false);
+            byte[] alternativeSpki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(responder,
+                    zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO);
+            var alternative = sdkRole(selected.alternative(), alternativeSpki, true);
+            requireDedicatedSdkRoles(selected.primary(), selected.alternative(), primary.spki(), alternative.spki(), cancellation);
+            var roles = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("primary", primary.value(), "alternative", alternative.value()));
+            var trusted = sdkTrust(query, chain, roles, captured);
+            zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.validateResponder(trusted);
+            var request = Pkix.parseOcspRequest(query.originalRequestDer());
+            if (request.requestedCertificates().isEmpty() || request.requestedCertificates().size() > 819
+                    || request.nonce().filter(value -> value.length == 0 || value.length > 4096).isPresent()) throw new IllegalArgumentException("SDK OCSP request bounds invalid");
+            var requests = request.requestedCertificates().stream().map(id -> new CertId(
+                    switch (id.hashAlgorithm().oid()) { case SHA1_OID -> CertIdHash.SHA1; case SHA256_OID -> CertIdHash.SHA256; default -> throw new IllegalArgumentException("SDK OCSP digest unsupported"); },
+                    id.issuerNameHash(), id.issuerKeyHash(), id.serialNumber())).toList();
+            java.time.Instant next = captured.plus(query.nextUpdateAfter());
+            if (next.isAfter(responder.getNotAfter().toInstant())) next = responder.getNotAfter().toInstant();
+            var command = new Command(selected.authorityId(), selected.issuerId(), selected.issuerCredentialId(), selected.responderCredentialId(), selected.primary().keyRef(),
+                    selected.responseChain(), selected.primary().signatureAlgorithm(), selected.primary().signatureBindingId(), selected.responderId(), captured, captured, next, request.nonce(), requests);
+            validateAuthority(command, issuer, responder);
+            SdkStatusSnapshot snapshot;
+            try (RevocationView view = store.openRevocationView()) {
+                snapshot = new SdkStatusSnapshot(resolve(command, issuer, view, cancellation), view.revision(), view.commitment());
+            }
+            byte[] tbs = responseTbs(command, responder, snapshot.resolved());
+            byte[] placeholder = sdkPrimaryPlaceholder();
+            byte[] maximumNative = Pkix.assembleOcspResponse(tbs, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.primaryAlgorithm(), placeholder, chain);
+            var projected = SdkOcspProjection.parse(query.originalRequestDer(), maximumNative);
+            var maximumFrame = sdkFrame(query, chain, roles, projected, maximumNative, captured);
+            var maximumAlternative = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(5, maximumFrame.fields());
+            sdkEnvelopeBytes(maximumNative.length, maximumFrame.encode().length, maximumAlternative.encode().length, 104, 4627, chain);
+            provider.inputCapabilities().select(primary.algorithm().identity().canonicalForm(), tbs.length);
+            provider.inputCapabilities().select(primary.algorithm().identity().canonicalForm(), maximumFrame.encode().length);
+            provider.inputCapabilities().select(alternative.algorithm().identity().canonicalForm(), maximumAlternative.encode().length);
+            cancellation.throwIfCancelled();
+            byte[] nativeSignature = rawSign(selected.authorityId(), selected.primary().keyRef(), primary.algorithm().identity(), tbs, Encoding.DER, cancellation);
+            if (nativeSignature.length > 104) throw new IOException("SDK native signature exceeded captured bound");
+            byte[] nativeResponse = Pkix.assembleOcspResponse(tbs, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.primaryAlgorithm(), nativeSignature, chain);
+            if (nativeResponse.length > maximumNative.length) throw new IOException("SDK native response exceeded captured bound");
+            var actual = SdkOcspProjection.parse(query.originalRequestDer(), nativeResponse);
+            if (!Pkix.parseOcspResponse(nativeResponse).verifySignature(responder.getPublicKey())) throw new IOException("SDK native response signature invalid");
+            java.time.Instant issued = sdkNow(); if (issued.isBefore(captured)) throw new IOException("SDK clock moved backwards");
+            var f4 = sdkFrame(query, chain, roles, actual, nativeResponse, issued); var f5 = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(5, f4.fields());
+            byte[] first = rawSign(selected.authorityId(), selected.primary().keyRef(), primary.algorithm().identity(), f4.encode(), Encoding.BINARY, cancellation);
+            if (first.length > 104) throw new IOException("SDK primary evidence signature exceeded captured bound");
+            byte[] second = rawSign(selected.authorityId(), selected.alternative().keyRef(), alternative.algorithm().identity(), f5.encode(), Encoding.BINARY, cancellation);
+            if (second.length != 4627) throw new IOException("SDK alternative evidence signature exceeded captured bound");
+            var encodedChain = new ArrayList<byte[]>(); for (var cert : chain) encodedChain.add(cert.getEncoded());
+            var result = new zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence(nativeResponse, encodedChain, f4, f5, first, second);
+            java.time.Instant evaluated = sdkNow(); if (evaluated.isBefore(issued)) throw new IOException("SDK clock moved backwards");
+            cancellation.throwIfCancelled();
+            zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.verify(result, sdkTrust(query, chain, roles, evaluated));
+            return result;
+        } catch (SigningExecutionException | SigningPendingException signingFailure) { throw signingFailure; }
+        catch (Exception failure) {
+            rethrowSigningBoundaryFailure(failure); throw new PkiException("SDK OCSP evidence generation failed: code=SDK_OCSP_FAILED");
+        }
+    }
+
+    private java.time.Instant sdkNow() { return clock.instant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS); }
+    private void requireSdkStoreBinding(SdkResponderBinding selected) {
+        var generation = store.getIssuerGeneration(selected.issuerId()).orElseThrow();
+        var binding = store.getIssuerCryptographicBinding(selected.issuerId()).orElseThrow();
+        var path = store.getIssuerChainPath(selected.chainPathId()).orElseThrow();
+        if (!generation.authorityId().equals(selected.authorityId()) || !generation.credentialId().equals(selected.issuerCredentialId())
+                || !binding.commitment().equals(selected.issuerBindingCommitment()) || !path.authorityId().equals(selected.authorityId())
+                || !path.issuerId().equals(selected.issuerId()) || !path.pathCommitment().equals(selected.pathCommitment())
+                || !path.orderedCredentialIds().equals(selected.responseChain().subList(1, selected.responseChain().size()))) throw new IllegalArgumentException("SDK OCSP immutable issuer context differs");
+        PkiId generationId = selected.issuerId();
+        for (int index = 1; index < selected.responseChain().size(); index++) {
+            var exactGeneration = store.getIssuerGeneration(generationId).orElseThrow();
+            var exactBinding = store.getIssuerCryptographicBinding(generationId).orElseThrow();
+            var credential = store.getCredential(selected.responseChain().get(index)).orElseThrow();
+            if (!exactGeneration.credentialId().equals(credential.credentialId()) || !exactBinding.credentialId().equals(credential.credentialId())
+                    || exactBinding.certificateHybridBaseline() != selected.issuerCertificateBaselines().get(index - 1)) throw new IllegalArgumentException("SDK OCSP historical baseline differs");
+            generationId = credential.issuerRef().issuerId();
+        }
+        var responder = store.getCredential(selected.responderCredentialId()).orElseThrow();
+        if (!(responder.profileBinding() instanceof zeroecho.pki.api.credential.EndEntityProfileBinding)
+                || !responder.issuerRef().caId().equals(selected.authorityId()) || !responder.issuerRef().issuerId().equals(selected.issuerId())
+                || !responder.issuerRef().chainPathId().equals(selected.chainPathId())) throw new IllegalArgumentException("SDK OCSP delegation coordinates differ");
+    }
+    private SdkResolvedRole sdkRole(SdkSigningRole selected, byte[] expectedSpki, boolean alternative) throws IOException {
+        if (!(provider instanceof zeroecho.pki.spi.crypto.PublicKeyInfoSource keys)) throw new UnsupportedOperationException("SDK managed public metadata unavailable");
+        var info = keys.resolvePublicKeyInfo(selected.keyRef());
+        if (info.encoding() != Encoding.DER || !Arrays.equals(info.bytes(), expectedSpki)) throw new IllegalArgumentException("SDK responder key differs");
+        var adapter = new BcX509AlgorithmAdapter(authority.bindings());
+        var publicKey = adapter.decode(Pkix.subjectPublicKeyAlgorithm(expectedSpki), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+        var signature = authority.resolveIdentity(selected.signatureAlgorithm()); X509SecurityFloor.requirePermitted(signature); X509SuiteCompatibility.requireCompatible(signature, publicKey);
+        var plan = selected.signatureBindingId().isPresent() ? authority.plan(signature, publicKey, Direction.SIGN, Optional.empty(), "explicit", selected.signatureBindingId().orElseThrow(), SigningProvider.class)
+                : authority.plan(signature, publicKey, Direction.SIGN, Optional.empty(), "default", SigningProvider.class);
+        authority.authorize(plan, provider, Direction.SIGN);
+        // Raw SigningRequest carries identity, not a format-binding selector. Only
+        // the exact default-equivalent execution can therefore be honored here.
+        var rawPlan = authority.plan(signature, publicKey, Direction.SIGN, Optional.empty(), "default", SigningProvider.class);
+        authority.authorize(rawPlan, provider, Direction.SIGN);
+        var captured = plan.selection(); var raw = rawPlan.selection();
+        if (!captured.requested().equals(raw.requested()) || !captured.suite().equals(raw.suite())
+                || !captured.binding().equals(raw.binding()) || captured.direction() != raw.direction()
+                || !captured.authorityFingerprint().equals(raw.authorityFingerprint())
+                || !captured.implementation().implementationId().equals(raw.implementation().implementationId())
+                || !captured.implementation().domainFingerprint().equals(raw.implementation().domainFingerprint())
+                || plan.executor() != rawPlan.executor()) throw new IllegalArgumentException("SDK responder binding cannot be carried by raw signing");
+        var algorithm = BcX509AlgorithmAdapter.toLib(raw.binding());
+        byte[] expected = alternative ? zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.alternativeAlgorithm() : zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.primaryAlgorithm();
+        if (!Arrays.equals(Pkix.encodeAlgorithmIdentifier(algorithm), expected)) throw new IllegalArgumentException("SDK responder signature suite differs");
+        var role = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("spki", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bytes(expectedSpki),
+                "publicKeyAlgorithm", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(publicKey.canonicalForm()), "signatureAlgorithm", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(signature.canonicalForm()),
+                "algorithmIdentifier", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bytes(expected)));
+        return new SdkResolvedRole(new SigningAlgorithm(signature, algorithm), role, expectedSpki);
+    }
+    private record SdkResolvedRole(SigningAlgorithm algorithm, zeroecho.pki.api.hybrid.sdk.HybridSdkValue value, byte[] spki) { }
+    private record SdkStatusSnapshot(List<Resolved> resolved, long revision, String commitment) {
+        private SdkStatusSnapshot { resolved = List.copyOf(resolved); if (revision < 0 || commitment == null || !commitment.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("SDK OCSP snapshot invalid"); }
+    }
+    private void requireDedicatedSdkRoles(SdkSigningRole primaryRole, SdkSigningRole alternativeRole, byte[] primary, byte[] alternative, CancellationSignal cancellation) throws IOException {
+        String first = sdkDigest(primary), second = sdkDigest(alternative); if (first.equals(second)) throw new IllegalArgumentException("SDK responder roles coincide");
+        Optional<PkiId> after = Optional.empty();
+        while (true) {
+            var authorities = store.listCasPage(after, 256); if (authorities.isEmpty()) return;
+            for (var ca : authorities) {
+                Optional<String> issuerAfter = Optional.empty();
+                while (true) {
+                    var generations = store.listIssuerGenerationsPage(ca.caId(), issuerAfter, 256, value -> true, cancellation); if (generations.isEmpty()) break;
+                    for (var generation : generations) {
+                        cancellation.throwIfCancelled(); var binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow();
+                        var roles = new ArrayList<zeroecho.pki.api.ca.IssuerKeyBinding>(); roles.add(binding.primary()); binding.alternative().ifPresent(roles::add);
+                        for (var role : roles) if (role.keyRef().equals(primaryRole.keyRef()) || role.keyRef().equals(alternativeRole.keyRef())
+                                || role.subjectSpkiSha256().equals(first) || role.subjectSpkiSha256().equals(second)) throw new IllegalArgumentException("SDK responder reuses CA role");
+                    }
+                    issuerAfter = Optional.of(generations.getLast().issuerId().value());
+                }
+            }
+            after = Optional.of(authorities.getLast().caId());
+        }
+    }
+    private static String sdkDigest(byte[] bytes) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); } catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); } }
+    private static zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.TrustedContext sdkTrust(SdkCommand command, List<X509Certificate> chain,
+            zeroecho.pki.api.hybrid.sdk.HybridSdkValue roles, java.time.Instant now) throws java.security.cert.CertificateEncodingException {
+        var selected = command.responder(); var issuerPath = new ArrayList<byte[]>();
+        for (int index = 1; index < chain.size(); index++) issuerPath.add(chain.get(index).getEncoded());
+        return new zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.TrustedContext(selected.realmId(), selected.canonicalOrigin(), selected.authorityId(), selected.issuerId(), selected.chainPathId(),
+                selected.pathCommitment(), selected.issuerBindingCommitment(), command.originalRequestDer(), command.clientNonce(), issuerPath, selected.issuerCertificateBaselines(), chain.getFirst().getEncoded(), roles, now);
+    }
+    private static zeroecho.pki.api.hybrid.sdk.HybridSdkFrame sdkFrame(SdkCommand query, List<X509Certificate> chain, zeroecho.pki.api.hybrid.sdk.HybridSdkValue roles,
+            SdkOcspProjection.Projection projection, byte[] nativeResponse, java.time.Instant issued) throws java.security.cert.CertificateEncodingException {
+        var selected = query.responder(); java.time.Instant expires = issued.plusSeconds(120);
+        if (expires.isAfter(projection.nextUpdate())) expires = projection.nextUpdate();
+        if (expires.isAfter(chain.getFirst().getNotAfter().toInstant())) expires = chain.getFirst().getNotAfter().toInstant();
+        var values = new TreeMap<Integer,byte[]>(); var encoded = new ArrayList<zeroecho.pki.api.hybrid.sdk.HybridSdkValue>();
+        for (var certificate : chain) encoded.add(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bytes(certificate.getEncoded()));
+        values.put(1,sdkText("zeroecho-hybrid-sdk-v1"));values.put(2,sdkText(selected.realmId()));values.put(3,sdkText(selected.canonicalOrigin()));values.put(4,query.clientNonce());
+        values.put(5,zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(query.originalRequestDer()));values.put(6,zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(nativeResponse));values.put(7,zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(chain.getFirst().getEncoded()));
+        values.put(8,zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(zeroecho.pki.api.hybrid.sdk.HybridSdkValue.list(encoded).encode()));
+        values.put(9,sdkText(selected.authorityId().value()));values.put(10,sdkText(selected.issuerId().value()));values.put(11,sdkText(selected.chainPathId().value()));values.put(12,sdkText(selected.pathCommitment()));values.put(13,sdkText(selected.issuerBindingCommitment()));values.put(14,roles.encode());
+        values.put(15,sdkTime(projection.producedAt()));values.put(16,sdkTime(projection.thisUpdate()));values.put(17,sdkTime(projection.nextUpdate()));values.put(18,sdkTime(issued));values.put(19,sdkTime(expires));values.put(20,projection.nonce().encode());values.put(21,projection.statuses().encode());
+        return new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(4,values);
+    }
+    private static byte[] sdkText(String value) { return value.getBytes(StandardCharsets.UTF_8); }
+    private static byte[] sdkTime(java.time.Instant value) { return java.nio.ByteBuffer.allocate(8).putLong(value.getEpochSecond()).array(); }
+    private static byte[] sdkPrimaryPlaceholder() throws IOException {
+        var integer = new org.bouncycastle.asn1.ASN1Integer(java.math.BigInteger.ONE.shiftLeft(383));
+        return new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[]{integer,integer}).getEncoded("DER");
+    }
+    private static int sdkEnvelopeBytes(int nativeBytes, int firstFrame, int secondFrame, int firstSignature, int secondSignature, List<X509Certificate> chain) throws java.security.cert.CertificateEncodingException {
+        String empty = "{\"version\":1,\"profile\":\"zeroecho-hybrid-sdk-v1\",\"primaryResponseDer\":\"\",\"responderChain\":[],\"primaryFrame\":\"\",\"alternativeFrame\":\"\",\"primarySignature\":\"\",\"alternativeSignature\":\"\"}";
+        long bytes = empty.getBytes(StandardCharsets.UTF_8).length;
+        for (int component : new int[]{nativeBytes,firstFrame,secondFrame,firstSignature,secondSignature}) bytes = Math.addExact(bytes,sdkBase64Bytes(component));
+        for (var certificate : chain) bytes = Math.addExact(bytes,sdkBase64Bytes(certificate.getEncoded().length));
+        bytes = Math.addExact(bytes,Math.addExact(2L*chain.size(),Math.max(0,chain.size()-1)));
+        return Math.toIntExact(bytes);
+    }
+    private static long sdkBase64Bytes(int bytes) { return (Math.addExact(Math.multiplyExact(4L,bytes),2))/3; }
 
     @Override public void validateSigningMetadata(PkiId authorityId, PkiId responderCredentialId,
             KeyRef signingKeyRef, String signatureAlgorithm, Optional<String> signatureBindingId,
@@ -355,19 +602,13 @@ final class DefaultOcspResponseService implements OcspResponseService {
 
     private byte[] sign(Command command, X509Certificate responder, List<X509Certificate> chain,
             SigningAlgorithm algorithm, List<Resolved> resolved, CancellationSignal cancellation) throws Exception {
-        zeroecho.pkix.ocsp.ResponderId responderId = command.responderId() == ResponderId.BY_NAME
-                ? zeroecho.pkix.ocsp.ResponderId.byName(responder.getSubjectX500Principal())
-                : zeroecho.pkix.ocsp.ResponderId.byKey(Pkix.subjectKeyIdentifier(responder.getPublicKey()));
-        zeroecho.pkix.ocsp.OcspResponseBuilder builder = Pkix.ocspResponseBuilder().responderId(responderId)
-                .producedAt(command.producedAt());
-        for (Resolved item : resolved) {
-            builder.addResponse(item.id(), item.status(), command.thisUpdate(), command.nextUpdate());
-        }
-        command.nonce().ifPresent(builder::nonce);
-        byte[] tbs = builder.buildTbs();
+        byte[] tbs = responseTbs(command, responder, resolved);
         byte[] signature = rawSign(command.authorityId(), command.signingKeyRef(), algorithm.identity(), tbs, Encoding.DER, cancellation);
         byte[] encoded = Pkix.assembleOcspResponse(tbs, Pkix.encodeAlgorithmIdentifier(algorithm.identifier()), signature, chain);
         OcspResponse decoded = Pkix.parseOcspResponse(encoded);
+        zeroecho.pkix.ocsp.ResponderId responderId = command.responderId() == ResponderId.BY_NAME
+                ? zeroecho.pkix.ocsp.ResponderId.byName(responder.getSubjectX500Principal())
+                : zeroecho.pkix.ocsp.ResponderId.byKey(Pkix.subjectKeyIdentifier(responder.getPublicKey()));
         if (!decoded.isSuccessful()
                 || !decoded.producedAt().equals(command.producedAt())
                 || !decoded.responderId().equals(responderId)
@@ -379,6 +620,19 @@ final class DefaultOcspResponseService implements OcspResponseService {
             throw new IOException("Generated OCSP response validation failed");
         }
         return encoded;
+    }
+
+    private static byte[] responseTbs(Command command, X509Certificate responder, List<Resolved> resolved) {
+        zeroecho.pkix.ocsp.ResponderId responderId = command.responderId() == ResponderId.BY_NAME
+                ? zeroecho.pkix.ocsp.ResponderId.byName(responder.getSubjectX500Principal())
+                : zeroecho.pkix.ocsp.ResponderId.byKey(Pkix.subjectKeyIdentifier(responder.getPublicKey()));
+        zeroecho.pkix.ocsp.OcspResponseBuilder builder = Pkix.ocspResponseBuilder().responderId(responderId)
+                .producedAt(command.producedAt());
+        for (Resolved item : resolved) {
+            builder.addResponse(item.id(), item.status(), command.thisUpdate(), command.nextUpdate());
+        }
+        command.nonce().ifPresent(builder::nonce);
+        return builder.buildTbs();
     }
 
     private static boolean matchesResponses(List<OcspResponse.SingleResponse> decoded, List<Resolved> expected,

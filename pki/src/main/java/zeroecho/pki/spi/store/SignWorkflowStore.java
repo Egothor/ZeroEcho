@@ -699,7 +699,10 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             if (proofStep.isPresent()) {
                 CaSubjectProofStep proof = proofStep.orElseThrow();
                 proof.requireParent(operationId);
-                if (mode != Mode.NORMAL || outer.filter(value -> value.kind() == DomainContinuationStore.Kind.CA).isEmpty()
+                if (mode != Mode.NORMAL || outer.filter(value -> value.kind() == DomainContinuationStore.Kind.CA
+                        || value.kind() == DomainContinuationStore.Kind.ISSUANCE
+                            && zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(value.command())
+                                .equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)).isEmpty()
                         || !proof.challenge().storeId().equals(candidate.storeId())
                         || proof.challenge().contentId().equals(candidate.contentId())
                         || candidate.encoding() != Encoding.DER || signatureEncoding != Encoding.BINARY) {

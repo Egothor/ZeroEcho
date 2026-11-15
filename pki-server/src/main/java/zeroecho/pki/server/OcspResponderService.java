@@ -346,6 +346,26 @@ public final class OcspResponderService {
     }
 
     /**
+     * Explicit SDK responder opt-in; existing primary role remains the native OCSP role.
+     * @param profile exactly zeroecho-hybrid-sdk-v1
+     * @param alternativeKeyRef dedicated existing managed ML-DSA-87 responder key
+     * @param alternativeSignatureAlgorithm exact outgoing signature identity
+     * @param alternativeSignatureBindingId optional exact default-equivalent binding
+     * @param alternativeSignatureBindingCommitment expected binding or registry commitment
+     */
+    public record SdkConfiguration(String profile, KeyRef alternativeKeyRef, String alternativeSignatureAlgorithm,
+            Optional<String> alternativeSignatureBindingId, String alternativeSignatureBindingCommitment) {
+        /** Rejects incomplete or unsupported SDK choices without signing or granting key authority. */
+        public SdkConfiguration {
+            if (!"zeroecho-hybrid-sdk-v1".equals(profile)) throw new IllegalArgumentException("Unsupported OCSP SDK profile");
+            Objects.requireNonNull(alternativeKeyRef,"alternativeKeyRef");
+            Permission.requireBounded(alternativeSignatureAlgorithm,128,"SDK alternative signature");
+            alternativeSignatureBindingId=Objects.requireNonNull(alternativeSignatureBindingId,"alternativeSignatureBindingId");
+            requireDigest(alternativeSignatureBindingCommitment);
+        }
+    }
+
+    /**
      * Closed administrator input without server-authoritative timestamps, state, or record commitments.
      *
      * @param responderId stable responder identifier
@@ -369,6 +389,7 @@ public final class OcspResponderService {
      * @param cacheLifetime positive response-cache lifetime
      * @param requestAuthenticationMode signed-request authentication policy
      * @param requesterTrustPolicy requester trust policy required by signed modes
+     * @param hybridSdk optional fixed-profile alternative responder role
      */
     public record Registration(String responderId, String alias, PkiId authorityId, PkiId issuerId,
             SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
@@ -376,7 +397,7 @@ public final class OcspResponderService {
             OcspResponseService.ResponderId responderIdForm, Duration responseValidity, NoncePolicy noncePolicy,
             int maximumNonceBytes, Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumRequestBytes,
             int maximumEntries, Duration cacheLifetime, RequestAuthenticationMode requestAuthenticationMode,
-            Optional<RequesterTrustPolicy> requesterTrustPolicy) {
+            Optional<RequesterTrustPolicy> requesterTrustPolicy, Optional<SdkConfiguration> hybridSdk) {
         /** Snapshots the typed finite registration input. */
         public Registration {
             Permission.requireId(responderId, "OCSP responder"); Permission.requireId(alias, "OCSP alias");
@@ -392,6 +413,29 @@ public final class OcspResponderService {
             Objects.requireNonNull(requestAuthenticationMode, "requestAuthenticationMode");
             requesterTrustPolicy = Objects.requireNonNull(requesterTrustPolicy, "requesterTrustPolicy");
             requirePolicyShape(requestAuthenticationMode, requesterTrustPolicy);
+            hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
+            if (hybridSdk.isPresent() && signingMode!=SigningMode.DELEGATED_RESPONDER) throw new IllegalArgumentException("SDK requires delegated responder signing");
+        }
+
+        /**
+         * Preserves native registration without SDK opt-in.
+         * @param responderId stable ID @param alias public alias @param authorityId CA @param issuerId exact generation
+         * @param signingMode issuer/delegated mode @param responderCredentialId responder certificate @param signingKeyRef primary key
+         * @param chainPathId exact path @param signatureAlgorithm primary signature @param signatureBindingId optional binding
+         * @param signatureBindingCommitment binding commitment @param responderIdForm native responder identifier form
+         * @param responseValidity validity @param noncePolicy nonce policy @param maximumNonceBytes nonce budget
+         * @param acceptedHashes accepted hashes @param maximumRequestBytes request budget @param maximumEntries CertID budget
+         * @param cacheLifetime cache lifetime @param requestAuthenticationMode requester policy @param requesterTrustPolicy signed requester trust
+         */
+        public Registration(String responderId,String alias,PkiId authorityId,PkiId issuerId,SigningMode signingMode,
+                PkiId responderCredentialId,KeyRef signingKeyRef,PkiId chainPathId,String signatureAlgorithm,
+                Optional<String> signatureBindingId,String signatureBindingCommitment,OcspResponseService.ResponderId responderIdForm,
+                Duration responseValidity,NoncePolicy noncePolicy,int maximumNonceBytes,Set<OcspResponseService.CertIdHash> acceptedHashes,
+                int maximumRequestBytes,int maximumEntries,Duration cacheLifetime,RequestAuthenticationMode requestAuthenticationMode,
+                Optional<RequesterTrustPolicy> requesterTrustPolicy) {
+            this(responderId,alias,authorityId,issuerId,signingMode,responderCredentialId,signingKeyRef,chainPathId,signatureAlgorithm,
+                    signatureBindingId,signatureBindingCommitment,responderIdForm,responseValidity,noncePolicy,maximumNonceBytes,acceptedHashes,
+                    maximumRequestBytes,maximumEntries,cacheLifetime,requestAuthenticationMode,requesterTrustPolicy,Optional.empty());
         }
 
         /**
@@ -458,6 +502,7 @@ public final class OcspResponderService {
      * @param state durable activation state
      * @param createdAt server-authoritative creation time
      * @param configurationCommitment SHA-256 commitment to the complete configuration
+     * @param hybridSdk optional fixed-profile alternative responder role
      */
     public record Responder(String responderId, String alias, RealmId realmId, PkiId authorityId,
             PkiId issuerId, SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef,
@@ -467,7 +512,26 @@ public final class OcspResponderService {
             Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumRequestBytes,
             int maximumEntries, Duration cacheLifetime, RequestAuthenticationMode requestAuthenticationMode,
             Optional<RequesterTrustPolicy> requesterTrustPolicy, State state, Instant createdAt,
-            String configurationCommitment) {
+            String configurationCommitment, Optional<SdkConfiguration> hybridSdk) {
+        /**
+         * Preserves native responder metadata without SDK opt-in.
+         * @param responderId stable ID @param alias public alias @param realmId trusted realm @param authorityId CA @param issuerId exact generation
+         * @param signingMode signing mode @param responderCredentialId certificate @param signingKeyRef primary key @param chainPathId exact path
+         * @param signatureAlgorithm primary signature @param signatureBindingId optional binding @param signatureBindingCommitment binding commitment
+         * @param responderIdForm native responder form @param responseValidity validity @param noncePolicy nonce policy @param maximumNonceBytes nonce budget
+         * @param acceptedHashes hashes @param maximumRequestBytes request budget @param maximumEntries CertID budget @param cacheLifetime cache lifetime
+         * @param requestAuthenticationMode requester policy @param requesterTrustPolicy signed requester trust @param state activation state
+         * @param createdAt creation time @param configurationCommitment complete configuration hash
+         */
+        public Responder(String responderId,String alias,RealmId realmId,PkiId authorityId,PkiId issuerId,SigningMode signingMode,
+                PkiId responderCredentialId,KeyRef signingKeyRef,PkiId chainPathId,String signatureAlgorithm,Optional<String> signatureBindingId,
+                String signatureBindingCommitment,OcspResponseService.ResponderId responderIdForm,Duration responseValidity,NoncePolicy noncePolicy,
+                int maximumNonceBytes,Set<OcspResponseService.CertIdHash> acceptedHashes,int maximumRequestBytes,int maximumEntries,Duration cacheLifetime,
+                RequestAuthenticationMode requestAuthenticationMode,Optional<RequesterTrustPolicy> requesterTrustPolicy,State state,Instant createdAt,String configurationCommitment) {
+            this(responderId,alias,realmId,authorityId,issuerId,signingMode,responderCredentialId,signingKeyRef,chainPathId,signatureAlgorithm,
+                    signatureBindingId,signatureBindingCommitment,responderIdForm,responseValidity,noncePolicy,maximumNonceBytes,acceptedHashes,
+                    maximumRequestBytes,maximumEntries,cacheLifetime,requestAuthenticationMode,requesterTrustPolicy,state,createdAt,configurationCommitment,Optional.empty());
+        }
         /** Validates all finite immutable dependencies and the record commitment. */
         public Responder {
             Permission.requireId(responderId, "OCSP responder"); Permission.requireId(alias, "OCSP alias");
@@ -489,6 +553,9 @@ public final class OcspResponderService {
             requesterTrustPolicy = Objects.requireNonNull(requesterTrustPolicy, "requesterTrustPolicy");
             requirePolicyShape(requestAuthenticationMode, requesterTrustPolicy);
             Objects.requireNonNull(createdAt); requireDigest(configurationCommitment);
+            hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
+            if (hybridSdk.isPresent() && (signingMode!=SigningMode.DELEGATED_RESPONDER
+                    || signingKeyRef.equals(hybridSdk.orElseThrow().alternativeKeyRef()))) throw new IllegalArgumentException("SDK requires distinct dedicated delegated roles");
         }
     }
 
@@ -553,9 +620,23 @@ public final class OcspResponderService {
         validateSigningMetadata(value);
     }
     private void validateSigningMetadata(Responder value) {
+        validateSdkMetadata(value);
         signing.orElseThrow(() -> new IllegalStateException("OCSP signing service is unavailable"))
                 .validateSigningMetadata(value.authorityId(),value.responderCredentialId(),value.signingKeyRef(),
                         value.signatureAlgorithm(),value.signatureBindingId(),zeroecho.core.io.CancellationSignal.NONE);
+    }
+
+    private void validateSdkMetadata(Responder value) {
+        value.hybridSdk().ifPresent(sdk -> {
+            sdk.alternativeSignatureBindingId().ifPresentOrElse(
+                    binding -> bindings.require(binding,sdk.alternativeSignatureBindingCommitment()),
+                    () -> {if(!bindings.commitment().equals(sdk.alternativeSignatureBindingCommitment()))throw new IllegalStateException("SDK alternative binding registry differs");});
+            signing.orElseThrow(() -> new IllegalStateException("OCSP signing service is unavailable")).validateSdkResponderMetadata(
+                    value.authorityId(),value.issuerId(),value.responderCredentialId(),value.chainPathId(),
+                    new OcspResponseService.SdkSigningRole(value.signingKeyRef(),value.signatureAlgorithm(),value.signatureBindingId()),
+                    new OcspResponseService.SdkSigningRole(sdk.alternativeKeyRef(),sdk.alternativeSignatureAlgorithm(),sdk.alternativeSignatureBindingId()),
+                    value.responderIdForm(),zeroecho.core.io.CancellationSignal.NONE);
+        });
     }
 
     private Responder draft(Registration supplied) {
@@ -565,7 +646,7 @@ public final class OcspResponderService {
                 supplied.signatureBindingCommitment(), supplied.responderIdForm(), supplied.responseValidity(),
                 supplied.noncePolicy(), supplied.maximumNonceBytes(), supplied.acceptedHashes(),
                 supplied.maximumRequestBytes(), supplied.maximumEntries(), supplied.cacheLifetime(),
-                supplied.requestAuthenticationMode(), supplied.requesterTrustPolicy());
+                supplied.requestAuthenticationMode(), supplied.requesterTrustPolicy(), supplied.hybridSdk());
     }
 
     /** Canonically seals an already constructed internal draft. */
@@ -742,18 +823,28 @@ public final class OcspResponderService {
             int maximumNonceBytes, Set<OcspResponseService.CertIdHash> hashes, int maximumRequestBytes,
             int maximumEntries, Duration cacheLifetime, RequestAuthenticationMode requestAuthenticationMode,
             Optional<RequesterTrustPolicy> requesterTrustPolicy) {
+        return create(responderId,alias,authorityId,issuerId,signingMode,responderCredentialId,signingKeyRef,chainPathId,
+                signatureAlgorithm,signatureBindingId,bindingCommitment,responderIdForm,validity,noncePolicy,maximumNonceBytes,hashes,
+                maximumRequestBytes,maximumEntries,cacheLifetime,requestAuthenticationMode,requesterTrustPolicy,Optional.empty());
+    }
+
+    private Responder create(String responderId,String alias,PkiId authorityId,PkiId issuerId,SigningMode signingMode,
+            PkiId responderCredentialId,KeyRef signingKeyRef,PkiId chainPathId,String signatureAlgorithm,Optional<String> signatureBindingId,
+            String bindingCommitment,OcspResponseService.ResponderId responderIdForm,Duration validity,NoncePolicy noncePolicy,int maximumNonceBytes,
+            Set<OcspResponseService.CertIdHash> hashes,int maximumRequestBytes,int maximumEntries,Duration cacheLifetime,
+            RequestAuthenticationMode requestAuthenticationMode,Optional<RequesterTrustPolicy> requesterTrustPolicy,Optional<SdkConfiguration> hybridSdk) {
         Responder draft = new Responder(responderId, alias, realmId, authorityId, issuerId, signingMode,
                 responderCredentialId, signingKeyRef, chainPathId, signatureAlgorithm, signatureBindingId,
                 bindingCommitment, responderIdForm, validity, noncePolicy, maximumNonceBytes, hashes,
                 maximumRequestBytes, maximumEntries, cacheLifetime, requestAuthenticationMode,
-                requesterTrustPolicy, State.INACTIVE, clock.instant(), "0".repeat(64));
+                requesterTrustPolicy, State.INACTIVE, clock.instant(), "0".repeat(64),hybridSdk);
         return new Responder(draft.responderId(), draft.alias(), draft.realmId(), draft.authorityId(), draft.issuerId(),
                 draft.signingMode(), draft.responderCredentialId(), draft.signingKeyRef(), draft.chainPathId(),
                 draft.signatureAlgorithm(), draft.signatureBindingId(), draft.signatureBindingCommitment(),
                 draft.responderIdForm(), draft.responseValidity(), draft.noncePolicy(), draft.maximumNonceBytes(),
                 draft.acceptedHashes(), draft.maximumRequestBytes(), draft.maximumEntries(), draft.cacheLifetime(),
                 draft.requestAuthenticationMode(), draft.requesterTrustPolicy(), draft.state(), draft.createdAt(),
-                commitment(draft, true));
+                commitment(draft, true),draft.hybridSdk());
     }
 
     private Responder seal(Responder value, State state) {
@@ -763,17 +854,18 @@ public final class OcspResponderService {
                 value.signatureBindingCommitment(), value.responderIdForm(), value.responseValidity(),
                 value.noncePolicy(), value.maximumNonceBytes(), value.acceptedHashes(), value.maximumRequestBytes(),
                 value.maximumEntries(), value.cacheLifetime(), value.requestAuthenticationMode(),
-                value.requesterTrustPolicy(), state, value.createdAt(), value.configurationCommitment());
+                value.requesterTrustPolicy(), state, value.createdAt(), value.configurationCommitment(),value.hybridSdk());
         return new Responder(draft.responderId(), draft.alias(), draft.realmId(), draft.authorityId(), draft.issuerId(),
                 draft.signingMode(), draft.responderCredentialId(), draft.signingKeyRef(), draft.chainPathId(),
                 draft.signatureAlgorithm(), draft.signatureBindingId(), draft.signatureBindingCommitment(),
                 draft.responderIdForm(), draft.responseValidity(), draft.noncePolicy(), draft.maximumNonceBytes(),
                 draft.acceptedHashes(), draft.maximumRequestBytes(), draft.maximumEntries(), draft.cacheLifetime(),
                 draft.requestAuthenticationMode(), draft.requesterTrustPolicy(), draft.state(), draft.createdAt(),
-                commitment(draft, true));
+                commitment(draft, true),draft.hybridSdk());
     }
 
     private void validateDependencies(Responder value, boolean proveSigning) {
+        validateSdkMetadata(value);
         value.signatureBindingId().ifPresentOrElse(
                 bindingId -> bindings.require(bindingId, value.signatureBindingCommitment()),
                 () -> {
@@ -918,6 +1010,22 @@ public final class OcspResponderService {
             output.writeInt(value.requestAuthenticationMode().code());
             output.writeBoolean(value.requesterTrustPolicy().isPresent());
             if (value.requesterTrustPolicy().isPresent()) writePolicy(output, value.requesterTrustPolicy().orElseThrow());
+            if (value.hybridSdk().isPresent()) {
+                // The opt-in approval freezes both roles and complete native policy; ordinary policy bytes stay unchanged.
+                write(output,"zeroecho:ocsp-sdk-registration:v1");
+                write(output,value.responderId());write(output,value.alias());write(output,value.authorityId().value());write(output,value.issuerId().value());
+                output.writeInt(value.signingMode().code());write(output,value.responderCredentialId().value());write(output,value.signingKeyRef().value());
+                write(output,value.chainPathId().value());write(output,value.signatureAlgorithm());output.writeBoolean(value.signatureBindingId().isPresent());
+                if(value.signatureBindingId().isPresent())write(output,value.signatureBindingId().orElseThrow());
+                write(output,value.signatureBindingCommitment());output.writeInt(value.responderIdForm().code());
+                output.writeLong(value.responseValidity().toMillis());output.writeInt(value.noncePolicy().code());output.writeInt(value.maximumNonceBytes());
+                output.writeInt(value.acceptedHashes().size());for(var hash:value.acceptedHashes().stream().sorted().toList())output.writeInt(hash.code());
+                output.writeInt(value.maximumRequestBytes());output.writeInt(value.maximumEntries());output.writeLong(value.cacheLifetime().toMillis());
+                var sdk=value.hybridSdk().orElseThrow();write(output,sdk.profile());write(output,sdk.alternativeKeyRef().value());
+                write(output,sdk.alternativeSignatureAlgorithm());output.writeBoolean(sdk.alternativeSignatureBindingId().isPresent());
+                if(sdk.alternativeSignatureBindingId().isPresent())write(output,sdk.alternativeSignatureBindingId().orElseThrow());
+                write(output,sdk.alternativeSignatureBindingCommitment());
+            }
             output.flush(); return sha256(bytes.toByteArray());
         } catch (IOException impossible) {
             throw new IllegalStateException("OCSP requester policy encoding failed", impossible);
@@ -928,7 +1036,7 @@ public final class OcspResponderService {
     private static byte[] encode(Responder value, boolean ignoreCommitment) {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(1024);
                 DataOutputStream output = new DataOutputStream(bytes)) {
-            output.writeInt(2); write(output, value.responderId()); write(output, value.alias());
+            output.writeInt(value.hybridSdk().isPresent()?3:2); write(output, value.responderId()); write(output, value.alias());
             write(output, value.realmId().value()); write(output, value.authorityId().value());
             write(output, value.issuerId().value()); output.writeInt(value.signingMode().code());
             write(output, value.responderCredentialId().value()); write(output, value.signingKeyRef().value());
@@ -946,6 +1054,12 @@ public final class OcspResponderService {
             output.writeInt(value.requestAuthenticationMode().code());
             output.writeBoolean(value.requesterTrustPolicy().isPresent());
             if (value.requesterTrustPolicy().isPresent()) writePolicy(output, value.requesterTrustPolicy().orElseThrow());
+            if (value.hybridSdk().isPresent()) {
+                var sdk=value.hybridSdk().orElseThrow();write(output,sdk.profile());write(output,sdk.alternativeKeyRef().value());
+                write(output,sdk.alternativeSignatureAlgorithm());output.writeBoolean(sdk.alternativeSignatureBindingId().isPresent());
+                if(sdk.alternativeSignatureBindingId().isPresent())write(output,sdk.alternativeSignatureBindingId().orElseThrow());
+                write(output,sdk.alternativeSignatureBindingCommitment());
+            }
             output.writeInt(value.state().code());
             output.writeLong(value.createdAt().toEpochMilli());
             write(output, ignoreCommitment ? "0".repeat(64) : value.configurationCommitment()); output.flush();
@@ -956,7 +1070,7 @@ public final class OcspResponderService {
     private static Responder decode(byte[] payload) {
         if (payload.length == 0 || payload.length > 65_536) throw new IllegalStateException("OCSP record bound differs");
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload))) {
-            if (input.readInt() != 2) throw new IOException("OCSP record schema is obsolete");
+            int version=input.readInt();if(version!=2&&version!=3)throw new IOException("OCSP record schema is invalid");
             String id = read(input); String alias = read(input); RealmId realm = new RealmId(read(input));
             PkiId authority = new PkiId(read(input)); PkiId issuer = new PkiId(read(input));
             SigningMode mode = SigningMode.fromCode(input.readInt()); PkiId credential = new PkiId(read(input));
@@ -975,11 +1089,13 @@ public final class OcspResponderService {
             RequestAuthenticationMode authenticationMode = RequestAuthenticationMode.fromCode(input.readInt());
             Optional<RequesterTrustPolicy> trustPolicy = input.readBoolean()
                     ? Optional.of(readPolicy(input)) : Optional.empty();
+            Optional<SdkConfiguration> sdk=version==3?Optional.of(new SdkConfiguration(read(input),new KeyRef(read(input)),read(input),
+                    input.readBoolean()?Optional.of(read(input)):Optional.empty(),read(input))):Optional.empty();
             State state = State.fromCode(input.readInt()); Instant created = Instant.ofEpochMilli(input.readLong());
             String commitment = read(input); if (input.read() != -1) throw new IOException("Trailing OCSP record data");
             return new Responder(id, alias, realm, authority, issuer, mode, credential, key, path, algorithm,
                     binding, bindingCommitment, form, validity, nonce, nonceBytes, hashes, requestBytes,
-                    entries, cache, authenticationMode, trustPolicy, state, created, commitment);
+                    entries, cache, authenticationMode, trustPolicy, state, created, commitment,sdk);
         } catch (IOException | RuntimeException failure) {
             throw new IllegalStateException("OCSP responder record is invalid");
         }

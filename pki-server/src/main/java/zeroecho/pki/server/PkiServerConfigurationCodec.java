@@ -374,7 +374,7 @@ public final class PkiServerConfigurationCodec {
         value.allowed(Set.of("enabled", "address", "port", "tlsProvider", "allowPlaintextLoopback", "authentication",
                 "maximumHeaderBytes", "maximumBodyBytes", "execution", "maximumStreamDurationMillis",
                 "publicImmutableCacheMillis",
-                "publicAliasCacheMillis", "authorityListExposed", "consoleBasePath"));
+                "publicAliasCacheMillis", "authorityListExposed", "consoleBasePath", "hybridSdk"));
         if (!value.bool("enabled")) {
             value.exact("enabled");
             value.complete();
@@ -390,7 +390,7 @@ public final class PkiServerConfigurationCodec {
                 Duration.ofMillis(value.longValue("maximumStreamDurationMillis")),
                 Duration.ofMillis(value.longValue("publicImmutableCacheMillis")),
                 Duration.ofMillis(value.longValue("publicAliasCacheMillis")),
-                value.bool("authorityListExposed"),value.optionalText("consoleBasePath"));
+                value.bool("authorityListExposed"),value.optionalText("consoleBasePath"),hybridSdk(value));
         value.complete();
         return Optional.of(result);
     }

@@ -49,9 +49,23 @@ import zeroecho.pki.api.status.StatusObjectType;
  * context and, when applicable, issuance evidence to {@link PkiSigningCommands}.
  * Preparation and durable acceptance remain separate operations.</p>
  */
-public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAuthority, PkiSigningOperation.CreateIntermediate, PkiSigningOperation.IssueIntermediateCertificate, PkiSigningOperation.RolloverCaCertificate, PkiSigningOperation.RotateCaKey, PkiSigningOperation.IssueCredential, PkiSigningOperation.RenewCredential, PkiSigningOperation.ReplaceCredential, PkiSigningOperation.ReissueCredential, PkiSigningOperation.GenerateStatus {
+public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAuthority, PkiSigningOperation.CreateIntermediate, PkiSigningOperation.IssueIntermediateCertificate, PkiSigningOperation.RolloverCaCertificate, PkiSigningOperation.RotateCaKey, PkiSigningOperation.IssueCredential, PkiSigningOperation.RenewCredential, PkiSigningOperation.ReplaceCredential, PkiSigningOperation.ReissueCredential, PkiSigningOperation.GenerateStatus, PkiSigningOperation.IssueOcspResponderCertificate {
     /** {@return the stable historical transport and approval identity} */
     String name();
+
+    /**
+     * Requests controlled issuance for an existing managed dedicated responder key pair.
+     * This selector grants no authority; server dispatch requires a retained canonical provisioning claim.
+     * @param request exact managed subject, profile, generation, path and validity selection
+     */
+    record IssueOcspResponderCertificate(zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request)
+            implements PkiSigningOperation {
+        /** Stable provisioning operation identity. */
+        public static final String NAME = "ocsp.responder.issue-certificate";
+        /** Rejects missing input without performing key lookup or issuance. */
+        public IssueOcspResponderCertificate { Objects.requireNonNull(request, "request"); }
+        @Override public String name() { return NAME; }
+    }
 
     /**
      * Creates one root certificate authority using an existing managed key reference.

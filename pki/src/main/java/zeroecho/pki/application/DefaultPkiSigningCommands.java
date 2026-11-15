@@ -98,6 +98,14 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
 
     @Override public PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
         requireOpen.run(); Objects.requireNonNull(operation, "operation");
+        if (operation instanceof PkiSigningOperation.IssueOcspResponderCertificate value) {
+            var selected = value.request(); var binding = service.managedOcspResponderBinding(selected);
+            var intent = new zeroecho.pki.api.issuance.IssuanceIntent(binding.issuanceId(), binding.effectiveCommitment(),
+                    binding.expectedProfile(), binding.expectedIssuerId(), binding.expectedChainPathId(), binding.expectedChainPathCommitment());
+            return new PkiSigningOperation.IssueOcspResponderCertificate(new zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest(
+                    selected.authorityId(), selected.primaryKeyRef(), selected.alternativeKeyRef(), selected.subject(), selected.validity(),
+                    intent, selected.expectedPredecessorCredentialId()));
+        }
         if (operation instanceof PkiSigningOperation.CreateAuthority value && value.signatureAlgorithmId().isEmpty()) {
             return new PkiSigningOperation.CreateAuthority(value.formatId(), value.subjectRef(), value.profileId(),
                     value.keyRef(), Optional.of(service.creationSignatureAlgorithm()));
@@ -246,6 +254,8 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
                                 value.issuerCaId().orElseThrow(), value.expectedHead(), EMPTY_ATTRIBUTES);
                 service.validateCaKeyRotation(access, command, cancellation);
             }
+            case PkiSigningOperation.IssueOcspResponderCertificate value -> service.validateManagedOcspResponder(access,
+                    value.request(), evidence, cancellation);
             case PkiSigningOperation.IssueCredential value -> service.validateEndEntity(access,
                     new EndEntityIssuanceRequest(value.issuerCaId(), csr(value.requestId()), value.profileId(),
                             Optional.empty()), evidence, cancellation);
@@ -302,6 +312,8 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
                                 value.issuerCaId().orElseThrow(), value.expectedHead(), EMPTY_ATTRIBUTES);
                 yield service.prepareCaKeyRotation(access, command, cancellation);
             }
+            case PkiSigningOperation.IssueOcspResponderCertificate ignored -> throw new UnsupportedOperationException(
+                    "Managed OCSP provisioning requires canonical correlated dispatch");
             case PkiSigningOperation.IssueCredential value -> service.prepareEndEntity(access,
                     new EndEntityIssuanceRequest(value.issuerCaId(), csr(value.requestId()), value.profileId(),
                             Optional.empty()), evidence, cancellation);

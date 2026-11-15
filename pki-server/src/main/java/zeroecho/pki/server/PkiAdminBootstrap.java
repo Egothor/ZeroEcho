@@ -273,6 +273,8 @@ public final class PkiAdminBootstrap {
                 .filter(descriptor -> !descriptor.operationId().equals(ServerControlOperation.GenerateManagedKey.NAME))
                 // Inventory aliases the existing search permission; preserve every historical numbered grant.
                 .filter(descriptor -> !descriptor.operationId().equals(zeroecho.pki.application.PkiOperation.ListCredentials.NAME))
+                // Managed responder issuance reuses CERTIFICATE_ISSUE; keep the historical numbered grant sequence.
+                .filter(descriptor -> !descriptor.operationId().equals(zeroecho.pki.application.PkiSigningOperation.IssueOcspResponderCertificate.NAME))
                 .sorted(java.util.Comparator.comparing(
                         OperationSecurityDescriptors.Descriptor::operationId)).toList()) {
             permissions.add(grant(prefix + index++, principal, descriptor.action(), descriptor.resourceType(),

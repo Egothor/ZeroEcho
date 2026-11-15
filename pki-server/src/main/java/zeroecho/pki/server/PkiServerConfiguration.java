@@ -541,12 +541,13 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param publicAliasCache stable-alias public cache duration
      * @param authorityListExposed whether safe public authority metadata routes are enabled
      * @param consoleBasePath explicitly provisioned same-origin public route, absent when not published to the console
+     * @param hybridSdk explicit optional SDK OCSP origin; absent preserves native-only behavior
      */
     public record PublicListener(InetAddress address, int port, Optional<ProviderConfig> tlsProvider,
             boolean allowPlaintextLoopback, Authentication authentication, int maximumHeaderBytes,
             int maximumBodyBytes, Execution execution,
             Duration maximumStreamDuration, Duration publicImmutableCache, Duration publicAliasCache,
-            boolean authorityListExposed, Optional<String> consoleBasePath) {
+            boolean authorityListExposed, Optional<String> consoleBasePath, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Creates a listener without asserting a published same-origin console route.
          * @param address bind address
@@ -569,9 +570,27 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             this(address,port,tlsProvider,allowPlaintextLoopback,authentication,maximumHeaderBytes,maximumBodyBytes,
                     execution,maximumStreamDuration,publicImmutableCache,publicAliasCache,authorityListExposed,Optional.empty());
         }
+        /**
+         * Preserves public listener configuration without SDK opt-in.
+         * @param address bind address @param port TCP port @param tlsProvider explicit TLS provider
+         * @param allowPlaintextLoopback loopback development exception @param authentication authentication policy
+         * @param maximumHeaderBytes header budget @param maximumBodyBytes body budget @param execution execution limits
+         * @param maximumStreamDuration finite deadline @param publicImmutableCache immutable cache lifetime
+         * @param publicAliasCache alias cache lifetime @param authorityListExposed listing opt-in @param consoleBasePath published console path
+         */
+        public PublicListener(InetAddress address,int port,Optional<ProviderConfig> tlsProvider,
+                boolean allowPlaintextLoopback,Authentication authentication,int maximumHeaderBytes,
+                int maximumBodyBytes,Execution execution,Duration maximumStreamDuration,
+                Duration publicImmutableCache,Duration publicAliasCache,boolean authorityListExposed,Optional<String> consoleBasePath) {
+            this(address,port,tlsProvider,allowPlaintextLoopback,authentication,maximumHeaderBytes,maximumBodyBytes,
+                    execution,maximumStreamDuration,publicImmutableCache,publicAliasCache,authorityListExposed,consoleBasePath,Optional.empty());
+        }
         /** Validates public-listener transport policy and independent finite bounds. */
         public PublicListener {
             Objects.requireNonNull(address, "address");
+            hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
+            if (hybridSdk.isPresent() && tlsProvider.isEmpty()) throw new IllegalArgumentException("SDK OCSP listener requires TLS");
+            hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             if (port < 0 || port > 65_535) throw new IllegalArgumentException("Public listener port is invalid");
             consoleBasePath=Objects.requireNonNull(consoleBasePath,"consoleBasePath");
             if(consoleBasePath.filter(value -> !value.equals("/public/v1")).isPresent())throw new IllegalArgumentException("Published public repository path is invalid");

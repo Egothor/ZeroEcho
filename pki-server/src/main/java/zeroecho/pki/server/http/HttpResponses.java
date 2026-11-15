@@ -127,6 +127,19 @@ final class HttpResponses {
         return encode(202,trace,"administrative.request.submit","PENDING",result,null);
     }
 
+    static Response administrativeProvisioningAccepted(String trace,PkiOperationValue.ObjectValue result,String canonicalRequestId) {
+        var response=administrativeAccepted(trace,result);
+        return new Response(response.statusCode(),response.body(),false,java.util.Optional.empty(),
+                java.util.Optional.of("/admin/v1/requests/"+canonicalRequestId));
+    }
+    static Response administrativeProvisioningConflict(String trace,String canonicalRequestId) {
+        var response=encode(409,trace,"administrative.request.submit","FAILED",new PkiOperationValue.ObjectValue(java.util.Map.of(
+                "canonicalRequestId",new PkiOperationValue.Text(canonicalRequestId))),
+                new Failure("CONFLICT","OCSP_PROVISIONING_TARGET_CONFLICT","OCSP_PROVISIONING_TARGET_CONFLICT",false,false));
+        return new Response(response.statusCode(),response.body(),false,java.util.Optional.empty(),
+                java.util.Optional.of("/admin/v1/requests/"+canonicalRequestId));
+    }
+
     static Response success(String requestId, String operation, PkiOperationValue.ObjectValue result) {
         return encode(200, requestId, operation, "SUCCEEDED", result, null);
     }

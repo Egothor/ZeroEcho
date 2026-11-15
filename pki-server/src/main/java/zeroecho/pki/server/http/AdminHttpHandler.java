@@ -340,7 +340,11 @@ final class AdminHttpHandler implements HttpHandler {
             var request=new ServerOperationGateway.Request(configuration.realm().realmId(),viewer,actor.mode(),actor.transportPrincipalId(),actor.credentialEvidence(),
                     decoded.operation(),decoded.resource(),Permission.Relationship.ANY,decoded.context(),Optional.empty(),trace);
             var accepted=coordinator.submit(id,request,encoded,duration);
-            return HttpResponses.administrativeAccepted(trace,coordinator.projection(accepted,viewer,true));
+            return accepted.operation().equals("ocsp.responder.issue-certificate")
+                    ?HttpResponses.administrativeProvisioningAccepted(trace,coordinator.projection(accepted,viewer,true),accepted.requestId())
+                    :HttpResponses.administrativeAccepted(trace,coordinator.projection(accepted,viewer,true));
+        } catch(zeroecho.pki.server.AdministrativeRequestCoordinator.ProvisioningConflict conflict) {
+            return HttpResponses.administrativeProvisioningConflict(trace,conflict.canonicalRequestId());
         } catch(zeroecho.pki.server.AdministrativeRequestCoordinator.Conflict conflict) {
             return HttpResponses.failure(409,trace,"administrative.request.submit","CONFLICT","REQUEST_ID_CONFLICT","REQUEST_ID_CONFLICT",false,false);
         } catch(zeroecho.pki.server.AdministrativeRequestCoordinator.Capacity full) {

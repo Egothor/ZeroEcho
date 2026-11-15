@@ -103,8 +103,8 @@ class PkiAdminBootstrapTest {
             assertEquals(Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY, proxyGrants.getFirst().action());
             var descriptors = new OperationSecurityDescriptors().descriptors();
             for (String principal : List.of("administrator", "approver")) {
-                // The mandatory inventory aliases search authority; the three content grants have stable additive IDs.
-                assertEquals(descriptors.size() - 2 + 3 + (principal.equals("administrator") ? 2 : 1), control.grantsFor(principal).size());
+                // Managed generation is separate; inventory and responder issuance alias existing permissions. Content grants keep stable additive IDs.
+                assertEquals(descriptors.size() - 3 + 3 + (principal.equals("administrator") ? 2 : 1), control.grantsFor(principal).size());
                 for(Permission.Action action:List.of(Permission.Action.CERTIFICATE_READ_CONTENT,Permission.Action.CERTIFICATE_DOWNLOAD)) {
                     assertTrue(control.grantsFor(principal).stream().anyMatch(value -> value.action()==action
                             &&value.dataView()==Permission.DataView.CONTENT_FULL&&value.enabled()));

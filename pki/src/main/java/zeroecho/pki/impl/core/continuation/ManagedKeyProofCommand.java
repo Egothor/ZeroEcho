@@ -71,7 +71,7 @@ public final class ManagedKeyProofCommand {
     private static final int MAX_INT_DIGITS = 10;
     private static final int UTF8_TWO_BYTE_START = 0x80;
     private static final int UTF8_THREE_BYTE_START = 0x800;
-    /** Single discriminator for both managed key proof purposes. */
+    /** Discriminator shared by the closed managed key proof purposes. */
     public static final String OPERATION = "PROVE_MANAGED_KEY";
     /** Inclusive aggregate encoded command bound, in bytes. */
     public static final int MAX_COMMAND_BYTES = 1_048_576;
@@ -95,6 +95,9 @@ public final class ManagedKeyProofCommand {
             case ManagedKeyProofRequest.CaSubject ca -> List.of(ManagedKeyProofPurpose.CA_SUBJECT_KEY.name(),
                     ca.issuerAuthorityId().value(), ca.subjectAuthorityId().map(PkiId::value).orElse(""),
                     ca.profileId(), "", ca.keyRef().value());
+            case ManagedKeyProofRequest.OcspResponderCandidate candidate -> List.of(ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY.name(),
+                    candidate.authorityId().value(), OcspResponderProofTargetCodec.encode(candidate.target()),
+                    OcspResponderProofTargetCodec.profile(candidate.profileRef()), "", candidate.keyRef().value());
             case ManagedKeyProofRequest.OcspResponder responder -> List.of(ManagedKeyProofPurpose.OCSP_RESPONDER_KEY.name(),
                     responder.authorityId().value(), "", "", responder.responderCredentialId().value(),
                     responder.keyRef().value());
@@ -127,6 +130,12 @@ public final class ManagedKeyProofCommand {
             return new ManagedKeyProofRequest.OcspResponder(new PkiId(command.field(1)),
                     new PkiId(command.field(4)), new KeyRef(command.field(5)));
         }
+        if (ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY.name().equals(purpose)) {
+            if (!command.field(4).isEmpty()) throw invalid();
+            return new ManagedKeyProofRequest.OcspResponderCandidate(new PkiId(command.field(1)),
+                    OcspResponderProofTargetCodec.profile(command.field(3)), new KeyRef(command.field(5)),
+                    OcspResponderProofTargetCodec.decode(command.field(2)));
+        }
         throw invalid();
     }
 
@@ -150,6 +159,10 @@ public final class ManagedKeyProofCommand {
                     OPERATION, access, key, Optional.of(ca.issuerAuthorityId()), ca.subjectAuthorityId(),
                     Optional.of(ca.profileId()), Optional.of(new ManagedKeyProofScope(
                             ManagedKeyProofPurpose.CA_SUBJECT_KEY, Optional.empty())));
+            case ManagedKeyProofRequest.OcspResponderCandidate candidate -> new SemanticSigningScope(SemanticSigningKind.KEY_PROOF,
+                    OPERATION, access, key, Optional.of(candidate.authorityId()), Optional.empty(), Optional.of(candidate.profileRef().profileId()),
+                    Optional.of(new ManagedKeyProofScope(ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY,
+                            Optional.empty(), Optional.of(candidate.target()))));
             case ManagedKeyProofRequest.OcspResponder responder -> new SemanticSigningScope(SemanticSigningKind.KEY_PROOF,
                     OPERATION, access, key, Optional.of(responder.authorityId()), Optional.empty(), Optional.empty(),
                     Optional.of(new ManagedKeyProofScope(ManagedKeyProofPurpose.OCSP_RESPONDER_KEY,
@@ -167,6 +180,7 @@ public final class ManagedKeyProofCommand {
         return switch (Objects.requireNonNull(request, "request")) {
             case ManagedKeyProofRequest.CaSubject ca -> ca.issuerAuthorityId();
             case ManagedKeyProofRequest.OcspResponder responder -> responder.authorityId();
+            case ManagedKeyProofRequest.OcspResponderCandidate candidate -> candidate.authorityId();
         };
     }
 

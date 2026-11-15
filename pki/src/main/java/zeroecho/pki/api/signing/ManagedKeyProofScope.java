@@ -45,8 +45,17 @@ import zeroecho.pki.api.PkiId;
  * @param purpose exact managed key role
  * @param responderCredentialId present exactly for {@link ManagedKeyProofPurpose#OCSP_RESPONDER_KEY};
  *        its identifier is limited to 4,096 strict UTF-8 bytes
+ * @param candidateTarget present exactly for the pre-certificate responder purpose
  */
-public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiId> responderCredentialId) {
+public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiId> responderCredentialId,
+        Optional<ManagedOcspResponderProofTarget> candidateTarget) {
+    /**
+     * Preserves existing post-certificate/CA proof scope constructors.
+     * @param purpose existing purpose @param responderCredentialId existing credential coordinate
+     */
+    public ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiId> responderCredentialId) {
+        this(purpose, responderCredentialId, Optional.empty());
+    }
     /**
      * Validates the exact purpose/credential combination and bounded identity.
      * @throws NullPointerException if an argument is null
@@ -57,6 +66,10 @@ public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiI
         responderCredentialId = Objects.requireNonNull(responderCredentialId, "responderCredentialId");
         if (purpose == ManagedKeyProofPurpose.OCSP_RESPONDER_KEY != responderCredentialId.isPresent()) {
             throw new IllegalArgumentException("Managed key proof purpose and responder scope differ");
+        }
+        Objects.requireNonNull(candidateTarget, "candidateTarget");
+        if ((purpose == ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY) != candidateTarget.isPresent()) {
+            throw new IllegalArgumentException("Managed candidate proof scope differs");
         }
         responderCredentialId.ifPresent(ManagedKeyProofInputs::identifier);
     }

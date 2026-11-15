@@ -378,7 +378,7 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                     bindings, signing.signatureAlgorithm(), provider, signingAuthority, pureEdDsaMaximum, service);
             return new SigningGraph(Optional.of(service), Optional.of(semantic),
                     Optional.of(new DefaultOcspResponseService(store, service, provider, signingAuthority,
-                            reactor::requireAccepting)), provider, reactor);
+                            reactor::requireAccepting, clock)), provider, reactor);
         } catch (RuntimeException | Error primary) {
             closeResource(provider, primary);
             throw primary;

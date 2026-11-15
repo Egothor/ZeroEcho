@@ -89,6 +89,24 @@ final class CertificateProfileValidator {
     private CertificateProfileValidator() {
     }
 
+    /* package */ static ValidatedCertificateRequest validateManagedOcsp(
+            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+            zeroecho.pki.api.EncodedObject publicKey, CertificateProfile profile, CertificateProfileRef reference,
+            Credential issuer, Instant time, X509AuthoritySnapshot authority) {
+        List<SubjectRdn> subject = validateSubject(request.subject(), profile, false);
+        LeafCertificatePolicy policy = profile.leafPolicy();
+        if (subject.isEmpty() || policy.subjectAlternativeNamePolicy().minimumTotal() != 0
+                || policy.subjectAlternativeNamePolicy().rules().stream().anyMatch(rule -> rule.minimum() != 0)) {
+            throw reject("OCSP_SUBJECT_POLICY_INVALID");
+        }
+        requireSubjectKeyAllowed(publicKey, policy.allowedSubjectKeyAlgorithmIds(), authority);
+        Validity validity = approvedFrozenValidity(request.validity(), profile, issuer, time);
+        return new ValidatedCertificateRequest(request.authorityId(), reference,
+                new SubjectRef(BcX509ProfileSupport.subjectRefString(subject)), subject, List.of(), false,
+                publicKey, validity, policy.keyUsages(), policy.extendedKeyUsages(), policy.keyUsageCritical(),
+                policy.extendedKeyUsageCritical(), policy.basicConstraintsCritical(), profile.algorithmBindingPolicy());
+    }
+
     /* package */ static ValidatedCertificateRequest validate(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority) {
@@ -152,13 +170,18 @@ final class CertificateProfileValidator {
 
     private static List<SubjectRdn> validateSubject(ParsedCertificationRequest request, CertificateProfile profile,
             boolean reconstructed) {
+        return validateSubject(request.subjectRdns(), profile, reconstructed);
+    }
+
+    private static List<SubjectRdn> validateSubject(List<SubjectRdn> subject, CertificateProfile profile,
+            boolean reconstructed) {
         Map<SubjectRdnType, SubjectRdnRule> rules = new EnumMap<>(SubjectRdnType.class);
         for (SubjectRdnRule rule : profile.subjectPolicy().rules()) {
             rules.put(rule.type(), rule);
         }
         Map<SubjectRdnType, Integer> counts = new EnumMap<>(SubjectRdnType.class);
-        List<SubjectRdn> approved = new ArrayList<>(request.subjectRdns().size() + rules.size());
-        for (SubjectRdn rdn : request.subjectRdns()) {
+        List<SubjectRdn> approved = new ArrayList<>(subject.size() + rules.size());
+        for (SubjectRdn rdn : subject) {
             SubjectRdnRule rule = rules.get(rdn.type());
             String canonical = canonicalSubjectValue(rdn, rule, reconstructed);
             int count = Math.addExact(counts.getOrDefault(rdn.type(), 0), 1);

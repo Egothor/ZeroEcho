@@ -88,6 +88,31 @@ final class ManagedKeyProofChallengeTest {
         assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.decode(old));
     }
 
+    @Test void responderCandidateVersionFourBindsPreCertificatePurposeRoleAndTarget() {
+        var parent = new PkiId("zsign:v1:store.provider:0:" + "8".repeat(32));
+        var profile = new zeroecho.pki.api.profile.CertificateProfileRef("ocsp", 1, new byte[32]);
+        var target = new zeroecho.pki.api.signing.ManagedOcspResponderProofTarget(parent, "ocsp-intent:v1:" + "a".repeat(64),
+                "b".repeat(64), zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY);
+        var candidate = new ManagedKeyProofRequest.OcspResponderCandidate(new PkiId("authority"), profile, new KeyRef("key"), target);
+        var metadata = new ArrayList<>(metadata());
+        for (int index = 0; index < 6; index++) metadata.set(index, ManagedKeyProofCommand.prefix(candidate).get(index));
+        var context = new ManagedKeyProofChallenge.ResponderCandidateContext(parent, target.parentIntentCommitment(), target.role(), target.frozenTargetCommitment());
+        byte[] encoded = ManagedKeyProofChallenge.encodeCandidate(OPERATION, java.time.Instant.ofEpochSecond(60), context, metadata, new byte[32], SPKI);
+        var decoded = ManagedKeyProofChallenge.decode(encoded);
+        assertEquals(Optional.empty(), decoded.context());
+        assertEquals(Optional.of(context), decoded.candidateContext());
+        assertEquals(candidate, ManagedKeyProofCommand.decodePrefix(decoded.command()));
+        assertArrayEquals(encoded, ManagedKeyProofChallenge.encodeCandidate(decoded.operationId(), decoded.deadline(), decoded.candidateContext().orElseThrow(),
+                decoded.command().fields().subList(0, 10), decoded.nonce(), decoded.spki()));
+        assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.encode(OPERATION, java.time.Instant.ofEpochSecond(60), Optional.empty(), metadata, new byte[32], SPKI));
+        var wrongRole = new ManagedKeyProofChallenge.ResponderCandidateContext(parent, target.parentIntentCommitment(),
+                zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE, target.frozenTargetCommitment());
+        assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.encodeCandidate(OPERATION, java.time.Instant.ofEpochSecond(60), wrongRole, metadata, new byte[32], SPKI));
+        byte[] downgraded = encoded.clone();
+        ByteBuffer.wrap(downgraded).putInt("ZEROECHO-MANAGED-KEY-PROOF\0".getBytes(StandardCharsets.US_ASCII).length, 3);
+        assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.decode(downgraded));
+    }
+
     @Test void goldenFramingAndReconstructedCommitmentsAreStable() {
         byte[] nonce = new byte[32];
         for (int index = 0; index < nonce.length; index++) { nonce[index] = (byte) index; }

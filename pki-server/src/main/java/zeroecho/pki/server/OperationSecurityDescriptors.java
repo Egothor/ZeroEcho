@@ -185,6 +185,7 @@ public final class OperationSecurityDescriptors {
                         Permission.Action.CERTIFICATE_REVOKE,
                         Permission.ResourceType.CERTIFICATE, false),
                 signing(PkiSigningOperation.IssueCredential.NAME, Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE, false),
+                signing(PkiSigningOperation.IssueOcspResponderCertificate.NAME, Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE, false),
                 signing(PkiSigningOperation.RenewCredential.NAME, Permission.Action.CERTIFICATE_RENEW, Permission.ResourceType.CERTIFICATE, false),
                 signing(PkiSigningOperation.ReplaceCredential.NAME, Permission.Action.CERTIFICATE_REKEY, Permission.ResourceType.CERTIFICATE, false),
                 signing(PkiSigningOperation.ReissueCredential.NAME, Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE, true),
@@ -746,6 +747,10 @@ public final class OperationSecurityDescriptors {
         boolean valid = switch (operation) {
             case PkiSigningOperation.CreateAuthority ignored -> resource.scope().authorityId().isEmpty()
                     && resource.objectId().isEmpty();
+            case PkiSigningOperation.IssueOcspResponderCertificate value -> resource.scope().authorityId().filter(value.request().authorityId()::equals).isPresent()
+                    && resource.scope().issuerId().filter(value.request().intent().expectedIssuerId()::equals).isPresent()
+                    && resource.scope().profileId().filter(value.request().intent().expectedProfile().profileId()::equals).isPresent()
+                    && resource.objectId().isEmpty();
             case PkiSigningOperation.IssueCredential value -> resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent()
                     && resource.scope().profileId().filter(value.profileId()::equals).isPresent();
             case PkiSigningOperation.RenewCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
@@ -781,6 +786,8 @@ public final class OperationSecurityDescriptors {
                     + atom(value.subjectRef().value()) + ";profile=" + atom(value.profileId())
                     + ";keyRef=" + atom(value.keyRef().value())
                     + value.signatureAlgorithmId().map(id->";signatureAlgorithmId="+atom(id)).orElse("");
+            case PkiSigningOperation.IssueOcspResponderCertificate value -> "issuance=" + atom(value.request().intent().issuanceId())
+                    + ";target=" + atom(value.request().intent().commandCommitment());
             case PkiSigningOperation.IssueCredential value -> "issuer=" + atom(value.issuerCaId().value()) + ";request="
                     + atom(value.requestId().value()) + ";profile=" + atom(value.profileId());
             case PkiSigningOperation.RenewCredential value -> "credential=" + atom(value.credentialId().value());

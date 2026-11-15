@@ -62,4 +62,10 @@ final class TransportCancellationGateway {
         return Objects.requireNonNull(service, "service").respond(Objects.requireNonNull(command, "command"),
                 Objects.requireNonNull(cancellation, "cancellation"));
     }
+    /* default */ static zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence respondSdkOcsp(OcspResponseService service,
+            OcspResponseService.SdkCommand command,CancellationSignal cancellation) {
+        return Objects.requireNonNull(service,"service").respondSdk(Objects.requireNonNull(command,"command"),
+                Objects.requireNonNull(cancellation,"cancellation"));
+    }
+
 }

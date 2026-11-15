@@ -85,6 +85,7 @@ final class AdministrativeRequestCoverage {
             "key.generate",
             "ocsp.responder.activate",
             "ocsp.responder.deactivate",
+            "ocsp.responder.issue-certificate",
             "ocsp.responder.register",
             "profile.activate",
             "profile.register",

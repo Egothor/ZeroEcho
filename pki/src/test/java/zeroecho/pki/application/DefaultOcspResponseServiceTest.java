@@ -394,6 +394,165 @@ final class DefaultOcspResponseServiceTest {
     @FunctionalInterface private interface Action { void run() throws Exception; }
     @FunctionalInterface private interface BeforeCall { void run(String method, Object[] arguments); }
 
+    @Test
+    void sdkEvidenceUsesActualManagedDualRolesAndOneClosedStatusView(@TempDir Path directory) throws Exception {
+        try (SdkFixture fixture = new SdkFixture(directory)) {
+            var service = fixture.service(fixture.session.signing().orElseThrow()); var expected = fixture.binding;
+            service.validateSdkResponderMetadata(expected.authorityId(), expected.issuerId(), expected.responderCredentialId(), expected.chainPathId(),
+                    expected.primary(), expected.alternative(), expected.responderId(), CancellationSignal.NONE);
+            var captured = service.captureSdkResponderBinding(expected.realmId(), expected.canonicalOrigin(), expected.authorityId(), expected.issuerId(),
+                    expected.responderCredentialId(), expected.chainPathId(), expected.primary(), expected.alternative(), expected.responderId(), CancellationSignal.NONE);
+            assertEquals(expected, captured); assertEquals(0, fixture.viewsOpened.get()); assertEquals(0, fixture.dispatches.get());
+            assertThrows(PkiException.class, () -> service.validateSdkResponderMetadata(expected.authorityId(), expected.issuerId(), expected.responderCredentialId(), expected.chainPathId(),
+                    new OcspResponseService.SdkSigningRole(HybridIssuanceFixture.key("root"), expected.primary().signatureAlgorithm(), Optional.empty()), expected.alternative(), expected.responderId(), CancellationSignal.NONE));
+            assertEquals(0, fixture.dispatches.get());
+            var evidence = service.respondSdk(new OcspResponseService.SdkCommand(captured, fixture.request, fixture.query().clientNonce(), Duration.ofSeconds(300)), CancellationSignal.NONE);
+            assertEquals(1, fixture.viewsOpened.get()); assertEquals(1, fixture.viewsClosed.get());
+            assertEquals(3, fixture.dispatches.get());
+            var projection = SdkOcspProjection.parse(fixture.request, evidence.primaryResponseDer());
+            assertEquals(List.of("GOOD", "REVOKED", "UNKNOWN"), projection.statuses().listValues().stream()
+                    .map(value -> value.objectFields().get("status").textValue()).toList());
+            assertArrayEquals(fixture.request, fixture.query().originalRequestDer());
+            assertEquals(fixture.now.get(), projection.producedAt());
+            assertTrue(Pkix.parseOcspResponse(evidence.primaryResponseDer()).verifySignature(fixture.responder.getPublicKey()));
+            assertEquals(fixture.binding.issuerId().value(),new String(evidence.primaryFrame().field(10),java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(fixture.binding.issuerBindingCommitment(),new String(evidence.primaryFrame().field(13),java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    void sdkInvalidAlternativeCancellationLostAcceptanceAndDelayedCompletionExposeNoBundle(@TempDir Path directory) throws Exception {
+        try (SdkFixture fixture = new SdkFixture(directory)) {
+            var service = fixture.service(fixture.session.signing().orElseThrow());
+            fixture.invalidAlternative.set(true);
+            assertThrows(PkiException.class, () -> service.respondSdk(fixture.query(),CancellationSignal.NONE));
+            assertEquals(3,fixture.dispatches.get());
+            fixture.invalidAlternative.set(false); fixture.dispatches.set(0);
+            assertThrows(PkiException.class, () -> service.respondSdk(fixture.query(),()->true));
+            assertEquals(0,fixture.dispatches.get());
+            fixture.expireDuringAlternative.set(true);
+            assertThrows(PkiException.class, () -> service.respondSdk(fixture.query(),CancellationSignal.NONE));
+            assertEquals(3,fixture.dispatches.get());
+            fixture.expireDuringAlternative.set(false); fixture.now.set(fixture.initialTime); fixture.dispatches.set(0);
+            AtomicInteger accepted = new AtomicInteger(), cancelled = new AtomicInteger(), discarded = new AtomicInteger();
+            var delegate = fixture.session.signing().orElseThrow();
+            SigningService lostAcknowledgment = (SigningService)Proxy.newProxyInstance(SigningService.class.getClassLoader(),new Class<?>[]{SigningService.class},(proxy,method,args)->{
+                if (method.getName().equals("discard")) discarded.incrementAndGet();
+                if (method.getName().equals("cancel")) cancelled.incrementAndGet();
+                try {
+                    var result = method.invoke(delegate,args);
+                    if (method.getName().equals("accept")) { accepted.incrementAndGet(); throw new PkiException("Controlled lost acknowledgment"); }
+                    return result;
+                } catch (InvocationTargetException failure) { throw failure.getCause(); }
+            });
+            assertThrows(PkiException.class,()->fixture.service(lostAcknowledgment).respondSdk(fixture.query(),CancellationSignal.NONE));
+            assertEquals(1,accepted.get()); assertEquals(1,cancelled.get()); assertEquals(0,discarded.get());
+            assertTrue(fixture.dispatches.get()<=1);
+        }
+    }
+
+    private static final class SdkFixture implements AutoCloseable {
+        final HybridIssuanceFixture base;
+        final PkiSession session;
+        final java.util.concurrent.atomic.AtomicReference<SigningProvider> provider = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<PkiStore> observedStore = new java.util.concurrent.atomic.AtomicReference<>();
+        final AtomicInteger viewsOpened = new AtomicInteger(), viewsClosed = new AtomicInteger(), dispatches = new AtomicInteger();
+        final java.util.concurrent.atomic.AtomicBoolean active = new java.util.concurrent.atomic.AtomicBoolean(), invalidAlternative = new java.util.concurrent.atomic.AtomicBoolean(), expireDuringAlternative = new java.util.concurrent.atomic.AtomicBoolean();
+        final java.util.concurrent.atomic.AtomicReference<java.time.Instant> now = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.time.Instant initialTime;
+        final X509Certificate responder;
+        final byte[] request;
+        final OcspResponseService.SdkResponderBinding binding;
+        SdkFixture(Path directory) throws Exception {
+            String signature = BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm();
+            String alternative = BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm();
+            base = new HybridIssuanceFixture(directory,"EC384","ECDSA",signature,
+                    new zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature(alternative,HybridIssuanceFixture.key("alt").value()),"EC384","ML-DSA-87");
+            base.storeDecorator = delegate -> {
+                var decorated = (PkiStore)Proxy.newProxyInstance(PkiStore.class.getClassLoader(),new Class<?>[]{PkiStore.class},(proxy,method,args)->{
+                try {
+                    Object result=method.invoke(delegate,args);
+                    if (!active.get() || !method.getName().equals("openRevocationView")) return result;
+                    viewsOpened.incrementAndGet(); var view=(RevocationView)result;
+                    return new RevocationView() {
+                        @Override public long revision(){ return view.revision(); }
+                        @Override public String commitment(){ return view.commitment(); }
+                        @Override public Optional<RevocationRecord> get(PkiId id)throws IOException { return view.get(id); }
+                        @Override public void close()throws IOException { view.close();viewsClosed.incrementAndGet(); }
+                    };
+                } catch(InvocationTargetException failure){ throw failure.getCause(); }
+                });
+                observedStore.set(decorated); return decorated;
+            };
+            base.signingDecorator = delegate -> {
+                var decorated=(SigningProvider)Proxy.newProxyInstance(SigningProvider.class.getClassLoader(),
+                        new Class<?>[]{SigningProvider.class,zeroecho.pki.spi.crypto.PublicKeyInfoSource.class,zeroecho.pki.spi.crypto.AltSigningCapability.class},(proxy,method,args)->{
+                    try {
+                        Object result=method.invoke(delegate,args);
+                        if (active.get() && method.getName().equals("dispatch")) {
+                            assertEquals(viewsOpened.get(),viewsClosed.get()); dispatches.incrementAndGet();
+                            var requested=(SigningProvider.SignRequest)args[0];
+                            if (requested.keyRef().equals(HybridIssuanceFixture.key("rotated-alt"))) {
+                                if (expireDuringAlternative.get()) now.updateAndGet(value->value.plusSeconds(301));
+                                if (invalidAlternative.get()) {
+                                    var observation=(SigningProvider.OperationObservation)result; byte[] bytes=observation.signature().orElseThrow().bytes();bytes[0]^=1;
+                                    return new SigningProvider.OperationObservation(observation.operationId(),observation.state(),observation.updatedAt(),observation.detailCode(),Optional.of(new EncodedObject(Encoding.BINARY,bytes)));
+                                }
+                            }
+                        }
+                        return result;
+                    }catch(InvocationTargetException failure){ throw failure.getCause(); }
+                });
+                provider.set(decorated);return decorated;
+            };
+            var seed=base.open(); PkiId caId=base.create(seed);
+            var ca=base.store.getCa(caId).orElseThrow(); var issuer=base.store.getIssuerGeneration(ca.currentIssuanceIssuerId()).orElseThrow();
+            X509Certificate issuerCertificate=base.certificate(issuer.credentialId());
+            initialTime=issuerCertificate.getNotBefore().toInstant().plusSeconds(10);now.set(initialTime);
+            var good=base.issueLeaf(seed,caId);var revoked=base.issueLeaf(seed,caId);
+            base.store.transitionRevocation(new RevocationCommand.RevokePermanently(revoked,RevocationReason.KEY_COMPROMISE,new SimpleAttributeSet()),initialTime.minusSeconds(1));
+            var builder=Pkix.certificateBuilder().serialNumber(BigInteger.valueOf(90001)).subject(new X500Principal("CN=Dedicated SDK OCSP"))
+                    .issuer(issuerCertificate.getSubjectX500Principal()).publicKey(base.rotatedKey.getPublic()).validity(issuerCertificate.getNotBefore().toInstant(),issuerCertificate.getNotAfter().toInstant())
+                    .basicConstraints(BasicConstraints.endEntity(),true).keyUsage(Set.of(KeyUsage.DIGITAL_SIGNATURE),true)
+                    .addExtension(new zeroecho.pkix.CertificateExtension("2.5.29.37",false,new org.bouncycastle.asn1.x509.ExtendedKeyUsage(org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_OCSPSigning).getEncoded("DER")))
+                    .addExtension(new zeroecho.pkix.CertificateExtension("2.5.29.72",false,base.rotatedAltKey.getPublic().getEncoded()))
+                    .addExtension(new zeroecho.pkix.CertificateExtension("2.5.29.73",false,zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.alternativeAlgorithm()));
+            Signature alternativeSigner=Signature.getInstance("ML-DSA-87","BC");alternativeSigner.initSign(base.altKey.getPrivate());
+            var primaryId=zeroecho.pkix.AlgorithmIdentifier.absent("1.2.840.10045.4.3.3");alternativeSigner.update(builder.buildAlternativeSignatureTbs(primaryId));
+            responder=builder.addExtension(new zeroecho.pkix.CertificateExtension("2.5.29.74",false,new org.bouncycastle.asn1.DERBitString(alternativeSigner.sign()).getEncoded("DER"))).build(Pkix.signer(base.rootKey.getPrivate(),primaryId));
+            byte[] der=responder.getEncoded();PkiId responderId=new PkiId("x509:"+hash(der));
+            var profile=base.store.getCredential(good).orElseThrow().profileBinding();
+            base.store.putCredential(new Credential(responderId,HybridIssuanceFixture.X509,new zeroecho.pki.api.IssuerRef(caId,issuer.issuerId(),ca.issuanceChainPathId()),new SubjectRef("CN=Dedicated SDK OCSP"),
+                    new Validity(responder.getNotBefore().toInstant(),responder.getNotAfter().toInstant()),"90001",new PkiId("spki:"+hash(base.rotatedKey.getPublic().getEncoded())),profile,
+                    zeroecho.pki.api.credential.CredentialStatus.ISSUED,PkiTestRuntime.stageCredential(base.store,der),new SimpleAttributeSet()));
+            var path=base.store.getIssuerChainPath(ca.issuanceChainPathId()).orElseThrow();var issuerBinding=base.store.getIssuerCryptographicBinding(issuer.issuerId()).orElseThrow();
+            binding=new OcspResponseService.SdkResponderBinding("hybrid-test","https://127.0.0.1:8443",caId,issuer.issuerId(),issuer.credentialId(),path.pathId(),path.pathCommitment(),issuerBinding.commitment(),responderId,
+                    List.of(responderId,issuer.credentialId()),new OcspResponseService.SdkSigningRole(HybridIssuanceFixture.key("rotated"),signature,
+                            Optional.of(PkiTestRuntime.signingAuthority(provider.get()).bindings().bindingId(
+                                    zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier.absent("1.2.840.10045.4.3.3"),
+                                    zeroecho.pki.impl.framework.x509.X509AlgorithmRole.SIGNATURE_ALGORITHM))),
+                    new OcspResponseService.SdkSigningRole(HybridIssuanceFixture.key("rotated-alt"),alternative,Optional.empty()),List.of(issuerBinding.certificateHybridBaseline()),OcspResponseService.ResponderId.BY_NAME);
+            var digest=new org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder().build().get(new org.bouncycastle.asn1.x509.AlgorithmIdentifier(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.16.840.1.101.3.4.2.1")));
+            var requests=new org.bouncycastle.cert.ocsp.OCSPReqBuilder();
+            for (BigInteger serial:List.of(base.certificate(good).getSerialNumber(),base.certificate(revoked).getSerialNumber(),BigInteger.valueOf(999999)))
+                requests.addRequest(new org.bouncycastle.cert.ocsp.CertificateID(digest,new org.bouncycastle.cert.X509CertificateHolder(issuerCertificate.getEncoded()),serial));
+            request=requests.build().getEncoded(); seed.close();
+            // Local setup creates fixtures; runtime queries require the real bounded reactor.
+            var topology=new PkiSessionConfiguration.SigningTopology(new PkiSessionConfiguration.SigningCoordinatorLimits(8,Duration.ofSeconds(10),Duration.ofSeconds(5),Duration.ofMillis(5),Duration.ofSeconds(2)),List.of(),new PkiSessionConfiguration.SigningLanePool(1,8));
+            var signing=new PkiSessionConfiguration.SigningConfiguration(new ProviderConfig("zeroecho-lib",Map.of("keyringPath",base.keyring.toString())),signature,Duration.ofMinutes(5),Optional.empty(),topology,java.util.OptionalLong.empty());
+            session=DefaultPkiSession.open(new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,new ProviderConfig("fs",Map.of("root",base.root.resolve("store").toString())),new ProviderConfig("memory",Map.of()),Optional.of(signing),List.of(),List.of()),
+                    PkiSessionRuntimeDependencies.withKeyringUnlockProvider(zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider()),base.clock,base);
+            active.set(true);
+        }
+        OcspResponseService.SdkCommand query(){return new OcspResponseService.SdkCommand(binding,request,new byte[32],Duration.ofSeconds(300));}
+        DefaultOcspResponseService service(SigningService signing){
+            java.time.Clock clock=new java.time.Clock(){@Override public java.time.ZoneId getZone(){return java.time.ZoneOffset.UTC;}@Override public java.time.Clock withZone(java.time.ZoneId zone){return this;}@Override public java.time.Instant instant(){return now.get();}};
+            return new DefaultOcspResponseService(observedStore.get(),signing,provider.get(),PkiTestRuntime.signingAuthority(provider.get()),()->{},clock);
+        }
+        private static String hash(byte[] bytes)throws Exception{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}
+        @Override public void close()throws IOException{session.close();}
+    }
+
     private static final class Fixture implements DefaultPkiSession.Bootstrap {
         private final IntermediateIssuanceFixture certificates = new IntermediateIssuanceFixture();
         private final Provider provider = new Provider(this);

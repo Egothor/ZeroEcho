@@ -110,7 +110,8 @@ class PkiCertificateAccessTest {
             realm.createPrincipal(new SecurityPrincipal("trusted-proxy",SecurityPrincipal.Type.SERVICE,"Initial reverse proxy",Optional.empty(),Map.of(),true),"system");
             realm.grant(grant("bootstrap.proxy-forward","trusted-proxy",Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY,Permission.ResourceType.REALM,scope,Permission.DataView.METADATA_REDACTED),"system");
             var original=new OperationSecurityDescriptors().descriptors().values().stream().filter(value -> !value.operationId().equals(PkiOperation.ListCredentials.NAME)
-                    && !value.operationId().equals(ServerControlOperation.GenerateManagedKey.NAME)).sorted(Comparator.comparing(OperationSecurityDescriptors.Descriptor::operationId)).toList();
+                    && !value.operationId().equals(ServerControlOperation.GenerateManagedKey.NAME)
+                    && !value.operationId().equals(zeroecho.pki.application.PkiSigningOperation.IssueOcspResponderCertificate.NAME)).sorted(Comparator.comparing(OperationSecurityDescriptors.Descriptor::operationId)).toList();
             check(original.size()==150,"Legacy catalog changed; review historical grants explicitly");
             for(String principal:List.of("bootstrap-admin","bootstrap-approver")) {
                 realm.createPrincipal(new SecurityPrincipal(principal,SecurityPrincipal.Type.USER,principal,Optional.empty(),Map.of(),true),"system");

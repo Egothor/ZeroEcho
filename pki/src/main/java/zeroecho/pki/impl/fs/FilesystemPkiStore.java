@@ -2193,9 +2193,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(domain.command());
         PkiId authority;
         if (domain.kind() == DomainContinuationStore.Kind.ISSUANCE) {
-            authority = new PkiId(command.field(0));
-            if (!credential.issuerRef().issuerId().value().equals(command.field(1))
-                    || !credential.issuerRef().chainPathId().value().equals(command.field(2))) {
+            boolean responder = command.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION);
+            authority = new PkiId(command.field(responder ? 1 : 0));
+            if (!credential.issuerRef().issuerId().value().equals(command.field(responder ? 2 : 1))
+                    || !credential.issuerRef().chainPathId().value().equals(command.field(responder ? 4 : 2))) {
                 throw new IllegalStateException("Credential publication issuer selection differs");
             }
         } else if ("CREATE_ROOT".equals(command.operation())) {
@@ -5388,8 +5389,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                                 ManagedKeyProofBindings.readChallenge(stagedContent, exact.operationId(), exact.deadline(), Optional.empty(), proof, candidate);
                             }
                             if (exact.proofStep().isPresent()) {
-                                zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent,
-                                        SignWorkflowStore.AcceptanceEnvelope.from(exact));
+                                var envelope = SignWorkflowStore.AcceptanceEnvelope.from(exact);
+                                if (zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.supports(envelope)) {
+                                    zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
+                                } else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
                             }
                             Optional<SignAcceptanceCrlScope> claims = SignAcceptanceCrlScope.derive(this, exact, ignoredContent);
                             MetadataCommitResult committed = createSignAcceptance(exact, admission, claims, scheduledClaim);
@@ -6801,6 +6804,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    // These receipts are the canonical slot uniqueness evidence, including failed attempts.
+    private static boolean isManagedOcspProvisioning(SignWorkflowStore.Workflow workflow) {
+        return workflow.envelope().outer().filter(outer -> outer.kind() == DomainContinuationStore.Kind.ISSUANCE
+                && zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command())
+                    .equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)).isPresent();
+    }
+
     @Override
     public int purgeExpiredSignRecords() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -6812,6 +6822,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     .filter(stored -> !stored.record().createdAt().plus(options.signingOperationHorizon())
                             .isAfter(cutoff))
                     .filter(stored -> !isPinnedScheduleReceipt(stored.record().operationId()))
+                    .filter(stored -> !isManagedOcspProvisioning(stored.record()))
                     .limit(SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS / 3)
                     .map(stored -> stored.record().submissionId())
                     .sorted(Comparator.comparing(PkiId::value)).toList();
@@ -6826,6 +6837,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     Optional<StoredSign> current = readStoredSign(id);
                     if (current.isEmpty()) continue;
                     StoredSign stored = current.orElseThrow();
+                    if (isManagedOcspProvisioning(stored.record())) continue;
                     try (var snapshot = metadataStore.snapshot()) {
                         if (CrlHybridMetadata.reverse(snapshot, id, stagedContent).isPresent()) continue;
                     }

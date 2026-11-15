@@ -188,8 +188,17 @@ final class PkiOperationRegistry {
         return bindings.keySet();
     }
 
+    // These shared typed selectors require the server's canonical claim and approval
+    // transaction. They must never be advertised as locally executable bindings.
+    /* default */ Set<String> serverOnlyNames() {
+        return Set.of(PkiSigningOperation.IssueOcspResponderCertificate.NAME);
+    }
+
     /* default */ PkiLocalCommand bind(String name, PkiOperationValue.ObjectValue arguments, Path baseDirectory)
             throws IOException {
+        if (serverOnlyNames().contains(name)) {
+            throw new IllegalArgumentException("This operation requires authenticated remote server provisioning and approval; use the remote JSON operation transport");
+        }
         Binding binding = bindings.get(name);
         if (binding == null) {
             throw new IllegalArgumentException("Unknown PKI operation");

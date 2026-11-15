@@ -260,9 +260,22 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
     public void requireSupportedIssuance() {
         if (hybridMode instanceof HybridCertificateMode.AltSignature alternative) {
             boolean requested = alternative.subjectKeySource() == HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
-            if (requested != (certificateType == CertificateProfileKind.END_ENTITY)) {
+            boolean managedResponder = !requested && isManagedOcspResponderProfile();
+            if (!managedResponder && requested != (certificateType == CertificateProfileKind.END_ENTITY)) {
                 throw new IllegalArgumentException("Alternative subject key source does not match certificate kind");
             }
         }
     }
+    /**
+     * Identifies the narrow dedicated managed responder profile; this grants no issuance authority.
+     * @return whether the exact non-CA policy permits only digitalSignature and OCSP signing
+     */
+    public boolean isManagedOcspResponderProfile() {
+        return certificateType == CertificateProfileKind.END_ENTITY
+                && hybridMode instanceof HybridCertificateMode.AltSignature mode
+                && mode.subjectKeySource() == HybridCertificateMode.AlternativeSubjectKeySource.MANAGED
+                && leafPolicy().keyUsages().equals(java.util.Set.of(LeafKeyUsage.DIGITAL_SIGNATURE))
+                && leafPolicy().extendedKeyUsages().equals(java.util.Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.9")));
+    }
+
 }

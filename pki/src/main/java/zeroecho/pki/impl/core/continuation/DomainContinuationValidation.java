@@ -142,6 +142,10 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
     }
 
     private static void validateIssuance(DomainCommandEncoding.Decoded command) {
+        if (command.operation().equals(OcspResponderCertificateCommand.OPERATION)) {
+            new OcspResponderCertificateCommand(command.fields());
+            return;
+        }
         boolean lifecycle = switch (command.operation()) {
             case "ISSUE_END_ENTITY" -> false;
             case "RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY" -> true;

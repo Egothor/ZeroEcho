@@ -1176,7 +1176,7 @@ public final class ServerControlOperationExecutor {
     }
 
     private static PkiOperationValue responder(OcspResponderService.Responder value) {
-        return object("responderId", text(value.responderId()), "alias", text(value.alias()),
+        var nativeValue = object("responderId", text(value.responderId()), "alias", text(value.alias()),
                 TEXT_AUTHORITY_ID, text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
                 "signingMode", text(value.signingMode().name()), "responderCredentialId",
                 text(value.responderCredentialId().value()), FIELD_STATE, text(value.state().name()),
@@ -1184,6 +1184,11 @@ public final class ServerControlOperationExecutor {
                 "requesterRevocationPolicy", text(value.requesterTrustPolicy()
                         .map(policy -> policy.revocationPolicy().name()).orElse("NOT_APPLICABLE")),
                 "configurationCommitment", text(value.configurationCommitment()));
+        if(value.hybridSdk().isEmpty())return nativeValue;
+        var fields=new java.util.LinkedHashMap<>(nativeValue.fields());
+        fields.put("sdkProfile",text(value.hybridSdk().orElseThrow().profile()));
+        fields.put("alternativeSignatureAlgorithm",text(value.hybridSdk().orElseThrow().alternativeSignatureAlgorithm()));
+        return new PkiOperationValue.ObjectValue(fields);
     }
     private static PkiOperationValue template(RoleTemplateCatalog.Template value) {
         List<PkiOperationValue> actions = value.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))

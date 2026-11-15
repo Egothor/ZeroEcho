@@ -126,7 +126,7 @@ class ServerControlOperationExecutorTest {
     void catalogContainsAllExplicitOperationFamilies() {
         System.out.println("catalogContainsAllExplicitOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(152, catalog.descriptors().size());
+        assertEquals(153, catalog.descriptors().size());
         assertEquals(Permission.Action.CERTIFICATE_SEARCH, catalog.descriptors().get("credential.list").action());
         assertEquals(Permission.ResourceType.CERTIFICATE, catalog.descriptors().get("credential.list").resourceType());
         assertEquals(Permission.DataView.METADATA_REDACTED, catalog.descriptors().get("credential.list").dataView());
@@ -139,8 +139,11 @@ class ServerControlOperationExecutorTest {
         assertTrue(managedKey.mutating());
         assertEquals(52, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
-        assertEquals(10, catalog.descriptors().values().stream()
+        assertEquals(11, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
+        var responderIssuance=catalog.require(zeroecho.pki.application.PkiSigningOperation.IssueOcspResponderCertificate.NAME);
+        assertEquals(Permission.Action.CERTIFICATE_ISSUE,responderIssuance.action());
+        assertEquals(OperationSecurityDescriptors.Family.SIGNING_OPERATION,responderIssuance.family());
         assertEquals(90, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());

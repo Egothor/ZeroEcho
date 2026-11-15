@@ -292,6 +292,272 @@ class HybridSdkRealIssuanceTest {
         }
     }
 
+    @Test void managedResponderProvisioningKeepsOneApprovalAndCredentialAcrossConcurrentReplayAndExplicitRenewal(@TempDir Path directory) throws Exception {
+        zeroecho.sdk.util.BouncyCastleActivator.init();
+        var configuration=withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(directory));
+        PkiAdminBootstrap.bootstrap(ManagedKeyGenerationIntegrationTest.withoutSigning(configuration),"administrator","approver","trusted-proxy");
+        var clock=new TestClock();
+        PkiOperationValue.ObjectValue selectedEnvelope;
+        String canonical;
+        PkiId firstCredential;
+        PkiId acceptedOperation;
+        try(var realm=ServerRealmContext.open(configuration.realm(),dependencies(),clock,new java.security.SecureRandom())) {
+            var keys=realm.session().managedKeyGeneration().orElseThrow();
+            var rootKey=keys.generate("1".repeat(64),ManagedKeyGeneration.Parameters.ECDSA_P384);
+            var rootAlt=keys.generate("2".repeat(64),ManagedKeyGeneration.Parameters.ML_DSA_87);
+            var responderKey=keys.generate("3".repeat(64),ManagedKeyGeneration.Parameters.ECDSA_P384);
+            var responderAlt=keys.generate("4".repeat(64),ManagedKeyGeneration.Parameters.ML_DSA_87);
+            install(realm,"root-ca","responder-root",new HybridCertificateMode.AltSignature(
+                    BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),rootAlt.keyRef().value()),IssuanceApprovalRequirement.NONE);
+            var root=submit(realm,"responder-root","ca.create",arguments("formatId","x509","subjectRef","CN=Responder Example Root",
+                    "profileId","responder-root","keyRef",rootKey.keyRef().value(),"signatureAlgorithmId",BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm()));
+            approve(realm,root);
+            var issuerCredential=credential(process(realm.administrativeRequests(),root.requestId()));
+            var authority=authority(realm,issuerCredential);
+            var ca=realm.session().repository().authority(authority).orElseThrow();
+            var path=realm.session().repository().chainPath(ca.issuanceChainPathId()).orElseThrow();
+            var source=BuiltInCertificateProfileCatalog.load(getClass().getClassLoader()).stream().map(t->t.definition())
+                    .filter(d->d.profileId().equals("vpn-client")).findFirst().orElseThrow();
+            var definition=new CertificateProfileDefinition(zeroecho.pki.api.profile.CertificateProfileKind.END_ENTITY,"dedicated-responder",1,
+                    source.formatId(),"Dedicated responder",Duration.ofDays(1),IssuanceApprovalRequirement.SINGLE,
+                    new zeroecho.pki.api.profile.SubjectPolicy(false,List.of(new zeroecho.pki.api.profile.SubjectRdnRule(
+                            zeroecho.pki.api.profile.SubjectRdnType.COMMON_NAME,1,1,128,Optional.empty(),true))),
+                    new zeroecho.pki.api.profile.LeafCertificatePolicy(new zeroecho.pki.api.profile.SubjectAlternativeNamePolicy(
+                            0,0,List.of(),false,java.util.Set.of(),false,false,false),java.util.Set.of(zeroecho.pki.api.profile.LeafKeyUsage.DIGITAL_SIGNATURE),
+                            java.util.Set.of(new zeroecho.pki.api.profile.ExtendedKeyUsageId("1.3.6.1.5.5.7.3.9")),true,false,true,java.util.Set.of("ECDSA")),
+                    source.algorithmBindingPolicy(),source.confirmationPolicy(),new HybridCertificateMode.AltSignature(
+                            BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),responderAlt.keyRef().value()));
+            realm.session().profiles().importProfile(CertificateProfileDocumentCodec.writeCanonical(definition));
+            realm.session().profiles().activateProfile("dedicated-responder",1);
+            var profile=realm.session().profiles().requireActiveProfile("dedicated-responder").reference();
+            var input=new zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest(authority,responderKey.keyRef(),responderAlt.keyRef(),
+                    List.of(new zeroecho.pki.api.request.SubjectRdn(zeroecho.pki.api.profile.SubjectRdnType.COMMON_NAME,"Example OCSP Responder")),
+                    new zeroecho.pki.api.Validity(clock.instant(),clock.instant().plus(Duration.ofHours(12))),
+                    new zeroecho.pki.api.issuance.IssuanceIntent("ignored-caller","0".repeat(64),profile,path.issuerId(),path.pathId(),path.pathCommitment()));
+            selectedEnvelope=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),
+                    "authorityId",new PkiOperationValue.Text(authority.value()),"arguments",OcspProvisioningProjection.encode(input)));
+            var request=request(realm,"ocsp.responder.issue-certificate",selectedEnvelope);
+            var admitted=realm.administrativeRequests().submit("caller-one",request,selectedEnvelope,Duration.ofSeconds(30));
+            canonical=admitted.requestId();
+            assertTrue(canonical.matches("ocsp-prov:[0-9a-f]{64}:r1"));
+            assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,admitted.state());
+            assertTrue(admitted.receipt().isEmpty());
+            try(var executor=java.util.concurrent.Executors.newFixedThreadPool(3)) {
+                var envelope=selectedEnvelope;
+                var futures=new java.util.ArrayList<java.util.concurrent.Future<AdministrativeRequest>>();
+                for(int i=0;i<3;i++){String id="retry-"+i;futures.add(executor.submit(()->realm.administrativeRequests().submit(id,request,envelope,Duration.ofSeconds(10))));}
+                for(var future:futures)assertEquals(admitted,future.get());
+            }
+            var changedArgs=new TreeMap<>(OcspProvisioningProjection.encode(input).fields());
+            changedArgs.put("notAfter",new PkiOperationValue.Text(input.validity().notAfter().minusSeconds(1).toString()));
+            var changedEnvelope=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),
+                    "authorityId",new PkiOperationValue.Text(authority.value()),"arguments",new PkiOperationValue.ObjectValue(changedArgs)));
+            assertThrows(AdministrativeRequestCoordinator.ProvisioningConflict.class,()->realm.administrativeRequests().submit("different-date",
+                    request(realm,"ocsp.responder.issue-certificate",changedEnvelope),changedEnvelope,Duration.ofSeconds(30)));
+            var control=AdministrativeWorkflowFixture.control(realm);
+            assertEquals(1,control.protocolRecords(ServerControlStore.OCSP_PROVISIONING,0,100).values().size());
+            assertTrue(control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,"caller-one").isEmpty());
+            assertEquals(1,control.approvals(0,100).values().stream().filter(a->a.operationId().equals("ocsp.responder.issue-certificate")).count());
+            approve(realm,admitted);
+            var actual=realm.session().semanticSigning().orElseThrow();
+            var accepts=new java.util.concurrent.atomic.AtomicInteger();
+            var lostAcknowledgment=(zeroecho.pki.api.SemanticSigningService)java.lang.reflect.Proxy.newProxyInstance(
+                    zeroecho.pki.api.SemanticSigningService.class.getClassLoader(),new Class<?>[]{zeroecho.pki.api.SemanticSigningService.class},
+                    (proxy,method,parameters)->{
+                        if(method.getName().equals("resolve"))throw new zeroecho.pki.api.PkiException("fixture observation unavailable",
+                                zeroecho.pki.api.PkiFailureReason.STORE_DURABILITY_UNCONFIRMED);
+                        if(method.getName().equals("accept")) {
+                            var durable=AdministrativeRequestCodec.decode(control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,canonical).orElseThrow());
+                            assertEquals(AdministrativeRequest.State.DISPATCHING,durable.state());assertTrue(durable.receipt().isPresent());
+                            assertEquals(ApprovalService.State.EXECUTING,realm.approvals().requireCurrent(admitted.approvalId().orElseThrow()).state());
+                            assertEquals(1,accepts.incrementAndGet());
+                            try{method.invoke(actual,parameters);}catch(java.lang.reflect.InvocationTargetException failure){throw failure.getCause();}
+                            throw new IllegalStateException("fixture lost committed acknowledgment");
+                        }
+                        try{return method.invoke(actual,parameters);}catch(java.lang.reflect.InvocationTargetException failure){throw failure.getCause();}
+                    });
+            try(var crashing=new AdministrativeRequestCoordinator(realm,control,clock,()->lostAcknowledgment)) {
+                var unknown=crashing.process(canonical);
+                assertEquals(AdministrativeRequest.State.DISPATCHING,unknown.state());assertTrue(unknown.receipt().isPresent());
+                acceptedOperation=unknown.receipt().orElseThrow().operationId();
+                assertEquals("SIGNING_OBSERVATION_UNAVAILABLE",unknown.failureCode().orElseThrow());
+                long completedBy=System.nanoTime()+Duration.ofSeconds(15).toNanos();
+                while(actual.find(acceptedOperation).orElseThrow().state()!=zeroecho.pki.api.signing.SemanticSigningState.COMPLETED) {
+                    if(System.nanoTime()>completedBy)throw new AssertionError("Managed responder real signing did not complete before restart");
+                    Thread.sleep(5);
+                }
+                assertEquals(1,accepts.get());
+            }
+        }
+        try(var realm=ServerRealmContext.open(configuration.realm(),dependencies(),clock,new java.security.SecureRandom())) {
+            var replay=realm.administrativeRequests().submit("new-id-after-restart",request(realm,"ocsp.responder.issue-certificate",selectedEnvelope),selectedEnvelope,Duration.ofSeconds(20));
+            assertEquals(canonical,replay.requestId());
+            var completed=process(realm.administrativeRequests(),canonical);firstCredential=credential(completed);
+            assertEquals(acceptedOperation,completed.receipt().orElseThrow().operationId());
+            assertEquals(1,AdministrativeWorkflowFixture.control(realm).approvals(0,100).values().stream()
+                    .filter(a->a.operationId().equals("ocsp.responder.issue-certificate")).count());
+            var credential=realm.session().repository().credential(firstCredential).orElseThrow();
+            var ca=realm.session().repository().authority(credential.issuerRef().caId()).orElseThrow();
+            var issuer=certificate(realm,realm.session().repository().issuer(ca.currentIssuanceIssuerId()).orElseThrow().credentialId());
+            var certificate=certificate(realm,firstCredential);certificate.verify(issuer.getPublicKey());
+            assertTrue(Pkix.verifyAlternativeSignatureCor3(certificate,alternative(issuer)));
+            assertEquals(List.of("1.3.6.1.5.5.7.3.9"),certificate.getExtendedKeyUsage());
+            var again=realm.administrativeRequests().submit("yet-another-id",request(realm,"ocsp.responder.issue-certificate",selectedEnvelope),selectedEnvelope,Duration.ofSeconds(15));
+            assertEquals(firstCredential,credential(again));
+            var args=new TreeMap<>(((PkiOperationValue.ObjectValue)selectedEnvelope.fields().get("arguments")).fields());
+            args.put("expectedPredecessorCredentialId",new PkiOperationValue.Text(firstCredential.value()));
+            var renewedEnvelope=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),
+                    "authorityId",selectedEnvelope.fields().get("authorityId"),"arguments",new PkiOperationValue.ObjectValue(args)));
+            var renewal=realm.administrativeRequests().submit("deliberate-renewal",request(realm,"ocsp.responder.issue-certificate",renewedEnvelope),renewedEnvelope,Duration.ofSeconds(30));
+            assertEquals(canonical.substring(0,canonical.length()-1)+"2",renewal.requestId());approve(realm,renewal);
+            var renewed=process(realm.administrativeRequests(),renewal.requestId());assertNotEquals(firstCredential,credential(renewed));
+            assertEquals(renewed,realm.administrativeRequests().submit("same-predecessor",request(realm,"ocsp.responder.issue-certificate",renewedEnvelope),renewedEnvelope,Duration.ofSeconds(5)));
+            assertThrows(AdministrativeRequestCoordinator.ProvisioningConflict.class,()->realm.administrativeRequests().submit("historical-initial",
+                    request(realm,"ocsp.responder.issue-certificate",selectedEnvelope),selectedEnvelope,Duration.ofSeconds(30)));
+            var row=AdministrativeWorkflowFixture.control(realm).protocolRecords(ServerControlStore.OCSP_PROVISIONING,0,100).values().getFirst();
+            var slot=OcspProvisioningSlotCodec.decode(row);assertEquals(credential(renewed),slot.credentialId().orElseThrow());
+            assertEquals(2,slot.revision());
+        }
+        managedResponderHttps(configuration,clock,selectedEnvelope,firstCredential);
+    }
+
+    private static void managedResponderHttps(PkiServerConfiguration domain,TestClock clock,
+            PkiOperationValue.ObjectValue originalEnvelope,PkiId statusCredential) throws Exception {
+        var tls=HttpServerTestSupport.tls();
+        var transport=HttpServerTestSupport.configuration(domain.realm().controlLogPath().getParent().resolve("ocsp-wire-transport"),tls.clientCertificate());
+        String fingerprint=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(tls.clientCertificate().getEncoded()));
+        var auth=new PkiServerConfiguration.Authentication(AdministrativeAuthenticationMode.DIRECT_MTLS,
+                List.of(new PkiServerConfiguration.ClientCertificateMapping("wire-admin","administrator",Optional.of(fingerprint),Optional.empty(),Optional.empty())),
+                List.of(),List.of(),java.util.Set.of(),Optional.empty(),Optional.empty(),Optional.empty(),Optional.empty(),0,0);
+        var publicListener=new PkiServerConfiguration.PublicListener(java.net.InetAddress.getByName("127.0.0.1"),0,
+                Optional.of(transport.listener().tlsProvider()),false,auth,16384,65536,transport.execution(),Duration.ofSeconds(20),
+                Duration.ofMinutes(5),Duration.ofSeconds(30),true,Optional.empty(),Optional.of(new PkiServerConfiguration.HybridSdkListener("https://ocsp.example.invalid:443")));
+        var config=new PkiServerConfiguration(domain.version(),domain.serverName(),domain.realm(),transport.listener(),auth,
+                transport.execution(),transport.runtime(),Optional.of(publicListener));
+        byte[] nativeRequest;
+        try(var http=java.net.http.HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+                var anonymous=java.net.http.HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+                var server=PkiHttpsServer.start(config,dependencies(),clock,HttpServerTestSupport.random(),zeroecho.pki.server.http.TestTlsProvider.class.getClassLoader())) {
+            String admin="https://localhost:"+server.address().getPort()+"/admin/v1/";
+            String publicBase="https://localhost:"+server.publicAddress().orElseThrow().getPort()+"/ocsp/wire-responder";
+            var catalog=http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(admin+"operations")).GET().build(),java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,catalog.statusCode());assertTrue(catalog.body().contains("ocsp.responder.issue-certificate"));
+            var row=AdministrativeWorkflowFixture.control(server.realm()).protocolRecords(ServerControlStore.OCSP_PROVISIONING,0,100).values().getFirst();
+            var old=OcspProvisioningSlotCodec.decode(row);
+            var args=new TreeMap<>(((PkiOperationValue.ObjectValue)originalEnvelope.fields().get("arguments")).fields());
+            args.put("expectedPredecessorCredentialId",new PkiOperationValue.Text(old.credentialId().orElseThrow().value()));
+            var submittedBody=new TreeMap<String,PkiOperationValue>();submittedBody.put("version",new PkiOperationValue.IntegerValue(1));
+            submittedBody.put("requestId",new PkiOperationValue.Text("wire-provision"));submittedBody.put("operation",new PkiOperationValue.Text("ocsp.responder.issue-certificate"));
+            submittedBody.put("authorityId",originalEnvelope.fields().get("authorityId"));submittedBody.put("arguments",new PkiOperationValue.ObjectValue(args));
+            var accepted=jsonPost(http,admin+"requests",new PkiOperationValue.ObjectValue(submittedBody));
+            assertEquals(202,accepted.statusCode(),new String(accepted.body()));
+            String canonical=accepted.headers().firstValue("Location").orElseThrow().substring("/admin/v1/requests/".length());
+            assertTrue(canonical.endsWith(":r3"));assertNotEquals("wire-provision",canonical);
+            var pending=server.realm().administrativeRequests().inspect(canonical,"administrator");
+            assertEquals(AdministrativeRequest.State.WAITING_APPROVAL,pending.state());assertTrue(pending.receipt().isEmpty());
+            var decision=envelope(arguments("approvalId",pending.approvalId().orElseThrow(),"justification","Explicit responder renewal for HTTPS verification"));
+            assertEquals(200,jsonPost(http,admin+"operations/security.approval.approve",decision).statusCode());
+            var completed=process(server.realm().administrativeRequests(),canonical);var responderCredential=credential(completed);
+            var duplicate=new TreeMap<>(submittedBody);duplicate.put("requestId",new PkiOperationValue.Text("wire-different-caller"));
+            var repeated=jsonPost(http,admin+"requests",new PkiOperationValue.ObjectValue(duplicate));
+            assertEquals(202,repeated.statusCode());assertEquals(accepted.headers().firstValue("Location"),repeated.headers().firstValue("Location"));
+            var changed=new TreeMap<>(args);changed.put("notAfter",new PkiOperationValue.Text(Instant.parse(((PkiOperationValue.Text)args.get("notAfter")).value()).minusSeconds(1).toString()));
+            duplicate.put("arguments",new PkiOperationValue.ObjectValue(changed));
+            var conflict=jsonPost(http,admin+"requests",new PkiOperationValue.ObjectValue(duplicate));
+            assertEquals(409,conflict.statusCode(),new String(conflict.body()));assertTrue(new String(conflict.body()).contains("OCSP_PROVISIONING_TARGET_CONFLICT"));
+            assertEquals(accepted.headers().firstValue("Location"),conflict.headers().firstValue("Location"));
+            var input=OcspProvisioningProjection.decode(args);
+            var registry=server.realm().session().algorithmBindings().commitment();
+            var registration=new TreeMap<String,PkiOperationValue>(arguments("responderId","wire-responder","alias","wire-responder", "authorityId",input.authorityId().value(),
+                    "issuerId",input.intent().expectedIssuerId().value(),"signingMode","DELEGATED_RESPONDER","responderCredentialId",responderCredential.value(),
+                    "signingKeyRef",input.primaryKeyRef().value(),"chainPathId",input.intent().expectedChainPathId().value(),"signatureAlgorithm",BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),
+                    "signatureBindingCommitment",registry,"responderIdForm","BY_KEY","noncePolicy","OPTIONAL_ECHO","requestAuthenticationMode","UNSIGNED_ONLY").fields());
+            registration.put("responseValidityMillis",new PkiOperationValue.IntegerValue(300000));registration.put("maximumNonceBytes",new PkiOperationValue.IntegerValue(64));
+            registration.put("acceptedHashes",new PkiOperationValue.ListValue(List.of(new PkiOperationValue.Text("SHA256"))));
+            registration.put("maximumRequestBytes",new PkiOperationValue.IntegerValue(16384));registration.put("maximumEntries",new PkiOperationValue.IntegerValue(16));
+            registration.put("cacheLifetimeMillis",new PkiOperationValue.IntegerValue(30000));
+            registration.put("hybridSdk",arguments("profile","zeroecho-hybrid-sdk-v1","alternativeKeyRef",input.alternativeKeyRef().value(),
+                    "alternativeSignatureAlgorithm",BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),"alternativeSignatureBindingCommitment",registry));
+            var registerBody=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),"requestId",new PkiOperationValue.Text("wire-register"),
+                    "operation",new PkiOperationValue.Text("ocsp.responder.register"),"arguments",new PkiOperationValue.ObjectValue(registration)));
+            var registered=jsonPost(http,admin+"requests",registerBody);assertEquals(202,registered.statusCode(),new String(registered.body()));
+            var registerPending=server.realm().administrativeRequests().inspect("wire-register","administrator");
+            if(registerPending.approvalId().isPresent())assertEquals(200,jsonPost(http,admin+"operations/security.approval.approve",
+                    envelope(arguments("approvalId",registerPending.approvalId().orElseThrow(),"justification","Enable dedicated SDK OCSP responder"))).statusCode());
+            process(server.realm().administrativeRequests(),"wire-register");
+            var activateBody=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),"requestId",new PkiOperationValue.Text("wire-activate"),
+                    "operation",new PkiOperationValue.Text("ocsp.responder.activate"),"arguments",arguments("responderId","wire-responder")));
+            var activationResponse=jsonPost(http,admin+"requests",activateBody);assertEquals(202,activationResponse.statusCode(),new String(activationResponse.body()));
+            var activation=server.realm().administrativeRequests().inspect("wire-activate","administrator");
+            if(activation.approvalId().isPresent())assertEquals(200,jsonPost(http,admin+"operations/security.approval.approve",
+                    envelope(arguments("approvalId",activation.approvalId().orElseThrow(),"justification","Activate dedicated SDK responder"))).statusCode());
+            process(server.realm().administrativeRequests(),activation.requestId());
+            var capability=anonymous.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(publicBase+"/hybrid-sdk/v1")).GET().build(),java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,capability.statusCode(),capability.body());assertTrue(capability.body().contains("https://ocsp.example.invalid:443"));
+            assertFalse(capability.body().contains("responderCredentialId"));assertFalse(capability.body().contains("KeyRef"));
+            var issuerCredential=server.realm().session().repository().issuer(input.intent().expectedIssuerId()).orElseThrow().credentialId();
+            var issuer=certificate(server.realm(),issuerCredential);var queried=certificate(server.realm(),statusCredential);
+            var digest=new org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder().build().get(new org.bouncycastle.asn1.x509.AlgorithmIdentifier(org.bouncycastle.asn1.nist.NISTObjectIdentifiers.id_sha256));
+            var builder=new org.bouncycastle.cert.ocsp.OCSPReqBuilder();builder.addRequest(new org.bouncycastle.cert.ocsp.CertificateID(digest,new org.bouncycastle.cert.jcajce.JcaX509CertificateHolder(issuer),queried.getSerialNumber()));
+            nativeRequest=builder.build().getEncoded();byte[] nonce=new byte[32];nonce[0]=7;
+            var query=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),"profile",new PkiOperationValue.Text("zeroecho-hybrid-sdk-v1"),
+                    "requestDer",httpBytes(nativeRequest),"clientNonce",httpBytes(nonce)));
+            var response=sdkPost(anonymous,publicBase+"/hybrid-sdk/v1",query);assertEquals(200,response.statusCode(),new String(response.body()));
+            assertEquals("no-store",response.headers().firstValue("Cache-Control").orElseThrow());
+            var evidence=ocspEvidence(response.body());
+            var responder=certificate(server.realm(),responderCredential);
+            var service=server.realm().session().ocsp().orElseThrow();
+            var binding=service.captureSdkResponderBinding(server.realm().configuration().realmId().value(),"https://ocsp.example.invalid:443",input.authorityId(),input.intent().expectedIssuerId(),
+                    responderCredential,input.intent().expectedChainPathId(),new zeroecho.pki.application.OcspResponseService.SdkSigningRole(input.primaryKeyRef(),BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),Optional.empty()),
+                    new zeroecho.pki.application.OcspResponseService.SdkSigningRole(input.alternativeKeyRef(),BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),Optional.empty()),zeroecho.pki.application.OcspResponseService.ResponderId.BY_KEY,zeroecho.core.io.CancellationSignal.NONE);
+            var roles=zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("primary",ocspRole(responder.getPublicKey().getEncoded(),false),"alternative",ocspRole(alternativeSpki(responder),true)));
+            var trusted=new zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.TrustedContext(binding.realmId(),binding.canonicalOrigin(),binding.authorityId(),binding.issuerId(),binding.chainPathId(),
+                    binding.pathCommitment(),binding.issuerBindingCommitment(),nativeRequest,nonce,List.of(issuer.getEncoded()),binding.issuerCertificateBaselines(),responder.getEncoded(),roles,clock.instant());
+            var verified=zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.verify(evidence,trusted);
+            assertEquals("GOOD",verified.statuses().listValues().getFirst().objectFields().get("status").textValue());
+            byte[] invalid=evidence.alternativeSignature();invalid[0]^=1;
+            var tampered=new zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence(evidence.primaryResponseDer(),evidence.responderChain(),evidence.primaryFrame(),evidence.alternativeFrame(),evidence.primarySignature(),invalid);
+            assertThrows(IllegalArgumentException.class,()->zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.verify(tampered,trusted));
+            server.realm().session().revocations().revokePermanently(new zeroecho.pki.api.revocation.RevocationCommand.RevokePermanently(statusCredential,
+                    zeroecho.pki.api.revocation.RevocationReason.KEY_COMPROMISE,new zeroecho.pki.impl.core.attr.SimpleAttributeSet(List.of())));
+            var revoked=sdkPost(anonymous,publicBase+"/hybrid-sdk/v1",query);assertEquals(200,revoked.statusCode(),new String(revoked.body()));
+            var revokedProjection=zeroecho.pki.api.hybrid.sdk.SdkOcspEvidenceVerifier.verify(ocspEvidence(revoked.body()),trusted);
+            assertEquals("REVOKED",revokedProjection.statuses().listValues().getFirst().objectFields().get("status").textValue());
+            var malformed=new PkiOperationValue.ObjectValue(Map.of("version",new PkiOperationValue.IntegerValue(1),"profile",new PkiOperationValue.Text("zeroecho-hybrid-sdk-v1"),"requestDer",httpBytes(nativeRequest),"clientNonce",new PkiOperationValue.Text("AA==")));
+            assertEquals(400,sdkPost(anonymous,publicBase+"/hybrid-sdk/v1",malformed).statusCode());
+            var nativeResponse=anonymous.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(publicBase)).header("Content-Type","application/ocsp-request")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(nativeRequest)).build(),java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200,nativeResponse.statusCode());assertTrue(Pkix.parseOcspResponse(nativeResponse.body()).verifySignature(responder.getPublicKey()));
+        }
+        var disabled=new PkiServerConfiguration.PublicListener(publicListener.address(),0,publicListener.tlsProvider(),false,auth,publicListener.maximumHeaderBytes(),publicListener.maximumBodyBytes(),
+                publicListener.execution(),publicListener.maximumStreamDuration(),publicListener.publicImmutableCache(),publicListener.publicAliasCache(),true);
+        var nativeConfig=new PkiServerConfiguration(domain.version(),domain.serverName(),domain.realm(),transport.listener(),auth,transport.execution(),transport.runtime(),Optional.of(disabled));
+        try(var anonymous=java.net.http.HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+                var server=PkiHttpsServer.start(nativeConfig,dependencies(),clock,HttpServerTestSupport.random(),zeroecho.pki.server.http.TestTlsProvider.class.getClassLoader())) {
+            String base="https://localhost:"+server.publicAddress().orElseThrow().getPort()+"/ocsp/wire-responder";
+            assertEquals(404,anonymous.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(base+"/hybrid-sdk/v1")).GET().build(),java.net.http.HttpResponse.BodyHandlers.ofByteArray()).statusCode());
+            assertEquals(200,anonymous.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(base)).header("Content-Type","application/ocsp-request")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(nativeRequest)).build(),java.net.http.HttpResponse.BodyHandlers.ofByteArray()).statusCode());
+        }
+    }
+
+    private static java.net.http.HttpResponse<byte[]> jsonPost(java.net.http.HttpClient client,String uri,PkiOperationValue.ObjectValue body) throws Exception {
+        return client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(uri)).header("Content-Type","application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(StrictJson.encode(body))).build(),java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+    }
+    private static zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence ocspEvidence(byte[] bytes) {
+        var fields=((PkiOperationValue.ObjectValue)StrictJson.parse(bytes,8388608)).fields();
+        java.util.function.Function<String,byte[]> decode=key->java.util.Base64.getUrlDecoder().decode(((PkiOperationValue.Text)fields.get(key)).value());
+        var chain=((PkiOperationValue.ListValue)fields.get("responderChain")).values().stream().map(v->java.util.Base64.getUrlDecoder().decode(((PkiOperationValue.Text)v).value())).toList();
+        return new zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence(decode.apply("primaryResponseDer"),chain,HybridSdkFrame.decode(decode.apply("primaryFrame")),HybridSdkFrame.decode(decode.apply("alternativeFrame")),decode.apply("primarySignature"),decode.apply("alternativeSignature"));
+    }
+    private static zeroecho.pki.api.hybrid.sdk.HybridSdkValue ocspRole(byte[] spki,boolean alternative) {
+        return zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(Map.of("spki",zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bytes(spki),
+                "publicKeyAlgorithm",zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text((alternative?BootstrapAlgorithmIdentities.ML_DSA_87_PUBLIC_KEY:BootstrapAlgorithmIdentities.EC_P384_PUBLIC_KEY).canonicalForm()),
+                "signatureAlgorithm",zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text((alternative?BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE:BootstrapAlgorithmIdentities.ECDSA_SHA384).canonicalForm()),
+                "algorithmIdentifier",zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bytes(alternative?HybridSdkFrame.alternativeAlgorithm():HybridSdkFrame.primaryAlgorithm())));
+    }
+
     private static PkiOperationValue.Text httpBytes(byte[] value) {
         return new PkiOperationValue.Text(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value));
     }

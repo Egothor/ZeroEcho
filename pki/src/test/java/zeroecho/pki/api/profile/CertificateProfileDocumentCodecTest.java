@@ -592,6 +592,27 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(requestJson.replace("\"type\":\"ALT_SIGNATURE\"", "\"type\":\"TWIN_CERTIFICATE\""), "SEMANTIC_INVALID");
     }
 
+    @Test void managedLeafIsLimitedToDedicatedOcspSigningPolicy() {
+        var base = parse(VALID_DOCUMENT); var original = base.leafPolicy();
+        var ocsp = new LeafCertificatePolicy(original.subjectAlternativeNamePolicy(), java.util.Set.of(LeafKeyUsage.DIGITAL_SIGNATURE),
+                java.util.Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.9")), original.keyUsageCritical(),
+                original.extendedKeyUsageCritical(), original.basicConstraintsCritical(), original.allowedSubjectKeyAlgorithmIds());
+        var mode = new zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature("selected-alt", "managed-subject");
+        var dedicated = new CertificateProfileDefinition(base.certificateType(), base.profileId(), base.profileVersion(), base.formatId(),
+                base.displayName(), base.maximumValidity(), base.approvalRequirement(), base.subjectPolicy(), ocsp,
+                base.algorithmBindingPolicy(), base.confirmationPolicy(), mode);
+        dedicated.requireSupportedIssuance();
+        assertEquals(canonical(dedicated), canonical(parse(canonical(dedicated))));
+        assertThrows(IllegalArgumentException.class, () -> withHybrid(base, mode).requireSupportedIssuance());
+        var mixed = new LeafCertificatePolicy(ocsp.subjectAlternativeNamePolicy(), ocsp.keyUsages(),
+                java.util.Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.9"), new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")),
+                ocsp.keyUsageCritical(), ocsp.extendedKeyUsageCritical(), ocsp.basicConstraintsCritical(), ocsp.allowedSubjectKeyAlgorithmIds());
+        var notDedicated = new CertificateProfileDefinition(base.certificateType(), base.profileId(), base.profileVersion(), base.formatId(),
+                base.displayName(), base.maximumValidity(), base.approvalRequirement(), base.subjectPolicy(), mixed,
+                base.algorithmBindingPolicy(), base.confirmationPolicy(), mode);
+        assertThrows(IllegalArgumentException.class, notDedicated::requireSupportedIssuance);
+    }
+
     private static CertificateProfileDefinition withHybrid(CertificateProfileDefinition base,
             zeroecho.pki.api.hybrid.HybridCertificateMode mode) {
         return new CertificateProfileDefinition(base.certificateType(), base.profileId(), base.profileVersion(),

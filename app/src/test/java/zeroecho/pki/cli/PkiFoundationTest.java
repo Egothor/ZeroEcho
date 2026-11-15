@@ -136,7 +136,14 @@ class PkiFoundationTest {
         for (Class<?> type : PkiSigningOperation.class.getPermittedSubclasses()) {
             expected.add((String) type.getField("NAME").get(null));
         }
-        assertEquals(expected, new PkiOperationRegistry().names());
+        var registry = new PkiOperationRegistry();
+        assertTrue(java.util.Collections.disjoint(registry.names(), registry.serverOnlyNames()));
+        var classified = new HashSet<>(registry.names()); classified.addAll(registry.serverOnlyNames());
+        assertEquals(expected, classified);
+        assertEquals(Set.of(PkiSigningOperation.IssueOcspResponderCertificate.NAME), registry.serverOnlyNames());
+        var rejected = assertThrows(IllegalArgumentException.class, () -> registry.bind(PkiSigningOperation.IssueOcspResponderCertificate.NAME,
+                new PkiOperationValue.ObjectValue(Map.of()), temporaryDirectory));
+        assertTrue(rejected.getMessage().contains("authenticated remote server provisioning and approval"));
     }
 
     @Test

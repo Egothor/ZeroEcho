@@ -103,4 +103,21 @@ public sealed interface ManagedKeyProofRequest {
         /** Returns a diagnostic representation without privileged coordinates. */
         @Override public String toString() { return "ManagedKeyProofRequest.OcspResponder[redacted]"; }
     }
+    /**
+     * Internal typed proof of a frozen managed responder subject key before issuance.
+     * @param authorityId authorizing issuer authority @param profileRef exact responder profile
+     * @param keyRef managed subject key @param target parent/final-TBS proof context
+     */
+    record OcspResponderCandidate(PkiId authorityId, zeroecho.pki.api.profile.CertificateProfileRef profileRef,
+            KeyRef keyRef, ManagedOcspResponderProofTarget target) implements ManagedKeyProofRequest {
+        /** Validates finite coordinates without admitting or signing the candidate. */
+        public OcspResponderCandidate {
+            ManagedKeyProofInputs.identifier(authorityId); Objects.requireNonNull(profileRef, "profileRef");
+            ManagedKeyProofInputs.text(Objects.requireNonNull(keyRef, "keyRef").value(), 1_048_576);
+            Objects.requireNonNull(target, "target");
+        }
+        /** @return redacted diagnostic */
+        @Override public String toString() { return "ManagedKeyProofRequest.OcspResponderCandidate[redacted]"; }
+    }
+
 }

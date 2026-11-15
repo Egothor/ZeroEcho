@@ -830,6 +830,24 @@ operations:
 
   # ---- OCSP ---------------------------------------------------------------
 
+  ocsp.responder.issue-certificate:
+    summary: "Issue a dedicated managed hybrid OCSP responder certificate"
+    description: "Claims one canonical provisioning attempt for an existing managed P-384 and ML-DSA-87 key pair under the exact issuer generation, path and approved end-entity OCSP-signing profile. Both managed subject-key proofs and issuer signatures are verified through ordinary approval and durable issuance. Equivalent retries return the retained request or certificate; changed target fields conflict. Keys remain in server custody. This operation neither generates keys nor registers or activates a responder. Deliberate same-slot renewal requires the exact current completed predecessor credential."
+    arguments:
+      authorityId: "Authorized logical issuer CA identifier"
+      issuerId: "Exact immutable issuer-generation identifier"
+      primaryKeyRef: "Existing dedicated server-managed P-384 key reference"
+      alternativeKeyRef: "Existing dedicated server-managed ML-DSA-87 key reference"
+      subject: "Typed subject RDN object for the delegated responder certificate"
+      profileId: "Dedicated non-CA OCSP-signing certificate profile identifier"
+      profileVersion: "Exact approved certificate-profile version"
+      profileSha256: "Lowercase SHA-256 commitment of the approved profile"
+      chainPathId: "Exact retained issuer-chain path identifier"
+      chainPathCommitment: "Full commitment of the selected immutable issuer path"
+      notBefore: "Requested absolute validity start as an ISO-8601 UTC instant"
+      notAfter: "Requested absolute validity end as an ISO-8601 UTC instant, within issuer authorization"
+      expectedPredecessorCredentialId: "Optional exact current completed responder credential for controlled same-slot renewal"
+
   ocsp.responder.register:
     summary: "Register an OCSP responder for a CA"
     description: "Creates an OCSP responder configuration for the specified authority. The responder is INACTIVE until activated."

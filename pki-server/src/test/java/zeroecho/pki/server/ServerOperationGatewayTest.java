@@ -1035,14 +1035,17 @@ class ServerOperationGatewayTest {
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
-        assertEquals(152, descriptors.descriptors().size());
+        assertEquals(153, descriptors.descriptors().size());
         assertEquals(Permission.Action.CERTIFICATE_SEARCH, descriptors.descriptors().get("credential.list").action());
         assertEquals(Permission.ResourceType.CERTIFICATE, descriptors.descriptors().get("credential.list").resourceType());
         assertEquals(Permission.DataView.METADATA_REDACTED, descriptors.descriptors().get("credential.list").dataView());
         assertEquals(52, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
-        assertEquals(10, descriptors.descriptors().values().stream()
+        assertEquals(11, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
+        var responderIssuance=descriptors.require(zeroecho.pki.application.PkiSigningOperation.IssueOcspResponderCertificate.NAME);
+        assertEquals(Permission.Action.CERTIFICATE_ISSUE,responderIssuance.action());
+        assertEquals(OperationSecurityDescriptors.Family.SIGNING_OPERATION,responderIssuance.family());
         assertEquals(descriptors.descriptors().size(), descriptors.descriptors().values().stream()
                 .map(OperationSecurityDescriptors.Descriptor::operationId).distinct().count());
         OperationSecurityDescriptors.Descriptor descriptor = descriptors.descriptors()

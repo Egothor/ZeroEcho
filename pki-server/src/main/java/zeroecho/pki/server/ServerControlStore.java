@@ -105,6 +105,8 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String ACME_EVIDENCE = "io.zeroecho.server.acme-evidence";
     /** Stable namespace for durable OCSP responder bindings. */
     public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
+    /** Private canonical responder-certificate provisioning claims. */
+    static final String OCSP_PROVISIONING = "io.zeroecho.server.ocsp-provisioning";
     /** Stable namespace for durable enrollment policy profiles. */
     public static final String ENROLLMENT_PROFILE = "io.zeroecho.server.enrollment-profile";
     /** Stable namespace for revisioned enrollment endpoint bindings and tombstones. */
@@ -187,7 +189,7 @@ public final class ServerControlStore implements AutoCloseable {
             ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER,
             REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, ADMINISTRATIVE_REQUEST, AUDIT_EVIDENCE_PROJECTION, ENROLLMENT_PROFILE,
             ENROLLMENT_ENDPOINT, ENROLLMENT_CREDENTIAL, ENROLLMENT_REQUEST, CMP_TRANSACTION, CMP_RESPONSE, ENROLLMENT_KEYGEN,
-            MANAGED_KEY_GENERATION, HYBRID_SDK_INTENT);
+            MANAGED_KEY_GENERATION, HYBRID_SDK_INTENT, OCSP_PROVISIONING);
 
     /**
      * Durable realm-control identity and commitments.
@@ -942,11 +944,35 @@ public final class ServerControlStore implements AutoCloseable {
     synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
             Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
             Optional<ProtocolMutation> sdkConsumption) {
+        mutateAdministrativeRequest(request, expectedRequest, expectedApproval, approval, sdkConsumption, Optional.empty());
+    }
+
+    /** Atomically binds a purpose-specific provisioning claim to its exact request and ordinary approval. */
+    synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
+            Optional<ProtocolMutation> sdkConsumption, Optional<ProtocolMutation> provisioning) {
+        mutateAdministrativeRequest(request,expectedRequest,expectedApproval,approval,sdkConsumption,provisioning,Optional.empty());
+    }
+
+    /** Publishes a verified attached winner after the losing receipt was definitely not accepted. */
+    synchronized void attachOcspProvisioningReceipt(ProtocolRecord request, String expectedRequest,
+            ProtocolMutation slot, OcspResponderProvisioningService.Attachment attachment) {
+        mutateAdministrativeRequest(request,Optional.of(expectedRequest),Optional.empty(),Optional.empty(),Optional.empty(),
+                Optional.of(slot),Optional.of(attachment));
+    }
+
+    private void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
+            Optional<ProtocolMutation> sdkConsumption, Optional<ProtocolMutation> provisioning,
+            Optional<OcspResponderProvisioningService.Attachment> attachment) {
         requireOpen();
         if (!request.namespace().equals(ADMINISTRATIVE_REQUEST) || expectedApproval.isPresent() && approval.isEmpty()) {
             throw new IllegalArgumentException("Administrative request transition is invalid");
         }
         AdministrativeRequest retained = AdministrativeRequestCodec.decode(request);
+        if (retained.operation().equals(OcspProvisioningSlot.OPERATION) != provisioning.isPresent()
+                || provisioning.isPresent() && sdkConsumption.isPresent()) throw new IllegalArgumentException("OCSP provisioning requires atomic slot authority");
+        provisioning.ifPresent(mutation -> OcspProvisioningSlotCodec.decode(mutation.record()).requireRequest(retained));
         if (expectedRequest.isEmpty() && retained.sdkProof().isPresent() != sdkConsumption.isPresent()) {
             throw new IllegalArgumentException("SDK admission requires atomic consumption");
         }
@@ -967,6 +993,12 @@ public final class ServerControlStore implements AutoCloseable {
                 throw new IllegalArgumentException("Approval does not bind administrative request");
             }
         });
+        if (provisioning.isPresent()) {
+            long combined = encode(output -> writeProtocol(output, request)).length
+                    + encode(output -> writeProtocol(output, provisioning.orElseThrow().record())).length;
+            if (approval.isPresent()) combined += encode(output -> writeApproval(output, approval.orElseThrow())).length;
+            if (combined > MAXIMUM_RECORD_BYTES / 2) throw new IllegalArgumentException("OCSP provisioning is too large");
+        }
         if (sdkConsumption.isPresent()) {
             // Reserve half the transaction ceiling for framing/keys; measure actual private payloads before staging.
             long combined = encode(output -> writeProtocol(output, request)).length
@@ -986,6 +1018,17 @@ public final class ServerControlStore implements AutoCloseable {
                 ProtocolRecord decoded = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, ADMINISTRATIVE_REQUEST));
                 if (!decoded.commitment().equals(expectedRequest.orElseThrow())) throw new IllegalStateException("Administrative request changed");
                 if (!AdministrativeRequestCodec.decode(decoded).sdkProof().equals(retained.sdkProof())) throw new IllegalStateException("SDK_REFERENCE_CHANGED");
+                if (provisioning.isPresent()) {
+                    var priorRequest = AdministrativeRequestCodec.decode(decoded);
+                    if (!priorRequest.actor().equals(retained.actor()) || !priorRequest.envelope().equals(retained.envelope())
+                            || !priorRequest.operationCommitment().equals(retained.operationCommitment())
+                            || !priorRequest.approvalId().equals(retained.approvalId())
+                            || !priorRequest.policyCommitment().equals(retained.policyCommitment())
+                            || !priorRequest.profileCommitment().equals(retained.profileCommitment())
+                            || priorRequest.executionTimeoutMillis() != retained.executionTimeoutMillis()) {
+                        throw new IllegalStateException("OCSP provisioning execution changed");
+                    }
+                }
                 transaction.replace(requestKey, existing.recordRevision(), next, CancellationSignal.NONE);
             }
             if (approval.isPresent()) {
@@ -1014,6 +1057,33 @@ public final class ServerControlStore implements AutoCloseable {
                 }
                 HybridSdkAdmissionService.requireConsumption(previousIntent, value, retained);
                 transaction.replace(intentKey, existing.recordRevision(), new ByteContent(encode(output -> writeProtocol(output, value))), CancellationSignal.NONE);
+            }
+            if (provisioning.isPresent()) {
+                var mutation = provisioning.orElseThrow();
+                var slot = OcspProvisioningSlotCodec.decode(mutation.record());
+                MetadataKey slotKey = key(OCSP_PROVISIONING, slot.serverSlotId());
+                var observed = snapshot.get(slotKey);
+                Optional<OcspProvisioningSlot> previousSlot = Optional.empty();
+                if (mutation.expectedCommitment().isEmpty()) {
+                    if (observed.isPresent()) throw new IllegalStateException("OCSP provisioning slot already exists");
+                } else {
+                    var existing = observed.orElseThrow(() -> new IllegalStateException("OCSP provisioning slot unavailable"));
+                    ProtocolRecord previousSlotRecord = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, OCSP_PROVISIONING));
+                    if (!previousSlotRecord.commitment().equals(mutation.expectedCommitment().orElseThrow())) throw new IllegalStateException("OCSP provisioning slot changed");
+                    previousSlot = Optional.of(OcspProvisioningSlotCodec.decode(previousSlotRecord));
+                }
+                if (attachment.isPresent()) attachment.orElseThrow().require(previousSlot,slot);
+                slot.requireTransition(previousSlot,attachment.isPresent());
+                if (previousSlot.isPresent() && previousSlot.orElseThrow().revision() != slot.revision()) {
+                    var oldSlot = previousSlot.orElseThrow();
+                    var priorRequestRecord = snapshot.get(key(ADMINISTRATIVE_REQUEST, oldSlot.canonicalRequestId()))
+                            .orElseThrow(() -> new IllegalStateException("OCSP provisioning predecessor request unavailable"));
+                    oldSlot.requireRequest(AdministrativeRequestCodec.decode(decode(priorRequestRecord, KIND_PROTOCOL,
+                            input -> readProtocol(input, ADMINISTRATIVE_REQUEST))));
+                }
+                var encoded = new ByteContent(encode(output -> writeProtocol(output, mutation.record())));
+                if (observed.isEmpty()) transaction.create(slotKey, encoded, CancellationSignal.NONE);
+                else transaction.replace(slotKey, observed.orElseThrow().recordRevision(), encoded, CancellationSignal.NONE);
             }
             if (transaction.commit().outcome() != MetadataCommitResult.Outcome.COMMITTED) throw new IllegalStateException("Administrative transition requires reconciliation");
         } catch (IOException failure) { throw new IllegalStateException("Administrative transition failed"); }

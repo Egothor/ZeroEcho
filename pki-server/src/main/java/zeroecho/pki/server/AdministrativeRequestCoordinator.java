@@ -77,6 +77,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     private final ServerRealmContext realm;
     private final ServerControlStore control;
     private final HybridSdkAdmissionService sdkAdmission;
+    private final OcspResponderProvisioningService ocspProvisioning;
     private final Clock clock;
     private final java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService;
     private final Semaphore wake = new Semaphore(0);
@@ -108,6 +109,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         this.realm=realm; this.control=control; this.clock=clock;
         this.signingService=java.util.Objects.requireNonNull(signingService,"signingService");
         this.sdkAdmission=new HybridSdkAdmissionService(control,clock,this,sdkOrigin,sdkResolver);
+        this.ocspProvisioning=new OcspResponderProvisioningService(realm.configuration().realmId(),control,signingService);
     }
 
     HybridSdkAdmissionService sdkAdmission() { return sdkAdmission; }
@@ -136,24 +138,49 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
      */
     public AdministrativeRequest submit(String requestId, ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, Duration executionTimeout) {
-        return submitInternal(requestId,request,envelope,executionTimeout,Optional.empty());
+        if (request.operation() instanceof AdministrativeOperation.Signing signing
+                && signing.operation() instanceof PkiSigningOperation.IssueOcspResponderCertificate selected) {
+            var provisioning = ocspProvisioning.select(selected.request());
+            var canonical = new ServerOperationGateway.Request(request.realmId(),request.principalId(),request.authenticationMode(),
+                    request.transportPrincipalId(),request.credentialEvidence(),request.operation(),request.resource(),request.relationship(),
+                    request.context(),request.approvalId(),provisioning.requestId());
+            try {
+                return submitInternal(provisioning.requestId(),canonical,envelope,executionTimeout,Optional.empty(),Optional.of(provisioning));
+            } catch (OcspResponderProvisioningService.TargetConflict conflict) {
+                var retained=find(conflict.canonicalRequestId()).orElseThrow(()->new SecurityException("Request unavailable"));
+                if(!canReviewTarget(retained,request.principalId()))throw new SecurityException("Request unavailable");
+                throw new ProvisioningConflict(retained.requestId());
+            }
+        }
+        return submitInternal(requestId,request,envelope,executionTimeout,Optional.empty(),Optional.empty());
     }
 
     AdministrativeRequest submitSdk(String requestId, ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, Duration executionTimeout, HybridSdkAdmissionService.Acceptance proof) {
-        return submitInternal(requestId,request,envelope,executionTimeout,Optional.of(proof));
+        return submitInternal(requestId,request,envelope,executionTimeout,Optional.of(proof),Optional.empty());
     }
 
     private AdministrativeRequest submitInternal(String requestId, ServerOperationGateway.Request request,
-            PkiOperationValue.ObjectValue envelope, Duration executionTimeout, Optional<HybridSdkAdmissionService.Acceptance> proof) {
+            PkiOperationValue.ObjectValue envelope, Duration executionTimeout, Optional<HybridSdkAdmissionService.Acceptance> proof,
+            Optional<OcspResponderProvisioningService.Selection> provisioning) {
         if (requestId == null || !requestId.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")) throw new IllegalArgumentException("Invalid request ID");
         var admission = proof.map(value->value.context().admission()).orElseGet(()->realm.gateway().assessAdministrativeRequest(request));
         if (!supports(realm.gateway().descriptor(admission.request().operation()))) throw new IllegalArgumentException("DURABLE_REQUEST_UNSUPPORTED");
         var retainedEnvelope=freezeCreationEnvelope(envelope,admission.request().operation());
         long timeout = executionTimeout.toMillis();
         if (timeout < 1 || timeout > 120000) throw new IllegalArgumentException("Invalid execution budget");
-        String target = ApprovalService.digest(admission.commitment() + '|' + timeout);
+        String target = provisioning.map(OcspResponderProvisioningService.Selection::targetCommitment)
+                .orElseGet(() -> ApprovalService.digest(admission.commitment() + '|' + timeout));
         synchronized (control) {
+            if (provisioning.isPresent()) {
+                var existing = ocspProvisioning.existing(provisioning.orElseThrow());
+                if (existing.isPresent()) {
+                    var retained = existing.orElseThrow();
+                    if (!canReviewTarget(retained,request.principalId())) throw new SecurityException("Request unavailable");
+                    return retained;
+                }
+                if (find(requestId).isPresent()) throw new IllegalStateException("OCSP provisioning request has no matching slot");
+            }
             var old = find(requestId);
             if (old.isPresent()) {
                 var retained=old.orElseThrow();
@@ -180,6 +207,14 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
                 admission.commitment(),admission.request().resource().scope(),request.principalId(),now,now.plus(policy.lifetime()),policy,policy.commitment(),
                 ApprovalService.State.PENDING,List.of(),Optional.empty()));
         synchronized (control) {
+            if (provisioning.isPresent()) {
+                var existing = ocspProvisioning.existing(provisioning.orElseThrow());
+                if (existing.isPresent()) {
+                    if (!canReviewTarget(existing.orElseThrow(),request.principalId())) throw new SecurityException("Request unavailable");
+                    return existing.orElseThrow();
+                }
+                if (find(requestId).isPresent()) throw new IllegalStateException("OCSP provisioning request has no matching slot");
+            }
             var raced=find(requestId);
             if (raced.isPresent()) {
                 if (!raced.orElseThrow().actor().principalId().equals(request.principalId())) throw new SecurityException("Request unavailable");
@@ -195,7 +230,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
                 }
             }
             control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(retained),Optional.empty(),Optional.empty(),approval,
-                    proof.map(HybridSdkAdmissionService.Acceptance::consumption));
+                    proof.map(HybridSdkAdmissionService.Acceptance::consumption),
+                    provisioning.map(value -> ocspProvisioning.claim(value,retained)));
         }
         audit(retained);
         wake(); return retained;
@@ -271,6 +307,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         synchronized(control) { if(closed.get() || !inFlight.add(id)) return find(id).orElseThrow(); }
         try {
             var current=find(id).orElseThrow();
+            if (current.operation().equals(OcspProvisioningSlot.OPERATION)) ocspProvisioning.requireClaim(current);
             var activation=activationSelection(current);
             if(activation.isPresent()&&(current.state()==AdministrativeRequest.State.DISPATCHING
                     ||current.state()==AdministrativeRequest.State.RECONCILIATION_REQUIRED)) {
@@ -305,7 +342,22 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             if(request.operation() instanceof AdministrativeOperation.Signing signing) {
                 AccessContext access=new AccessContext(new Principal("ADMIN_PRINCIPAL",request.principalId()),new Purpose(signing.operation().name()),Optional.empty(),Optional.empty());
                 PreparedSemanticSigningRequest prepared;
-                if(current.sdkProof().isPresent()) {
+                if (signing.operation() instanceof PkiSigningOperation.IssueOcspResponderCertificate provision) {
+                    ocspProvisioning.requireClaim(current);
+                    var correlated = signingService.get().prepareManagedOcspResponder(access,provision.request(),
+                            realm.gateway().administrativeSigningEvidence(admission),cancellation);
+                    if (correlated instanceof zeroecho.pki.api.issuance.CorrelatedIssuancePreparation.Existing) {
+                        var receipt = signingService.get().findManagedOcspResponderReceipt(provision.request())
+                                .orElseThrow(() -> new IllegalStateException("OCSP retained receipt unavailable"));
+                        synchronized (control) {
+                            var exact = find(id).orElseThrow();
+                            if (exact.revision() != current.revision()) return exact;
+                            current = claim(exact,Optional.of(receipt));
+                        }
+                        return reconcile(current);
+                    }
+                    prepared = ((zeroecho.pki.api.issuance.CorrelatedIssuancePreparation.Prepared)correlated).prepared();
+                } else if(current.sdkProof().isPresent()) {
                     var input=sdkAdmission.preparation(current,request,current.envelope());
                     var operation=HybridSdkIssuerResolver.issue(request);
                     var commands=realm.session().signingCommands().orElseThrow();
@@ -328,7 +380,22 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
                         current=claim(exact,Optional.of(prepared.receipt()));
                     }
                 } catch(Exception failure) { service.discard(prepared);throw failure; }
-                try { service.accept(prepared); } catch(RuntimeException uncertain) { return reconcile(current); }
+                try {
+                    var accepted=service.accept(prepared);
+                    if (signing.operation() instanceof PkiSigningOperation.IssueOcspResponderCertificate provision
+                            && accepted.disposition()==zeroecho.pki.api.signing.SigningAcceptanceDisposition.ATTACHED_EXISTING
+                            && !current.receipt().equals(Optional.of(accepted.receipt()))) {
+                        synchronized (control) {
+                            var exact=find(id).orElseThrow();
+                            if (exact.revision()!=current.revision()) return exact;
+                            var proof=ocspProvisioning.attachment(exact,provision.request(),accepted.receipt());
+                            var attached=update(exact,exact.state(),Optional.of(accepted.receipt()),Optional.empty(),Optional.empty());
+                            control.attachOcspProvisioningReceipt(AdministrativeRequestCodec.encode(attached),
+                                    AdministrativeRequestCodec.encode(exact).commitment(),ocspProvisioning.transition(exact,attached),proof);
+                            audit(attached); current=attached;
+                        }
+                    }
+                } catch(RuntimeException uncertain) { return reconcile(current); }
                 return reconcile(current);
             }
             var dispatched=update(current,AdministrativeRequest.State.DISPATCHING,Optional.empty(),Optional.empty(),Optional.empty());
@@ -404,6 +471,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         SigningAcceptanceResolution resolution=service.resolve(receipt);
         if(resolution==SigningAcceptanceResolution.CONFLICT) return finish(current,AdministrativeRequest.State.RECONCILIATION_REQUIRED,Optional.empty(),"SIGNING_RECEIPT_CONFLICT");
         if(resolution==SigningAcceptanceResolution.NOT_ACCEPTED) {
+            if (current.operation().equals(OcspProvisioningSlot.OPERATION)) return finish(current,
+                    AdministrativeRequest.State.RECONCILIATION_REQUIRED,Optional.empty(),"OCSP_PROVISIONING_ACCEPTANCE_NOT_RETAINED");
             if(current.state()!=AdministrativeRequest.State.DISPATCHING) return finish(current,AdministrativeRequest.State.RECONCILIATION_REQUIRED,Optional.empty(),"SIGNING_ACCEPTANCE_LOST");
             synchronized(control) {
                 var exact=find(current.requestId()).orElseThrow();
@@ -476,6 +545,10 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         var arguments=new LinkedHashMap<>(((PkiOperationValue.ObjectValue)fields.get("arguments")).fields());
         if(algorithm.isPresent())arguments.put("signatureAlgorithmId",text(algorithm.orElseThrow()));
         arguments=new LinkedHashMap<>(LifecycleProjection.arguments(new PkiOperationValue.ObjectValue(arguments),operation).fields());
+        if (operation instanceof AdministrativeOperation.Signing signing
+                && signing.operation() instanceof PkiSigningOperation.IssueOcspResponderCertificate selected) {
+            arguments = new LinkedHashMap<>(OcspProvisioningProjection.encode(selected.request()).fields());
+        }
         fields.put("arguments",new PkiOperationValue.ObjectValue(arguments));
         return new PkiOperationValue.ObjectValue(fields);
     }
@@ -570,7 +643,12 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     }
     private Optional<AdministrativeRequest> find(String id) { return control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,id).map(AdministrativeRequestCodec::decode); }
     private void write(AdministrativeRequest old,AdministrativeRequest next,Optional<ApprovalService.Request> prior,Optional<ApprovalService.Request> approval) {
-        control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(next),Optional.of(AdministrativeRequestCodec.encode(old).commitment()),prior,approval);
+        if (old.operation().equals(OcspProvisioningSlot.OPERATION)) {
+            control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(next),Optional.of(AdministrativeRequestCodec.encode(old).commitment()),
+                    prior,approval,Optional.empty(),Optional.of(ocspProvisioning.transition(old,next)));
+        } else {
+            control.mutateAdministrativeRequest(AdministrativeRequestCodec.encode(next),Optional.of(AdministrativeRequestCodec.encode(old).commitment()),prior,approval);
+        }
         audit(next);
     }
     private void audit(AdministrativeRequest value) {
@@ -639,7 +717,15 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         /** @return safe field validation code */
         public String code() { return code; }
     }
-    /** Same identity names a different canonical target. */
+    /** Authorized conflict with an already occupied canonical responder provisioning target. */
+    public static final class ProvisioningConflict extends IllegalArgumentException {
+        private static final long serialVersionUID=1L;
+        private final String canonicalRequestId;
+        private ProvisioningConflict(String requestId){super("OCSP_PROVISIONING_TARGET_CONFLICT");this.canonicalRequestId=requestId;}
+        /** @return authorized canonical pending or completed request identity */
+        public String canonicalRequestId(){return canonicalRequestId;}
+    }
+    /** Conflicting reuse of an ordinary client-selected request identity. */
     public static final class Conflict extends IllegalArgumentException { private static final long serialVersionUID=1L; }
     /** Finite retained/pending capacity has been reached. */
     public static final class Capacity extends IllegalStateException { private static final long serialVersionUID=1L; }
