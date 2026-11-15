@@ -74,7 +74,8 @@ public record FullCrlSnapshotProvenance(MetadataStoreId sourceStoreId, long revi
      * @throws IllegalArgumentException if provenance fields or field count are invalid
      */
     public static FullCrlSnapshotProvenance from(DomainCommandEncoding.Decoded command) {
-        command.requireFields(FullCrlSigningCommand.DELTA_OPERATION.equals(command.operation()) ? 36 : 31);
+        command.requireFields((FullCrlSigningCommand.DELTA_OPERATION.equals(command.operation()) ? 36 : 31)
+                + (CrlHybridSigningCommand.isHybrid(command) ? 1 : 0));
         if (!FullCrlSigningCommand.supports(command.operation())) { throw invalid(); }
         return new FullCrlSnapshotProvenance(source(command.field(30)), nonnegative(command.field(20)),
                 nonnegative(command.field(21)), command.field(22));

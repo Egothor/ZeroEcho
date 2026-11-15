@@ -131,6 +131,9 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         if (dependencies.issuerAlgorithmEvidenceVerifier().isPresent()) {
             options = options.withIssuerAlgorithmEvidenceVerifier(dependencies.issuerAlgorithmEvidenceVerifier().orElseThrow());
         }
+        if (dependencies.crlHybridNativeChildVerifier().isPresent()) {
+            options = options.withCrlHybridNativeChildVerifier(dependencies.crlHybridNativeChildVerifier().orElseThrow());
+        }
         return new FilesystemPkiStore(root, options, dependencies.clock());
     }
 

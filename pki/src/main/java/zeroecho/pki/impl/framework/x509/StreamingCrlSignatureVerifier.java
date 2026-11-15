@@ -76,9 +76,30 @@ public final class StreamingCrlSignatureVerifier {
     public static String verify(RepeatableContent tbs, String algorithm, X509Certificate issuer,
             byte[] signature, X509BindingCatalog bindings, CancellationSignal cancellation)
             throws GeneralSecurityException, IOException {
+        return verify(tbs, algorithm, Pkix.subjectPublicKeyInfo(issuer), signature, bindings, cancellation);
+    }
+
+    /**
+     * Verifies streamed signature input using an explicitly bound signer public key.
+     * This supports either issuer role without consulting a managed private key.
+     * The caller enforces exact AlgorithmIdentifier agreement and algorithm-specific
+     * input bounds before this operation. Content and its streams remain caller-owned.
+     * @param tbs exact repeatable signature input
+     * @param algorithm canonical signature algorithm identity
+     * @param signerSpki exact signer SubjectPublicKeyInfo DER, with configured presentation bindings
+     * @param signature external X.509 signature bytes
+     * @param bindings immutable algorithm/public-key presentation catalog
+     * @param cancellation cooperative streaming cancellation
+     * @return lowercase SHA-256 of verified input
+     * @throws GeneralSecurityException if key conversion or verification fails
+     * @throws IOException if streaming or cancellation fails
+     */
+    public static String verify(RepeatableContent tbs, String algorithm, byte[] signerSpki,
+            byte[] signature, X509BindingCatalog bindings, CancellationSignal cancellation)
+            throws GeneralSecurityException, IOException {
         SignatureInteropProfile profile = SignatureInteropProfiles.resolve(algorithm)
                 .orElseThrow(() -> new GeneralSecurityException("CRL signature algorithm is unsupported"));
-        byte[] nativeSpki = new BcX509PublicKeyAdapter(bindings).unwrap(Pkix.subjectPublicKeyInfo(issuer));
+        byte[] nativeSpki = new BcX509PublicKeyAdapter(bindings).unwrap(signerSpki);
         PublicKey key = Pkix.publicKeyFromSubjectPublicKeyInfo(nativeSpki);
         byte[] expected = profile.externalToInternalSignature(signature);
         MessageDigest digest = MessageDigest.getInstance("SHA-256");

@@ -200,15 +200,22 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
             requireOpen.run();
             SemanticSigningOperation observation = semantic.find(id).orElseThrow();
             Workflow workflow = store.getSignWorkflow(id).orElseThrow();
+            Optional<zeroecho.pki.spi.store.CrlHybridExecution> hybrid = store.supportsHybridCrlContinuations()
+                    && workflow.envelope().outer().filter(value -> value.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.STATUS
+                            && zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(
+                                    zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(value.command()))).isPresent()
+                    ? store.getCrlHybridExecution(id) : Optional.empty();
+            Workflow target = hybrid.filter(value -> value.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED)
+                    .map(value -> store.getSignWorkflow(value.nativeChildId()).orElseThrow()).orElse(workflow);
             LocalSigningResult terminal = terminal(name, receipt, observation, workflow);
             if (terminal != null) { return terminal; }
-            if (!workflow.namespace().equals(store.signingNamespace() + "." + provider.id())
-                    || !provider.configurationCommitment().matches(workflow.configurationCommitment())) {
+            if (!target.namespace().equals(store.signingNamespace() + "." + provider.id())
+                    || !provider.configurationCommitment().matches(target.configurationCommitment())) {
                 return failed(name, PkiOperationFailure.POLICY_REJECTION, "PROVIDER_ID_MISMATCH", Optional.of(receipt));
             }
             Instant now = store.signingNow();
-            if (workflow.leaseUntil().filter(value -> value.isAfter(now)).isPresent()
-                    || workflow.nextEligibleAt().filter(value -> value.isAfter(now)).isPresent()) {
+            if (target.leaseUntil().filter(value -> value.isAfter(now)).isPresent()
+                    || target.nextEligibleAt().filter(value -> value.isAfter(now)).isPresent()) {
                 return failed(name, PkiOperationFailure.RECOVERY_REQUIRED, "SIGNING_NOT_READY", Optional.of(receipt));
             }
             if (cancelled(cancellation)) {
@@ -217,7 +224,7 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
             SemanticSigningOperation after;
             Workflow fresh;
             try {
-                steps.advance(workflow, source -> {
+                steps.advance(target, source -> {
                     requireOpen.run();
                     return store.claimSignStep(source.operationId(), source.revision(), configuration.claimLease());
                 }, cancellation, () -> { });
@@ -232,7 +239,13 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
             if (cancelled(cancellation)) {
                 return failed(name, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED", Optional.of(receipt));
             }
-            if (!forward(workflow.stage(), fresh.stage())) {
+            boolean hybridForward = false;
+            if (hybrid.isPresent()) {
+                var changed = store.getCrlHybridExecution(id).orElseThrow();
+                hybridForward = hybrid.orElseThrow().phase() == SignWorkflowStore.CrlHybridPhase.AWAITING_ALT
+                        && changed.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED;
+            }
+            if (!hybridForward && !forward(workflow.stage(), fresh.stage())) {
                 return failed(name, PkiOperationFailure.RECOVERY_REQUIRED, RECOVERY_REQUIRED_CODE, Optional.of(receipt));
             }
         }

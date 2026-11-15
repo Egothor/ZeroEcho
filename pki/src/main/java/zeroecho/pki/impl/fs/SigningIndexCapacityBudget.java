@@ -50,6 +50,7 @@ final class SigningIndexCapacityBudget {
     private long highWaterReservedBytes;
     private long releaseEpoch;
     private Runnable releaseSignal;
+    private final ThreadLocal<Loan> preparationLoan = new ThreadLocal<>();
 
     /* default */ SigningIndexCapacityBudget(long maximumBytes) {
         this(maximumBytes, 0L);
@@ -83,6 +84,8 @@ final class SigningIndexCapacityBudget {
         Objects.requireNonNull(admissionClass, "admissionClass");
         lock.lock();
         try {
+            Loan loan = preparationLoan.get();
+            if (loan != null) return loan.borrow(bytes, admissionClass);
             long ceiling = admissionClass
                     == SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY
                             ? ordinaryMaximumBytes : maximumBytes;
@@ -312,6 +315,7 @@ final class SigningIndexCapacityBudget {
         private final long bytes;
         private final SigningTransitionWorkspaceSizing.AdmissionClass admissionClass;
         private final AtomicBoolean active = new AtomicBoolean(true);
+        private Loan loan;
 
         private Reservation(SigningIndexCapacityBudget owner, long bytes,
                 SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
@@ -327,8 +331,117 @@ final class SigningIndexCapacityBudget {
         @Override
         public void close() {
             if (active.compareAndSet(true, false)) {
-                owner.release(bytes, admissionClass);
+                if (loan == null || loan.committed) owner.release(bytes, admissionClass);
+                else loan.refund(bytes, admissionClass);
             }
+        }
+    }
+
+    /**
+     * Opens a single-operation preparation scope over already committed ordinary
+     * bytes. No bytes are freed globally; allocations borrow only this owner's
+     * escrow. The scope must leave the preparing thread before publication.
+     */
+    /* default */ Loan borrowCommitted(long bytes) {
+        if (bytes < 0L || preparationLoan.get() != null) {
+            throw new IllegalStateException("signing future-capacity loan scope is invalid");
+        }
+        lock.lock();
+        try {
+            if (bytes > ordinaryReservedBytes) {
+                throw new IllegalStateException("signing future-capacity ownership is invalid");
+            }
+            Loan loan = new Loan(bytes);
+            preparationLoan.set(loan);
+            return loan;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Parent-owned byte conversion with rollback before authoritative publication. */
+    /* default */ final class Loan implements AutoCloseable {
+        private final Thread preparingThread = Thread.currentThread();
+        private final long initial;
+        private long remaining;
+        private boolean detached;
+        private boolean committed;
+        private boolean closed;
+
+        private Loan(long bytes) { initial = bytes; remaining = bytes; }
+
+        private Reservation borrow(long bytes,
+                SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
+            if (detached || closed || bytes > remaining) {
+                throw new CapacityExceededException(
+                        "hybrid CRL owner future-capacity allowance is exhausted", releaseEpoch);
+            }
+            remaining -= bytes;
+            if (admissionClass != SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY) {
+                ordinaryReservedBytes -= bytes;
+                protectedReservedBytes += bytes;
+            }
+            Reservation result = new Reservation(SigningIndexCapacityBudget.this,
+                    bytes, admissionClass);
+            result.loan = this;
+            return result;
+        }
+
+        private void refund(long bytes,
+                SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
+            lock.lock();
+            try {
+                if (closed) throw new IllegalStateException("closed signing capacity loan");
+                remaining = Math.addExact(remaining, bytes);
+                if (admissionClass != SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY) {
+                    protectedReservedBytes -= bytes;
+                    ordinaryReservedBytes += bytes;
+                }
+            } finally { lock.unlock(); }
+        }
+
+        /** Ends ambient preparation eligibility without retaining a thread lock. */
+        /* default */ void detach() {
+            if (Thread.currentThread() != preparingThread || preparationLoan.get() != this) {
+                throw new IllegalStateException("signing capacity loan thread differs");
+            }
+            preparationLoan.remove();
+            detached = true;
+        }
+
+        /** Checks the remaining phase allowance before irreversible WAL admission. */
+        /* default */ void requireResidual(long residual) {
+            lock.lock();
+            try {
+                if (!detached || closed || residual < 0L || residual > remaining) {
+                    throw new CapacityExceededException("hybrid CRL future phase allowance is insufficient", releaseEpoch);
+                }
+            } finally { lock.unlock(); }
+        }
+
+        /** Converts borrowed allocations and retains exactly the next phase's escrow. */
+        /* default */ void publish(long residual) {
+            lock.lock();
+            try {
+                if (!detached || closed || residual < 0L || residual > remaining) {
+                    throw new IllegalStateException("signing future-capacity residual is invalid");
+                }
+                committed = true;
+                closed = true;
+                release(remaining - residual, SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
+            } finally { lock.unlock(); }
+        }
+
+        @Override public void close() {
+            lock.lock();
+            try {
+                if (closed) return;
+                if (!detached) detach();
+                if (remaining != initial) {
+                    throw new IllegalStateException("signing future-capacity rollback has outstanding allocations");
+                }
+                closed = true;
+            } finally { lock.unlock(); }
         }
     }
 

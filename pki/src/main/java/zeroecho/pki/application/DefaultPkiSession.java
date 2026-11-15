@@ -210,7 +210,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         try {
             store = Objects.requireNonNull(exactBootstrap.openStore(exact.store(),
                     new PkiStoreRuntimeDependencies(exactClock,
-                            zeroecho.pki.impl.core.IssuerBindingResolver.publicEvidenceVerifier(authority))), "opened store");
+                            zeroecho.pki.impl.core.IssuerBindingResolver.publicEvidenceVerifier(authority),
+                            new zeroecho.pki.impl.core.CrlHybridPublicVerifier(authority))), "opened store");
             audit = runtime.auditSink().orElseGet(
                     () -> Objects.requireNonNull(exactBootstrap.openAudit(exact.audit()), "opened audit sink"));
             ProfileService profiles = new DefaultProfileService(store, exactClock, audit, bindings.registry(),
@@ -271,7 +272,8 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         try {
             store = Objects.requireNonNull(exactBootstrap.openStore(exact.store(),
                     new PkiStoreRuntimeDependencies(exactClock,
-                            zeroecho.pki.impl.core.IssuerBindingResolver.publicEvidenceVerifier(authority))), "opened store");
+                            zeroecho.pki.impl.core.IssuerBindingResolver.publicEvidenceVerifier(authority),
+                            new zeroecho.pki.impl.core.CrlHybridPublicVerifier(authority))), "opened store");
             audit = runtime.auditSink().orElseGet(
                     () -> Objects.requireNonNull(exactBootstrap.openAudit(exact.audit()), "opened audit sink"));
             ProfileService profiles = new DefaultProfileService(store, exactClock, audit, bindings.registry(),

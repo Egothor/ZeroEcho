@@ -231,9 +231,17 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
     }
 
     /* default */ void stageEffect(MetadataTransaction transaction, PkiId operationId, StatusObject status) throws IOException {
-        try (MetadataSnapshot snapshot = metadata.snapshot();
-                MetadataSnapshot.Record sidecar = snapshot.get(receiptKey(operationId)).orElse(null)) {
-            if (sidecar == null) { return; }
+        try (MetadataSnapshot snapshot = metadata.snapshot()) {
+            for (var mutation : effectMutations(snapshot, operationId, status)) {
+                replace(transaction, mutation.key(), mutation.expectedRevision(), mutation.content());
+            }
+        }
+    }
+
+    /* default */ java.util.List<SigningTransactionPayloadCodec.Mutation> effectMutations(MetadataSnapshot snapshot,
+            PkiId operationId, StatusObject status) throws IOException {
+        try (MetadataSnapshot.Record sidecar = snapshot.get(receiptKey(operationId)).orElse(null)) {
+            if (sidecar == null) { return java.util.List.of(); }
             Execution accepted = decodeExecution(readBytes(sidecar));
             if (accepted.phase() == Phase.FAILED) { throw invalid("SCHEDULE_EXECUTION_FAILED"); }
             if (!accepted.signingOperationId().equals(Optional.of(operationId))
@@ -242,7 +250,7 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
                     || !accepted.configuration().formatId().equals(status.formatId())) { throw invalid("SCHEDULE_EFFECT_MISMATCH"); }
             if (accepted.statusObjectId().isPresent()) {
                 if (!accepted.statusObjectId().equals(Optional.of(status.statusObjectId()))) { throw invalid("SCHEDULE_EFFECT_CONFLICT"); }
-                return;
+                return java.util.List.of();
             }
             MetadataKey key = key(accepted.configuration().caId(), accepted.configuration().statusType());
             Stored head = read(snapshot, key).orElseThrow(() -> invalid("SCHEDULE_CLAIM_MISSING"));
@@ -250,9 +258,13 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
             Execution committed = new Execution(accepted.executionId(), accepted.configuration(), accepted.due(), accepted.fence(),
                     Phase.EFFECT_COMMITTED, accepted.signingOperationId(), accepted.acceptanceCommitment(),
                     Optional.of(status.statusObjectId()), "");
-            replace(transaction, receiptKey(operationId), sidecar.recordRevision(), encodeExecution(committed));
-            replace(transaction, key, head.revision(), encode(new StatusScheduleState(head.value().configuration(),
-                    head.value().nextDue(), Math.addExact(head.value().workerRevision(), 1), Optional.of(committed))));
+            return java.util.List.of(
+                    new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.REPLACE,
+                            receiptKey(operationId), sidecar.recordRevision(), encodeExecution(committed)),
+                    new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.REPLACE,
+                            key, head.revision(), encode(new StatusScheduleState(head.value().configuration(),
+                                    head.value().nextDue(), Math.addExact(head.value().workerRevision(), 1), Optional.of(committed)))));
+
         }
     }
 
@@ -330,14 +342,15 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
     }
 
     private static void requireCommandMatches(Execution claim, SignWorkflowStore.AcceptanceEnvelope envelope,
-            DomainCommandEncoding.Decoded command) {
+            DomainCommandEncoding.Decoded command, boolean hybridRoleMatches) {
+        boolean hybrid = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command);
         Instant evaluation = Instant.parse(command.field(29)).truncatedTo(ChronoUnit.SECONDS);
         if (Instant.parse(command.field(29)).isBefore(claim.due())
                 || !command.field(0).equals(claim.configuration().caId().value())
                 || !command.field(1).equals(claim.configuration().statusType().name())
                 || !command.field(2).equals(claim.configuration().formatId().value())
-                || !command.field(5).equals(envelope.keyRef().value())
-                || !command.field(8).equals(envelope.algorithmId())
+                || (hybrid ? !hybridRoleMatches : !command.field(5).equals(envelope.keyRef().value())
+                        || !command.field(8).equals(envelope.algorithmId()))
                 || !envelope.fairnessAuthorityId().equals(claim.configuration().caId())
                 || !Instant.parse(command.field(3)).equals(evaluation)
                 || !Instant.parse(command.field(4)).equals(evaluation.plus(claim.configuration().interval()).truncatedTo(ChronoUnit.SECONDS))) {
@@ -345,7 +358,7 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
-    /* default */ static void validateBinding(Execution claim, SignWorkflowStore.AcceptanceEnvelope envelope) {
+    /* default */ void validateBinding(Execution claim, SignWorkflowStore.AcceptanceEnvelope envelope) {
         SignWorkflowStore.OuterCommand outer = envelope.outer().orElseThrow(() -> invalid("SCHEDULE_STATUS_REQUIRED"));
         DomainCommandEncoding.Decoded command = DomainContinuationValidation.validate(new DomainContinuationTemplate(
                 outer.kind(), Optional.of(outer.correlationId()), outer.command(), outer.commandCommitment()));
@@ -354,7 +367,20 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         if (outer.kind() != DomainContinuationStore.Kind.STATUS || !operation.equals(command.operation())) { throw invalid("SCHEDULE_STATUS_REQUIRED"); }
         FullCrlSigningCommand.validate(command);
         FullCrlSigningCommand.requireTbs(command, envelope.candidate());
-        requireCommandMatches(claim, envelope, command);
+        boolean hybridRoleMatches = false;
+        if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)) {
+            var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
+            try (MetadataSnapshot snapshot = metadata.snapshot()) {
+                var binding = AuthorityMetadataStore.findBinding(snapshot, new PkiId(command.field(6)))
+                        .orElseThrow(() -> invalid("SCHEDULE_ISSUER_BINDING_MISSING"));
+                var alternative = binding.alternative().orElseThrow(() -> invalid("SCHEDULE_ALTERNATIVE_ROLE_MISSING"));
+                hybridRoleMatches = binding.commitment().equals(descriptor.issuerBindingCommitment())
+                        && binding.authorityId().equals(claim.configuration().caId())
+                        && alternative.keyRef().equals(envelope.keyRef())
+                        && alternative.signatureAlgorithm().canonicalForm().equals(envelope.algorithmId());
+            } catch (IOException failure) { throw new IllegalStateException("Scheduled hybrid issuer evidence cannot be read", failure); }
+        }
+        requireCommandMatches(claim, envelope, command, hybridRoleMatches);
         if (claim.signingOperationId().isPresent() && (!claim.signingOperationId().orElseThrow().equals(envelope.operationId())
                 || !claim.acceptanceCommitment().equals(envelope.acceptanceCommitment().encoded()))) { throw invalid("SCHEDULE_RECEIPT_MISMATCH"); }
     }
@@ -391,12 +417,12 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
             return record == null ? Optional.empty() : Optional.of(new Stored(decode(record), record.recordRevision()));
         }
     }
-    private static StatusScheduleState decodeState(DataInputStream input, MetadataSnapshot.Record record, byte[] bytes) throws IOException {
+    private static StatusScheduleState decodeState(DataInputStream input, MetadataKey recordKey, byte[] bytes) throws IOException {
         if (input.readInt() != VERSION) { throw invalid("SCHEDULE_VERSION"); }
         StatusSchedule configuration = readSchedule(input);
         Instant due = Instant.parse(input.readUTF()); long revision = input.readLong();
         Optional<Execution> execution = input.readBoolean() ? Optional.of(readExecution(input)) : Optional.empty();
-        if (input.read() != -1 || !record.key().equals(key(configuration.caId(), configuration.statusType()))) { throw invalid("SCHEDULE_IDENTITY"); }
+        if (input.read() != -1 || !recordKey.equals(key(configuration.caId(), configuration.statusType()))) { throw invalid("SCHEDULE_IDENTITY"); }
         if (execution.isPresent()) {
             Execution claim = execution.orElseThrow();
             if (!claim.configuration().caId().equals(configuration.caId()) || claim.configuration().statusType() != configuration.statusType()
@@ -407,13 +433,20 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         return result;
     }
 
+    static StatusScheduleState decodeState(MetadataKey key, byte[] bytes) throws IOException {
+        if (bytes.length > MAX_BYTES) throw new IOException("Schedule metadata exceeds its limit");
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
+            return decodeState(input, key, bytes);
+        } catch (RuntimeException malformed) { throw new IOException("Invalid status schedule metadata", malformed); }
+    }
+
     private static StatusScheduleState decode(MetadataSnapshot.Record record) throws IOException {
         byte[] bytes = readBytes(record);
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            return decodeState(input, record, bytes);
+            return decodeState(input, record.key(), bytes);
         } catch (RuntimeException malformed) { throw new IOException("Invalid status schedule metadata", malformed); } // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.
     }
-    private static byte[] encode(StatusScheduleState state) throws IOException {
+    static byte[] encode(StatusScheduleState state) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeInt(VERSION); writeSchedule(output, state.configuration()); output.writeUTF(state.nextDue().toString());
@@ -422,7 +455,7 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
         return bounded(bytes.toByteArray());
     }
-    private static byte[] encodeExecution(Execution execution) throws IOException {
+    static byte[] encodeExecution(Execution execution) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) { output.writeInt(VERSION); writeExecution(output, execution); }
         return bounded(bytes.toByteArray());
@@ -434,7 +467,7 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         return result;
     }
 
-    private static Execution decodeExecution(byte[] bytes) throws IOException {
+    static Execution decodeExecution(byte[] bytes) throws IOException {
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
             return decodeReceipt(input, bytes);
         } catch (RuntimeException malformed) { throw new IOException("Invalid schedule receipt metadata", malformed); } // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.

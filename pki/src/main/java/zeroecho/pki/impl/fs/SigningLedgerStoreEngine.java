@@ -102,6 +102,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private final MetadataStoreId storeId;
     private final SigningGenerationRegistry generations;
     private final SigningIndexCapacityBudget capacity;
+    private final SigningHybridCrlDependencies hybridDependencies;
     private final SigningIndexCapacityBudget transientCapacity;
     private final SigningMvccIndex index;
     private final SigningDueWorkIndex due;
@@ -196,6 +197,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         this.storeId = storeId;
         this.generations = generations;
         this.capacity = capacity;
+        hybridDependencies = new SigningHybridCrlDependencies(stagedContent, capacity, due,
+                indexConfiguration().maximumKeys());
         this.transientCapacity = transientCapacity;
         this.index = index;
         this.due = due;
@@ -1275,7 +1278,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
         SigningWorkProjection.RecoveryStatistics projection =
                 workProjection.recoverAll(recoveredStates,
-                        validatedRecovery.schedulingByOperation());
+                        validatedRecovery.schedulingByOperation(),
+                        hybridDependencies.recover(validatedRecovery.hybridExecutions(), key -> {
+                            var record = index.lookup(key);
+                            return record.isEmpty() ? null : readValue(record.orElseThrow());
+                        }, validatedRecovery.hybridPublications(), index.preparedKeyCount()));
         recoveryProjectionStatistics = new RecoveryProjectionStatistics(envelopesVisited,
                 validatedRecovery.peakTrackedEnvelopeWorkspaceBytes(),
                 validatedRecovery.currentTrackedEnvelopeWorkspaceBytes(),
@@ -1673,16 +1680,47 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 type, reservation.pointerSlot());
         SigningMvccIndex.PreparedApply indexApply = null;
         SigningWorkProjection.Prepared projectedWork = null;
+        SigningHybridCrlDependencies.Prepared projectedDependencies = null;
         OutcomeSlot outcomeSlot = null;
         boolean admitted = false;
         boolean declined = false;
         try {
             List<SigningMvccIndex.Mutation> mutations = semanticMutations(token, payload, pointer);
             try {
-                indexApply = index.prepare(
-                        reservation.revision(), reservation.sequence(), mutations, admissionClass);
-                projectedWork = workProjection.prepare(payload, pointer,
-                        signingAdmission == null ? null : signingAdmission.dueAdmission);
+                int projectedActualKeys = index.preparedKeyCount();
+                for (var mutation : mutations) {
+                    boolean exists = index.lookupPrepared(mutation.key()).isPresent();
+                    if (mutation.pointer() == null && exists) projectedActualKeys--;
+                    else if (mutation.pointer() != null && !exists) projectedActualKeys++;
+                }
+                projectedDependencies = hybridDependencies.prepare(payload,
+                        new SigningHybridCrlDependencies.RowReader() {
+                            @Override public byte[] read(MetadataKey key) throws IOException {
+                                var record = index.lookup(key);
+                                return record.isEmpty() ? null : readValue(record.orElseThrow());
+                            }
+                            @Override public boolean exists(MetadataKey key) {
+                                return index.lookupPrepared(key).isPresent();
+                            }
+                        }, projectedActualKeys);
+                projectedDependencies.enterLoan();
+                try {
+                    indexApply = index.prepare(
+                            reservation.revision(), reservation.sequence(), mutations, admissionClass);
+                    projectedWork = workProjection.prepare(payload, pointer,
+                            signingAdmission == null ? null : signingAdmission.dueAdmission,
+                            SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY,
+                            projectedDependencies.view());
+                    projectedWork.attach(projectedDependencies);
+                    SigningWorkProjection.Prepared ownedWork = projectedWork;
+                    SigningMvccIndex.PreparedApply ownedIndex = indexApply;
+                    projectedDependencies.attachRollback(() -> {
+                        ownedWork.close();
+                        ownedIndex.close();
+                    });
+                } finally {
+                    projectedDependencies.detachLoan();
+                }
             } catch (SigningIndexCapacityBudget.CapacityExceededException exhausted) {
                 throw classifyPreparationCapacityFailure(admissionClass, exhausted);
             }
@@ -1723,6 +1761,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                         && outcomeSlot != null) outcomes.remove(token, outcomeSlot);
                 if (projectedWork != null) projectedWork.close();
                 if (indexApply != null) indexApply.close();
+                if (projectedDependencies != null) projectedDependencies.close();
             }
             reservation.close();
             if (!declined) preparation.close();
@@ -1795,6 +1834,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         } catch (ExecutionException failure) {
             prepared.workProjection.close();
             prepared.indexApply.close();
+            prepared.workProjection.closeDependencies();
             Throwable actualFailure = failure.getCause() == null ? failure : failure.getCause();
             transitionRecoveryRequired(actualFailure);
             throw new MetadataStoreException(MetadataCommitResult.FailureCategory.STORAGE_FAILURE,
@@ -2260,6 +2300,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             recordRecoveryFailure(closeFailure);
             failure = mergeFailure(failure, closeFailure);
         }
+        synchronized (stateLock) { hybridDependencies.close(); }
         workProjection.close();
         due.close();
         retention.close();

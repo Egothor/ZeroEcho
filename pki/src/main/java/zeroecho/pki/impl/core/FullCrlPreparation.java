@@ -153,7 +153,9 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         requireIssuer(issuerId, generation, ca, credential);
         evaluation.requireUsable(credential, CredentialUse.STATUS_OBJECT_ISSUER);
         CertificateProfileRef reference = ((CaProfileBinding) credential.profileBinding()).reference();
-        CertificateProfileDefinition profile = profile(reference, generation);
+        var issuerBinding = store.getIssuerCryptographicBinding(generation.issuerId())
+                .orElseThrow(() -> reject("ISSUER_CRYPTOGRAPHIC_BINDING_MISSING"));
+        CertificateProfileDefinition profile = profile(reference, generation, issuerBinding);
         byte[] der = CredentialContent.materializeForBc(store, credential.content());
         try {
             if (!HexFormat.of().formatHex(sha256(der)).equals(credential.content().sha256())) {
@@ -169,17 +171,44 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
             byte[] spki = Pkix.subjectPublicKeyInfo(certificate);
             AlgorithmIdentity key = new BcX509AlgorithmAdapter(authority.bindings()).decode(
                     Pkix.subjectPublicKeyAlgorithm(spki), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-            X509AlgorithmBinding binding = binding(profile.algorithmBindingPolicy());
-            X509ExecutionPlan<SigningProvider> plan = authority.plan(signature, key,
+            AlgorithmIdentity selectedSignature = issuerBinding.primary().signatureAlgorithm();
+            CrlSigningRoleTuple.validate(issuerBinding.primary(), spki, authority);
+            X509AlgorithmBinding binding = binding(profile.algorithmBindingPolicy(), selectedSignature);
+            X509ExecutionPlan<SigningProvider> plan = authority.plan(selectedSignature, key,
                     AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
                     binding.bindingId(), SigningProvider.class);
             authority.authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
+            Optional<PreparedFullCrlTbs.Hybrid> hybrid = Optional.empty();
+            boolean hybridProfile = profile.hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature;
+            if (hybridProfile != issuerBinding.alternative().isPresent()) throw reject("CRL_HYBRID_ROLE_MISMATCH");
+            if (hybridProfile) {
+                var alt = issuerBinding.alternative().orElseThrow();
+                byte[] alternativeSpki = CrlSigningRoleTuple.alternativeSpki(certificate);
+                CrlSigningRoleTuple.validate(alt, alternativeSpki, authority);
+                var alternativePlan = authority.plan(alt.signatureAlgorithm(), alt.publicKeyAlgorithm(),
+                        AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit", SigningProvider.class);
+                authority.authorize(alternativePlan, alternativePlan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
+                if (alternativePlan.executor() != plan.executor() || !Arrays.equals(alt.signatureAlgorithmIdentifier().bytes(),
+                        Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(alternativePlan.selection().binding()))))
+                    throw reject("CRL_ALTERNATIVE_PLAN_DIFFERS");
+                String tuple = CrlSigningRoleTuple.commitment(issuerBinding, certificate,
+                        Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(plan.selection().binding())),
+                        alt.signatureAlgorithmIdentifier().bytes());
+                hybrid = Optional.of(new PreparedFullCrlTbs.Hybrid(issuerBinding, alternativePlan.selection().binding(), tuple,
+                        store.requireCrlSignerLineage(issuerId), CrlSigningRoleTuple.planCommitment(plan, binding.bindingId(), binding.semanticCommitment()),
+                        alternativePlanCommitment(alternativePlan),
+                        CrlSigningRoleTuple.maximumSignatureBytes(alt, alternativeSpki, authority),
+                        CrlSigningRoleTuple.maximumSignatureBytes(issuerBinding.primary(), spki, authority)));
+            }
             CrlScope scope = CrlScope.of(certificate.getSubjectX500Principal().getEncoded(), spki);
             Optional<DeltaCrlBase> base = delta
-                    ? Optional.of(selectBase(ca.caId(), certificate, pureEdDsaMaximum, cancellation)) : Optional.empty();
+                    ? Optional.of(hybrid.isPresent() ? selectHybridBase(ca.caId(), hybrid.orElseThrow(), scope, pureEdDsaMaximum, cancellation)
+                            : selectBase(ca.caId(), certificate, pureEdDsaMaximum, cancellation)) : Optional.empty();
             cancellation.throwIfCancelled();
             return new Prepared(ca, generation, credential.credentialId(), reference, credential.content(),
-                    scope, binding, plan.selection().binding(), evaluation.evaluationTime(), thisUpdate, nextUpdate, der, base);
+                    scope, binding, plan.selection().binding(), evaluation.evaluationTime(), thisUpdate, nextUpdate, der, base, hybrid);
+        } catch (GeneralSecurityException invalid) {
+            throw reject("CRL_PUBLIC_SIGNATURE_BOUND_INVALID");
         } catch (DateTimeException | ArithmeticException invalid) {
             throw reject("TIME_INVALID");
         } catch (IllegalArgumentException invalid) {
@@ -247,6 +276,114 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         }
     }
 
+    private String alternativePlanCommitment(X509ExecutionPlan<SigningProvider> plan) {
+        String id = authority.bindings().bindingId(plan.selection().binding(), X509AlgorithmRole.SIGNATURE_ALGORITHM);
+        var rule = authority.bindings().rules().stream().filter(value -> value.id().equals(id)).findFirst().orElseThrow();
+        return CrlSigningRoleTuple.planCommitment(plan, id, rule.semanticFingerprint());
+    }
+
+    private DeltaCrlBase selectHybridBase(PkiId authorityId, PreparedFullCrlTbs.Hybrid requested, CrlScope scope,
+            long maximum, CancellationSignal cancellation) throws IOException, GeneralSecurityException {
+        StatusObject selected = null;
+        java.math.BigInteger selectedNumber = null;
+        for (StatusObject candidate : store.listStatusObjects(authorityId)) {
+            cancellation.throwIfCancelled();
+            if (candidate.type() != StatusObjectType.CRL) continue;
+            var evidence = baseEvidence(candidate, authorityId);
+            if (!requested.lineageId().equals(evidence.lineage()) || !scope.digest().equals(evidence.scope().digest())) continue;
+            if (selected != null && candidate.thisUpdate().isBefore(selected.thisUpdate())) continue;
+            java.math.BigInteger number;
+            try (RepeatableContent content = store.stagedContent().openContent(candidate.content())) {
+                number = new StreamingDerReader().inspectCrlSemantics(content, cancellation).crlNumber();
+            }
+            if (selected == null || candidate.thisUpdate().isAfter(selected.thisUpdate())
+                    || number.compareTo(selectedNumber) > 0
+                    || number.equals(selectedNumber) && candidate.statusObjectId().value().compareTo(selected.statusObjectId().value()) > 0) {
+                selected = candidate; selectedNumber = number;
+            }
+        }
+        if (selected == null) throw reject("DELTA_BASE_NEW_FULL_REQUIRED");
+        var issuerId = new PkiId(text(selected, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_GENERATION));
+        var binding = store.getIssuerCryptographicBinding(issuerId).orElseThrow();
+        var credential = store.getCredential(binding.credentialId()).orElseThrow();
+        var certificate = Pkix.parseCertificate(CredentialContent.materializeForBc(store, credential.content()));
+        if (!store.requireCrlSignerLineage(issuerId).equals(requested.lineageId())
+                || !binding.commitment().equals(text(selected, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_BINDING))
+                || !requested.tupleCommitment().equals(text(selected, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ROLE_TUPLE))
+                || !zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.PROFILE.equals(text(selected,
+                        zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.SIGNATURE_PROFILE)))
+            throw reject("DELTA_BASE_ROLE_TUPLE_INVALID");
+        try (RepeatableContent content = store.stagedContent().openContent(selected.content())) {
+            requireBaseCommitment(content, selected.content(), cancellation);
+            var alternativeLayout = new StreamingDerReader().inspectAlternativeCrl(content, cancellation);
+            var semantic = alternativeLayout.semantic(); var layout = semantic.layout();
+            byte[] nativeAlgorithm = readSlice(content, layout.outerAlgorithmOffset(), layout.outerAlgorithmLength(), 16_384);
+            if (semantic.deltaIndicator().isPresent() || !layout.thisUpdate().equals(Optional.of(selected.thisUpdate()))
+                    || !layout.nextUpdate().equals(selected.nextUpdate())
+                    || !requested.tupleCommitment().equals(CrlSigningRoleTuple.commitment(binding, certificate,
+                            nativeAlgorithm, alternativeLayout.alternativeAlgorithmDer()))
+                    || !Arrays.equals(alternativeLayout.alternativeAlgorithmDer(), binding.alternative().orElseThrow().signatureAlgorithmIdentifier().bytes()))
+                throw reject("DELTA_BASE_METADATA_INVALID");
+            var nativeIdentity = authority.bindings().reverse(BcX509AlgorithmAdapter.fromLib(Pkix.parseAlgorithmIdentifier(nativeAlgorithm)),
+                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            if (!nativeIdentity.equals(binding.primary().signatureAlgorithm())) throw reject("DELTA_BASE_NATIVE_ALGORITHM_INVALID");
+            byte[] primarySpki = Pkix.subjectPublicKeyInfo(certificate);
+            byte[] alternativeSpki = CrlSigningRoleTuple.alternativeSpki(certificate);
+            CrlSigningRoleTuple.validate(binding.primary(), primarySpki, authority);
+            CrlSigningRoleTuple.validate(binding.alternative().orElseThrow(), alternativeSpki, authority);
+            FullCrlSigningCommand.requireAdmission(nativeIdentity.canonicalForm(), layout.tbsLength(), maximum);
+            try (RepeatableContent tbs = new ContentSlice(content, layout.tbsOffset(), layout.tbsLength());
+                    RepeatableContent alternativeTbs = zeroecho.pki.impl.framework.x509.StreamingCrlAlternativeSignature.alternativeTbs(content, cancellation)) {
+                StreamingCrlSignatureVerifier.verify(tbs, nativeIdentity.canonicalForm(), primarySpki,
+                        readSlice(content, layout.signatureOffset(), layout.signatureLength(), 1_048_576), authority.bindings(), cancellation);
+                FullCrlSigningCommand.requireAdmission(binding.alternative().orElseThrow().signatureAlgorithm().canonicalForm(),
+                        alternativeTbs.length().orElseThrow(), maximum);
+                StreamingCrlSignatureVerifier.verify(alternativeTbs, binding.alternative().orElseThrow().signatureAlgorithm().canonicalForm(),
+                        alternativeSpki, alternativeLayout.alternativeSignature(), authority.bindings(), cancellation);
+            }
+            return new DeltaCrlBase(selected.statusObjectId(), semantic.crlNumber(), FullCrlSnapshotProvenance.decode(selected.attributes()));
+        }
+    }
+
+    private BaseEvidence baseEvidence(StatusObject candidate, PkiId authorityId) throws IOException {
+        var generationId = new PkiId(requiredText(candidate, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_GENERATION));
+        var generation = store.getIssuerGeneration(generationId).orElseThrow(() -> reject("DELTA_BASE_GENERATION_MISSING"));
+        var binding = store.getIssuerCryptographicBinding(generationId).orElseThrow(() -> reject("DELTA_BASE_BINDING_MISSING"));
+        var credential = store.getCredential(generation.credentialId()).orElseThrow(() -> reject("DELTA_BASE_CREDENTIAL_MISSING"));
+        if (!generation.authorityId().equals(authorityId) || !candidate.issuerCaId().equals(authorityId)
+                || !binding.issuerId().equals(generationId) || !binding.credentialId().equals(credential.credentialId())
+                || !binding.commitment().equals(requiredText(candidate, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_BINDING)))
+            throw reject("DELTA_BASE_METADATA_INVALID");
+        byte[] der = CredentialContent.materializeForBc(store, credential.content());
+        if (!HexFormat.of().formatHex(sha256(der)).equals(binding.certificateSha256())) throw reject("DELTA_BASE_METADATA_INVALID");
+        var certificate = Pkix.parseCertificate(der);
+        var lineage = store.requireCrlSignerLineage(generationId);
+        if (!lineage.value().equals(requiredText(candidate, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.SIGNER_LINEAGE))
+                || !zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.PROFILE.equals(requiredText(candidate,
+                        zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.SIGNATURE_PROFILE)))
+            throw reject("DELTA_BASE_METADATA_INVALID");
+        var immutableProfile = profile(((CaProfileBinding) credential.profileBinding()).reference(), generation, binding);
+        String tuple = new CrlHybridPublicVerifier(authority).roleTupleCommitment(binding,
+                new zeroecho.pki.api.EncodedObject(Encoding.DER, der), immutableProfile);
+        if (!tuple.equals(requiredText(candidate, zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ROLE_TUPLE)))
+            throw reject("DELTA_BASE_METADATA_INVALID");
+        return new BaseEvidence(lineage, CrlScope.of(certificate.getSubjectX500Principal().getEncoded(), Pkix.subjectPublicKeyInfo(certificate)));
+    }
+
+    private record BaseEvidence(PkiId lineage, CrlScope scope) { }
+
+    private static String requiredText(StatusObject status, zeroecho.pki.api.attr.AttributeId id) {
+        String value = text(status, id);
+        if (value.isEmpty()) throw reject("DELTA_BASE_METADATA_INVALID");
+        return value;
+    }
+
+    private static String text(StatusObject status, zeroecho.pki.api.attr.AttributeId id) {
+        if (status.attributes().getAll(id).size() != 1) return "";
+        return status.attributes().get(id).filter(zeroecho.pki.api.attr.AttributeValue.StringValue.class::isInstance)
+                .map(zeroecho.pki.api.attr.AttributeValue.StringValue.class::cast).map(zeroecho.pki.api.attr.AttributeValue.StringValue::value).orElse("");
+    }
+
     private StatusObject latestBase(PkiId authorityId, CancellationSignal cancellation) throws IOException {
         StatusObject selected = null;
         for (StatusObject candidate : store.listStatusObjects(authorityId)) {
@@ -280,12 +417,11 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         }
     }
 
-    private CertificateProfileDefinition profile(CertificateProfileRef expected, IssuerGeneration generation) {
+    private CertificateProfileDefinition profile(CertificateProfileRef expected, IssuerGeneration generation,
+            zeroecho.pki.api.ca.IssuerCryptographicBinding binding) {
         ImportedCertificateProfileVersion imported = store.getProfileVersion(expected.profileId(), expected.profileVersion())
                 .orElseThrow(() -> reject("PROFILE_MISSING"));
         String commitment = HexFormat.of().formatHex(expected.canonicalSha256());
-        var binding = store.getIssuerCryptographicBinding(generation.issuerId())
-                .orElseThrow(() -> reject("ISSUER_CRYPTOGRAPHIC_BINDING_MISSING"));
         if (!binding.issuerId().equals(generation.issuerId()) || !binding.authorityId().equals(generation.authorityId())
                 || !binding.credentialId().equals(generation.credentialId()) || !binding.profile().equals(expected)
                 || !binding.primary().keyRef().equals(generation.signingKeyRef())
@@ -307,13 +443,13 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         return definition;
     }
 
-    private X509AlgorithmBinding binding(X509AlgorithmBindingPolicy policy) {
+    private X509AlgorithmBinding binding(X509AlgorithmBindingPolicy policy, AlgorithmIdentity selectedSignature) {
         Optional<X509AlgorithmBindingPolicy.BindingReference> reference = policy.crlSignature();
         X509AlgorithmBinding selected = reference.map(value -> bindings.require(value.bindingId(), value.semanticCommitment()))
-                .orElseGet(() -> bindings.standard(signature, X509AlgorithmBinding.Role.CRL_SIGNATURE)
+                .orElseGet(() -> bindings.standard(selectedSignature, X509AlgorithmBinding.Role.CRL_SIGNATURE)
                         .orElseThrow(() -> reject("CRL_BINDING_MISSING")));
         if (selected.role() != X509AlgorithmBinding.Role.CRL_SIGNATURE
-                || !selected.algorithmIdentity().equals(signature)
+                || !selected.algorithmIdentity().equals(selectedSignature)
                 || reference.isPresent() && selected.origin() == X509AlgorithmBinding.Origin.STANDARD) {
             throw reject("CRL_BINDING_INCONSISTENT");
         }
@@ -358,7 +494,14 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
     /* default */ record Prepared(CaRecord authority, IssuerGeneration generation, PkiId credentialId, CertificateProfileRef profile,
             DurableContentReference issuerContent, CrlScope scope, X509AlgorithmBinding signatureBinding,
             X509AlgorithmIdentifier signatureIdentifier, Instant evaluationTime, Instant thisUpdate,
-            Instant nextUpdate, byte[] issuerDer, Optional<DeltaCrlBase> base) {
+            Instant nextUpdate, byte[] issuerDer, Optional<DeltaCrlBase> base, Optional<PreparedFullCrlTbs.Hybrid> hybrid) {
+        Prepared(CaRecord authority, IssuerGeneration generation, PkiId credentialId, CertificateProfileRef profile,
+                DurableContentReference issuerContent, CrlScope scope, X509AlgorithmBinding signatureBinding,
+                X509AlgorithmIdentifier signatureIdentifier, Instant evaluationTime, Instant thisUpdate, Instant nextUpdate,
+                byte[] issuerDer, Optional<DeltaCrlBase> base) {
+            this(authority, generation, credentialId, profile, issuerContent, scope, signatureBinding, signatureIdentifier,
+                    evaluationTime, thisUpdate, nextUpdate, issuerDer, base, Optional.empty());
+        }
         Prepared { issuerDer = issuerDer.clone(); Objects.requireNonNull(base, "base"); }
         /* default */ PkiId authorityId() { return authority.caId(); }
         @Override public byte[] issuerDer() { return issuerDer.clone(); }

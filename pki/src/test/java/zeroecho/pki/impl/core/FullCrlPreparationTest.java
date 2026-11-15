@@ -237,13 +237,70 @@ class FullCrlPreparationTest {
                 .prepare(request(Duration.ofHours(1)), CancellationSignal.NONE));
         assertThrows(PkiException.class, () -> fixture.preparer(fixed(), true, false, SIGNATURE)
                 .prepare(request(Duration.ofHours(1)), CancellationSignal.NONE));
-        assertThrows(PkiException.class, () -> fixture.preparer(fixed(), true, true, BootstrapAlgorithmIdentities.RSA_PSS_SHA256)
-                .prepare(request(Duration.ofHours(1)), CancellationSignal.NONE));
+        assertEquals(SIGNATURE, fixture.preparer(fixed(), true, true, BootstrapAlgorithmIdentities.RSA_PSS_SHA256)
+                .prepare(request(Duration.ofHours(1)), CancellationSignal.NONE).signatureBinding().algorithmIdentity());
         fixture.installProfile(X509AlgorithmBindingPolicy.standardOnly());
-        assertThrows(PkiException.class, () -> fixture.preparer(fixed(), true, true, BootstrapAlgorithmIdentities.ECDSA_SHA256)
-                .prepare(request(Duration.ofHours(1)), CancellationSignal.NONE));
+        assertEquals(SIGNATURE, fixture.preparer(fixed(), true, true, BootstrapAlgorithmIdentities.ECDSA_SHA256)
+                .prepare(request(Duration.ofHours(1)), CancellationSignal.NONE).signatureBinding().algorithmIdentity());
         assertThrows(IllegalArgumentException.class, () -> new FullCrlPreparation(fixture.store(), fixed(),
                 runtime(true, true), registry(), "SHA256withRSA"));
+    }
+
+    @Test void hybridPreparationFreezesBothRolesWithoutSigningAndRejectsWrongSubjectEvidence() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.installHybrid(privatePolicy());
+        var prepared = fixture.prepare();
+        var hybrid = prepared.hybrid().orElseThrow();
+        assertEquals(fixture.binding, hybrid.binding());
+        assertEquals(GENERATION, hybrid.lineageId());
+        assertEquals(256, hybrid.primaryMaximumSignatureBytes());
+        assertEquals(256, hybrid.alternativeMaximumSignatureBytes());
+        assertEquals(PrivateBinding.DESCRIPTOR.oid(), prepared.signatureIdentifier().oid());
+        assertEquals("1.2.840.113549.1.1.11", hybrid.alternativeIdentifier().oid());
+        assertEquals(hybrid.tupleCommitment(), new CrlHybridPublicVerifier(runtime(true, true)).roleTupleCommitment(
+                fixture.binding, new zeroecho.pki.api.EncodedObject(Encoding.DER, fixture.der), fixture.profile.definition()));
+        assertEquals(7, fixture.reads.get()); // One explicit hybrid lineage lookup; no active-profile or signing calls.
+        fixture.der = certificate;
+        fixture.credential = credential(CREDENTIAL, fixture.profile.reference(), fixture.der);
+        assertThrows(IOException.class, fixture::prepare, "A hybrid issuer cannot borrow another alternative subject key");
+    }
+
+    @Test void corruptLatestBaseLineageCannotBeSkippedForAnOlderCandidate() throws Exception {
+        for (int fault = 0; fault < 4; fault++) {
+            Fixture fixture = new Fixture(); fixture.installHybrid(X509AlgorithmBindingPolicy.standardOnly());
+            var prepared = fixture.prepare();
+            var hybrid = prepared.hybrid().orElseThrow();
+            var entries = new ArrayList<SimpleAttributeSet.Entry>();
+            entries.add(new SimpleAttributeSet.Entry(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_GENERATION,
+                    List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue(GENERATION.value()))));
+            entries.add(new SimpleAttributeSet.Entry(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_BINDING,
+                    List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue(fixture.binding.commitment()))));
+            entries.add(new SimpleAttributeSet.Entry(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ROLE_TUPLE,
+                    List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue(hybrid.tupleCommitment()))));
+            entries.add(new SimpleAttributeSet.Entry(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.SIGNATURE_PROFILE,
+                    List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.PROFILE))));
+            var valid = new ArrayList<>(entries);
+            valid.add(new SimpleAttributeSet.Entry(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.SIGNER_LINEAGE,
+                    List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue(GENERATION.value()))));
+            List<zeroecho.pki.api.attr.AttributeValue> invalid = switch (fault) {
+                case 0 -> List.of();
+                case 1 -> List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue(GENERATION.value()),
+                        new zeroecho.pki.api.attr.AttributeValue.StringValue(GENERATION.value()));
+                case 2 -> List.of(new zeroecho.pki.api.attr.AttributeValue.IntegerValue(1));
+                default -> List.of(new zeroecho.pki.api.attr.AttributeValue.StringValue("other-lineage"));
+            };
+            if (!invalid.isEmpty()) entries.add(new SimpleAttributeSet.Entry(
+                    zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.SIGNER_LINEAGE, invalid));
+            fixture.bases = List.of(new zeroecho.pki.api.status.StatusObject(new PkiId("crl:" + "1".repeat(64)), new FormatId("x509"),
+                    CA, zeroecho.pki.api.status.StatusObjectType.CRL, NOW, Optional.of(NOW.plusSeconds(60)), fixture.credential.content(),
+                    new SimpleAttributeSet(entries)),
+                    new zeroecho.pki.api.status.StatusObject(new PkiId("crl:" + "2".repeat(64)), new FormatId("x509"),
+                    CA, zeroecho.pki.api.status.StatusObjectType.CRL, NOW.minusSeconds(1), Optional.of(NOW.plusSeconds(60)),
+                    fixture.credential.content(), new SimpleAttributeSet(valid)));
+            var failure = assertThrows(PkiException.class, () -> fixture.preparer(fixed(), true, true, SIGNATURE).prepare(
+                    new zeroecho.pki.api.status.DeltaCrlRequest(GENERATION, Duration.ofHours(1)), 1_048_576, CancellationSignal.NONE));
+            assertTrue(failure.getMessage().contains("DELTA_BASE_METADATA_INVALID"), failure::getMessage);
+        }
     }
 
     @Test void missingAndMismatchedPointLookupsFailClosed() throws Exception {
@@ -310,16 +367,19 @@ class FullCrlPreparationTest {
     @Test void frozenPreparationAndTbsCarriersContainOnlyProviderNeutralResourceFreeComponents() {
         Set<Class<?>> allowed = Set.of(CaRecord.class, IssuerGeneration.class, PkiId.class, CertificateProfileRef.class,
                 DurableContentReference.class, CrlScope.class, X509AlgorithmBinding.class, X509AlgorithmIdentifier.class,
-                Instant.class, byte[].class, String.class, KeyRef.class, BigInteger.class, long.class, OptionalLong.class,
+                Instant.class, byte[].class, String.class, KeyRef.class, BigInteger.class, long.class, int.class, OptionalLong.class,
+                zeroecho.pki.api.ca.IssuerCryptographicBinding.class,
                 zeroecho.pki.spi.store.MetadataStoreId.class, Optional.class,
                 zeroecho.pki.impl.core.continuation.FullCrlSnapshotProvenance.class);
-        for (Class<?> carrier : List.of(FullCrlPreparation.Prepared.class, PreparedFullCrlTbs.class, DeltaCrlBase.class,
+        for (Class<?> carrier : List.of(FullCrlPreparation.Prepared.class, PreparedFullCrlTbs.class, PreparedFullCrlTbs.Hybrid.class, DeltaCrlBase.class,
                 zeroecho.pki.impl.core.continuation.FullCrlSnapshotProvenance.class)) {
             for (RecordComponent component : carrier.getRecordComponents()) {
                 assertTrue(allowed.contains(component.getType()), carrier.getSimpleName() + "." + component.getName()
                         + " must not retain a plan, provider, executor, source, cursor, sink or resource");
                 if (component.getType() == Optional.class) {
-                    assertEquals("java.util.Optional<zeroecho.pki.impl.core.DeltaCrlBase>", component.getGenericType().getTypeName());
+                    assertEquals(java.util.Map.of("base", "java.util.Optional<zeroecho.pki.impl.core.DeltaCrlBase>",
+                            "hybrid", "java.util.Optional<zeroecho.pki.impl.core.PreparedFullCrlTbs$Hybrid>").get(component.getName()),
+                            component.getGenericType().getTypeName());
                 }
             }
         }
@@ -406,8 +466,28 @@ class FullCrlPreparationTest {
         private ImportedCertificateProfileVersion profile;
         private byte[] der = certificate;
         private String missing = "";
+        private boolean hybrid;
+        private KeyPair alternativeKey;
+        private List<zeroecho.pki.api.status.StatusObject> bases = List.of();
 
         private Fixture() throws Exception { installProfile(X509AlgorithmBindingPolicy.standardOnly()); }
+
+        private void installHybrid(X509AlgorithmBindingPolicy policy) throws Exception {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048);
+            KeyPair alternative = generator.generateKeyPair();
+            hybrid = true;
+            X500Name name = new X500Name("CN=Issuer");
+            var builder = new JcaX509v3CertificateBuilder(name, BigInteger.ONE, Date.from(BEFORE), Date.from(AFTER), name, key.getPublic());
+            builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+            builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+            builder.addExtension(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.5.29.72"), false,
+                org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(alternative.getPublic().getEncoded()));
+            der = builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate()), false,
+                new JcaContentSignerBuilder("SHA256withRSA").build(alternative.getPrivate())).getEncoded();
+            alternativeKey = alternative;
+            installProfile(policy);
+        }
+
 
         private void installProfile(X509AlgorithmBindingPolicy policy) throws Exception {
             CertificateProfileDefinition definition = new CertificateProfileDefinition(CertificateProfileKind.ROOT_CA,
@@ -416,6 +496,10 @@ class FullCrlPreparationTest {
                             Optional.empty(), true))),
                     new CaCertificatePolicy(true, 1, true, Set.of(CaKeyUsage.KEY_CERT_SIGN, CaKeyUsage.CRL_SIGN),
                             Set.of("RSA")), policy);
+            if (hybrid) definition = new CertificateProfileDefinition(definition.certificateType(), definition.profileId(),
+                    definition.profileVersion(), definition.formatId(), definition.displayName(), definition.maximumValidity(),
+                    definition.approvalRequirement(), definition.subjectPolicy(), definition.certificatePolicy(), definition.algorithmBindingPolicy(),
+                    definition.confirmationPolicy(), new zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature(SIGNATURE.canonicalForm(), "key:alternative"));
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
             CertificateProfileRef reference = new CertificateProfileRef("root", 1,
                     MessageDigest.getInstance("SHA-256").digest(canonical));
@@ -423,9 +507,12 @@ class FullCrlPreparationTest {
                     definition, canonical, NOW);
             credential = credential(CREDENTIAL, reference, der);
             generation = generation(IssuerGenerationState.ACTIVE, commitment(), registry().commitment());
-            binding = IssuerBindingResolver.create(generation, der, "x509", SIGNATURE, Optional.empty(),
-                    ignored -> new zeroecho.pki.api.EncodedObject(Encoding.DER, key.getPublic().getEncoded()), runtime(true, true),
-                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, reference, registry().commitment());
+            binding = IssuerBindingResolver.create(generation, der, "x509", SIGNATURE, hybrid
+                            ? Optional.of(new IssuerBindingResolver.AlternativeSelection(new KeyRef("key:alternative"), SIGNATURE)) : Optional.empty(),
+                    selected -> new zeroecho.pki.api.EncodedObject(Encoding.DER,
+                            selected.equals(KEY) ? key.getPublic().getEncoded() : alternativeKey.getPublic().getEncoded()), runtime(true, true),
+                    hybrid ? zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.LEGACY_PRE_TBS
+                            : zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, reference, registry().commitment());
         }
 
         private String commitment() { return HexFormat.of().formatHex(profile.reference().canonicalSha256()); }
@@ -451,6 +538,8 @@ class FullCrlPreparationTest {
                         reads.incrementAndGet();
                         if (method.getName().equals(missing)) { return Optional.empty(); }
                         return switch (method.getName()) {
+                            case "listStatusObjects" -> { assertEquals(CA, args[0]); yield bases; }
+                            case "requireCrlSignerLineage" -> { assertTrue(hybrid); assertEquals(GENERATION, args[0]); yield GENERATION; }
                             case "getIssuerGeneration" -> Optional.of(generation);
                             case "getIssuerCryptographicBinding" -> { assertEquals(GENERATION, args[0]); yield Optional.of(binding); }
                             case "getCa" -> { assertEquals(generation.authorityId(), args[0]); yield Optional.of(ca); }

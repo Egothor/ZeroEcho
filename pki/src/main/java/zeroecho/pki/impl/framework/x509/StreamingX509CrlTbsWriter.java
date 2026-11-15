@@ -76,6 +76,7 @@ public final class StreamingX509CrlTbsWriter {
             .withZone(ZoneOffset.UTC);
     private final byte[] algorithm;
     private final byte[] issuer;
+    private final byte[] alternativeAlgorithm;
     private final byte[] thisUpdate;
     private final byte[] nextUpdate;
     private final byte[] authorityKeyIdentifier;
@@ -110,6 +111,34 @@ public final class StreamingX509CrlTbsWriter {
      */
     public StreamingX509CrlTbsWriter(X509AlgorithmIdentifier signature, byte[] issuerNameDer, byte[] keyIdentifier,
             Instant thisUpdate, Instant nextUpdate, Optional<BigInteger> baseNumber) throws IOException {
+        this(signature, issuerNameDer, keyIdentifier, thisUpdate, nextUpdate, baseNumber, false);
+    }
+
+    /**
+     * Captures the BC 1.86-compatible alternative CRL transcript profile.
+     * The result omits the native signature identifier and alternative value;
+     * its alternative algorithm extension is noncritical. No signed-object wrapper
+     * is part of this input. Entry streaming and source ownership match the ordinary writer.
+     * @param alternativeAlgorithm exact authorized alternative signature identifier
+     * @param issuerNameDer canonical issuer Name DER
+     * @param keyIdentifier nonempty issuer key identifier
+     * @param thisUpdate inclusive whole-second update time
+     * @param nextUpdate later whole-second update time
+     * @param baseNumber full CRL number for a delta, empty for a full CRL
+     * @return immutable two-pass alternative transcript writer
+     * @throws IOException if a bounded encoded field is malformed
+     * @throws IllegalArgumentException if a field is outside its X.509 range
+     */
+    public static StreamingX509CrlTbsWriter forAlternativeSignature(X509AlgorithmIdentifier alternativeAlgorithm,
+            byte[] issuerNameDer, byte[] keyIdentifier, Instant thisUpdate, Instant nextUpdate,
+            Optional<BigInteger> baseNumber) throws IOException {
+        return new StreamingX509CrlTbsWriter(alternativeAlgorithm, issuerNameDer, keyIdentifier,
+                thisUpdate, nextUpdate, baseNumber, true);
+    }
+
+    private StreamingX509CrlTbsWriter(X509AlgorithmIdentifier signature, byte[] issuerNameDer, byte[] keyIdentifier,
+            Instant thisUpdate, Instant nextUpdate, Optional<BigInteger> baseNumber,
+            boolean alternativeTranscript) throws IOException {
         this.baseNumber = Objects.requireNonNull(baseNumber, "baseNumber");
         if (baseNumber.filter(number -> number.signum() < 0 || number.bitLength() > 159).isPresent()) {
             throw new IllegalArgumentException("Base CRL number is outside the issued range");
@@ -119,13 +148,26 @@ public final class StreamingX509CrlTbsWriter {
         if (thisUpdate.getNano() != 0 || nextUpdate.getNano() != 0 || !nextUpdate.isAfter(thisUpdate)) {
             throw new IllegalArgumentException("CRL update times must be increasing whole seconds");
         }
-        this.issuer = Objects.requireNonNull(issuerNameDer, "issuerNameDer").clone();
+        Objects.requireNonNull(issuerNameDer, "issuerNameDer");
+        if (alternativeTranscript && (issuerNameDer.length > 16 * 1024 || keyIdentifier.length > 16 * 1024)) {
+            throw new IOException("Alternative CRL Name or key identifier exceeds header bound");
+        }
+        this.issuer = issuerNameDer.clone();
         new X500Principal(this.issuer);
         new StreamingDerReader().validate(this.issuer, this.issuer.length);
-        this.algorithm = Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(signature));
+        byte[] selectedAlgorithm = Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(signature));
+        if (alternativeTranscript && selectedAlgorithm.length > 16 * 1024) {
+            throw new IOException("Alternative CRL algorithm exceeds header bound");
+        }
+        this.algorithm = alternativeTranscript ? new byte[0] : selectedAlgorithm;
+        this.alternativeAlgorithm = alternativeTranscript ? extension(73, selectedAlgorithm) : new byte[0];
         byte[] identifier = Objects.requireNonNull(keyIdentifier, "keyIdentifier").clone();
         if (identifier.length == 0) { throw new IllegalArgumentException("Issuer key identifier must not be empty"); }
-        this.authorityKeyIdentifier = extension(35, tlv(0x30, tlv(0x80, identifier)));
+        byte[] keyIdentifierValue = tlv(0x30, tlv(0x80, identifier));
+        if (alternativeTranscript && keyIdentifierValue.length > 16 * 1024) {
+            throw new IOException("Alternative CRL authority key identifier encoding exceeds header bound");
+        }
+        this.authorityKeyIdentifier = extension(35, keyIdentifierValue);
         this.thisUpdate = time(thisUpdate);
         this.nextUpdate = time(nextUpdate);
         this.headerLength = Math.addExact(3L, Math.addExact(this.algorithm.length,
@@ -261,6 +303,7 @@ public final class StreamingX509CrlTbsWriter {
         if (baseNumber.isPresent()) {
             values.write(extension(27, tlv(0x02, baseNumber.orElseThrow().toByteArray()), true));
         }
+        values.write(alternativeAlgorithm);
         return tlv(0xa0, tlv(0x30, values.toByteArray()));
     }
 

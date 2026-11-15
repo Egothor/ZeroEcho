@@ -54,6 +54,7 @@ public final class SigningOuterTerminalDriver
     private final PkiStore store;
     private final DomainContinuationPublisher publisher;
     private final FullCrlContinuationPublisher fullCrl;
+    private final CrlHybridContinuation hybridCrl;
     private final Optional<ManagedKeyProofVerifier> proof;
 
     /**
@@ -76,6 +77,7 @@ public final class SigningOuterTerminalDriver
         publisher = new DomainContinuationPublisher(store);
         FullCrlSigningCommand.requireAdmission("", 0, pureEdDsaMaximumTbsBytes);
         fullCrl = new FullCrlContinuationPublisher(store, Objects.requireNonNull(bindings, "bindings"), pureEdDsaMaximumTbsBytes);
+        hybridCrl = new CrlHybridContinuation(store, bindings, pureEdDsaMaximumTbsBytes, fullCrl);
         proof = Optional.empty();
     }
 
@@ -92,11 +94,17 @@ public final class SigningOuterTerminalDriver
         publisher = new DomainContinuationPublisher(store);
         FullCrlSigningCommand.requireAdmission("", 0, pureEdDsaMaximumTbsBytes);
         fullCrl = new FullCrlContinuationPublisher(store, authority.bindings(), pureEdDsaMaximumTbsBytes);
+        hybridCrl = new CrlHybridContinuation(store, authority.bindings(), pureEdDsaMaximumTbsBytes, fullCrl);
         proof = Optional.of(new ManagedKeyProofVerifier(store, authority, verifier, pureEdDsaMaximumTbsBytes));
     }
 
     @Override public void advance(SignWorkflowStore.Workflow workflow) {
         SignWorkflowStore.Workflow exact = Objects.requireNonNull(workflow, "workflow");
+        if (exact.envelope().outer().filter(value -> value.kind() == DomainContinuationStore.Kind.STATUS
+                && CrlHybridSigningCommand.isHybrid(DomainCommandEncoding.decode(value.command()))).isPresent()) {
+            hybridCrl.advance(exact);
+            return;
+        }
         if (exact.state() == SignWorkflowStore.State.DISPATCHED
                 && (exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
                         || exact.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING)) {

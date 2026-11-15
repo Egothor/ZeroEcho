@@ -53,6 +53,42 @@ final class SigningDueWorkIndexTest {
     private static final Instant BASE = Instant.parse("2026-08-12T12:00:00Z");
 
     @Test
+    @SuppressWarnings("try") // Closing the uncommitted handoff is the rollback under test.
+    void oneDueSlotTransfersBothDirectionsAndRollbackKeepsDonor() {
+        try (SigningDueWorkIndex index = index(1)) {
+            var parent = index.admit("parent");
+            var child = index.admit("child");
+            index.update(parent, BASE, SignWorkflowStore.State.SUCCEEDED, pointer(1L));
+            try (var ignored = index.prepareHandoff(parent, child, BASE,
+                    SignWorkflowStore.State.INTENT, pointer(2L), null,
+                    SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY)) {
+                assertEquals(List.of("parent"), dueIds(index));
+                assertThrows(IllegalStateException.class, index::reserveAdmission);
+            }
+            assertEquals(List.of("parent"), dueIds(index));
+            try (var prepared = index.prepareHandoff(parent, child, BASE,
+                    SignWorkflowStore.State.INTENT, pointer(2L), null,
+                    SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY)) {
+                prepared.publish();
+            }
+            assertEquals(List.of("child"), dueIds(index));
+            try (var prepared = index.prepareHandoff(child, parent, BASE,
+                    SignWorkflowStore.State.SUCCEEDED, pointer(3L), null,
+                    SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY)) {
+                prepared.publish();
+            }
+            assertEquals(List.of("parent"), dueIds(index));
+            assertEquals(1, index.statistics().workCount());
+        }
+    }
+
+    private static List<String> dueIds(SigningDueWorkIndex index) {
+        try (var selection = index.selectThrough(BASE, 10)) {
+            return selection.records().stream().map(SigningDueWorkIndex.WorkDescriptor::operationId).toList();
+        }
+    }
+
+    @Test
     void selectionOrdersByTimeThenCanonicalOperationIdAndHonorsCutoff() {
         try (SigningDueWorkIndex index = index(10)) {
             SigningDueWorkIndex.CanonicalOperationId second = index.admit("op-b");

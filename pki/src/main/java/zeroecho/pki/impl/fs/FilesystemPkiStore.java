@@ -148,6 +148,7 @@ import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.DomainContinuationStore;
+import zeroecho.pki.spi.store.CrlHybridExecution;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 import zeroecho.pki.spi.store.RevocationSnapshot;
 import zeroecho.pki.spi.store.RevocationView;
@@ -940,7 +941,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
             AuthorityMetadataStore.validateAll(snapshot);
             AuthorityMetadataStore.visit(snapshot, AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec::generation,
-                    generation -> validateIssuerGeneration(generation));
+                    generation -> {
+                        validateIssuerGeneration(generation);
+                        var lineage = AuthorityMetadataStore.lineage(snapshot, generation.issuerId());
+                        if (lineage.isPresent()) {
+                            var binding = AuthorityMetadataStore.findBinding(snapshot, generation.issuerId()).orElseThrow();
+                            if (!lineage.orElseThrow().signerTupleCommitment().equals(crlLineageTuple(snapshot, generation, binding))) {
+                                throw new IOException("Hybrid CRL signer lineage public evidence differs");
+                            }
+                        }
+                    });
             AuthorityMetadataStore.visit(snapshot, AuthorityMetadataCodec.ISSUER_PATH, AuthorityMetadataCodec::path,
                     path -> validateIssuerChainPath(snapshot, path));
             for (var transition : AuthorityMetadataStore.list(snapshot, CaLifecycleMetadataCodec.TRANSITION, (key, bytes) -> {
@@ -1223,12 +1233,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec.ISSUER_CRYPTO_BINDING, AuthorityMetadataCodec.ISSUER_PATH,
                 AuthorityMetadataCodec.CREDENTIAL_RECORD, AuthorityMetadataCodec.CREDENTIAL_OWNER_SET,
                 CaLifecycleMetadataCodec.HEAD, CaLifecycleMetadataCodec.HEAD_HISTORY, CaLifecycleMetadataCodec.TRANSITION,
-                CaLifecycleMetadataCodec.ACTIVATION, CaLifecycleMetadataCodec.CANDIDATE_INDEX));
+                CaLifecycleMetadataCodec.ACTIVATION, CaLifecycleMetadataCodec.CANDIDATE_INDEX, CrlSignerLineageCodec.NAMESPACE));
     }
 
-    /* default */ void restoreSnapshotLifecycle(MetadataSnapshot source, List<CaRecord> cas, Instant at) throws IOException {
+    /* default */ void restoreSnapshotLifecycle(MetadataSnapshot source, List<CaRecord> cas, List<IssuerGeneration> retainedGenerations, Instant at) throws IOException {
         java.util.Map<PkiId, CaRecord> selected = new java.util.HashMap<>();
         java.util.Map<PkiId, zeroecho.pki.api.ca.CaHeadSnapshot> heads = new java.util.HashMap<>();
+        for (var generation : retainedGenerations) {
+            var lineage = AuthorityMetadataStore.lineage(source, generation.issuerId());
+            if (lineage.isPresent()) restoreLifecycleRow(CrlSignerLineageCodec.key(generation.issuerId()), CrlSignerLineageCodec.encode(lineage.orElseThrow()));
+        }
         for (CaRecord ca : cas) {
             selected.put(ca.caId(), ca);
             var head = AuthorityMetadataStore.headAt(source, ca, at, options.caHistoryPolicy());
@@ -1840,7 +1854,42 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private AuthorityMetadataStore authorityMetadata() { return new AuthorityMetadataStore(metadataStore, this::requireKnownOutcome); }
+    private AuthorityMetadataStore authorityMetadata() {
+        return new AuthorityMetadataStore(metadataStore, this::requireKnownOutcome, Optional.of(this::crlLineageTuple));
+    }
+
+    private String crlLineageTuple(MetadataSnapshot snapshot, IssuerGeneration generation,
+            zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException {
+        var verifier = options.crlHybridNativeChildVerifier().orElseThrow(() ->
+                new UnsupportedOperationException("Configured hybrid CRL public authority unavailable"));
+        var profileRef = binding.profile();
+        Path profilePath = paths.profileVersion(profileRef.profileId(), profileRef.profileVersion());
+        var profile = decodeProfileVersion(profilePath, profileRef.profileId(), profileRef.profileVersion());
+        if (!profile.reference().equals(profileRef)) throw new IOException("Hybrid CRL immutable creation profile differs");
+        var credential = requireCredential(snapshot, generation.credentialId());
+        try {
+            var certificate = certificateHolder(credential);
+            return verifier.roleTupleCommitment(binding, new EncodedObject(Encoding.DER, certificate.getEncoded()), profile.definition());
+        } catch (java.security.GeneralSecurityException failure) {
+            throw new IllegalStateException("Hybrid CRL public signer tuple cannot be verified", failure);
+        }
+    }
+
+    @Override
+    public PkiId requireCrlSignerLineage(PkiId issuerId) {
+        requireStoreUsable();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var generation = requireGeneration(snapshot, issuerId);
+            var ca = AuthorityMetadataStore.ca(snapshot, generation.authorityId()).orElseThrow();
+            if (!ca.issuerIds().contains(issuerId)) throw new IllegalArgumentException("Hybrid CRL issuer lacks completed CA membership");
+            var lineage = AuthorityMetadataStore.requireLineage(snapshot, issuerId);
+            var binding = AuthorityMetadataStore.findBinding(snapshot, issuerId).orElseThrow();
+            if (!lineage.signerTupleCommitment().equals(crlLineageTuple(snapshot, generation, binding))) {
+                throw new IllegalStateException("Hybrid CRL signer lineage tuple differs from captured public evidence");
+            }
+            return lineage.lineageId();
+        } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL signer lineage cannot be read", failure); }
+    }
 
     @Override
     public void putCredential(final Credential credential) {
@@ -4810,7 +4859,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private void validateScheduleReceipt(StatusScheduleState.Execution execution) {
         SignWorkflowStore.Workflow workflow = readSignWorkflow(execution.signingOperationId().orElseThrow()).orElseThrow();
-        FsStatusSchedules.validateBinding(execution, workflow.envelope());
+        schedules().validateBinding(execution, workflow.envelope());
         DomainContinuationStore.Record domain = getDomainContinuation(workflow.operationId()).orElseThrow();
         requireMatchingOuter(workflow, domain);
         if (execution.phase() == StatusScheduleState.Phase.FAILED) requireFailedSchedule(execution);
@@ -4837,7 +4886,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         PkiId id = execution.signingOperationId().orElseThrow();
         SignWorkflowStore.Workflow workflow = readSignWorkflow(id).orElseThrow();
         DomainContinuationStore.Record domain = getDomainContinuation(id).orElseThrow();
-        FsStatusSchedules.validateBinding(execution, workflow.envelope());
+        schedules().validateBinding(execution, workflow.envelope());
         requireMatchingOuter(workflow, domain);
         if (isActiveSignState(workflow.state()) || domain.kind() != DomainContinuationStore.Kind.STATUS
                 || domain.state() != DomainContinuationStore.State.FAILED && domain.state() != DomainContinuationStore.State.EXPIRED) {
@@ -4948,6 +4997,266 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
+    public boolean supportsHybridCrlContinuations() { return true; }
+
+    @Override
+    public void requireCrlHybridMetadataBudget(SignWorkflowStore.AcceptanceCommand parentCommand) {
+        requireStoreUsable();
+        var execution = CrlHybridMetadata.initial(parentCommand).orElseThrow(() -> new IllegalArgumentException("Explicit hybrid CRL parent required"));
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var decoded = zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(parentCommand.outer().orElseThrow().command());
+            zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.validate(decoded);
+            var generation = requireGeneration(snapshot, new PkiId(decoded.field(6)));
+            var binding = AuthorityMetadataStore.findBinding(snapshot, generation.issuerId()).orElseThrow();
+            var reference = binding.profile();
+            var profile = decodeProfileVersion(paths.profileVersion(reference.profileId(), reference.profileVersion()), reference.profileId(), reference.profileVersion());
+            if (!profile.reference().equals(reference)) throw new IllegalStateException("Hybrid CRL creation profile differs");
+            var certificate = certificateHolder(requireCredential(snapshot, generation.credentialId()));
+            options.crlHybridNativeChildVerifier().orElseThrow(() -> new UnsupportedOperationException("Configured hybrid CRL admission authority unavailable"))
+                    .validateAdmission(binding, new EncodedObject(Encoding.DER, certificate.getEncoded()), profile.definition(), parentCommand);
+            try {
+                CrlHybridMetadata.futureTransactionBytes(SignWorkflowStore.AcceptanceEnvelope.from(parentCommand), execution,
+                        key -> crlMetadataBytes(snapshot, key));
+            } catch (IOException | IllegalArgumentException | PkiException tooLarge) {
+                throw new PkiException("CRL_HYBRID_METADATA_LIMIT", tooLarge);
+            }
+        } catch (java.security.GeneralSecurityException invalid) {
+            throw new IllegalArgumentException("Hybrid CRL public admission evidence invalid", invalid);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Hybrid CRL public admission evidence cannot be read", failure);
+        }
+    }
+
+    private static byte[] crlMetadataBytes(MetadataSnapshot snapshot, MetadataKey key) throws IOException {
+        try (var row = snapshot.get(key).orElse(null)) {
+            return row == null ? null : CredentialMetadataAuthority.read(row, SigningWalFrameCodec.MAX_PAYLOAD_BYTES);
+        }
+    }
+
+    private void requireCrlAdmissionForm(SignWorkflowStore.AcceptanceCommand command) {
+        if (command.outer().filter(value -> value.kind() == DomainContinuationStore.Kind.STATUS).isEmpty()) return;
+        var decoded = zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(command.outer().orElseThrow().command());
+        if (!zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.supports(decoded.operation())) return;
+        var binding = getIssuerCryptographicBinding(new PkiId(decoded.field(6))).orElseThrow();
+        boolean hybrid = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(decoded);
+        if (binding.alternative().isPresent() != hybrid) throw new IllegalArgumentException("Hybrid CRL signer roles require the matching explicit signing form");
+        if (hybrid) requireCrlHybridMetadataBudget(command);
+    }
+
+    @Override
+    public SignWorkflowStore.AcceptanceResolution resolveCrlNativeChild(PkiId parentId,
+            SignWorkflowStore.AcceptanceCommitment childCommitment) {
+        requireStoreUsable();
+        var retained = getCrlHybridExecution(parentId);
+        if (retained.isEmpty()) return SignWorkflowStore.AcceptanceResolution.NOT_ACCEPTED;
+        var execution = retained.orElseThrow();
+        if (execution.phase() == SignWorkflowStore.CrlHybridPhase.AWAITING_ALT) return SignWorkflowStore.AcceptanceResolution.NOT_ACCEPTED;
+        return execution.nativeAcceptanceCommitment().orElseThrow().matches(childCommitment)
+                ? SignWorkflowStore.AcceptanceResolution.MATCHED : SignWorkflowStore.AcceptanceResolution.CONFLICT;
+    }
+
+    @Override
+    public SignWorkflowStore.AcceptanceResult adoptCrlNativeChild(PkiId parentId, long expectedParentRevision,
+            long parentFence, long expectedExecutionRevision, SignWorkflowStore.AcceptanceCommand child) {
+        StoreMutationBarrier.Lease admission = mutationBarrier.enter();
+        try (admission) {
+            requireStoreUsable(); Objects.requireNonNull(child, "child");
+            SignLockEntry candidateLock = acquireSignCandidateLock(child.candidate().contentId());
+            try {
+            SignLockEntry parentLock = acquireSignLock(parentId);
+            try {
+                var existing = getCrlHybridExecution(parentId).orElseThrow();
+                if (existing.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
+                    var result = existing.nativeAcceptanceCommitment().orElseThrow().matches(child.commitment())
+                            ? SignWorkflowStore.AcceptanceResult.ATTACHED_EXISTING : SignWorkflowStore.AcceptanceResult.CONFLICT;
+                    reclaimDefinitelyUnboundCandidates(child); return result;
+                }
+                if (!existing.nativeChildId().equals(child.operationId())) {
+                    reclaimDefinitelyUnboundCandidates(child); return SignWorkflowStore.AcceptanceResult.CONFLICT;
+                }
+                SignLockEntry childLock = acquireSignLock(child.operationId());
+                try { return adoptCrlNativeChildLocked(parentId, expectedParentRevision, parentFence, expectedExecutionRevision, child); }
+                finally { releaseSignLock(child.operationId(), childLock); }
+            } finally { releaseSignLock(parentId, parentLock); }
+            } finally { releaseSignCandidateLock(child.candidate().contentId(), candidateLock); }
+        }
+    }
+
+    private SignWorkflowStore.AcceptanceResult adoptCrlNativeChildLocked(PkiId parentId, long expectedParentRevision,
+            long parentFence, long expectedExecutionRevision, SignWorkflowStore.AcceptanceCommand child) {
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var execution = crlHybridExecution(snapshot, parentId).orElseThrow();
+            var parentState = snapshot.get(signingStateKey(parentId)).orElseThrow();
+            var parentDomain = snapshot.get(domainContinuationKey(parentId)).orElseThrow();
+            var executionRow = snapshot.get(CrlHybridMetadata.executionKey(parentId)).orElseThrow();
+            try (parentState; parentDomain; executionRow) {
+                var parent = decodeStoredSign(snapshot, parentState).record();
+                var domain = decodeDomainContinuation(parentId, parentDomain);
+                if (parent.revision() != expectedParentRevision || parent.fence() != parentFence
+                        || execution.revision() != expectedExecutionRevision || parent.state() != SignWorkflowStore.State.SUCCEEDED
+                        || domain.state() != DomainContinuationStore.State.PUBLISHING || !parent.deadline().isAfter(signingNow())) {
+                    reclaimDefinitelyUnboundCandidates(child); return SignWorkflowStore.AcceptanceResult.CONFLICT;
+                }
+                validateAcceptanceCommand(child);
+                var command = zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(domain.command());
+                var generation = requireGeneration(snapshot, new PkiId(command.field(6)));
+                var binding = AuthorityMetadataStore.findBinding(snapshot, generation.issuerId()).orElseThrow();
+                var verifier = options.crlHybridNativeChildVerifier().orElseThrow(() -> new UnsupportedOperationException("Configured hybrid CRL native-child verifier unavailable"));
+                var certificate = certificateHolder(requireCredential(snapshot, generation.credentialId()));
+                try (var alternativeContent = stagedContent.openContent(parent.envelope().candidate());
+                        var nativeContent = stagedContent.openContent(child.candidate())) {
+                    verifier.verify(binding, new EncodedObject(Encoding.DER, certificate.getEncoded()), parent,
+                            alternativeContent, child, nativeContent, () -> Thread.currentThread().isInterrupted());
+                } catch (java.security.GeneralSecurityException invalid) {
+                    throw new IllegalArgumentException("Hybrid CRL native-child public evidence invalid", invalid);
+                }
+                if (snapshot.get(signingCandidateBindingKey(child.candidate().contentId())).isPresent()) {
+                    reclaimDefinitelyUnboundCandidates(child); return SignWorkflowStore.AcceptanceResult.CONFLICT;
+                }
+                var linked = new zeroecho.pki.spi.store.CrlHybridExecution(1, parentId, execution.parentCommandCommitment(),
+                        execution.issuerBindingCommitment(), execution.roleTupleCommitment(), child.operationId(),
+                        SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED, 1, Optional.of(child.commitment()), Optional.of(child.candidate()),
+                        Optional.of(HexFormat.of().formatHex(sha256Digest(parent.result().orElseThrow().bytes()))));
+                var mutations = List.of(
+                        hybridReplace(signingStateKey(parentId), parentState.recordRevision(), FsCodec.encodeSigningState(parent.envelope(), parent.mutableState())),
+                        hybridReplace(domainContinuationKey(parentId), parentDomain.recordRevision(), FsCodec.encode(FsCodec.DOMAIN_CONTINUATION, domain)),
+                        hybridCreate(signingEnvelopeKey(child.operationId()), FsCodec.encode(FsCodec.SIGN_ACCEPTANCE_ENVELOPE, SignWorkflowStore.AcceptanceEnvelope.from(child))),
+                        hybridCreate(signingStateKey(child.operationId()), FsCodec.encodeSigningState(SignWorkflowStore.AcceptanceEnvelope.from(child),
+                                SignWorkflowStore.MutableState.intent(child.operationId(), child.mode(), SignWorkflowStore.Stage.SINGLE))),
+                        hybridCreate(signingCandidateBindingKey(child.candidate().contentId()), FsCodec.encode(FsCodec.SIGN_CANDIDATE_BINDING,
+                                new SignWorkflowStore.CandidateBinding(child.candidate().contentId(), child.operationId(), child.candidate().length(), child.candidate().sha256()))),
+                        hybridReplace(CrlHybridMetadata.executionKey(parentId), executionRow.recordRevision(), CrlHybridMetadata.encode(linked)),
+                        hybridCreate(CrlHybridMetadata.reverseKey(child.operationId()), CrlHybridMetadata.encode(linked)));
+                SigningTransactionPayloadCodec.encodedCommitSize(mutations);
+                var reservation = stagedContent.reserveTransactionalPublication(child.candidate());
+                try (reservation) {
+                    MetadataCommitResult result;
+                    try { result = metadataStore.directSigningProgressCommit(mutations); }
+                    catch (IOException failure) { reservation.preserveUntilRecovery(); throw signingDurabilityFailure(failure); }
+                    if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                        reservation.preserveUntilRecovery(); throw signingDurabilityFailure(new IOException("Hybrid CRL child adoption outcome is unknown"));
+                    }
+                    if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) return SignWorkflowStore.AcceptanceResult.ACCEPTED;
+                    var resolved = resolveCrlNativeChild(parentId, child.commitment());
+                    if (resolved == SignWorkflowStore.AcceptanceResolution.MATCHED) return SignWorkflowStore.AcceptanceResult.ATTACHED_EXISTING;
+                    reclaimDefinitelyUnboundCandidates(child);
+                    return result.failureCategory().filter(MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED::equals).isPresent()
+                            ? SignWorkflowStore.AcceptanceResult.CAPACITY_REJECTED : SignWorkflowStore.AcceptanceResult.CONFLICT;
+                }
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Hybrid CRL child admission evidence cannot be read", failure);
+        }
+    }
+
+    private boolean hybridCommitted(MetadataCommitResult result) {
+        if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+            throw signingDurabilityFailure(new IOException("Hybrid CRL direct commit outcome is unknown"));
+        }
+        return result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
+    }
+
+    private boolean hybridRelated(PkiId operationId) {
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            return CrlHybridMetadata.read(snapshot, operationId, stagedContent).isPresent()
+                    || CrlHybridMetadata.reverse(snapshot, operationId, stagedContent).isPresent();
+        } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL execution role cannot be read", failure); }
+    }
+
+    private static SigningTransactionPayloadCodec.Mutation hybridCreate(MetadataKey key, byte[] bytes) {
+        return new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.CREATE, key, -1, bytes);
+    }
+    private static SigningTransactionPayloadCodec.Mutation hybridReplace(MetadataKey key, long revision, byte[] bytes) {
+        return new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.REPLACE, key, revision, bytes);
+    }
+
+    @Override
+    public Optional<zeroecho.pki.spi.store.CrlHybridExecution> getCrlHybridExecution(PkiId parentId) {
+        requireStoreUsable();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return crlHybridExecution(snapshot, parentId); }
+        catch (IOException failure) { throw new IllegalStateException("Hybrid CRL execution cannot be read", failure); }
+    }
+
+    @Override
+    public Optional<zeroecho.pki.spi.store.CrlHybridExecution> getCrlHybridExecutionForChild(PkiId childId) {
+        requireStoreUsable();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var reverse = CrlHybridMetadata.reverse(snapshot, childId, stagedContent);
+            if (reverse.isEmpty()) return Optional.empty();
+            var execution = crlHybridExecution(snapshot, reverse.orElseThrow().parentId())
+                    .orElseThrow(() -> new IllegalStateException("Hybrid CRL reverse link has no parent execution"));
+            if (!execution.equals(reverse.orElseThrow())) throw new IllegalStateException("Hybrid CRL reverse link differs");
+            return Optional.of(execution);
+        } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL reverse link cannot be read", failure); }
+    }
+
+    private Optional<zeroecho.pki.spi.store.CrlHybridExecution> crlHybridExecution(MetadataSnapshot snapshot, PkiId parentId) throws IOException {
+        var found = CrlHybridMetadata.read(snapshot, parentId, stagedContent);
+        if (found.isEmpty()) {
+            var retained = crlLinkedWorkflow(snapshot, parentId);
+            if (retained.isPresent() && retained.orElseThrow().envelope().outer()
+                    .filter(value -> value.kind() == DomainContinuationStore.Kind.STATUS)
+                    .map(value -> zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(
+                            zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(value.command()))).orElse(false)) {
+                throw new IllegalStateException("Accepted hybrid CRL parent is missing its execution record");
+            }
+            return Optional.empty();
+        }
+        var execution = found.orElseThrow();
+        var parent = crlLinkedWorkflow(snapshot, parentId).orElseThrow(() -> new IllegalStateException("Hybrid CRL parent workflow is missing"));
+        var outer = parent.envelope().outer().orElseThrow();
+        var command = zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(outer.command());
+        zeroecho.pki.impl.core.continuation.FullCrlSigningCommand.validate(command);
+        var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
+        if (!execution.parentCommandCommitment().equals(outer.commandCommitment())
+                || !execution.nativeChildId().equals(descriptor.nativeChildId())
+                || !execution.nativeChildId().equals(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.nativeChildId(parentId))
+                || !execution.issuerBindingCommitment().equals(descriptor.issuerBindingCommitment())
+                || !execution.roleTupleCommitment().equals(descriptor.roleTupleCommitment())) {
+            throw new IllegalStateException("Hybrid CRL parent execution differs from its accepted command");
+        }
+        var domainRow = snapshot.get(domainContinuationKey(parentId)).orElseThrow();
+        try (domainRow) { requireMatchingOuter(parent, decodeDomainContinuation(parentId, domainRow)); }
+        var child = crlLinkedWorkflow(snapshot, execution.nativeChildId());
+        var reverse = CrlHybridMetadata.reverse(snapshot, execution.nativeChildId(), stagedContent);
+        if (execution.phase() == SignWorkflowStore.CrlHybridPhase.AWAITING_ALT) {
+            try (var childEnvelope = snapshot.get(signingEnvelopeKey(execution.nativeChildId())).orElse(null)) {
+                if (child.isPresent() || reverse.isPresent() || childEnvelope != null) {
+                    throw new IllegalStateException("Unlinked hybrid CRL execution has a partial native-child graph");
+                }
+            }
+        } else {
+            if (child.isEmpty() || reverse.filter(execution::equals).isEmpty()) throw new IllegalStateException("Hybrid CRL native-child graph is incomplete");
+            var accepted = child.orElseThrow().envelope();
+            var binding = AuthorityMetadataStore.findBinding(snapshot, new PkiId(command.field(6))).orElseThrow();
+            if (!binding.commitment().equals(execution.issuerBindingCommitment()) || binding.alternative().isEmpty()
+                    || !accepted.acceptanceCommitment().matches(execution.nativeAcceptanceCommitment().orElseThrow())
+                    || !accepted.candidate().equals(execution.nativeTbs().orElseThrow())
+                    || !accepted.keyRef().equals(binding.primary().keyRef())
+                    || !accepted.algorithmId().equals(binding.primary().signatureAlgorithm().canonicalForm())
+                    || !accepted.providerNamespace().equals(parent.envelope().providerNamespace())
+                    || !accepted.providerConfigurationCommitment().matches(parent.envelope().providerConfigurationCommitment())
+                    || !accepted.accessContext().equals(parent.envelope().accessContext())
+                    || !accepted.fairnessAuthorityId().equals(parent.envelope().fairnessAuthorityId())
+                    || !accepted.createdAt().equals(parent.createdAt()) || !accepted.deadline().equals(parent.deadline())
+                    || accepted.outer().isPresent() || accepted.proofStep().isPresent() || accepted.alternativeProofStep().isPresent()
+                    || accepted.mode() != SignWorkflowStore.Mode.NORMAL
+                    || !java.util.HexFormat.of().formatHex(sha256Digest(parent.result().orElseThrow().bytes()))
+                            .equals(execution.alternativeSignatureSha256().orElseThrow())) {
+                throw new IllegalStateException("Hybrid CRL native child differs from its retained execution authority");
+            }
+        }
+        return Optional.of(execution);
+    }
+
+    private Optional<SignWorkflowStore.Workflow> crlLinkedWorkflow(MetadataSnapshot snapshot, PkiId operationId) throws IOException {
+        try (var state = snapshot.get(signingStateKey(operationId)).orElse(null)) {
+            if (state == null) return Optional.empty();
+            return Optional.of(decodeStoredSign(snapshot, state).record());
+        }
+    }
+
+    @Override
     public SignWorkflowStore.AcceptanceResult acceptSign(
             SignWorkflowStore.AcceptanceCommand command) {
         return acceptSign(command, Optional.empty());
@@ -4989,9 +5298,33 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             SignWorkflowStore.AcceptanceCommand exact, PkiId operationId,
             DurableContentReference candidate, Optional<StatusScheduleState.Execution> scheduledClaim) {
         try {
+            if (CrlHybridMetadata.initial(exact).isPresent()) {
+                var retained = readStoredSign(operationId);
+                if (retained.isPresent()) {
+                    var result = retained.orElseThrow().record().envelope().acceptanceCommitment().matches(exact.commitment())
+                            ? SignWorkflowStore.AcceptanceResult.ATTACHED_EXISTING : SignWorkflowStore.AcceptanceResult.CONFLICT;
+                    reclaimDefinitelyUnboundCandidates(exact);
+                    return result;
+                }
+            }
             validateAcceptanceCommand(exact);
             validateAcceptanceOuter(exact);
-            scheduledClaim.ifPresent(claim -> FsStatusSchedules.validateBinding(claim, SignWorkflowStore.AcceptanceEnvelope.from(exact)));
+            scheduledClaim.ifPresent(claim -> schedules().validateBinding(claim, SignWorkflowStore.AcceptanceEnvelope.from(exact)));
+            if (scheduledClaim.isPresent() && CrlHybridMetadata.initial(exact).isPresent()) {
+                var claim = scheduledClaim.orElseThrow();
+                try (var snapshot = metadataStore.snapshot()) {
+                    var headKey = FsStatusSchedules.key(claim.configuration().caId(), claim.configuration().statusType());
+                    var head = FsStatusSchedules.decodeState(headKey, crlMetadataBytes(snapshot, headKey));
+                    var accepted = new StatusScheduleState.Execution(claim.executionId(), claim.configuration(), claim.due(), claim.fence(),
+                            StatusScheduleState.Phase.CLAIMED, Optional.of(exact.operationId()), exact.commitment().encoded(), Optional.empty(), "");
+                    byte[] receipt = FsStatusSchedules.encodeExecution(accepted);
+                    byte[] headBytes = FsStatusSchedules.encode(new StatusScheduleState(head.configuration(), head.nextDue(),
+                            Math.incrementExact(head.workerRevision()), Optional.of(accepted)));
+                    CrlHybridMetadata.futureTransactionBytes(SignWorkflowStore.AcceptanceEnvelope.from(exact), CrlHybridMetadata.initial(exact).orElseThrow(),
+                            key -> key.equals(FsStatusSchedules.receiptKey(exact.operationId())) ? receipt
+                                    : key.equals(headKey) ? headBytes : crlMetadataBytes(snapshot, key));
+                } catch (IOException | IllegalArgumentException failure) { throw new PkiException("CRL_HYBRID_METADATA_LIMIT", failure); }
+            }
             notifySignAcceptanceValidated();
         } catch (IllegalArgumentException | IllegalStateException failure) {
             reclaimDefinitelyUnboundCandidates(exact);
@@ -5007,6 +5340,22 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                                 : SignWorkflowStore.AcceptanceResult.CONFLICT;
                 reclaimDefinitelyUnboundCandidates(exact);
                 return result;
+            }
+            var hybridInitial = CrlHybridMetadata.initial(exact);
+            if (hybridInitial.isPresent()) {
+                PkiId childId = hybridInitial.orElseThrow().nativeChildId();
+                try (var snapshot = metadataStore.snapshot();
+                        var childEnvelope = snapshot.get(signingEnvelopeKey(childId)).orElse(null);
+                        var childState = snapshot.get(signingStateKey(childId)).orElse(null);
+                        var reverse = snapshot.get(CrlHybridMetadata.reverseKey(childId)).orElse(null)) {
+                    if (childEnvelope != null || childState != null || reverse != null) {
+                        reclaimDefinitelyUnboundCandidates(exact);
+                        return SignWorkflowStore.AcceptanceResult.CONFLICT;
+                    }
+                } catch (IOException failure) {
+                    reclaimDefinitelyUnboundCandidates(exact);
+                    throw new IllegalStateException("Hybrid CRL child identity cannot be checked", failure);
+                }
             }
             if (acceptanceCandidates(exact).stream().anyMatch(value -> readCandidateBinding(value.contentId()).isPresent())) {
                 reclaimDefinitelyUnboundCandidates(exact);
@@ -5160,6 +5509,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private void validateAcceptanceOuter(SignWorkflowStore.AcceptanceCommand command) {
+        requireCrlAdmissionForm(command);
         command.outer().ifPresent(outer -> {
             if (outer.kind() == DomainContinuationStore.Kind.KEY_PROOF) {
                 ManagedKeyProofBindings.requireEnvelope(SignWorkflowStore.AcceptanceEnvelope.from(command));
@@ -5230,6 +5580,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 transaction.create(domainCorrelationKey(outer.kind(), outer.correlationId()),
                         byteContent(encodeDomainCorrelation(command.operationId())),
                         CancellationSignal.NONE);
+            }
+            var hybrid = CrlHybridMetadata.initial(command);
+            if (hybrid.isPresent()) {
+                transaction.create(CrlHybridMetadata.executionKey(command.operationId()), byteContent(CrlHybridMetadata.encode(hybrid.orElseThrow())), CancellationSignal.NONE);
             }
             SignAcceptanceCommitFault fault = SIGN_ACCEPTANCE_COMMIT_FAULT.get();
             if (fault == SignAcceptanceCommitFault.BEFORE_COMMIT_FAILURE) {
@@ -5357,6 +5711,20 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         current.operationId(), current.version(), current.kind(), current.correlationId(), target,
                         current.revision() + 1L, current.createdAt(), current.deadline(), current.command(),
                         current.commandCommitment(), liveDomainSigningContent(current, target), result, detailCode);
+                Optional<CrlHybridExecution> hybrid = CrlHybridMetadata.read(snapshot, operationId, stagedContent);
+                if (hybrid.isPresent()) {
+                    var execution = hybrid.orElseThrow();
+                    if (target != DomainContinuationStore.State.SIGNING && target != DomainContinuationStore.State.PUBLISHING && execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
+                        var child = readStoredSign(execution.nativeChildId()).orElseThrow(() -> new IOException("Hybrid native child is missing"));
+                        if (isActiveSignState(child.record().state())) return Optional.empty();
+                    }
+                    var mutations = new ArrayList<SigningTransactionPayloadCodec.Mutation>();
+                    mutations.add(hybridReplace(domainContinuationKey(operationId), stored.recordRevision(), FsCodec.encode(FsCodec.DOMAIN_CONTINUATION, replacement)));
+                    try (var executionRow = snapshot.get(CrlHybridMetadata.executionKey(operationId)).orElseThrow()) {
+                        mutations.add(hybridReplace(CrlHybridMetadata.executionKey(operationId), executionRow.recordRevision(), CrlHybridMetadata.encode(execution)));
+                    }
+                    return hybridCommitted(metadataStore.directSigningProgressCommit(mutations)) ? Optional.of(replacement) : Optional.empty();
+                }
                 try (MetadataTransaction transaction =
                         metadataStore.beginSigningProgressTransaction()) {
                     transaction.replace(domainContinuationKey(operationId), stored.recordRevision(),
@@ -5848,6 +6216,34 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private MetadataCommitResult createStatusMetadata(StatusObject status, byte[] encoded, Optional<PkiId> signingOperation) throws IOException {
         PkiId statusId = status.statusObjectId();
+        if (signingOperation.isPresent() && hybridRelated(signingOperation.orElseThrow())) {
+            var parentId = signingOperation.orElseThrow();
+            try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                    var existing = snapshot.get(statusRecordKey(statusId)).orElse(null);
+                    var executionRow = snapshot.get(CrlHybridMetadata.executionKey(parentId)).orElseThrow();
+                    var parentRow = snapshot.get(signingStateKey(parentId)).orElseThrow();
+                    var domainRow = snapshot.get(domainContinuationKey(parentId)).orElseThrow()) {
+                var execution = CrlHybridMetadata.read(snapshot, parentId, stagedContent).orElseThrow();
+                var mutations = new ArrayList<SigningTransactionPayloadCodec.Mutation>();
+                if (existing != null) {
+                    if (!Arrays.equals(encoded, readMetadataValue(existing))) throw new IllegalStateException("Status replay differs");
+                } else {
+                    mutations.add(hybridCreate(statusRecordKey(statusId), encoded));
+                    mutations.add(hybridCreate(statusOwnerKey(statusId), encodeStatusOwner(statusId, status.content())));
+                }
+                mutations.addAll(schedules().effectMutations(snapshot, parentId, status));
+                mutations.add(hybridReplace(CrlHybridMetadata.executionKey(parentId), executionRow.recordRevision(), CrlHybridMetadata.encode(execution)));
+                mutations.add(hybridReplace(signingStateKey(parentId), parentRow.recordRevision(), readMetadataValue(parentRow)));
+                mutations.add(hybridReplace(domainContinuationKey(parentId), domainRow.recordRevision(), readMetadataValue(domainRow)));
+                if (STATUS_COMMIT_FAULT.get() == StatusCommitFaultPoint.BEFORE_COMMIT) throw new IOException("Injected status commit failure");
+                var committed = metadataStore.directSigningProgressCommit(mutations);
+                if (committed.outcome() == MetadataCommitResult.Outcome.COMMITTED
+                        && STATUS_COMMIT_FAULT.get() == StatusCommitFaultPoint.AFTER_COMMIT_AS_UNKNOWN) {
+                    return new MetadataCommitResult(committed.transactionId(), MetadataCommitResult.Outcome.UNKNOWN, OptionalLong.empty(), Optional.empty());
+                }
+                return committed;
+            }
+        }
         try (MetadataSnapshot snapshot = metadataStore.snapshot(); MetadataTransaction transaction = metadataStore.beginTransaction();
                 MetadataSnapshot.Record existing = snapshot.get(statusRecordKey(statusId)).orElse(null)) {
             if (signingOperation.isPresent() && existing != null) {
@@ -6139,6 +6535,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    private Optional<Integer> crlSignatureMaximum(PkiId operationId) {
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var execution = CrlHybridMetadata.read(snapshot, operationId, stagedContent);
+            boolean alternative = execution.isPresent();
+            if (execution.isEmpty()) execution = CrlHybridMetadata.reverse(snapshot, operationId, stagedContent);
+            if (execution.isEmpty()) return Optional.empty();
+            var parent = crlLinkedWorkflow(snapshot, execution.orElseThrow().parentId()).orElseThrow();
+            var command = zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(parent.envelope().outer().orElseThrow().command());
+            var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
+            return Optional.of(alternative ? descriptor.alternativeMaximumSignatureBytes() : descriptor.primaryMaximumSignatureBytes());
+        } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL result bound cannot be read", failure); }
+    }
+
     @Override
     public Optional<SignWorkflowStore.Workflow> transitionSign(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.State target, Optional<String> detailCode, Optional<EncodedObject> result,
@@ -6173,6 +6582,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         expiry = expireSign(stored);
                         transition = expiry.map(SignExpiry::record);
                     } else {
+                        if (target == SignWorkflowStore.State.SUCCEEDED && result.isPresent()) {
+                            var maximum = crlSignatureMaximum(submissionId);
+                            if (maximum.isPresent() && (result.orElseThrow().encoding() != Encoding.BINARY
+                                    || result.orElseThrow().byteLength() == 0 || result.orElseThrow().byteLength() > maximum.orElseThrow())) {
+                                target = SignWorkflowStore.State.FAILED; detailCode = Optional.of("PROVIDER_RESULT_INVALID"); result = Optional.empty();
+                            }
+                        }
                         if (target == SignWorkflowStore.State.SUCCEEDED
                                 && current.stage() != SignWorkflowStore.Stage.SINGLE
                                 && current.stage() != SignWorkflowStore.Stage.CA_CERTIFICATE) {
@@ -6358,7 +6774,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         return Optional.empty();
                     }
                     try {
-                        for (DurableContentReference reference : current.candidates()) {
+                        var retiredReferences = new ArrayList<DurableContentReference>(current.candidates());
+                        try (var snapshot = metadataStore.snapshot()) {
+                            CrlHybridMetadata.read(snapshot, current.operationId(), stagedContent)
+                                    .flatMap(CrlHybridExecution::nativeTbs).ifPresent(retiredReferences::add);
+                        }
+                        for (DurableContentReference reference : retiredReferences) {
                         if (reference.lifecycle() == DurableContentReference.Lifecycle.OPERATION) {
                             signingRetirementFaults.beforeRetirement(reference);
                             stagedContent.retireSigningContent(reference);
@@ -6405,6 +6826,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     Optional<StoredSign> current = readStoredSign(id);
                     if (current.isEmpty()) continue;
                     StoredSign stored = current.orElseThrow();
+                    try (var snapshot = metadataStore.snapshot()) {
+                        if (CrlHybridMetadata.reverse(snapshot, id, stagedContent).isPresent()) continue;
+                    }
                     if (isContentFreeSignState(stored.record().state())
                             && !stored.record().createdAt().plus(options.signingOperationHorizon()).isAfter(cutoff)) {
                         int mutationStart = deletes.size();
@@ -6428,6 +6852,29 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         try (MetadataSnapshot snapshot = metadataStore.snapshot();
                                 MetadataSnapshot.Record domain = snapshot.get(domainContinuationKey(id)).orElse(null);
                                 MetadataSnapshot.Record scheduleReceipt = snapshot.get(FsStatusSchedules.receiptKey(id)).orElse(null)) {
+                            var hybrid = CrlHybridMetadata.read(snapshot, id, stagedContent);
+                            if (hybrid.isPresent()) {
+                                var execution = hybrid.orElseThrow();
+                                if (execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
+                                    var child = readStoredSign(execution.nativeChildId()).orElseThrow();
+                                    if (!isContentFreeSignState(child.record().state())) throw new IOException("Hybrid CRL child is not safely retired");
+                                    deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                            signingStateKey(child.record().operationId()), child.recordRevision(), null));
+                                    deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                            signingEnvelopeKey(child.record().operationId()), child.envelopeRevision(), null));
+                                    deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                            signingCandidateBindingKey(child.reference().contentId()), child.bindingRevision(), null));
+                                    retiredCandidates.add(child.reference());
+                                    try (var reverse = snapshot.get(CrlHybridMetadata.reverseKey(execution.nativeChildId())).orElseThrow()) {
+                                        deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                                reverse.key(), reverse.recordRevision(), null));
+                                    }
+                                }
+                                try (var executionRow = snapshot.get(CrlHybridMetadata.executionKey(id)).orElseThrow()) {
+                                    deletes.add(new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.DELETE,
+                                            executionRow.key(), executionRow.recordRevision(), null));
+                                }
+                            }
                             if (scheduleReceipt != null) {
                                 StatusScheduleState.Execution execution = schedules().receipt(snapshot, id).orElseThrow();
                                 if (schedules().pinned(snapshot, execution)) {
@@ -7405,6 +7852,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private boolean replaceSignMetadata(StoredSign current, SignWorkflowStore.Workflow replacement,
             boolean removeOwner) {
         validateSignRecord(replacement.submissionId(), replacement);
+        if (hybridRelated(replacement.operationId())) return directReplaceSignMetadata(current, replacement);
         try (MetadataTransaction transaction =
                 metadataStore.beginSigningProgressTransaction()) {
             transaction.replace(signingStateKey(replacement.submissionId()), current.recordRevision(),
@@ -7557,7 +8005,47 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 SigningTransactionPayloadCodec.MutationKind.REPLACE,
                 signingStateKey(replacement.submissionId()), current.recordRevision(),
                 FsCodec.encodeSigningState(replacement.envelope(), replacement.mutableState()));
-        return List.of(replace);
+        var mutations = new ArrayList<SigningTransactionPayloadCodec.Mutation>();
+        mutations.add(replace);
+        appendCrlParentWake(current.record(), replacement, mutations);
+        if (replacement.state() == SignWorkflowStore.State.RETIRED) {
+            try (var snapshot = metadataStore.snapshot()) {
+                var execution = CrlHybridMetadata.read(snapshot, replacement.operationId(), stagedContent);
+                if (execution.isPresent() && execution.orElseThrow().phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
+                    var child = readStoredSign(execution.orElseThrow().nativeChildId()).orElseThrow();
+                    if (isActiveSignState(child.record().state())) throw new IllegalStateException("Hybrid native child is still active");
+                    if (isRetirableSignState(child.record().state())) {
+                        var retired = copySignRecord(child.record(), SignWorkflowStore.State.RETIRED,
+                                Math.incrementExact(child.record().revision()), child.record().fence(), Optional.empty(),
+                                child.record().detailCode(), child.record().result(), child.record().providerUpdatedAt(), 0, Optional.empty(), Optional.empty());
+                        mutations.add(hybridReplace(signingStateKey(retired.operationId()), child.recordRevision(),
+                                FsCodec.encodeSigningState(retired.envelope(), retired.mutableState())));
+                    }
+                }
+            } catch (IOException failure) { throw signingDurabilityFailure(failure); }
+        }
+        return List.copyOf(mutations);
+    }
+
+    private void appendCrlParentWake(SignWorkflowStore.Workflow current, SignWorkflowStore.Workflow replacement,
+            List<SigningTransactionPayloadCodec.Mutation> mutations) {
+        if (isActiveSignState(replacement.state()) || !isActiveSignState(current.state())) return;
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            var execution = CrlHybridMetadata.reverse(snapshot, current.operationId(), stagedContent);
+            if (execution.isEmpty()) return;
+            PkiId parentId = execution.orElseThrow().parentId();
+            try (var parentState = snapshot.get(signingStateKey(parentId)).orElseThrow();
+                    var parentDomain = snapshot.get(domainContinuationKey(parentId)).orElseThrow()) {
+                var parent = decodeStoredSign(snapshot, parentState).record();
+                var domain = decodeDomainContinuation(parentId, parentDomain);
+                if (parent.state() == SignWorkflowStore.State.SUCCEEDED && !isTerminalOuterState(domain.state())) {
+                    var wake = copySignRecord(parent, parent.state(), Math.incrementExact(parent.revision()), parent.fence(),
+                            Optional.empty(), parent.detailCode(), parent.result(), parent.providerUpdatedAt(), 0, Optional.empty(), Optional.empty());
+                    mutations.add(hybridReplace(signingStateKey(parentId), parentState.recordRevision(),
+                            FsCodec.encodeSigningState(parent.envelope(), wake.mutableState())));
+                }
+            }
+        } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL terminal parent wake cannot be prepared", failure); }
     }
 
     private boolean replaceExpiredSignMetadata(StoredSign current,
@@ -7566,7 +8054,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try {
             MetadataCommitResult result = metadataStore.directSigningProgressCommit(
                     signExpiryMutations(current, expired));
-            return result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
+            return hybridRelated(expired.operationId()) ? hybridCommitted(result)
+                    : result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
         } catch (MetadataStoreException failure) {
             throw translateSigningMetadataFailure(failure);
         } catch (IOException failure) {
@@ -7609,6 +8098,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private boolean outerTerminal(SignWorkflowStore.Workflow workflow) {
         if (workflow.envelope().outer().isEmpty()) {
+            try (var snapshot = metadataStore.snapshot()) {
+                var linked = CrlHybridMetadata.reverse(snapshot, workflow.operationId(), stagedContent);
+                if (linked.isPresent()) {
+                    var parent = getDomainContinuation(linked.orElseThrow().parentId()).orElseThrow();
+                    return isTerminalOuterState(parent.state());
+                }
+            } catch (IOException failure) { throw signingDurabilityFailure(failure); }
             return true;
         }
         DomainContinuationStore.Record outer = getDomainContinuation(workflow.operationId())
@@ -7650,6 +8146,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private void finishSignExpiry(SignExpiry expiry) {
+        if (!outerTerminal(expiry.record())) {
+            recordSigningEvidence(expiry.record());
+            return;
+        }
         expiry.references().forEach(reference -> {
             if (reference.lifecycle() != DurableContentReference.Lifecycle.OPERATION) {
                 return;
@@ -7667,14 +8167,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private boolean directReplaceSignMetadata(StoredSign current, SignWorkflowStore.Workflow replacement) {
         validateSignRecord(replacement.submissionId(), replacement);
-        List<SigningTransactionPayloadCodec.Mutation> mutations = List.of(
-                new SigningTransactionPayloadCodec.Mutation(
-                        SigningTransactionPayloadCodec.MutationKind.REPLACE,
-                        signingStateKey(replacement.submissionId()), current.recordRevision(),
-                        FsCodec.encodeSigningState(replacement.envelope(), replacement.mutableState())));
+        List<SigningTransactionPayloadCodec.Mutation> mutations = signReplacementMutations(current, replacement, false);
         try {
             MetadataCommitResult result = metadataStore.directSigningProgressCommit(mutations);
-            return result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
+            return hybridRelated(replacement.operationId()) ? hybridCommitted(result)
+                    : result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
         } catch (MetadataStoreException failure) {
             throw translateSigningMetadataFailure(failure);
         } catch (IOException failure) {
@@ -7805,27 +8302,27 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return lease.compareTo(untilDeadline) >= 0 ? workflow.deadline() : now.plus(lease);
     }
 
-    private static MetadataKey signingEnvelopeKey(PkiId submissionId) {
+    static MetadataKey signingEnvelopeKey(PkiId submissionId) {
         SigningSubmissionId parsed = SigningSubmissionId.parse(submissionId);
         return new MetadataKey(SIGN_ENVELOPE_NAMESPACE, parsed.id().value());
     }
 
-    private static MetadataKey signingStateKey(PkiId submissionId) {
+    static MetadataKey signingStateKey(PkiId submissionId) {
         SigningSubmissionId parsed = SigningSubmissionId.parse(submissionId);
         return new MetadataKey(SIGN_STATE_NAMESPACE, parsed.id().value());
     }
 
-    private static MetadataKey signingCandidateBindingKey(String candidateId) {
+    static MetadataKey signingCandidateBindingKey(String candidateId) {
         Objects.requireNonNull(candidateId, "candidateId");
         return new MetadataKey(SIGN_CANDIDATE_BINDING_NAMESPACE, candidateId);
     }
 
-    private static MetadataKey domainContinuationKey(PkiId operationId) {
+    static MetadataKey domainContinuationKey(PkiId operationId) {
         SigningSubmissionId parsed = SigningSubmissionId.parse(operationId);
         return new MetadataKey(DOMAIN_CONT_NAMESPACE, parsed.id().value());
     }
 
-    private static MetadataKey domainCorrelationKey(DomainContinuationStore.Kind kind, String correlationId) {
+    static MetadataKey domainCorrelationKey(DomainContinuationStore.Kind kind, String correlationId) {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(correlationId, "correlationId");
         try {
@@ -7838,15 +8335,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private static byte[] encodeDomainCorrelation(PkiId operationId) {
+    static byte[] encodeDomainCorrelation(PkiId operationId) {
         return ("v1\n" + operationId.value()).getBytes(StandardCharsets.UTF_8);
     }
 
-    private static MetadataKey statusRecordKey(PkiId statusObjectId) {
+    static MetadataKey statusRecordKey(PkiId statusObjectId) {
         return new MetadataKey(STATUS_RECORD_NAMESPACE, statusObjectId.value());
     }
 
-    private static MetadataKey statusOwnerKey(PkiId statusObjectId) {
+    static MetadataKey statusOwnerKey(PkiId statusObjectId) {
         return new MetadataKey(STATUS_OWNER_NAMESPACE, statusObjectId.value());
     }
 
@@ -8070,7 +8567,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return DomainContinuationValidation.validate(operationId, decoded, encoded.length);
     }
 
-    private static byte[] encodeStatusOwner(PkiId statusObjectId, DurableContentReference reference) {
+    static byte[] encodeStatusOwner(PkiId statusObjectId, DurableContentReference reference) {
         new DurableContentOwner(DurableContentOwner.Category.STATUS_OBJECT_RECORD, statusObjectId.value());
         return encodeTransactionalOwner(STATUS_OWNER_VALUE_VERSION,
                 DurableContentOwner.Category.STATUS_OBJECT_RECORD, statusObjectId, reference);

@@ -129,12 +129,100 @@ final class FullCrlContinuationPublisher {
         }
     }
 
+    /* default */ EncodedObject publishHybrid(DomainContinuationStore.Record domain,
+            zeroecho.pki.spi.store.CrlHybridExecution execution, zeroecho.pki.spi.store.SignWorkflowStore.Workflow parent,
+            zeroecho.pki.spi.store.SignWorkflowStore.Workflow child) {
+        var command = DomainCommandEncoding.decode(domain.command());
+        FullCrlSigningCommand.validate(command);
+        var descriptor = CrlHybridSigningCommand.descriptor(command);
+        var binding = store.getIssuerCryptographicBinding(new PkiId(command.field(6))).orElseThrow();
+        DurableContentReference nativeTbs = execution.nativeTbs().orElseThrow();
+        if (!binding.commitment().equals(descriptor.issuerBindingCommitment())
+                || !execution.nativeChildId().equals(child.operationId())
+                || !execution.nativeAcceptanceCommitment().orElseThrow().matches(child.envelope().acceptanceCommitment())
+                || !nativeTbs.equals(child.envelope().candidate())) throw invalid("HYBRID_CRL_NATIVE_CAPTURE_DIFFERS");
+        byte[] signature = child.result().orElseThrow().bytes();
+        byte[] alternative = parent.result().orElseThrow().bytes();
+        DurableContentReference assembled = null;
+        boolean published = false;
+        try {
+            if (child.result().orElseThrow().encoding() != Encoding.BINARY || signature.length == 0
+                    || signature.length > descriptor.primaryMaximumSignatureBytes()
+                    || parent.result().orElseThrow().encoding() != Encoding.BINARY || alternative.length == 0
+                    || alternative.length > descriptor.alternativeMaximumSignatureBytes()) throw invalid("HYBRID_CRL_SIGNATURE_BOUND_INVALID");
+            FullCrlSigningCommand.requireAdmission(command.field(8), nativeTbs.length(), pureEdDsaMaximumTbsBytes);
+            byte[] algorithm = HexFormat.of().parseHex(command.field(9));
+            var certificate = issuer(command);
+            assembled = assemble(nativeTbs, algorithm, signature);
+            try (RepeatableContent crl = store.stagedContent().openContent(assembled)) {
+                var hybrid = new StreamingDerReader().inspectAlternativeCrl(crl, CancellationSignal.NONE);
+                var layout = hybrid.semantic().layout();
+                if (layout.tbsLength() != nativeTbs.length()
+                        || !hybrid.semantic().crlNumber().toString().equals(command.field(10))
+                        || !layout.thisUpdate().equals(Optional.of(Instant.parse(command.field(3))))
+                        || !layout.nextUpdate().equals(Optional.of(Instant.parse(command.field(4))))
+                        || !hybrid.semantic().deltaIndicator().equals(FullCrlSigningCommand.DELTA_OPERATION.equals(command.operation())
+                                ? Optional.of(new java.math.BigInteger(command.field(32))) : Optional.empty())
+                        || !Arrays.equals(hybrid.alternativeSignature(), alternative)
+                        || !Arrays.equals(hybrid.alternativeAlgorithmDer(), binding.alternative().orElseThrow().signatureAlgorithmIdentifier().bytes()))
+                    throw invalid("HYBRID_CRL_LAYOUT_DIFFERS");
+                requireSlice(crl, layout.tbsAlgorithmOffset(), layout.tbsAlgorithmLength(), algorithm);
+                requireSlice(crl, layout.outerAlgorithmOffset(), layout.outerAlgorithmLength(), algorithm);
+                requireSlice(crl, layout.issuerOffset(), layout.issuerLength(), certificate.getSubjectX500Principal().getEncoded());
+                var identifier = BcX509AlgorithmAdapter.fromLib(Pkix.parseAlgorithmIdentifier(algorithm));
+                if (!bindings.reverse(identifier, X509AlgorithmRole.SIGNATURE_ALGORITHM).equals(binding.primary().signatureAlgorithm())
+                        || !bindings.resolve(command.field(17), binding.primary().signatureAlgorithm(), X509AlgorithmRole.SIGNATURE_ALGORITHM).equals(identifier)
+                        || !zeroecho.pki.impl.core.CrlScope.of(certificate.getSubjectX500Principal().getEncoded(),
+                                Pkix.subjectPublicKeyInfo(certificate)).digest().equals(command.field(11))
+                        || !descriptor.roleTupleCommitment().equals(zeroecho.pki.impl.core.CrlSigningRoleTuple.commitment(binding, certificate,
+                                algorithm, hybrid.alternativeAlgorithmDer()))) throw invalid("HYBRID_CRL_ISSUER_ROLE_DIFFERS");
+                try (RepeatableContent tbs = new ContentSlice(crl, layout.tbsOffset(), layout.tbsLength());
+                        RepeatableContent altTbs = zeroecho.pki.impl.framework.x509.StreamingCrlAlternativeSignature.alternativeTbs(crl, CancellationSignal.NONE)) {
+                    if (!StreamingCrlSignatureVerifier.verify(tbs, command.field(8), Pkix.subjectPublicKeyInfo(certificate), signature,
+                            bindings, CancellationSignal.NONE).equals(nativeTbs.sha256())) throw invalid("HYBRID_CRL_NATIVE_SIGNATURE_INVALID");
+                    FullCrlSigningCommand.requireAdmission(binding.alternative().orElseThrow().signatureAlgorithm().canonicalForm(),
+                            altTbs.length().orElseThrow(), pureEdDsaMaximumTbsBytes);
+                    if (!StreamingCrlSignatureVerifier.verify(altTbs, binding.alternative().orElseThrow().signatureAlgorithm().canonicalForm(),
+                            zeroecho.pki.impl.core.CrlSigningRoleTuple.alternativeSpki(certificate), alternative, bindings, CancellationSignal.NONE)
+                            .equals(command.field(28))) throw invalid("HYBRID_CRL_ALTERNATIVE_SIGNATURE_INVALID");
+                }
+            } catch (GeneralSecurityException | IOException | IllegalArgumentException failure) {
+                throw new DomainContinuationPublisher.PostconditionFailure("HYBRID_CRL_SIGNATURE_INVALID", failure);
+            }
+            var id = new PkiId("crl:" + assembled.sha256());
+            var expected = status(id, assembled, domain, store.requireCrlSignerLineage(binding.issuerId()));
+            var existing = store.getStatusObject(id);
+            if (existing.isPresent()) {
+                var retained = existing.orElseThrow();
+                requirePublished(retained, domain, assembled);
+                if (!retained.attributes().ids().equals(expected.attributes().ids())
+                        || expected.attributes().ids().stream().anyMatch(attribute ->
+                                !retained.attributes().getAll(attribute).equals(expected.attributes().getAll(attribute))))
+                    throw invalid("HYBRID_CRL_PUBLISHED_AUTHORITY_DIFFERS");
+                // Reconcile the original signing effect and scheduled receipt; never replace retained content.
+                store.putStatusObjectFromSigning(retained, domain.operationId(), domain.commandCommitment());
+            } else {
+                store.putStatusObjectFromSigning(expected, domain.operationId(), domain.commandCommitment());
+                published = true;
+                DomainContinuationPublisher.afterDurablePublication(DomainContinuationPublisher.PublicationFaultPoint.AFTER_STATUS);
+            }
+            return new EncodedObject(Encoding.BINARY, id.value().getBytes(StandardCharsets.US_ASCII));
+        } catch (IOException failure) {
+            throw new PkiException("Hybrid CRL content processing failed", failure);
+        } catch (IllegalArgumentException invalid) {
+            throw new DomainContinuationPublisher.PostconditionFailure("HYBRID_CRL_ADMISSION_INVALID", invalid);
+        } finally {
+            Arrays.fill(signature, (byte) 0); Arrays.fill(alternative, (byte) 0);
+            if (assembled != null && !published) new DomainContentAccess(store).releaseUnlessPublished(assembled, false);
+        }
+    }
+
     private X509Certificate issuer(DomainCommandEncoding.Decoded command) {
         IssuerGeneration generation = store.getIssuerGeneration(new PkiId(command.field(6)))
                 .orElseThrow(() -> invalid("FULL_CRL_ISSUER_UNAVAILABLE"));
         if (!generation.authorityId().value().equals(command.field(0))
                 || !generation.credentialId().value().equals(command.field(7))
-                || !generation.signingKeyRef().value().equals(command.field(5))
+                || !CrlHybridSigningCommand.isHybrid(command) && !generation.signingKeyRef().value().equals(command.field(5))
                 || !generation.profilePolicyCommitment().equals(command.field(15))
                 || !generation.x509BindingCommitment().equals(command.field(16))) {
             throw invalid("FULL_CRL_ISSUER_DIFFERS");
@@ -219,17 +307,39 @@ final class FullCrlContinuationPublisher {
     }
 
     /* default */ static StatusObject status(PkiId id, DurableContentReference content, DomainContinuationStore.Record domain) {
+        return status(id, content, domain, null);
+    }
+
+    /* default */ static StatusObject status(PkiId id, DurableContentReference content, DomainContinuationStore.Record domain, PkiId lineage) {
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(domain.command());
+        var attributes = SimpleAttributeSet.builder().put(COMMAND, new AttributeValue.StringValue(domain.commandCommitment()))
+                .putAll(FullCrlSnapshotProvenance.from(command).attributes());
+        if (CrlHybridSigningCommand.isHybrid(command)) {
+            var descriptor = CrlHybridSigningCommand.descriptor(command);
+            attributes.put(CrlHybridSigningCommand.ISSUER_GENERATION, new AttributeValue.StringValue(command.field(6)))
+                    .put(CrlHybridSigningCommand.ISSUER_BINDING, new AttributeValue.StringValue(descriptor.issuerBindingCommitment()))
+                    .put(CrlHybridSigningCommand.ROLE_TUPLE, new AttributeValue.StringValue(descriptor.roleTupleCommitment()))
+                    .put(CrlHybridSigningCommand.SIGNATURE_PROFILE, new AttributeValue.StringValue(CrlHybridSigningCommand.PROFILE))
+                    .put(CrlHybridSigningCommand.SIGNER_LINEAGE, new AttributeValue.StringValue(java.util.Objects.requireNonNull(lineage).value()));
+            if (FullCrlSigningCommand.DELTA_OPERATION.equals(command.operation()))
+                attributes.put(CrlHybridSigningCommand.BASE_STATUS_ID, new AttributeValue.StringValue(command.field(31)));
+        }
         return new StatusObject(id, new FormatId(command.field(2)), new PkiId(command.field(0)), StatusObjectType.valueOf(command.field(1)),
-                Instant.parse(command.field(3)), Optional.of(Instant.parse(command.field(4))), content,
-                SimpleAttributeSet.builder().put(COMMAND, new AttributeValue.StringValue(domain.commandCommitment()))
-                        .putAll(FullCrlSnapshotProvenance.from(command).attributes()).build());
+                Instant.parse(command.field(3)), Optional.of(Instant.parse(command.field(4))), content, attributes.build());
     }
 
     /* default */ static void requirePublished(StatusObject actual, DomainContinuationStore.Record domain,
             DurableContentReference expectedContent) {
         DurableContentReference content = actual.content();
-        StatusObject expected = status(actual.statusObjectId(), content, domain);
+        var command = DomainCommandEncoding.decode(domain.command());
+        PkiId lineage = null;
+        if (CrlHybridSigningCommand.isHybrid(command)) {
+            var values = actual.attributes().getAll(CrlHybridSigningCommand.SIGNER_LINEAGE);
+            if (values.size() != 1 || !(values.getFirst() instanceof AttributeValue.StringValue value))
+                throw invalid("HYBRID_CRL_LINEAGE_METADATA_INVALID");
+            lineage = new PkiId(value.value());
+        }
+        StatusObject expected = status(actual.statusObjectId(), content, domain, lineage);
         // Attribute identifiers have no ordering contract; each identifier's typed value list does.
         if (!FullCrlSnapshotProvenance.decode(actual.attributes()).equals(
                     FullCrlSnapshotProvenance.decode(expected.attributes()))

@@ -57,6 +57,49 @@ import zeroecho.pki.spi.store.StagedContentStore;
 
 final class SigningWorkProjectionTest {
     @Test
+    void handoffKeepsBothResidentsWithOnlyOneDueSlotAndRebuildsThatOwnership() throws Exception {
+        SigningGenerationRegistry generations = publishedGenerations();
+        SigningIndexCapacityBudget capacity = new SigningIndexCapacityBudget(32_768L);
+        SigningDueWorkIndex due = new SigningDueWorkIndex(1, capacity, generations,
+                SigningGenerationRegistry.Owner.DUE);
+        SigningRetentionIndex retention = new SigningRetentionIndex(8, capacity);
+        SigningDueWorkIndex owners = new SigningDueWorkIndex(8, capacity, generations,
+                SigningGenerationRegistry.Owner.OWNER);
+        SigningWorkProjection projection = new SigningWorkProjection(due, retention, owners, capacity, stagedContent());
+        String parent = operationId(1);
+        String child = operationId(2);
+        var linked = new SigningHybridCrlDependencies.View(java.util.Set.of(parent),
+                Map.of(child, parent), java.util.Set.of(parent, child));
+        try {
+            try (var prepared = projection.prepare(acceptancePayload(parent, SignWorkflowStore.State.INTENT), pointer(1L))) {
+                prepared.publish();
+            }
+            var adoptionMutations = new java.util.ArrayList<>(acceptancePayload(child, SignWorkflowStore.State.INTENT).mutations());
+            adoptionMutations.add(recordMutation(parent, SignWorkflowStore.State.INTENT));
+            try (var prepared = projection.prepare(SigningTransactionPayloadCodec.commitPayload(adoptionMutations),
+                    pointer(2L), null, SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY, linked)) {
+                prepared.publish();
+            }
+            assertEquals(2, projection.statistics().identities());
+            try (var selection = due.selectThrough(java.time.Instant.MAX, 10)) {
+                assertEquals(List.of(child), selection.records().stream().map(SigningDueWorkIndex.WorkDescriptor::operationId).toList());
+            }
+        } finally {
+            projection.close(); due.close(); retention.close(); owners.close(); generations.close();
+        }
+        assertEquals(0L, capacity.snapshot().reservedBytes());
+        try (ProjectionFixture fixture = new ProjectionFixture()) {
+            fixture.projection.recoverAll(List.of(recoveredState(parent, SignWorkflowStore.State.INTENT),
+                    recoveredState(child, SignWorkflowStore.State.INTENT)),
+                    Map.of(parent, SignWorkflowStore.SchedulingPlan.from(acceptanceEnvelope(parent)),
+                            child, SignWorkflowStore.SchedulingPlan.from(acceptanceEnvelope(child))),
+                    new SigningHybridCrlDependencies.View(java.util.Set.of(parent), Map.of(), java.util.Set.of(parent, child)));
+            assertEquals(2, fixture.projection.statistics().identities());
+            assertEquals(1, fixture.due.statistics().workCount());
+        }
+    }
+
+    @Test
     void admissionTransfersOnlyToInitialStateDueWork() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
         SigningIndexCapacityBudget capacity = new SigningIndexCapacityBudget(32_768L);

@@ -264,6 +264,362 @@ public final class StreamingDerReader {
         }
     }
 
+    /**
+     * Inspects the qualified BC 1.86 alternative CRL transcript, whose native
+     * AlgorithmIdentifier and alternative signature value are absent. Ordinary
+     * CRL parsing is not relaxed. Canonical DER and positive serials are
+     * required; revoked entries retain their original SEQUENCE OF order, which
+     * need not be numeric serial order. Only bounded header fields are materialized. Limits are 128
+     * extensions, 128 OID bytes, 16 KiB Names/AlgorithmIdentifiers and 1 MiB signatures.
+     * @param content exact borrowed alternative transcript
+     * @param cancellation cooperative streaming cancellation
+     * @return immutable semantic values and original content spans
+     * @throws IOException if the dedicated profile grammar or resource bounds fail
+     */
+    public CrlAlternativeTbsLayout inspectAlternativeCrlTbs(RepeatableContent content,
+            CancellationSignal cancellation) throws IOException {
+        validate(content, cancellation);
+        try (CountedInput input = new CountedInput(content.openStream())) {
+            Header root = HeaderReader.read(input);
+            requireSequence(root);
+            HybridFields fields = inspectHybridFields(input, root, false, cancellation);
+            if (input.read() >= 0) { throw new IOException("Alternative CRL transcript has trailing data"); }
+            return new CrlAlternativeTbsLayout(root.encodedLength(), root.valueOffset(),
+                    fields.extensionsStart() - root.valueOffset(), fields.issuerOffset(), fields.issuerLength(),
+                    fields.thisUpdate(), fields.nextUpdate(), fields.extensions().numbers.crlNumber,
+                    Optional.ofNullable(fields.extensions().numbers.deltaIndicator),
+                    fields.extensions().contentOffset, fields.extensions().contentLength,
+                    fields.extensions().algorithm);
+        }
+    }
+
+    /**
+     * Inspects a complete hybrid CRL under the qualified BC 1.86 profile.
+     * Both noncritical alternative extensions must be present and the value must
+     * be last. Native inner/outer algorithm bytes must agree. This method performs
+     * structural checks only; callers verify both signatures against frozen keys.
+     * @param content complete borrowed CRL DER
+     * @param cancellation cooperative streaming cancellation
+     * @return immutable signed layout, alternative values and transformation spans
+     * @throws IOException if profile syntax, canonicality or bounded headers fail
+     */
+    public AlternativeCrlLayout inspectAlternativeCrl(RepeatableContent content,
+            CancellationSignal cancellation) throws IOException {
+        CrlSemanticLayout semantic = inspectCrlSemantics(content, cancellation);
+        SignedObjectLayout signed = semantic.layout();
+        if (signed.signatureLength() < 1 || signed.signatureLength() > 1024 * 1024) {
+            throw new IOException("Native hybrid CRL signature exceeds its bounded profile");
+        }
+        byte[] inner = boundedSlice(content, signed.tbsAlgorithmOffset(), signed.tbsAlgorithmLength(), 16 * 1024, cancellation);
+        byte[] outer = boundedSlice(content, signed.outerAlgorithmOffset(), signed.outerAlgorithmLength(), 16 * 1024, cancellation);
+        if (!java.util.Arrays.equals(inner, outer)) { throw new IOException("CRL native algorithm identifiers differ"); }
+        try (CountedInput input = new CountedInput(content.openStream())) {
+            skip(input, signed.tbsOffset(), cancellation);
+            Header tbs = HeaderReader.read(input);
+            HybridFields fields = inspectHybridFields(input, tbs, true, cancellation);
+            HybridExtensions extensions = fields.extensions();
+            return new AlternativeCrlLayout(semantic, tbs.valueOffset(),
+                    fields.extensionsStart() - tbs.valueOffset(), extensions.contentOffset,
+                    extensions.contentLength, extensions.valueExtensionOffset, extensions.valueExtensionLength,
+                    extensions.algorithm, extensions.signature);
+        }
+    }
+
+    /**
+     * Bounded header projection of the alternative transcript; offsets refer to
+     * the original content. The fields span begins with canonical v2 INTEGER 1
+     * and ends immediately before the explicit extensions wrapper.
+     * @param encodedLength complete transcript length
+     * @param fieldsOffset root SEQUENCE content offset
+     * @param fieldsLength bytes preceding explicit extensions
+     * @param issuerOffset issuer Name TLV offset
+     * @param issuerLength issuer Name TLV length
+     * @param thisUpdate exact inclusive update time
+     * @param nextUpdate exact later update time
+     * @param crlNumber issued CRL number
+     * @param deltaIndicator optional full base number
+     * @param extensionsContentOffset Extensions SEQUENCE value offset
+     * @param extensionsContentLength Extensions SEQUENCE value length
+     * @param alternativeAlgorithmDer canonical alternative AlgorithmIdentifier DER
+     */
+    public record CrlAlternativeTbsLayout(long encodedLength, long fieldsOffset, long fieldsLength,
+            long issuerOffset, long issuerLength, Instant thisUpdate, Instant nextUpdate,
+            BigInteger crlNumber, Optional<BigInteger> deltaIndicator, long extensionsContentOffset,
+            long extensionsContentLength, byte[] alternativeAlgorithmDer) {
+        /** Defensively captures the bounded algorithm bytes and non-null metadata. */
+        public CrlAlternativeTbsLayout {
+            Objects.requireNonNull(thisUpdate, "thisUpdate");
+            Objects.requireNonNull(nextUpdate, "nextUpdate");
+            Objects.requireNonNull(crlNumber, "crlNumber");
+            Objects.requireNonNull(deltaIndicator, "deltaIndicator");
+            alternativeAlgorithmDer = alternativeAlgorithmDer.clone();
+        }
+        /** @return defensive copy of the alternative AlgorithmIdentifier */
+        @Override public byte[] alternativeAlgorithmDer() { return alternativeAlgorithmDer.clone(); }
+    }
+
+    /**
+     * Bounded alternative-signature projection of a complete CRL. Offsets address
+     * the original complete signed object, not a separate TBS slice.
+     * @param semantic ordinary signed layout and CRL numbers
+     * @param fieldsOffset native TBS SEQUENCE content offset
+     * @param fieldsLength native fields preceding explicit extensions
+     * @param extensionsContentOffset Extensions SEQUENCE value offset
+     * @param extensionsContentLength Extensions SEQUENCE value length
+     * @param alternativeValueExtensionOffset complete alternative value Extension offset
+     * @param alternativeValueExtensionLength complete alternative value Extension length
+     * @param alternativeAlgorithmDer exact canonical alternative AlgorithmIdentifier
+     * @param alternativeSignature raw zero-unused-bit external signature bytes
+     */
+    public record AlternativeCrlLayout(CrlSemanticLayout semantic, long fieldsOffset, long fieldsLength,
+            long extensionsContentOffset, long extensionsContentLength, long alternativeValueExtensionOffset,
+            long alternativeValueExtensionLength, byte[] alternativeAlgorithmDer, byte[] alternativeSignature) {
+        /** Defensively captures both bounded byte values. */
+        public AlternativeCrlLayout {
+            Objects.requireNonNull(semantic, "semantic");
+            alternativeAlgorithmDer = alternativeAlgorithmDer.clone();
+            alternativeSignature = alternativeSignature.clone();
+        }
+        /** @return defensive copy of the alternative AlgorithmIdentifier */
+        @Override public byte[] alternativeAlgorithmDer() { return alternativeAlgorithmDer.clone(); }
+        /** @return defensive copy of the external alternative signature */
+        @Override public byte[] alternativeSignature() { return alternativeSignature.clone(); }
+    }
+
+    private static HybridFields inspectHybridFields(CountedInput input, Header tbs, boolean nativeTbs,
+            CancellationSignal cancellation) throws IOException {
+        long end = checkedAdd(tbs.valueOffset(), tbs.length());
+        requireCrlVersion(input, readWithin(input, end), cancellation);
+        if (nativeTbs) {
+            Header algorithm = readWithin(input, end);
+            if (algorithm.encodedLength() > 16 * 1024) { throw new IOException("CRL algorithm exceeds header bound"); }
+            requireAlgorithmIdentifier(input, algorithm, cancellation);
+        }
+        Header issuer = readWithin(input, end);
+        requireSequence(issuer);
+        if (issuer.encodedLength() > 16 * 1024) { throw new IOException("Hybrid CRL Name exceeds header bound"); }
+        byte[] name = readBoundedValue(input, issuer, 16 * 1024);
+        try { new javax.security.auth.x500.X500Principal(encodedValue(0x30, name)); }
+        catch (IllegalArgumentException invalid) { throw new IOException("Invalid hybrid CRL issuer Name", invalid); }
+        if (name.length == 0) { throw new IOException("Empty hybrid CRL issuer Name"); }
+        Instant thisUpdate = readCrlTime(input, readWithin(input, end));
+        Instant nextUpdate = readCrlTime(input, readWithin(input, end));
+        if (!nextUpdate.isAfter(thisUpdate)) { throw new IOException("Hybrid CRL update times are not increasing"); }
+        Header next = readWithin(input, end);
+        boolean release = false;
+        if (next.universal() && next.tagNumber() == 16) {
+            release = readHybridEntries(input, next, cancellation);
+            next = readWithin(input, end);
+        }
+        if (!next.contextSpecific(0) || !next.constructed()) { throw new IOException("Hybrid CRL extensions must be final [0] EXPLICIT"); }
+        long extensionStart = next.start();
+        long explicitEnd = checkedAdd(next.valueOffset(), next.length());
+        Header sequence = readWithin(input, explicitEnd);
+        requireSequence(sequence);
+        HybridExtensions extensions = readHybridExtensions(input, sequence, nativeTbs, cancellation);
+        if (input.position() != explicitEnd || input.position() != end) { throw new IOException("Hybrid CRL has extra fields"); }
+        if (release && extensions.numbers.deltaIndicator == null) { throw new IOException("Full CRL contains removeFromCRL"); }
+        return new HybridFields(issuer.start(), issuer.encodedLength(), thisUpdate, nextUpdate, extensionStart, extensions);
+    }
+
+    private static boolean readHybridEntries(CountedInput input, Header entries,
+            CancellationSignal cancellation) throws IOException {
+        long end = checkedAdd(entries.valueOffset(), entries.length());
+        if (entries.length() == 0) { throw new IOException("Empty revokedCertificates must be omitted"); }
+        boolean release = false;
+        while (input.position() < end) {
+            cancellation.throwIfCancelled();
+            Header entry = readWithin(input, end);
+            requireSequence(entry);
+            long entryEnd = checkedAdd(entry.valueOffset(), entry.length());
+            Header serial = readWithin(input, entryEnd);
+            requirePrimitiveUniversal(serial, 2);
+            byte[] serialBytes = readBoundedValue(input, serial, 20);
+            BigInteger number = new BigInteger(serialBytes);
+            if (number.signum() <= 0 || number.bitLength() > 159) {
+                throw new IOException("Hybrid CRL serials must be positive and at most 159 bits");
+            }
+            readCrlTime(input, readWithin(input, entryEnd));
+            if (input.position() < entryEnd) {
+                Header extensions = readWithin(input, entryEnd);
+                requireSequence(extensions);
+                long extensionsEnd = checkedAdd(extensions.valueOffset(), extensions.length());
+                if (extensions.length() == 0) { throw new IOException("Empty hybrid CRL entry extensions"); }
+                java.util.Set<String> seen = new java.util.HashSet<>();
+                while (input.position() < extensionsEnd) {
+                    Header extension = readWithin(input, extensionsEnd);
+                    requireSequence(extension);
+                    long extensionEnd = checkedAdd(extension.valueOffset(), extension.length());
+                    String oid = hybridOid(input, readWithin(input, extensionEnd), seen);
+                    Header value = hybridExtensionValue(input, extensionEnd, false);
+                    if (oid.equals("551d15")) {
+                        byte[] reason = readBoundedValue(input, value, 3);
+                        if (reason.length != 3 || reason[0] != 10 || reason[1] != 1
+                                || reason[2] < 0 || reason[2] > 10 || reason[2] == 7) {
+                            throw new IOException("Invalid hybrid CRL entry reason");
+                        }
+                        release |= reason[2] == 8;
+                    } else { skip(input, value.length(), cancellation); }
+                    if (input.position() != extensionEnd) { throw new IOException("Malformed hybrid CRL entry extension"); }
+                }
+                if (input.position() != extensionsEnd) { throw new IOException("Malformed hybrid CRL entry extensions"); }
+            }
+            if (input.position() != entryEnd) { throw new IOException("Malformed hybrid CRL entry"); }
+        }
+        if (input.position() != end) { throw new IOException("Malformed hybrid CRL entries"); }
+        return release;
+    }
+
+    private static HybridExtensions readHybridExtensions(CountedInput input, Header sequence, boolean nativeTbs,
+            CancellationSignal cancellation) throws IOException {
+        HybridExtensions result = new HybridExtensions();
+        result.contentOffset = sequence.valueOffset();
+        result.contentLength = sequence.length();
+        long end = checkedAdd(sequence.valueOffset(), sequence.length());
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        boolean aki = false;
+        while (input.position() < end) {
+            cancellation.throwIfCancelled();
+            Header extension = readWithin(input, end);
+            requireSequence(extension);
+            long extensionEnd = checkedAdd(extension.valueOffset(), extension.length());
+            String oid = hybridOid(input, readWithin(input, extensionEnd), seen);
+            if (result.algorithm != null && !oid.equals("551d4a")) { throw new IOException("Alternative CRL algorithm must follow retained extensions"); }
+            Header value = hybridExtensionValue(input, extensionEnd, oid.equals("551d1b"));
+            switch (oid) {
+                case "551d14", "551d1b" -> {
+                    BigInteger number = readCrlNumber(input, value, cancellation);
+                    if (oid.equals("551d14")) { result.numbers.crlNumber = number; }
+                    else { result.numbers.deltaIndicator = number; }
+                }
+                case "551d23" -> {
+                    byte[] keyIdentifier = readBoundedValue(input, value, 16 * 1024);
+                    new StreamingDerReader().validate(keyIdentifier, 16 * 1024);
+                    try (CountedInput identifier = new CountedInput(new ByteArrayInputStream(keyIdentifier))) {
+                        Header root = HeaderReader.read(identifier);
+                        requireSequence(root);
+                        Header key = readWithin(identifier, keyIdentifier.length);
+                        if (!key.contextSpecific(0) || key.constructed() || key.length() == 0) {
+                            throw new IOException("Hybrid CRL authority key identifier is missing");
+                        }
+                        skip(identifier, key.length(), cancellation);
+                        if (identifier.position() != keyIdentifier.length) {
+                            throw new IOException("Hybrid CRL authority key identifier has unsupported fields");
+                        }
+                    }
+                    aki = true;
+                }
+                case "551d48" -> throw new IOException("Subject alternative SPKI is not a CRL extension");
+                case "551d49" -> {
+                    result.algorithm = readBoundedValue(input, value, 16 * 1024);
+                    new StreamingDerReader().validate(result.algorithm, 16 * 1024);
+                    try (CountedInput algorithm = new CountedInput(new ByteArrayInputStream(result.algorithm))) {
+                        requireAlgorithmIdentifier(algorithm, HeaderReader.read(algorithm), cancellation);
+                        if (algorithm.read() >= 0) { throw new IOException("Alternative algorithm has trailing data"); }
+                    }
+                }
+                case "551d4a" -> {
+                    if (!nativeTbs || result.algorithm == null) { throw new IOException("Unexpected alternative CRL value"); }
+                    long valueEnd = checkedAdd(value.valueOffset(), value.length());
+                    Header signature = readWithin(input, valueEnd);
+                    requirePrimitiveUniversal(signature, 3);
+                    if (signature.length() < 2 || signature.length() > 1024 * 1024L + 1 || input.readRequired() != 0) {
+                        throw new IOException("Alternative CRL signature violates its bounded BIT STRING profile");
+                    }
+                    result.signature = readExactBytes(input, Math.toIntExact(signature.length() - 1));
+                    if (input.position() != valueEnd || extensionEnd != end) { throw new IOException("Alternative CRL value must be final"); }
+                    result.valueExtensionOffset = extension.start();
+                    result.valueExtensionLength = extension.encodedLength();
+                }
+                default -> skip(input, value.length(), cancellation);
+            }
+            if (input.position() != extensionEnd) { throw new IOException("Malformed hybrid CRL extension"); }
+        }
+        if (input.position() != end || !aki || result.algorithm == null || result.numbers.crlNumber == null
+                || nativeTbs != (result.signature != null)
+                || result.numbers.deltaIndicator != null && result.numbers.deltaIndicator.compareTo(result.numbers.crlNumber) >= 0) {
+            throw new IOException("Incomplete or inconsistent hybrid CRL extensions");
+        }
+        return result;
+    }
+
+    private static String hybridOid(CountedInput input, Header oid, java.util.Set<String> seen) throws IOException {
+        requirePrimitiveUniversal(oid, 6);
+        if (seen.size() >= 128) { throw new IOException("Hybrid CRL extension count exceeds header bound"); }
+        if (oid.encodedLength() > 128) { throw new IOException("Hybrid CRL extension OID exceeds header bound"); }
+        String value = java.util.HexFormat.of().formatHex(readBoundedValue(input, oid, 128));
+        if (!seen.add(value)) { throw new IOException("Duplicate hybrid CRL extension OID"); }
+        return value;
+    }
+
+    private static Header hybridExtensionValue(CountedInput input, long end, boolean critical) throws IOException {
+        Header value = readWithin(input, end);
+        boolean actualCritical = false;
+        if (value.universal() && value.tagNumber() == 1) {
+            requirePrimitiveUniversal(value, 1);
+            if (value.length() != 1 || input.readRequired() != 0xff) { throw new IOException("Noncanonical extension criticality"); }
+            actualCritical = true;
+            value = readWithin(input, end);
+        }
+        requirePrimitiveUniversal(value, 4);
+        if (actualCritical != critical) { throw new IOException("Unsupported hybrid CRL critical extension"); }
+        return value;
+    }
+
+    private static byte[] readBoundedValue(CountedInput input, Header value, int maximum) throws IOException {
+        if (value.length() < 1 || value.length() > maximum) { throw new IOException("Hybrid CRL field exceeds header bound"); }
+        return readExactBytes(input, Math.toIntExact(value.length()));
+    }
+
+    private static byte[] readExactBytes(CountedInput input, int length) throws IOException {
+        byte[] value = new byte[length];
+        int position = 0;
+        while (position < length) {
+            int count = input.read(value, position, length - position);
+            if (count < 0) { throw new IOException("Truncated hybrid CRL field"); }
+            if (count > 0) { position += count; }
+        }
+        return value;
+    }
+
+    private static byte[] encodedValue(int tag, byte[] value) throws IOException {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        StreamingDerWriter.writeTagAndLength(output, tag, value.length);
+        output.write(value);
+        return output.toByteArray();
+    }
+
+    private static byte[] boundedSlice(RepeatableContent content, long offset, long length, int maximum,
+            CancellationSignal cancellation) throws IOException {
+        if (length < 1 || length > maximum) { throw new IOException("Hybrid CRL field exceeds header bound"); }
+        try (InputStream input = content.openStream()) {
+            long left = offset;
+            byte[] buffer = new byte[BUFFER_BYTES];
+            while (left > 0) {
+                cancellation.throwIfCancelled();
+                int count = input.read(buffer, 0, (int) Math.min(buffer.length, left));
+                if (count < 0) { throw new IOException("Truncated hybrid CRL source"); }
+                left -= count;
+            }
+            byte[] value = input.readNBytes(Math.toIntExact(length));
+            if (value.length != length) { throw new IOException("Truncated hybrid CRL slice"); }
+            return value;
+        }
+    }
+
+    private record HybridFields(long issuerOffset, long issuerLength, Instant thisUpdate, Instant nextUpdate,
+            long extensionsStart, HybridExtensions extensions) { }
+
+    private static final class HybridExtensions {
+        private final CrlNumbers numbers = new CrlNumbers();
+        private long contentOffset;
+        private long contentLength;
+        private long valueExtensionOffset;
+        private long valueExtensionLength;
+        private byte[] algorithm;
+        private byte[] signature;
+    }
+
     /** Per-inspection CRL extension values used to validate number relationships. */
     private static final class CrlNumbers {
         private BigInteger crlNumber;

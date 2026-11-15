@@ -52,6 +52,7 @@ import java.security.cert.X509CRL;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.security.auth.x500.X500Principal;
@@ -116,6 +117,59 @@ class StreamingX509CrlTbsWriterTest {
             assertEquals(Date.from(NOW), parsed.getThisUpdate());
             assertEquals(Date.from(NOW.plusSeconds(3600)), parsed.getNextUpdate());
         }
+    }
+
+    @Test void qualifiedAlternativeFactoryMatchesIndependentFullAndDeltaTranscriptTlvs() throws Exception {
+        Instant update = Instant.parse("2026-01-01T00:00:00Z");
+        byte[] issuer = java.util.HexFormat.of().parseHex("300c310a300806035504030c0141");
+        String[] expected = {
+            "3066020101300c310a300806035504030c0141170d3236303130313030303030305a170d3236303130323030303030305aa0353033300f0603551d2304083006800401020304300a0603551d14040302010730140603551d49040d300b0609608648016503040313",
+            "30818b020101300c310a300806035504030c0141170d3236303130313030303030305a170d3236303130323030303030305a3023302102020080170d3236303130313030303030305a300c300a0603551d1504030a0101a0353033300f0603551d2304083006800401020304300a0603551d14040302010730140603551d49040d300b0609608648016503040313",
+            "308199020101300c310a300806035504030c0141170d3236303130313030303030305a170d3236303130323030303030305a30223020020101170d3236303130313030303030305a300c300a0603551d1504030a0108a0443042300f0603551d2304083006800401020304300a0603551d140403020108300d0603551d1b0101ff040302010730140603551d49040d300b0609608648016503040313"
+        };
+        for (int variant = 0; variant < expected.length; variant++) {
+            boolean delta = variant == 2;
+            Source source = new Source(variant == 0 ? 0 : 1);
+            source.fixed = new CrlEntry(BigInteger.valueOf(delta ? 1 : 128), update,
+                    delta ? RevocationReason.REMOVE_FROM_CRL : RevocationReason.KEY_COMPROMISE);
+            var writer = StreamingX509CrlTbsWriter.forAlternativeSignature(
+                    X509AlgorithmIdentifier.absent("2.16.840.1.101.3.4.3.19"), issuer, new byte[]{1, 2, 3, 4},
+                    update, update.plusSeconds(86_400), delta ? Optional.of(BigInteger.valueOf(7)) : Optional.empty());
+            var measured = writer.measure(source, CancellationSignal.NONE);
+            BigInteger number = BigInteger.valueOf(delta ? 8 : 7);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            long written = writer.write(source, measured, number, output, CancellationSignal.NONE);
+            // Hand-transcribed scalar TLVs were separately matched to BC 1.86 capture;
+            // expected bytes do not come from the product's writer or transform.
+            assertArrayEquals(java.util.HexFormat.of().parseHex(expected[variant]), output.toByteArray());
+            assertEquals(output.size(), written);
+            assertEquals(written, writer.encodedLength(measured, number));
+            assertEquals(2, source.closes);
+        }
+    }
+
+    @Test void alternativeFactoryBoundsTheEncodedAuthorityKeyIdentifierValue() throws Exception {
+        byte[] name = NAME.getEncoded();
+        var alternative = X509AlgorithmIdentifier.absent("2.16.840.1.101.3.4.3.19");
+        // Two canonical long-form TLV headers consume eight bytes of the 16 KiB value bound.
+        byte[] maximumKeyIdentifier = new byte[16 * 1024 - 8];
+        var writer = StreamingX509CrlTbsWriter.forAlternativeSignature(alternative, name, maximumKeyIdentifier,
+                NOW, NOW.plusSeconds(3600), Optional.empty());
+        Source source = new Source(0);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writer.write(source, writer.measure(source, CancellationSignal.NONE), BigInteger.ONE, output, CancellationSignal.NONE);
+        byte[] encoded = output.toByteArray();
+        try (var content = new zeroecho.core.io.RepeatableContent() {
+            @Override public java.io.InputStream openStream() { return new ByteArrayInputStream(encoded); }
+            @Override public OptionalLong length() { return OptionalLong.of(encoded.length); }
+            @Override public String contentId() { return "bounded-aki-test"; }
+            @Override public void close() { }
+        }) {
+            assertEquals(BigInteger.ONE, new StreamingDerReader().inspectAlternativeCrlTbs(content,
+                    CancellationSignal.NONE).crlNumber());
+        }
+        assertThrows(IOException.class, () -> StreamingX509CrlTbsWriter.forAlternativeSignature(alternative, name,
+                new byte[maximumKeyIdentifier.length + 1], NOW, NOW.plusSeconds(3600), Optional.empty()));
     }
 
     @Test void allFullReasonsAndX509TimeBoundariesAreCanonical() throws Exception {

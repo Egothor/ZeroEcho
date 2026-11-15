@@ -374,7 +374,7 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         BigInteger serial = approved.serial();
         Validity validity = wholeSecondValidity(approved.validity());
         AlgorithmIdentifier algorithm = algorithm(approved);
-        HybridCertificateMode selectedMode = selectedMode(profile, effective);
+        HybridCertificateMode selectedMode = selectedMode(profile, effective, retained.orElseThrow());
         var capturedOutgoing = outgoing(profile, keyRef, Optional.empty(), spki, selectedMode);
         boolean candidate = !sameAnchorRole(retained.orElseThrow().primary(), capturedOutgoing.primary())
                 || !retained.orElseThrow().alternative().map(old -> capturedOutgoing.alternative()
@@ -456,7 +456,7 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
                     .flatMap(zeroecho.pki.api.ca.CaRotationSelection.RoleChange::keyRef),
                     Optional.empty(), input.attributes(), BigInteger.ONE, cancellation);
         } else { throw new UnsupportedOperationException("Unsupported root lifecycle input"); }
-        validateTbs(Optional.empty(), selectedMode(existing.profile(), effective), existing.spki(), existing.approved(), cancellation);
+        validateTbs(Optional.empty(), selectedMode(existing.profile(), effective, retained), existing.spki(), existing.approved(), cancellation);
         cancellation.throwIfCancelled();
     }
 
@@ -474,16 +474,20 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
     }
 
     private static HybridCertificateMode selectedMode(ActiveCertificateProfile profile,
-            Optional<zeroecho.pki.api.ca.CaRotationSelection> effective) {
+            Optional<zeroecho.pki.api.ca.CaRotationSelection> effective,
+            zeroecho.pki.api.ca.IssuerCryptographicBinding retained) {
         HybridCertificateMode mode = profile.definition().hybridMode();
-        if (effective.isEmpty()) return mode;
-        var alternative = effective.orElseThrow().alternative();
         if (mode instanceof HybridCertificateMode.AltSignature) {
-            var selected = alternative.orElseThrow(() -> reject("ALT_ROLE_CONTINUITY_INVALID"));
+            if (effective.isEmpty()) {
+                var current = retained.alternative().orElseThrow(() -> reject("ALT_ROLE_CONTINUITY_INVALID"));
+                return new HybridCertificateMode.AltSignature(current.signatureAlgorithm().canonicalForm(), current.keyRef().value());
+            }
+            var selected = effective.orElseThrow().alternative().orElseThrow(() -> reject("ALT_ROLE_CONTINUITY_INVALID"));
             return new HybridCertificateMode.AltSignature(selected.signatureAlgorithmId().orElseThrow(),
                     selected.keyRef().orElseThrow().value());
         }
-        if (alternative.isPresent()) throw reject("HYBRID_MODE_CHANGE_UNSUPPORTED");
+        if (effective.flatMap(zeroecho.pki.api.ca.CaRotationSelection::alternative).isPresent())
+            throw reject("HYBRID_MODE_CHANGE_UNSUPPORTED");
         return mode;
     }
 
@@ -510,7 +514,9 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         KeyRef keyRef = replacementKey.orElse(root.issuerKeyRef());
         byte[] spki = keyRef.equals(generation.signingKeyRef()) ? issuerPublicKey.bytes() : publicKeyInfo(keyRef, cancellation);
         EncodedObject exactKey = new EncodedObject(Encoding.DER, spki);
-        X500Principal subject = new X500Principal(root.subjectRef().value());
+        // RFC2253 reparsing can change ASN.1 string types and break exact issuer-name continuity.
+        X500Principal subject = Pkix.parseCertificate(CredentialContent.materializeForBc(store, selected.content()))
+                .getSubjectX500Principal();
         List<SubjectRdn> rdns = CaCertificateProfileValidator.validateTrustedSubject(subject, profile.definition());
         ValidatedCaCertificateRequest approved = CaCertificateProfileValidator.validateApprovedSubject(
                 ValidatedCaCertificateRequest.Operation.CREATE_ROOT, profile, CertificateProfileKind.ROOT_CA,
@@ -614,25 +620,25 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         HybridCertificateMode oldMode = previous.definition().hybridMode();
         HybridCertificateMode newMode = active.definition().hybridMode();
         if (!oldMode.getClass().equals(newMode.getClass())) { throw reject("HYBRID_MODE_CHANGE_UNSUPPORTED"); }
-        if (newMode instanceof HybridCertificateMode.AltSignature alternative) {
+        if (newMode instanceof HybridCertificateMode.AltSignature) {
             byte[] encoded = CredentialContent.materializeForBc(store, selected.content());
             java.security.cert.X509Certificate certificate = Pkix.parseCertificate(encoded);
             byte[] expected = AltSignatureExtensions.requiredValue(certificate,
                     AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO);
-            byte[] configured = publicKeyInfo(new KeyRef(alternative.altKeyRef()), cancellation);
-            AlgorithmIdentifier algorithm = toAltAlgorithmIdentifier(bindings.standard(
-                    authority.resolveIdentity(alternative.altSignatureAlgorithmId()),
-                    X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE)
-                    .orElseThrow(() -> reject("ALT_ALGORITHM_BINDING_MISSING")));
-            var baseline = store.getIssuerCryptographicBinding(zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, selected.credentialId()))
-                    .map(zeroecho.pki.api.ca.IssuerCryptographicBinding::certificateHybridBaseline)
+            // A creation profile's original key is not the authority after an explicit generation rotation.
+            var retained = store.getIssuerCryptographicBinding(zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, selected.credentialId()))
                     .orElseThrow(() -> reject("ISSUER_BINDING_MISSING"));
+            var alternative = retained.alternative().orElseThrow(() -> reject("ALT_ROLE_CONTINUITY_INVALID"));
+            byte[] configured = publicKeyInfo(alternative.keyRef(), cancellation);
+            byte[] algorithm = alternative.signatureAlgorithmIdentifier().bytes();
+            var baseline = retained.certificateHybridBaseline();
             boolean signatureValid = baseline == zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.COR3_SIGNED_WRAPPER
                     ? Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(expected))
                     : baseline == zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.LEGACY_PRE_TBS
                             && Pkix.verifyAlternativeSignature(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(expected));
             if (!java.util.Arrays.equals(expected, configured)
-                    || !java.util.Arrays.equals(Pkix.encodeAlgorithmIdentifier(algorithm),
+                    || !alternative.subjectSpkiSha256().equals(SigningProvider.ContentCommitment.sha256(expected).sha256())
+                    || !java.util.Arrays.equals(algorithm,
                             AltSignatureExtensions.requiredValue(certificate,
                                     AltSignatureExtensions.OID_ALT_SIGNATURE_ALGORITHM))
                     || !signatureValid) {

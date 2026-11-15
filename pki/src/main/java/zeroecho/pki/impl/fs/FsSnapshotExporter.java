@@ -252,6 +252,11 @@ final class FsSnapshotExporter {
             List<StatusObject> statuses = source.snapshotStatusObjects(snapshot);
             Set<String> remintedContentIds = new HashSet<>(inventory.contentIds());
             for (StatusObject status : statuses) {
+                var issuer = status.attributes().get(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_GENERATION);
+                if (issuer.isPresent()) {
+                    if (!(issuer.orElseThrow() instanceof zeroecho.pki.api.attr.AttributeValue.StringValue text)) throw new IOException("Hybrid status issuer metadata is malformed");
+                    includeGeneration(generations, new PkiId(text.value()));
+                }
                 remintedContentIds.add(status.content().contentId());
             }
             return new SnapshotAuthority(cas, List.copyOf(generations.values()), List.copyOf(paths.values()), inventory.credentials(), statuses,
@@ -263,6 +268,10 @@ final class FsSnapshotExporter {
                 generations.put(issuerId, AuthorityMetadataStore.find(snapshot,
                         AuthorityMetadataCodec.generationKey(issuerId), AuthorityMetadataCodec::generation)
                         .orElseThrow(() -> new SnapshotAuthorityFailure("Snapshot issuer generation is missing")));
+                var lineage = AuthorityMetadataStore.lineage(snapshot, issuerId);
+                if (lineage.isPresent() && lineage.orElseThrow().predecessorSelectedIssuerId().isPresent()) {
+                    includeGeneration(generations, lineage.orElseThrow().predecessorSelectedIssuerId().orElseThrow());
+                }
             }
         }
 
@@ -491,7 +500,7 @@ final class FsSnapshotExporter {
             Set<PkiId> transferred = new HashSet<>();
             source.copySnapshotMetadataTo(snapshot, targetRoot);
             try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(targetRoot, options)) {
-                target.restoreSnapshotLifecycle(snapshot, authority.cas(), at);
+                target.restoreSnapshotLifecycle(snapshot, authority.cas(), authority.generations(), at);
                 for (Map.Entry<PkiId, Credential> entry : authority.credentials().entrySet()) {
                     persistCredentialWithIssuer(target, entry.getValue(), transferred, new HashSet<>());
                 }

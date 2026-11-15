@@ -74,10 +74,22 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             SigningWalFrameCodec.MAX_BATCH_FRAMES - 2);
     private final TransactionalMetadataStore metadata;
     private final Consumer<MetadataCommitResult> outcome;
+    private final Optional<LineageAuthority> lineageAuthority;
+
+    @FunctionalInterface
+    interface LineageAuthority {
+        String tuple(MetadataSnapshot snapshot, IssuerGeneration generation,
+                zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException;
+    }
 
     /* default */ AuthorityMetadataStore(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome) {
+        this(metadata, outcome, Optional.empty());
+    }
+
+    AuthorityMetadataStore(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome, Optional<LineageAuthority> lineageAuthority) {
         this.metadata = metadata;
         this.outcome = outcome;
+        this.lineageAuthority = lineageAuthority;
     }
 
     /* default */ <T> Optional<T> find(MetadataKey key, BiFunction<MetadataKey, byte[], T> decoder) throws IOException {
@@ -179,7 +191,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         try (MetadataTransaction transaction = metadata.beginTransaction(); MetadataSnapshot snapshot = metadata.snapshot()) {
             Instant timestamp = Instant.now().truncatedTo(ChronoUnit.MICROS);
             try {
-                stageCa(snapshot, transaction, ca, policy.enabled(), timestamp);
+                stageCa(snapshot, transaction, ca, policy.enabled(), timestamp, Optional.empty(), Optional.empty(), lineageAuthority);
             } catch (IOException failure) {
                 // No commit has been attempted: validation cannot make durability uncertain.
                 throw new IllegalStateException("CA metadata validation failed", failure);
@@ -201,7 +213,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             if (current.isEmpty() || !current.orElseThrow().equals(expected)) { return false; }
             try (MetadataTransaction transaction = metadata.beginTransaction()) {
                 try {
-                    stageCa(snapshot, transaction, replacement, policy.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS));
+                    stageCa(snapshot, transaction, replacement, policy.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.empty(), Optional.empty(), lineageAuthority);
                 } catch (IOException failure) {
                     // Comparison and staging are pre-commit validation, never uncertain publication.
                     throw new IllegalStateException("CA metadata validation failed", failure);
@@ -303,17 +315,17 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
 
     /* default */ static void stageCa(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
             boolean history, Instant timestamp) throws IOException {
-        stageCa(snapshot, transaction, ca, history, timestamp, Optional.empty(), Optional.empty());
+        stageCa(snapshot, transaction, ca, history, timestamp, Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     /* default */ static void stageCaFenced(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
             boolean history, Instant timestamp, zeroecho.pki.api.ca.CaHeadSnapshot expected) throws IOException {
-        stageCa(snapshot, transaction, ca, history, timestamp, Optional.of(expected), Optional.empty());
+        stageCa(snapshot, transaction, ca, history, timestamp, Optional.of(expected), Optional.empty(), Optional.empty());
     }
 
     private static void stageCa(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
             boolean history, Instant timestamp, Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expected,
-            Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> activation) throws IOException {
+            Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> activation, Optional<LineageAuthority> lineageAuthority) throws IOException {
         AuthorityMetadataCodec.Base base = AuthorityMetadataCodec.Base.of(ca);
         Optional<AuthorityMetadataCodec.Base> previousBase = find(snapshot, AuthorityMetadataCodec.baseKey(ca.caId()), AuthorityMetadataCodec::base);
         if (previousBase.isPresent() && !previousBase.orElseThrow().equals(base)) { throw invalid(); }
@@ -341,6 +353,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             long epoch = previous == null ? 1 : changesHead ? Math.incrementExact(original.orElseThrow().epoch()) : original.orElseThrow().epoch();
             var updated = new zeroecho.pki.api.ca.CaHeadSnapshot(1, ca.caId(), epoch, selected.issuerId(), head.pathId(), binding.commitment());
             stageHead(snapshot, transaction, updated);
+            stageCrlLineages(snapshot, transaction, ca, previous, lineageAuthority);
             stageCaMemberships(snapshot, transaction, ca, head, previous);
             requireSelection(snapshot, head, false);
             if (previousBase.isEmpty()) { create(transaction, AuthorityMetadataCodec.baseKey(ca.caId()), FsCodec.encode(FsCodec.CA_BASE, base)); }
@@ -481,6 +494,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                         AuthorityMetadataCodec.Membership member = AuthorityMetadataCodec.membership(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES));
                         AuthorityMetadataCodec.Head head = find(snapshot, AuthorityMetadataCodec.caKey(member.caId()), AuthorityMetadataCodec::head)
                                 .orElseThrow(AuthorityMetadataStore::invalid);
+                        var memberBinding = findBinding(snapshot, member.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
+                        if (memberBinding.alternative().isPresent()) requireLineage(snapshot, member.generationId());
                         if (member.ordinal() >= head.membershipCount() || !member.equals(requireMembership(snapshot, member.caId(), member.ordinal()))) { throw invalid(); }
                     }
                 }
@@ -547,6 +562,54 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    static Optional<CrlSignerLineage> lineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
+        return find(snapshot, CrlSignerLineageCodec.key(issuer), CrlSignerLineageCodec::decode);
+    }
+
+    private static void stageCrlLineages(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
+            AuthorityMetadataCodec.Head previous, Optional<LineageAuthority> authority) throws IOException {
+        int first = previous == null ? 0 : previous.membershipCount();
+        for (int ordinal = first; ordinal < ca.issuerIds().size(); ordinal++) {
+            var generation = requireGeneration(snapshot, ca.caId(), ca.issuerIds().get(ordinal));
+            var binding = findBinding(snapshot, generation.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+            if (binding.alternative().isEmpty()) continue;
+            if (lineage(snapshot, generation.issuerId()).isPresent()) throw invalid();
+            String tuple = authority.orElseThrow(() -> new UnsupportedOperationException("Configured hybrid CRL lineage authority unavailable"))
+                    .tuple(snapshot, generation, binding);
+            PkiId root = generation.issuerId();
+            Optional<PkiId> predecessor = previous == null ? Optional.empty() : Optional.of(previous.generationId());
+            if (predecessor.isPresent()) {
+                var priorBinding = findBinding(snapshot, predecessor.orElseThrow()).orElseThrow(AuthorityMetadataStore::invalid);
+                if (priorBinding.alternative().isPresent()) {
+                    var prior = requireLineage(snapshot, predecessor.orElseThrow());
+                    if (prior.signerTupleCommitment().equals(tuple)) root = prior.lineageId();
+                }
+            }
+            var value = new CrlSignerLineage(1, generation.issuerId(), predecessor, root, tuple, binding.commitment());
+            create(transaction, CrlSignerLineageCodec.key(generation.issuerId()), CrlSignerLineageCodec.encode(value));
+        }
+    }
+
+    static CrlSignerLineage requireLineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
+        var binding = findBinding(snapshot, issuer).orElseThrow(AuthorityMetadataStore::invalid);
+        if (binding.alternative().isEmpty()) throw new IllegalArgumentException("Native-only issuer has no qualified hybrid CRL lineage");
+        var value = lineage(snapshot, issuer).orElseThrow(() -> new IOException("Required hybrid CRL signer lineage is missing"));
+        if (!value.issuerBindingCommitment().equals(binding.commitment())) throw invalid();
+        if (value.predecessorSelectedIssuerId().isEmpty()) {
+            if (!value.lineageId().equals(issuer)) throw invalid();
+        } else {
+            var predecessor = findBinding(snapshot, value.predecessorSelectedIssuerId().orElseThrow()).orElseThrow(AuthorityMetadataStore::invalid);
+            if (predecessor.alternative().isEmpty()) {
+                if (!value.lineageId().equals(issuer)) throw invalid();
+            } else {
+                var prior = lineage(snapshot, predecessor.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+                PkiId expected = prior.signerTupleCommitment().equals(value.signerTupleCommitment()) ? prior.lineageId() : issuer;
+                if (!value.lineageId().equals(expected) || !prior.issuerBindingCommitment().equals(predecessor.commitment())) throw invalid();
+            }
+        }
+        return value;
+    }
+
     private static boolean sameAnchor(zeroecho.pki.api.ca.IssuerCryptographicBinding left, zeroecho.pki.api.ca.IssuerCryptographicBinding right) {
         return sameKey(left.primary(), right.primary()) && left.alternative().isPresent() == right.alternative().isPresent()
                 && (left.alternative().isEmpty() || sameKey(left.alternative().orElseThrow(), right.alternative().orElseThrow()));
@@ -563,7 +626,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             if (ca(snapshot, expected.caId()).orElseThrow(AuthorityMetadataStore::invalid).state() != replacement.state()) { return false; }
             if (!replacement.caId().equals(expected.caId())) { throw new IllegalArgumentException("Replacement CA differs from expected head authority"); }
             try (var transaction = metadata.beginTransaction()) {
-                stageCa(snapshot, transaction, replacement, history.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.of(expected), Optional.empty());
+                stageCa(snapshot, transaction, replacement, history.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.of(expected), Optional.empty(), lineageAuthority);
                 MetadataCommitResult result = transaction.commit();
                 outcome.accept(result);
                 if (result.outcome() == MetadataCommitResult.Outcome.NOT_COMMITTED) {
@@ -597,7 +660,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             if (!members.contains(transition.candidateIssuerId())) { members.add(transition.candidateIssuerId()); }
             CaRecord replacement = new CaRecord(ca.caId(), ca.kind(), ca.state(), ca.issuerKeyRef(), ca.subjectRef(), members, ca.currentIssuanceIssuerId(), ca.issuanceChainPathId());
             try (var transaction = metadata.beginTransaction()) {
-                stageCa(snapshot, transaction, replacement, history.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.of(head), Optional.empty());
+                stageCa(snapshot, transaction, replacement, history.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.of(head), Optional.empty(), lineageAuthority);
                 create(transaction, CaLifecycleMetadataCodec.transitionKey(transition.transitionId()), CaLifecycleMetadataCodec.encode(transition));
                 create(transaction, CaLifecycleMetadataCodec.candidateKey(transition.candidateIssuerId()), CaLifecycleMetadataCodec.encode(transition));
                 MetadataCommitResult result = transaction.commit();
@@ -633,7 +696,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             var generation = requireGeneration(snapshot, ca.caId(), transition.candidateIssuerId());
             CaRecord replacement = new CaRecord(ca.caId(), ca.kind(), ca.state(), generation.signingKeyRef(), ca.subjectRef(), ca.issuerIds(), generation.issuerId(), transition.candidatePathId());
             try (var transaction = metadata.beginTransaction()) {
-                stageCa(snapshot, transaction, replacement, history.enabled(), activation.acceptedAt(), Optional.of(expected), Optional.of(activation));
+                stageCa(snapshot, transaction, replacement, history.enabled(), activation.acceptedAt(), Optional.of(expected), Optional.of(activation), lineageAuthority);
                 create(transaction, CaLifecycleMetadataCodec.activationKey(transitionId), CaLifecycleMetadataCodec.encode(activation));
                 MetadataCommitResult result = transaction.commit();
                 if (definiteConflict(result)) {

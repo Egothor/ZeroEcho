@@ -144,9 +144,11 @@ final class HybridCertificateIssuanceTest {
     }
 
     @Test
-    void alternativeRootLifecyclePersistsBothSignaturesAndRejectsModeOrKeyChanges(@TempDir Path root) throws Exception {
+    void alternativeRootLifecyclePreservesCurrentRolesAndRejectsModeChanges(@TempDir Path root) throws Exception {
         HybridIssuanceFixture fixture = new HybridIssuanceFixture(root, "EC", "ECDSA", ECDSA_ALGORITHM,
                 HybridIssuanceFixture.alternative());
+        var changedCreationDefaults = new HybridCertificateMode.AltSignature(ML_DSA_65_ALGORITHM,
+                HybridIssuanceFixture.key("other-alt").value());
         java.util.List<zeroecho.pki.api.PkiId> credentials = new java.util.ArrayList<>();
         try (PkiSession session = fixture.open()) {
             zeroecho.pki.api.PkiId ca = fixture.create(session);
@@ -164,10 +166,17 @@ final class HybridCertificateIssuanceTest {
             for (int index = 0; index < credentials.size(); index++) {
                 fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey);
             }
+            var retainedRoles = fixture.store.getIssuerCryptographicBinding(
+                    fixture.store.getCa(ca).orElseThrow().currentIssuanceIssuerId()).orElseThrow();
             RootCreationFixture.install(fixture.store, fixture.profile("matrix-root", 2,
-                    CertificateProfileKind.ROOT_CA, new HybridCertificateMode.AltSignature(ML_DSA_65_ALGORITHM,
-                            HybridIssuanceFixture.key("other-alt").value())));
-            assertRejectedBeforeAcceptance(session, ca);
+                    CertificateProfileKind.ROOT_CA, changedCreationDefaults));
+            fixture.execute(session, new PkiSigningOperation.RolloverCaCertificate(ca, Optional.empty()));
+            credentials.add(fixture.current(ca));
+            fixture.verifyRoot(fixture.current(ca), fixture.rootKey, changedCreationDefaults);
+            var rolledRoles = fixture.store.getIssuerCryptographicBinding(
+                    fixture.store.getCa(ca).orElseThrow().currentIssuanceIssuerId()).orElseThrow();
+            assertEquals(retainedRoles.primary(), rolledRoles.primary());
+            assertEquals(retainedRoles.alternative(), rolledRoles.alternative());
             RootCreationFixture.install(fixture.store, fixture.profile("matrix-root", 3,
                     CertificateProfileKind.ROOT_CA, HybridCertificateMode.None.INSTANCE));
             assertRejectedBeforeAcceptance(session, ca);
@@ -190,7 +199,8 @@ final class HybridCertificateIssuanceTest {
             PkiSession session = fixture.open();
             try (session) {
                 for (int index = 0; index < credentials.size(); index++) {
-                    fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey);
+                    fixture.verifyRoot(credentials.get(index), index == 2 ? fixture.rotatedKey : fixture.rootKey,
+                            index == 3 ? changedCreationDefaults : fixture.mode);
                 }
             }
         }

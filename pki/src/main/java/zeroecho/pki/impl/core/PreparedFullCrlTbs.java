@@ -77,6 +77,7 @@ import zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier;
  * @param snapshotCommitment immutable snapshot commitment
  * @param rawEntryCount optional raw snapshot row count
  * @param emittedEntryCount exact emitted revocation count
+ * @param hybrid optional captured two-role alternative-transcript preparation
  * @param tbsContent completed operation-owned DER TBSCertList
  */
 public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, PkiId issuerCredentialId,
@@ -85,6 +86,100 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
         String signatureAlgorithm, X509AlgorithmBinding signatureBinding, X509AlgorithmIdentifier signatureIdentifier, BigInteger crlNumber,
         Instant evaluationTime, Instant thisUpdate, Instant nextUpdate, String snapshotId,
         MetadataStoreId snapshotSourceStoreId, long snapshotRevision, long snapshotBoundary, String snapshotCommitment, OptionalLong rawEntryCount,
-        long emittedEntryCount, DurableContentReference tbsContent, Optional<DeltaCrlBase> base) {
+        long emittedEntryCount, DurableContentReference tbsContent, Optional<DeltaCrlBase> base, Optional<Hybrid> hybrid) {
+    /**
+     * Checks hybrid carrier consistency against its actual selected CRL binding.
+     * Native-only carrier behavior is preserved. Cryptographic authority remains
+     * with configured preparation and the adoption verifier, not this constructor.
+     * @throws NullPointerException if a hybrid structural coordinate is null
+     * @throws IllegalArgumentException if captured roles or selected presentation disagree
+     */
+    public PreparedFullCrlTbs {
+        java.util.Objects.requireNonNull(hybrid, "hybrid");
+        if (hybrid.isPresent()) {
+            Hybrid selected = hybrid.orElseThrow();
+            var primary = selected.binding().primary();
+            if (!selected.binding().issuerId().equals(issuerGenerationId)
+                    || !selected.binding().authorityId().equals(authorityId)
+                    || !selected.binding().credentialId().equals(issuerCredentialId)
+                    || !selected.binding().profile().equals(profile)
+                    || !selected.binding().bindingSetCommitment().equals(x509BindingCommitment)
+                    || !primary.keyRef().equals(signingKeyRef)
+                    || !primary.signatureAlgorithm().canonicalForm().equals(signatureAlgorithm)
+                    || !signatureBinding.algorithmIdentity().equals(primary.signatureAlgorithm())
+                    || signatureBinding.role() != X509AlgorithmBinding.Role.CRL_SIGNATURE
+                    || !signatureBinding.oid().equals(signatureIdentifier.oid())
+                    || !(switch (signatureBinding.parameterRule()) {
+                        case ABSENT -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.ABSENT;
+                        case DER_NULL -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.DER_NULL;
+                        case STRUCTURED_DER -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.EXACT_DER;
+                    })) throw new IllegalArgumentException("Hybrid CRL selected native role differs");
+            requireAlgorithm(signatureIdentifier);
+            java.util.Objects.requireNonNull(tbsContent, "tbsContent");
+            if (tbsContent.encoding() != zeroecho.pki.api.Encoding.DER
+                    || tbsContent.lifecycle() != DurableContentReference.Lifecycle.OPERATION || tbsContent.length() <= 0)
+                throw new IllegalArgumentException("Hybrid CRL transcript content is invalid");
+        }
+    }
+
+    private static void requireAlgorithm(X509AlgorithmIdentifier identifier) {
+        byte[] der = zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(
+                zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.toLib(identifier));
+        try { new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(der, 16_384); }
+        catch (java.io.IOException invalid) { throw new IllegalArgumentException("Invalid CRL AlgorithmIdentifier", invalid); }
+    }
+
+    /**
+     * Preserves native-only prepared carriers.
+     * @param authorityId authority @param issuerGenerationId generation @param issuerCredentialId credential
+     * @param profile profile @param issuerContent issuer DER @param scopeDigest primary scope
+     * @param profilePolicyCommitment policy @param x509BindingCommitment registry
+     * @param signingKeyRef native key @param signatureAlgorithm native algorithm @param signatureBinding presentation
+     * @param signatureIdentifier native DER @param crlNumber number @param evaluationTime evaluation
+     * @param thisUpdate start @param nextUpdate end @param snapshotId snapshot @param snapshotSourceStoreId source
+     * @param snapshotRevision revision @param snapshotBoundary boundary @param snapshotCommitment snapshot commitment
+     * @param rawEntryCount raw count @param emittedEntryCount emitted count @param tbsContent native TBS @param base full base
+     */
+    public PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, PkiId issuerCredentialId,
+            CertificateProfileRef profile, DurableContentReference issuerContent, String scopeDigest,
+            String profilePolicyCommitment, String x509BindingCommitment, KeyRef signingKeyRef,
+            String signatureAlgorithm, X509AlgorithmBinding signatureBinding, X509AlgorithmIdentifier signatureIdentifier,
+            BigInteger crlNumber, Instant evaluationTime, Instant thisUpdate, Instant nextUpdate, String snapshotId,
+            MetadataStoreId snapshotSourceStoreId, long snapshotRevision, long snapshotBoundary, String snapshotCommitment,
+            OptionalLong rawEntryCount, long emittedEntryCount, DurableContentReference tbsContent, Optional<DeltaCrlBase> base) {
+        this(authorityId, issuerGenerationId, issuerCredentialId, profile, issuerContent, scopeDigest,
+                profilePolicyCommitment, x509BindingCommitment, signingKeyRef, signatureAlgorithm, signatureBinding,
+                signatureIdentifier, crlNumber, evaluationTime, thisUpdate, nextUpdate, snapshotId, snapshotSourceStoreId,
+                snapshotRevision, snapshotBoundary, snapshotCommitment, rawEntryCount, emittedEntryCount, tbsContent, base, Optional.empty());
+    }
+
+    /** Frozen hybrid role plans; public evidence only, no private keys or runtime executor tokens.
+     * @param binding immutable issuer roles @param alternativeIdentifier alternative CRL AlgorithmIdentifier
+     * @param tupleCommitment compatible signer tuple @param lineageId immutable signer lineage
+     * @param primaryPlanCommitment native implementation plan @param alternativePlanCommitment alternative implementation plan
+     * @param alternativeMaximumSignatureBytes public alternative bound @param primaryMaximumSignatureBytes public native bound
+     */
+    public record Hybrid(zeroecho.pki.api.ca.IssuerCryptographicBinding binding,
+            X509AlgorithmIdentifier alternativeIdentifier, String tupleCommitment, PkiId lineageId,
+            String primaryPlanCommitment, String alternativePlanCommitment,
+            int alternativeMaximumSignatureBytes, int primaryMaximumSignatureBytes) {
+        /**
+         * Checks bounded immutable structure; configured decoding and cryptographic checks remain mandatory.
+         * @throws NullPointerException if a structural coordinate is null
+         * @throws IllegalArgumentException for absent alternative role, invalid digest, DER or signature bound
+         */
+        public Hybrid {
+            java.util.Objects.requireNonNull(binding, "binding");
+            java.util.Objects.requireNonNull(alternativeIdentifier, "alternativeIdentifier");
+            java.util.Objects.requireNonNull(lineageId, "lineageId");
+            if (binding.alternative().isEmpty() || alternativeMaximumSignatureBytes < 1 || alternativeMaximumSignatureBytes > 1_048_576
+                    || primaryMaximumSignatureBytes < 1 || primaryMaximumSignatureBytes > 1_048_576)
+                throw new IllegalArgumentException("Invalid hybrid CRL role or bound");
+            for (String digest : new String[] {tupleCommitment, primaryPlanCommitment, alternativePlanCommitment})
+                if (digest == null || !digest.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid hybrid CRL plan commitment");
+            requireAlgorithm(alternativeIdentifier);
+        }
+    }
+
     @Override public String toString() { return "PreparedFullCrlTbs[redacted]"; }
 }

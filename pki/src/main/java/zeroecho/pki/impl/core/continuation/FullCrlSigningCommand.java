@@ -88,13 +88,18 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      * @return correlated durable command
      */
     public static DomainContinuationTemplate template(PreparedFullCrlTbs prepared) {
+        if (prepared.hybrid().isPresent()) throw new IllegalArgumentException("Hybrid CRL requires a captured parent identity");
+        return template(prepared, null);
+    }
+
+    /* default */ static DomainContinuationTemplate template(PreparedFullCrlTbs prepared, String hybridDescriptor) {
         String number = prepared.crlNumber().toString();
         boolean delta = prepared.base().isPresent();
         String correlation = (delta ? "delta-crl:" : "full-crl:") + DomainContinuationPublisher.sha256(
                 (prepared.scopeDigest() + ":" + number).getBytes(StandardCharsets.US_ASCII));
         String[] fields = {
                 prepared.authorityId().value(), delta ? "DELTA_CRL" : "CRL", "x509", prepared.thisUpdate().toString(),
-                prepared.nextUpdate().toString(), prepared.signingKeyRef().value(),
+                prepared.nextUpdate().toString(), hybridDescriptor == null ? prepared.signingKeyRef().value() : "",
                 prepared.issuerGenerationId().value(), prepared.issuerCredentialId().value(),
                 prepared.signatureAlgorithm(), HexFormat.of().formatHex(Pkix.encodeAlgorithmIdentifier(
                         BcX509AlgorithmAdapter.toLib(prepared.signatureIdentifier()))), number,
@@ -120,6 +125,10 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
                 throw new IllegalArgumentException("Delta CRL base source differs from its snapshot");
             }
         }
+        if (hybridDescriptor != null) {
+            fields = Arrays.copyOf(fields, fields.length + 1);
+            fields[fields.length - 1] = hybridDescriptor;
+        }
         return DomainCommandEncoding.correlatedTemplate(DomainContinuationStore.Kind.STATUS, correlation,
                 delta ? DELTA_OPERATION : OPERATION, fields);
     }
@@ -130,7 +139,9 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      */
     public static void validate(DomainCommandEncoding.Decoded command) {
         boolean delta = DELTA_OPERATION.equals(command.operation());
-        command.requireFields(delta ? 36 : 31);
+        boolean hybrid = CrlHybridSigningCommand.isHybrid(command);
+        command.requireFields((delta ? 36 : 31) + (hybrid ? 1 : 0));
+        if (hybrid) CrlHybridSigningCommand.descriptor(command);
         FullCrlSnapshotProvenance.from(command);
         if (!supports(command.operation()) || !(delta ? "DELTA_CRL" : "CRL").equals(command.field(1))
                 || !"x509".equals(command.field(2))) {
@@ -150,7 +161,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private static void validateIdentityAndValidity(DomainCommandEncoding.Decoded command) {
         for (int index : new int[] {0, 6, 7}) { new PkiId(command.field(index)); }
-        new KeyRef(command.field(5));
+        if (!CrlHybridSigningCommand.isHybrid(command)) new KeyRef(command.field(5));
         for (int index : new int[] {3, 4, 29}) {
             if (!Instant.parse(command.field(index)).toString().equals(command.field(index))) {
                 throw new IllegalStateException("Full CRL instant is noncanonical");
@@ -249,6 +260,21 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
     }
 
     /**
+     * Constructs the exact publication metadata used by the real CRL publisher.
+     * This pure factory performs no storage, signing or verification. Filesystem
+     * preflight may serialize bounded placeholder values without publishing them.
+     * @param id proposed content-addressed CRL status identity
+     * @param content proposed persisted CRL content metadata
+     * @param domain frozen full/delta parent continuation
+     * @param lineage exact immutable signer lineage for hybrid commands; null for native-only commands
+     * @return the publisher's complete typed status and attributes
+     */
+    public static StatusObject publicationStatus(PkiId id, DurableContentReference content,
+            DomainContinuationStore.Record domain, PkiId lineage) {
+        return FullCrlContinuationPublisher.status(id, content, domain, lineage);
+    }
+
+    /**
      * Resolves a completed result against authoritative publication metadata without reopening retired TBS.
      * @param store authoritative store containing the published status object
      * @param domain completed CRL continuation with a retained result
@@ -297,6 +323,10 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
         FullCrlContinuationPublisher.requirePublished(status, domain, status.content());
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(domain.command());
         validate(command);
+        if (CrlHybridSigningCommand.isHybrid(command)) {
+            requireHybridSigningEffect(store, status, domain, signature, command);
+            return;
+        }
         DurableContentReference tbs = domain.signingContent().orElseThrow();
         requireTbs(command, tbs);
         byte[] signed = signature.bytes();
@@ -327,6 +357,48 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 unavailable", impossible);
         } finally { Arrays.fill(signed, (byte) 0); }
+    }
+
+    private static void requireHybridSigningEffect(PkiStore store, StatusObject status, DomainContinuationStore.Record domain,
+            EncodedObject alternativeSignature, DomainCommandEncoding.Decoded command) throws IOException {
+        var execution = store.getCrlHybridExecution(domain.operationId()).orElseThrow();
+        var parent = store.getSignWorkflow(domain.operationId()).orElseThrow();
+        var child = store.getSignWorkflow(execution.nativeChildId()).orElseThrow();
+        var descriptor = CrlHybridSigningCommand.descriptor(command);
+        var tbs = execution.nativeTbs().orElseThrow();
+        if (!execution.nativeAcceptanceCommitment().orElseThrow().matches(child.envelope().acceptanceCommitment())
+                || !tbs.equals(child.envelope().candidate())
+                || !Arrays.equals(parent.result().orElseThrow().bytes(), alternativeSignature.bytes())
+                || alternativeSignature.encoding() != Encoding.BINARY
+                || alternativeSignature.bytes().length > descriptor.alternativeMaximumSignatureBytes()
+                || child.result().orElseThrow().encoding() != Encoding.BINARY
+                || !status.attributes().getAll(CrlHybridSigningCommand.SIGNER_LINEAGE).equals(java.util.List.of(
+                        new zeroecho.pki.api.attr.AttributeValue.StringValue(store.requireCrlSignerLineage(new PkiId(command.field(6))).value()))))
+            throw new IllegalStateException("Hybrid CRL signing effect differs from its retained graph");
+        byte[] signed = child.result().orElseThrow().bytes();
+        try {
+            if (signed.length == 0 || signed.length > descriptor.primaryMaximumSignatureBytes())
+                throw new IllegalStateException("Invalid native CRL signing result");
+            byte[] algorithm = HexFormat.of().parseHex(command.field(9));
+            long signatureLength = Math.addExact(1L, signed.length);
+            long bodyLength = Math.addExact(Math.addExact(tbs.length(), algorithm.length), StreamingDerWriter.encodedLength(signatureLength));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            MessageDigest inputDigest = MessageDigest.getInstance("SHA-256");
+            try (OutputStream output = new DigestOutputStream(OutputStream.nullOutputStream(), digest);
+                    RepeatableContent content = store.stagedContent().openContent(tbs);
+                    InputStream input = new java.security.DigestInputStream(content.openStream(), inputDigest)) {
+                StreamingDerWriter.writeTagAndLength(output, 0x30, bodyLength);
+                if (StreamingDerWriter.copy(input, output, CancellationSignal.NONE) != tbs.length()
+                        || !tbs.sha256().equals(HexFormat.of().formatHex(inputDigest.digest())))
+                    throw new IllegalStateException("Hybrid CRL native content differs");
+                output.write(algorithm);
+                StreamingDerWriter.writeTagAndLength(output, 0x03, signatureLength); output.write(0); output.write(signed);
+            }
+            if (status.content().length() != StreamingDerWriter.encodedLength(bodyLength)
+                    || !status.content().sha256().equals(HexFormat.of().formatHex(digest.digest())))
+                throw new IllegalStateException("Hybrid CRL differs from its actual native result");
+        } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+        finally { Arrays.fill(signed, (byte) 0); }
     }
 
     private static long nonnegative(String value) {

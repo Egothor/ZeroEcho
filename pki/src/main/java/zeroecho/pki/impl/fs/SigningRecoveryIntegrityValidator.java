@@ -80,6 +80,7 @@ final class SigningRecoveryIntegrityValidator {
     private final Map<MetadataKey, SigningMvccIndex.RecoveredRecord> records;
     private final Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation =
             new HashMap<>();
+    private final Map<String, String> hybridPublications = new HashMap<>();
     private long currentTrackedEnvelopeWorkspaceBytes; // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
     private long peakTrackedEnvelopeWorkspaceBytes; // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
 
@@ -108,13 +109,60 @@ final class SigningRecoveryIntegrityValidator {
                     new SigningRecoveryIntegrityValidator(root, manifest, recovered,
                             stagedContent);
             validator.validateGraph();
-            return new ValidatedSigningRecovery(validator.schedulingByOperation,
-                    validator.peakTrackedEnvelopeWorkspaceBytes,
+            var hybrids = validator.validateHybridGraph();
+            return new ValidatedSigningRecovery(validator.schedulingByOperation, hybrids,
+                    validator.hybridPublications, validator.peakTrackedEnvelopeWorkspaceBytes,
                     validator.currentTrackedEnvelopeWorkspaceBytes);
         } catch (MalformedRecoveryDataException | FsCodec.MalformedPayloadException
                 | RuntimeException failure) {
             throw new IntegrityException();
         }
+    }
+
+    private Map<String, zeroecho.pki.spi.store.CrlHybridExecution> validateHybridGraph() throws IOException {
+        Map<String, zeroecho.pki.spi.store.CrlHybridExecution> executions = new HashMap<>();
+        Set<MetadataKey> expectedReverse = new HashSet<>();
+        for (var entry : namespace(CrlHybridMetadata.EXECUTION_NAMESPACE).entrySet()) {
+            var execution = FsCodec.decodeRecovery(FsCodec.CRL_HYBRID_EXECUTION,
+                    readValue(entry.getValue()), stagedContent);
+            if (!entry.getKey().equals(CrlHybridMetadata.executionKey(execution.parentId()))
+                    || executions.put(execution.parentId().value(), execution) != null) throw malformed();
+            if (execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
+                expectedReverse.add(CrlHybridMetadata.reverseKey(execution.nativeChildId()));
+            }
+        }
+        if (!namespace(CrlHybridMetadata.REVERSE_NAMESPACE).keySet().equals(expectedReverse)) throw malformed();
+        if (executions.isEmpty()) {
+            if (!namespace(CrlHybridMetadata.REVERSE_NAMESPACE).isEmpty()) throw malformed();
+            return Map.of();
+        }
+        Map<String, String> parentsByCommand = new HashMap<>();
+        for (var execution : executions.values()) parentsByCommand.put(
+                execution.parentCommandCommitment(), execution.parentId().value());
+        for (var entry : namespace(SigningHybridCrlDependencies.STATUS).entrySet()) {
+            var status = FsCodec.decodeRecovery(FsCodec.STATUS_OBJECT,
+                    readValue(entry.getValue()), stagedContent);
+            String parent = parentsByCommand.get(SigningHybridCrlDependencies.publicationCommitment(status));
+            if (parent == null) continue;
+            if (!entry.getKey().equals(FilesystemPkiStore.statusRecordKey(status.statusObjectId()))
+                    || !records.containsKey(FilesystemPkiStore.statusOwnerKey(status.statusObjectId()))) throw malformed();
+            var domainRecord = records.get(new MetadataKey(DOMAIN_CONTINUATION_NAMESPACE, parent));
+            if (domainRecord == null) throw malformed();
+            var domain = FsCodec.decodeRecovery(FsCodec.DOMAIN_CONTINUATION, readValue(domainRecord), stagedContent);
+            FullCrlSigningCommand.requirePublicationMetadata(status, domain);
+            CrlHybridMetadata.requireOwnedPublication(status, executions.get(parent), key -> {
+                var record = records.get(key);
+                return record == null ? null : readValue(record);
+            }, stagedContent);
+            String old = hybridPublications.put(parent, status.statusObjectId().value());
+            if (old != null && !old.equals(status.statusObjectId().value())) throw malformed();
+        }
+
+        new SigningHybridCrlDependencies(stagedContent).recover(executions, key -> {
+            var record = records.get(key);
+            return record == null ? null : readValue(record);
+        });
+        return Map.copyOf(executions);
     }
 
     private void validateGraph() throws IOException {
@@ -400,9 +448,13 @@ final class SigningRecoveryIntegrityValidator {
     /** Immutable projection inputs produced by the one semantic-validation pass. */
     /* default */ record ValidatedSigningRecovery(
             Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation,
+            Map<String, zeroecho.pki.spi.store.CrlHybridExecution> hybridExecutions,
+            Map<String, String> hybridPublications,
             long peakTrackedEnvelopeWorkspaceBytes, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
             long currentTrackedEnvelopeWorkspaceBytes) { // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
         ValidatedSigningRecovery {
+            hybridExecutions = Map.copyOf(hybridExecutions);
+            hybridPublications = Map.copyOf(hybridPublications);
             schedulingByOperation = Map.copyOf(Objects.requireNonNull(
                     schedulingByOperation, "schedulingByOperation"));
             if (peakTrackedEnvelopeWorkspaceBytes < 0
@@ -441,10 +493,31 @@ final class SigningRecoveryIntegrityValidator {
         }
         if (FullCrlSigningCommand.supports(command.operation())) {
             FullCrlSigningCommand.requireTbs(command, envelope.candidate());
-            if (!envelope.algorithmId().equals(command.field(8))) { throw malformed(); }
+            if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)) {
+                validateHybridParentRole(envelope, command);
+            } else if (!envelope.algorithmId().equals(command.field(8))) { throw malformed(); }
         }
         if (zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(command.operation())) {
             zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.requireEnvelope(envelope);
         }
     }
+    /** Hybrid parents sign the alternative transcript; field 8 remains the native child's algorithm. */
+    private void validateHybridParentRole(SignWorkflowStore.AcceptanceEnvelope envelope,
+            DomainCommandEncoding.Decoded command) throws IOException {
+        PkiId issuer = new PkiId(command.field(6));
+        var generationRecord = records.get(AuthorityMetadataCodec.generationKey(issuer));
+        var bindingRecord = records.get(AuthorityMetadataCodec.bindingKey(issuer));
+        if (generationRecord == null || bindingRecord == null) throw malformed();
+        var generation = FsCodec.decodeRecovery(FsCodec.ISSUER_GENERATION,
+                readValue(generationRecord), stagedContent);
+        var binding = IssuerBindingStorageCodec.decode(readValue(bindingRecord), generation);
+        var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
+        var alternative = binding.alternative().orElseThrow(SigningRecoveryIntegrityValidator::malformed);
+        if (!issuer.equals(generation.issuerId())
+                || !binding.commitment().equals(descriptor.issuerBindingCommitment())
+                || !binding.authorityId().equals(envelope.fairnessAuthorityId())
+                || !alternative.keyRef().equals(envelope.keyRef())
+                || !alternative.signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())) throw malformed();
+    }
+
 }

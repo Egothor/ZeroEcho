@@ -42,6 +42,50 @@ import org.junit.jupiter.api.Test;
 final class SigningIndexCapacityBudgetTest {
 
     @Test
+    void privateFutureAllowanceSurvivesRollbackAndCannotBeStolenByOtherParents() {
+        SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(300L);
+        for (int parent = 0; parent < 3; parent++) {
+            try (var reserved = budget.reserve(100L)) { reserved.transfer(); }
+        }
+        assertThrows(IllegalStateException.class, () -> budget.reserve(1L));
+        try (var loan = budget.borrowCommitted(100L)) {
+            var insertion = budget.reserve(60L);
+            assertThrows(IllegalStateException.class, () -> budget.reserve(41L));
+            insertion.close();
+            loan.detach();
+            assertThrows(IllegalStateException.class, () -> budget.reserve(1L));
+        }
+        assertEquals(300L, budget.snapshot().reservedBytes());
+        try (var loan = budget.borrowCommitted(100L)) {
+            var insertion = budget.reserve(60L);
+            loan.detach();
+            insertion.transfer();
+            insertion.close();
+            loan.publish(40L);
+        }
+        assertEquals(300L, budget.snapshot().reservedBytes());
+        budget.releaseCommitted(60L);
+        budget.releaseCommitted(240L);
+        assertEquals(0L, budget.snapshot().reservedBytes());
+    }
+
+    @Test
+    void borrowedProtectedAllocationsRollbackTheirAccountingClass() {
+        var budget = new SigningIndexCapacityBudget(300L, 50L);
+        try (var escrow = budget.reserve(200L)) { escrow.transfer(); }
+        try (var loan = budget.borrowCommitted(200L)) {
+            var nodes = budget.reserve(90L,
+                    SigningTransitionWorkspaceSizing.AdmissionClass.PROTECTED_ACCEPTED_SIGNING);
+            assertEquals(90L, budget.protectedReservedBytes());
+            loan.detach();
+            nodes.close();
+        }
+        assertEquals(200L, budget.ordinaryReservedBytes());
+        assertEquals(0L, budget.protectedReservedBytes());
+        budget.releaseCommitted(200L);
+    }
+
+    @Test
     void exactBoundaryAndRollbackAreDeterministic() {
         SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(256L);
         try (SigningIndexCapacityBudget.Reservation first = budget.reserve(128L)) {

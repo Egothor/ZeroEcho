@@ -538,6 +538,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                         base.stage(), base.proofOutcome(), readCaProofOutcome(reader));
             }));
 
+    /* default */ static final Schema<zeroecho.pki.spi.store.CrlHybridExecution> CRL_HYBRID_EXECUTION = topLevel(
+            23, "CRL_HYBRID_EXECUTION", valueSchema(135, FsCodec::writeCrlHybridExecution, FsCodec::readCrlHybridExecution));
+
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
@@ -550,7 +553,7 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
             Map.entry(TOP_DOMAIN_CONTINUATION, DOMAIN_CONTINUATION),
             Map.entry(TOP_SIGN_MUTABLE_STATE, SIGN_MUTABLE_STATE),
             Map.entry(TOP_SIGN_CANDIDATE_BINDING, SIGN_CANDIDATE_BINDING),
-            Map.entry(21, DUAL_SIGN_ACCEPTANCE), Map.entry(22, DUAL_SIGN_STATE), Map.entry(18, CA_BASE), Map.entry(19, CA_HEAD), Map.entry(20, CA_MEMBERSHIP));
+            Map.entry(23, CRL_HYBRID_EXECUTION), Map.entry(21, DUAL_SIGN_ACCEPTANCE), Map.entry(22, DUAL_SIGN_STATE), Map.entry(18, CA_BASE), Map.entry(19, CA_HEAD), Map.entry(20, CA_MEMBERSHIP));
 
     @SuppressWarnings("unchecked")
     private static <T> T decodeCompatible(Schema<?> schema, byte[] encoded, StagedContentStore content) throws IOException {
@@ -762,7 +765,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
     }
 
     private static void writeAttributeSet(Writer writer, AttributeSet value) throws IOException {
-        List<AttributeId> ids = List.copyOf(value.ids());
+        // AttributeSet exposes a set, whose iteration order is not a persistence contract.
+        List<AttributeId> ids = value.ids().stream()
+                .sorted(java.util.Comparator.comparing(AttributeId::value)).toList();
         writer.writeCount(ids.size());
         for (AttributeId id : ids) {
             writer.writeValue(ATTRIBUTE_ID, id);
@@ -1100,6 +1105,33 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                 zeroecho.pki.spi.crypto.SigningProvider.ObservationState.valueOf(reader.readValue(STRING)),
                 zeroecho.pki.spi.crypto.SigningProvider.DetailCode.valueOf(reader.readValue(STRING)),
                 reader.readValue(OPTIONAL_INSTANT))) : Optional.empty();
+    }
+
+    private static void writeCrlHybridExecution(Writer writer, zeroecho.pki.spi.store.CrlHybridExecution value) throws IOException {
+        writer.writeInt(value.version()); writer.writeValue(PKI_ID, value.parentId());
+        writer.writeValue(STRING, value.parentCommandCommitment()); writer.writeValue(STRING, value.issuerBindingCommitment());
+        writer.writeValue(STRING, value.roleTupleCommitment()); writer.writeValue(PKI_ID, value.nativeChildId());
+        writer.writeInt(value.phase().persistentCode()); writer.writeValue(LONG, value.revision());
+        writer.writeBoolean(value.nativeAcceptanceCommitment().isPresent());
+        if (value.nativeAcceptanceCommitment().isPresent()) {
+            writer.writeValue(STRING, value.nativeAcceptanceCommitment().orElseThrow().encoded());
+            writer.writeValue(DURABLE_CONTENT, value.nativeTbs().orElseThrow());
+            writer.writeValue(STRING, value.alternativeSignatureSha256().orElseThrow());
+        }
+    }
+
+    private static zeroecho.pki.spi.store.CrlHybridExecution readCrlHybridExecution(Reader reader) throws IOException {
+        int version = reader.readInt(); PkiId parent = reader.readValue(PKI_ID);
+        String command = reader.readValue(STRING), binding = reader.readValue(STRING), tuple = reader.readValue(STRING);
+        PkiId child = reader.readValue(PKI_ID);
+        var phase = SignWorkflowStore.CrlHybridPhase.fromPersistentCode(reader.readInt()); long revision = reader.readValue(LONG);
+        boolean linked = reader.readBoolean();
+        Optional<SignWorkflowStore.AcceptanceCommitment> acceptance = linked
+                ? Optional.of(SignWorkflowStore.AcceptanceCommitment.parse(reader.readValue(STRING))) : Optional.empty();
+        Optional<DurableContentReference> tbs = linked ? Optional.of(reader.readValue(DURABLE_CONTENT)) : Optional.empty();
+        Optional<String> signature = linked ? Optional.of(reader.readValue(STRING)) : Optional.empty();
+        return new zeroecho.pki.spi.store.CrlHybridExecution(version, parent, command, binding, tuple, child, phase, revision,
+                acceptance, tbs, signature);
     }
 
     private static void writeSignCandidateBinding(Writer writer,

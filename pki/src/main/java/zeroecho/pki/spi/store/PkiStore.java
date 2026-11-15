@@ -247,6 +247,21 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
     boolean compareAndSetCaHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement);
 
     /**
+     * Returns the immutable CRL signer lineage for one explicitly requested issuer.
+     * Implementations verify completed CA membership and the exact retained
+     * binding/tuple witness; missing evidence is never inferred from today's
+     * head, optional history, or another generation. Historical issuers retain
+     * their original lineage after later head selections and signing-workflow purge.
+     * @param issuerId exact retained issuer-generation identifier
+     * @return canonical generated issuer identifier rooting its signer lineage
+     * @throws UnsupportedOperationException if lineage validation is unavailable
+     * @throws IllegalStateException if membership or immutable witness evidence is absent or inconsistent
+     */
+    default PkiId requireCrlSignerLineage(PkiId issuerId) {
+        throw new UnsupportedOperationException("CRL signer-lineage validation unavailable");
+    }
+
+    /**
      * Atomically selects a registered root candidate and retains its approved acknowledgment receipt.
      * Exact receipt replay cannot rewind a later head; altered retries conflict.
      * @param transitionId registered candidate

@@ -161,6 +161,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /** Returns the fixed resident allocation for one projected due entry. */
+    /* default */ static long entryResidentBytes() { return ENTRY_FIXED_BYTES; }
+
     /** Reserves one new due-work entry before its operation identity exists. */
     /* default */ Admission reserveAdmission() {
         writeLock.lock();
@@ -319,6 +322,44 @@ final class SigningDueWorkIndex implements AutoCloseable {
                     operationSlot, previous, reservation);
             return prepareReplacement(admission, operationId, nextEligibleAt, state, pointer,
                     scheduling, malformed, replacementTarget);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /**
+     * Prepares an exclusive transfer of one published due slot. The donor remains
+     * visible until publication; rollback preserves it. Only the dependency
+     * graph may select a donor after validating the persisted parent/child fence.
+     */
+    /* default */ PreparedChange prepareHandoff(CanonicalOperationId donor,
+            CanonicalOperationId receiver, Instant eligible, SignWorkflowStore.State state,
+            SigningMvccIndex.RecordPointer pointer,
+            SignWorkflowStore.SchedulingCoordinates scheduling,
+            SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
+        writeLock.lock();
+        PreparedChange removal = null;
+        try {
+            requireOpen();
+            if (donor.equals(receiver) || byOperation.containsKey(receiver)) {
+                throw new IllegalArgumentException("signing due-work handoff receiver is invalid");
+            }
+            OperationSlot source = byOperation.get(donor);
+            requireReusedIdentity(donor, source);
+            if (source == null || source.published == null || source.pending) {
+                throw new IllegalStateException("signing due-work handoff donor is unavailable");
+            }
+            removal = prepareRemove(donor);
+            SigningIndexCapacityBudget.Reservation reservation = capacity.reserve(
+                    ENTRY_FIXED_BYTES, admissionClass);
+            PreparedChange replacement = prepareReplacement(null, receiver, eligible,
+                    state, pointer, scheduling, false,
+                    new ReplacementTarget(null, null, reservation));
+            replacement.handoffDonor = removal;
+            return replacement;
+        } catch (RuntimeException failure) {
+            if (removal != null) removal.close();
+            throw failure;
         } finally {
             writeLock.unlock();
         }
@@ -1172,6 +1213,7 @@ final class SigningDueWorkIndex implements AutoCloseable {
         private final SigningIndexCapacityBudget.Reservation reservation;
         private final SigningGenerationRegistry.CurrentReferences reference;
         private boolean active;
+        private PreparedChange handoffDonor;
 
         private PreparedChange(OperationSlot operationSlot, DueKey previousKey,
                 DescriptorSlot previousSlot, DueKey replacementKey,
@@ -1204,6 +1246,7 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 if (!operationSlot.pending) {
                     throw new IllegalStateException("signing due-work prepared ownership is inconsistent");
                 }
+                if (handoffDonor != null) handoffDonor.publish();
                 WorkDescriptor previous = previousSlot == null ? null : previousSlot.published;
                 if (replacement == null) {
                     previousSlot.published = null;
@@ -1261,6 +1304,7 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 }
                 if (reference != null) reference.close();
                 if (reservation != null) reservation.close();
+                if (handoffDonor != null) handoffDonor.close();
             } finally {
                 writeLock.unlock();
             }

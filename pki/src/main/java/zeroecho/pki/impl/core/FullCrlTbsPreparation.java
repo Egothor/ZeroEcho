@@ -81,12 +81,13 @@ final class FullCrlTbsPreparation {
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         X509AlgorithmIdentifier signature = prepared.signatureIdentifier();
         X509Certificate certificate = Pkix.parseCertificate(prepared.issuerDer());
-        byte[] extension = certificate.getExtensionValue("2.5.29.14"); // NOPMD - AvoidUsingHardCodedIP: X.509 SubjectKeyIdentifier OID, not an IP address.
-        byte[] keyIdentifier = extension == null ? Pkix.subjectKeyIdentifier(certificate.getPublicKey())
-                : decodeKeyIdentifier(extension);
-        StreamingX509CrlTbsWriter writer = new StreamingX509CrlTbsWriter(signature,
-                certificate.getSubjectX500Principal().getEncoded(), keyIdentifier, prepared.thisUpdate(), prepared.nextUpdate(),
-                prepared.base().map(DeltaCrlBase::crlNumber));
+        byte[] keyIdentifier = CrlSigningRoleTuple.keyIdentifier(certificate);
+        StreamingX509CrlTbsWriter writer = prepared.hybrid().isPresent()
+                ? StreamingX509CrlTbsWriter.forAlternativeSignature(prepared.hybrid().orElseThrow().alternativeIdentifier(),
+                        certificate.getSubjectX500Principal().getEncoded(), keyIdentifier, prepared.thisUpdate(), prepared.nextUpdate(),
+                        prepared.base().map(DeltaCrlBase::crlNumber))
+                : new StreamingX509CrlTbsWriter(signature, certificate.getSubjectX500Principal().getEncoded(), keyIdentifier,
+                        prepared.thisUpdate(), prepared.nextUpdate(), prepared.base().map(DeltaCrlBase::crlNumber));
         StagedContentStore staging = store.stagedContent();
         String localStoreId = Objects.requireNonNull(staging.contentStoreId(), "contentStoreId");
         DurableContentReference content = null;
@@ -124,7 +125,7 @@ final class FullCrlTbsPreparation {
                         prepared.generation().signingKeyRef(), prepared.signatureBinding().algorithmIdentity().canonicalForm(),
                         prepared.signatureBinding(), signature, number, prepared.evaluationTime(), prepared.thisUpdate(), prepared.nextUpdate(),
                         source.snapshotId(), source.sourceStoreId(), source.revision(), source.boundary(), source.commitment(), source.rawCount(),
-                        measurement.entryCount(), content, prepared.base());
+                        measurement.entryCount(), content, prepared.base(), prepared.hybrid());
             }
             cancellation.throwIfCancelled();
             return result;

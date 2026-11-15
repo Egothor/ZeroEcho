@@ -125,13 +125,21 @@ class FullCrlTbsPreparationTest {
         issuerDer = certificateWithSki(null);
     }
 
-    private static byte[] certificateWithSki(byte[] innerDer) throws Exception {
+    private static byte[] certificateWithSki(byte[] innerDer) throws Exception { return certificateWithSki(innerDer, false); }
+
+    private static byte[] certificateWithSki(byte[] innerDer, boolean hybrid) throws Exception {
         X500Name name = new X500Name("CN=Issuer");
         JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(name, BigInteger.ONE,
                 Date.from(BEFORE), Date.from(AFTER), name, key.getPublic());
         builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
         builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
         if (innerDer != null) { builder.addExtension(Extension.subjectKeyIdentifier, false, innerDer); }
+        if (hybrid) {
+            builder.addExtension(new org.bouncycastle.asn1.ASN1ObjectIdentifier("2.5.29.72"), false,
+                    org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(key.getPublic().getEncoded()));
+            return builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate()), false,
+                    new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate())).getEncoded();
+        }
         return builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate())).getEncoded();
     }
 
@@ -175,14 +183,44 @@ class FullCrlTbsPreparationTest {
             new StreamingDerReader().validate(fixture.output.toByteArray(), fixture.output.size());
             Set<Class<?>> allowed = Set.of(PkiId.class, CertificateProfileRef.class, DurableContentReference.class,
                     String.class, KeyRef.class, X509AlgorithmBinding.class, BigInteger.class, Instant.class,
-                    long.class, OptionalLong.class, Optional.class, X509AlgorithmIdentifier.class, zeroecho.pki.spi.store.MetadataStoreId.class);
-            for (RecordComponent component : PreparedFullCrlTbs.class.getRecordComponents()) {
-                assertTrue(allowed.contains(component.getType()), component.getName());
-                if (component.getType() == Optional.class) {
-                    assertEquals("java.util.Optional<zeroecho.pki.impl.core.DeltaCrlBase>", component.getGenericType().getTypeName());
+                    long.class, int.class, zeroecho.pki.api.ca.IssuerCryptographicBinding.class,
+                    OptionalLong.class, Optional.class, X509AlgorithmIdentifier.class, zeroecho.pki.spi.store.MetadataStoreId.class);
+            for (Class<?> carrier : List.of(PreparedFullCrlTbs.class, PreparedFullCrlTbs.Hybrid.class)) {
+                for (RecordComponent component : carrier.getRecordComponents()) {
+                    assertTrue(allowed.contains(component.getType()), component.getName());
+                    if (component.getType() == Optional.class) {
+                        assertEquals(java.util.Map.of("base", "java.util.Optional<zeroecho.pki.impl.core.DeltaCrlBase>",
+                                "hybrid", "java.util.Optional<zeroecho.pki.impl.core.PreparedFullCrlTbs$Hybrid>").get(component.getName()),
+                                component.getGenericType().getTypeName());
+                    }
                 }
             }
         }
+    }
+
+    @Test void hybridStagingStreamsAlternativeTranscriptAndPreservesTwoPassCustody() throws Exception {
+        Fixture fixture = new Fixture(2, certificateWithSki(null, true), true);
+        PreparedFullCrlTbs staged = fixture.run();
+        assertTrue(staged.hybrid().isPresent());
+        try (var content = new ImmutableByteContent(fixture.output.toByteArray())) {
+            var layout = new zeroecho.pki.impl.framework.x509.StreamingDerReader().inspectAlternativeCrlTbs(content, CancellationSignal.NONE);
+            assertEquals(BigInteger.ONE, layout.crlNumber());
+            assertEquals(NOW, layout.thisUpdate());
+            assertArrayEquals(zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(
+                    zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.toLib(staged.hybrid().orElseThrow().alternativeIdentifier())),
+                    layout.alternativeAlgorithmDer());
+        }
+        assertEquals(2, staged.emittedEntryCount());
+        assertEquals(1, fixture.reservations);
+        assertEquals(2, fixture.cursorCloses);
+        assertEquals(1, fixture.completions);
+        assertEquals(0, fixture.retirements);
+        Fixture cancelled = new Fixture(2, certificateWithSki(null, true), true);
+        cancelled.cut = Cut.CANCEL_WRITE;
+        assertThrows(IOException.class, cancelled::run);
+        assertEquals(1, cancelled.reservations);
+        assertEquals(0, cancelled.completions);
+        assertEquals(1, cancelled.aborts);
     }
 
     @Test void firstPassReadCloseAndCancellationFailuresDoNotReserveOrOpenSink() throws Exception {
@@ -306,6 +344,7 @@ class FullCrlTbsPreparationTest {
 
     private static final class Fixture {
         private final int count;
+        private final boolean hybrid;
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final ByteArrayOutputStream output = new ByteArrayOutputStream();
         private final X509AuthoritySnapshot authority = PkiTestRuntime.signingAuthority(new EndEntityIssuancePreparationTest.CountingProvider());
@@ -330,8 +369,11 @@ class FullCrlTbsPreparationTest {
             this(count, issuerDer);
         }
 
-        private Fixture(int count, byte[] exactIssuerDer) throws Exception {
+        private Fixture(int count, byte[] exactIssuerDer) throws Exception { this(count, exactIssuerDer, false); }
+
+        private Fixture(int count, byte[] exactIssuerDer, boolean hybrid) throws Exception {
             this.count = count;
+            this.hybrid = hybrid;
             this.exactIssuerDer = exactIssuerDer;
             PkiId caId = new PkiId("ca");
             PkiId credentialId = new PkiId("issuer");
@@ -345,9 +387,12 @@ class FullCrlTbsPreparationTest {
                     new SimpleAttributeSet());
             byte[] spki = zeroecho.pkix.Pkix.subjectPublicKeyInfo(zeroecho.pkix.Pkix.parseCertificate(exactIssuerDer));
             var issuerBinding = IssuerBindingResolver.create(generation, exactIssuerDer, "x509",
-                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, Optional.empty(),
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, hybrid
+                            ? Optional.of(new IssuerBindingResolver.AlternativeSelection(new KeyRef("alternative"), BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256))
+                            : Optional.empty(),
                     referenceKey -> new zeroecho.pki.api.EncodedObject(Encoding.DER, spki), authority,
-                    zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, PROFILE,
+                    hybrid ? zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.LEGACY_PRE_TBS
+                            : zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline.NONE, PROFILE,
                     zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT);
             CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, generation.signingKeyRef(), issuer.subjectRef(),
                     List.of(generationId), generationId, new PkiId("path"));
@@ -356,7 +401,16 @@ class FullCrlTbsPreparationTest {
             prepared = new FullCrlPreparation.Prepared(ca, generation, credentialId, PROFILE, issuer.content(),
                     CrlScope.of(new X500Name("CN=Issuer").getEncoded(), key.getPublic().getEncoded()), binding,
                     authority.planSigning(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), SigningProvider.class).selection().binding(),
-                    NOW.plusNanos(5), NOW, NOW.plusSeconds(3600), exactIssuerDer, Optional.empty());
+                    NOW.plusNanos(5), NOW, NOW.plusSeconds(3600), exactIssuerDer, Optional.empty(), hybrid
+                            ? Optional.of(new PreparedFullCrlTbs.Hybrid(issuerBinding,
+                                    authority.planSigning(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), SigningProvider.class).selection().binding(),
+                                    CrlSigningRoleTuple.commitment(issuerBinding, zeroecho.pkix.Pkix.parseCertificate(exactIssuerDer),
+                                            issuerBinding.primary().signatureAlgorithmIdentifier().bytes(), issuerBinding.alternative().orElseThrow().signatureAlgorithmIdentifier().bytes()),
+                                    generationId, CrlSigningRoleTuple.planCommitment(authority.planSigning(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), SigningProvider.class),
+                                            binding.bindingId(), binding.semanticCommitment()),
+                                    CrlSigningRoleTuple.planCommitment(authority.planSigning(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), SigningProvider.class),
+                                            binding.bindingId(), binding.semanticCommitment()), 256, 256))
+                            : Optional.empty());
             StagedContentStore staging = (StagedContentStore) Proxy.newProxyInstance(StagedContentStore.class.getClassLoader(),
                     new Class<?>[] {StagedContentStore.class}, (proxy, method, args) -> switch (method.getName()) {
                         case "contentStoreId" -> "store";
@@ -412,7 +466,9 @@ class FullCrlTbsPreparationTest {
         }
 
         private Credential leaf(PkiId id) {
-            String serial = cut == Cut.DIVERGENT_LENGTH && cursorOpens == 2 ? "128" : "2";
+            // Credential-ID traversal is not numeric-serial ordering; hybrid inputs deliberately descend 3, 2.
+            String serial = hybrid ? Integer.toString(3 - Integer.parseInt(id.value().substring("leaf".length())))
+                    : cut == Cut.DIVERGENT_LENGTH && cursorOpens == 2 ? "128" : "2";
             return new Credential(id, new FormatId("x509"), issuer.issuerRef(), new SubjectRef("CN=Leaf"),
                     issuer.validity(), serial, new PkiId("leaf-key"), new EndEntityProfileBinding(PROFILE),
                     CredentialStatus.ISSUED, issuer.content(), new SimpleAttributeSet());

@@ -40,6 +40,7 @@ import java.util.Objects;
 public final class PkiStoreRuntimeDependencies {
     private final Clock clock;
     private final java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier;
+    private final java.util.Optional<CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier;
 
     /**
      * Creates dependencies with one authoritative store clock.
@@ -50,6 +51,7 @@ public final class PkiStoreRuntimeDependencies {
     public PkiStoreRuntimeDependencies(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.issuerAlgorithmEvidenceVerifier = java.util.Optional.empty();
+        this.crlHybridNativeChildVerifier = java.util.Optional.empty();
     }
 
     /**
@@ -60,6 +62,27 @@ public final class PkiStoreRuntimeDependencies {
     public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.issuerAlgorithmEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
+        this.crlHybridNativeChildVerifier = java.util.Optional.empty();
+    }
+
+    /**
+     * Creates immutable process-local public verification authorities for issuer
+     * metadata and streamed hybrid CRL child adoption. Neither callback supplies
+     * private keys or signing capability; implementations must be thread-safe.
+     * @param clock authoritative store clock
+     * @param verifier trusted configured public issuer algorithm verifier
+     * @param crlVerifier trusted configured pure hybrid CRL adoption verifier
+     */
+    public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier,
+            CrlHybridNativeChildVerifier crlVerifier) {
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.issuerAlgorithmEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
+        this.crlHybridNativeChildVerifier = java.util.Optional.of(Objects.requireNonNull(crlVerifier, "crlVerifier"));
+    }
+
+    /** @return optional configured public verification for hybrid native-child adoption */
+    public java.util.Optional<CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier() {
+        return crlHybridNativeChildVerifier;
     }
 
     /** @return optional configured public issuer validation, with no private-key capability */

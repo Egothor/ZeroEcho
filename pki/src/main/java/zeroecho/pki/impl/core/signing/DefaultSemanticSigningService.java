@@ -567,9 +567,23 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         try {
             signing.requireAvailable();
             Objects.requireNonNull(cancellation, CANCELLATION_ARGUMENT).throwIfCancelled();
-            DomainSigningRequest domain = new DomainSigningRequest(signing.newSubmissionId().id(), access,
-                    prepared.signingKeyRef(), prepared.signatureAlgorithm(), Encoding.BINARY,
-                    prepared.tbsContent(), signing.signingTtl(), FullCrlSigningCommand.template(prepared), Optional.empty());
+            var parent = signing.newSubmissionId();
+            var hybrid = prepared.hybrid();
+            if (hybrid.isPresent()) {
+                try (var input = store.stagedContent().openContent(prepared.tbsContent())) {
+                    long maximumNativeLength = zeroecho.pki.impl.framework.x509.StreamingCrlAlternativeSignature.completeTbs(
+                            input, prepared.signatureIdentifier(), new byte[hybrid.orElseThrow().alternativeMaximumSignatureBytes()],
+                            java.io.OutputStream.nullOutputStream(), cancellation);
+                    FullCrlSigningCommand.requireAdmission(prepared.signatureAlgorithm(), maximumNativeLength, pureEdDsaMaximumTbsBytes);
+                }
+            }
+            DomainSigningRequest domain = new DomainSigningRequest(parent.id(), access,
+                    hybrid.map(value -> value.binding().alternative().orElseThrow().keyRef()).orElse(prepared.signingKeyRef()),
+                    hybrid.map(value -> value.binding().alternative().orElseThrow().signatureAlgorithm().canonicalForm())
+                            .orElse(prepared.signatureAlgorithm()), Encoding.BINARY,
+                    prepared.tbsContent(), signing.signingTtl(), hybrid.isPresent()
+                            ? zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.template(prepared, parent.id())
+                            : FullCrlSigningCommand.template(prepared), Optional.empty());
             return prepare(domain, prepared.authorityId());
         } catch (IOException | RuntimeException | Error primary) {
             try { store.stagedContent().retireUnownedContent(prepared.tbsContent()); }
@@ -835,7 +849,19 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         }
         if (FullCrlSigningCommand.supports(command.operation())) {
             FullCrlSigningCommand.requireTbs(command, exact.content());
-            if (!command.field(8).equals(exact.algorithmId())) {
+            String expectedAlgorithm = command.field(8);
+            if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)) {
+                var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
+                var binding = store.getIssuerCryptographicBinding(new PkiId(command.field(6))).orElseThrow();
+                var alternative = binding.alternative().orElseThrow();
+                if (!binding.commitment().equals(descriptor.issuerBindingCommitment())
+                        || !binding.primary().signatureAlgorithm().canonicalForm().equals(command.field(8))
+                        || !alternative.keyRef().equals(exact.keyRef())
+                        || !binding.authorityId().equals(fairnessAuthorityId))
+                    throw new IllegalArgumentException("Hybrid CRL parent role differs");
+                expectedAlgorithm = alternative.signatureAlgorithm().canonicalForm();
+            }
+            if (!expectedAlgorithm.equals(exact.algorithmId())) {
                 throw new IllegalArgumentException("Full CRL signing algorithm differs");
             }
             FullCrlSigningCommand.requireAdmission(exact.algorithmId(), exact.content().length(), pureEdDsaMaximumTbsBytes);
@@ -982,6 +1008,30 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
     @Override public Optional<SemanticSigningOperation> cancel(PkiId operationId) {
         if (find(operationId).isEmpty()) {
             return Optional.empty();
+        }
+        var domain = store.getDomainContinuation(operationId).orElseThrow();
+        if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(DomainCommandEncoding.decode(domain.command()))
+                && (domain.state() == DomainContinuationStore.State.SIGNING || domain.state() == DomainContinuationStore.State.PUBLISHING)) {
+            var parent = store.getSignWorkflow(operationId).orElseThrow();
+            if (parent.state() == SignWorkflowStore.State.SUCCEEDED) {
+                var execution = store.getCrlHybridExecution(operationId).orElseThrow();
+                if (execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) signing.cancel(execution.nativeChildId());
+                else {
+                    boolean cancelled = false;
+                    try {
+                        cancelled = store.transitionDomainContinuation(operationId, domain.revision(), DomainContinuationStore.State.FAILED,
+                                Optional.empty(), Optional.of("CANCELLED")).isPresent();
+                    } catch (IllegalStateException conflict) {
+                        var changed = store.getCrlHybridExecution(operationId).orElseThrow();
+                        if (changed.phase() != SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) throw conflict;
+                    }
+                    if (!cancelled) {
+                        var changed = store.getCrlHybridExecution(operationId).orElseThrow();
+                        if (changed.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) signing.cancel(changed.nativeChildId());
+                    }
+                }
+                return find(operationId);
+            }
         }
         signing.cancel(operationId);
         return find(operationId);
@@ -1150,7 +1200,10 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
                         domain.commandCommitment()));
         if (FullCrlSigningCommand.supports(command.operation())) {
             FullCrlSigningCommand.requireTbs(command, envelope.candidate());
-            if (!envelope.algorithmId().equals(command.field(8))) {
+            String expectedAlgorithm = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)
+                    ? store.getIssuerCryptographicBinding(new PkiId(command.field(6))).orElseThrow().alternative().orElseThrow().signatureAlgorithm().canonicalForm()
+                    : command.field(8);
+            if (!envelope.algorithmId().equals(expectedAlgorithm)) {
                 throw new IllegalStateException("Full CRL acceptance algorithm differs");
             }
             if (domain.state() == DomainContinuationStore.State.COMPLETED) {
@@ -1169,6 +1222,22 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
                 || domain.state() == DomainContinuationStore.State.COMPLETED)
                 && signingState != SigningOperationState.SUCCEEDED) {
             throw new IllegalStateException("Semantic publication has no successful signature");
+        }
+        if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)) {
+            signingState = switch (domain.state()) {
+                case COMPLETED -> SigningOperationState.SUCCEEDED;
+                case EXPIRED -> SigningOperationState.EXPIRED;
+                case FAILED -> domain.detailCode().filter("CANCELLED"::equals).isPresent()
+                        ? SigningOperationState.CANCELLED : SigningOperationState.FAILED;
+                case SIGNING, PUBLISHING -> signingState == SigningOperationState.SUCCEEDED ? SigningOperationState.PENDING : signingState;
+            };
+        }
+        if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)
+                && domain.state() == DomainContinuationStore.State.PUBLISHING && signingState == SigningOperationState.PENDING) {
+            var execution = store.getCrlHybridExecution(domain.operationId()).orElseThrow();
+            if (execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED
+                    && DefaultSigningService.operationState(store.getSignWorkflow(execution.nativeChildId()).orElseThrow()) == SigningOperationState.CANCELLING)
+                signingState = SigningOperationState.CANCELLING;
         }
         return new SemanticSigningOperation(SigningSubmissionId.parse(envelope.operationId()), scope,
                 signingState, SemanticSigningState.valueOf(domain.state().name()), workflow.revision(),
@@ -1192,7 +1261,7 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
         }
     }
 
-    private static SemanticSigningScope scope(DomainContinuationStore.Kind kind,
+    private SemanticSigningScope scope(DomainContinuationStore.Kind kind,
             DomainCommandEncoding.Decoded command, AccessContext access, KeyRef key) {
         Optional<PkiId> authority = Optional.empty();
         Optional<PkiId> subjectAuthority = Optional.empty();
@@ -1215,6 +1284,15 @@ public final class DefaultSemanticSigningService implements SemanticSigningServi
             }
             case STATUS -> {
                 authority = Optional.of(new PkiId(command.field(0)));
+                if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)) {
+                    var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
+                    var binding = store.getIssuerCryptographicBinding(new PkiId(command.field(6))).orElseThrow();
+                    if (!binding.commitment().equals(descriptor.issuerBindingCommitment())
+                            || !binding.alternative().orElseThrow().keyRef().equals(key))
+                        throw new IllegalArgumentException("Hybrid CRL alternative signing key differs");
+                    return new SemanticSigningScope(SemanticSigningKind.STATUS, command.operation(), access,
+                            binding.primary().keyRef(), authority, Optional.empty(), Optional.empty(), Optional.empty());
+                }
                 keyField = 5;
             }
             case CA -> {

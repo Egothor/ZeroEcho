@@ -103,7 +103,9 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
     final KeyPair childKey;
     final KeyPair altKey;
     final KeyPair rotatedAltKey;
+    Clock clock = CLOCK;
     PkiStore store;
+    java.util.function.BiFunction<ProviderConfig, PkiStoreRuntimeDependencies, PkiStore> storeFactory = PkiBootstrap::openStore;
     String alternativeFault;
     java.util.function.UnaryOperator<PkiStore> storeDecorator = java.util.function.UnaryOperator.identity();
     java.util.function.UnaryOperator<zeroecho.pki.spi.crypto.SigningProvider> signingDecorator = java.util.function.UnaryOperator.identity();
@@ -167,17 +169,34 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         return DefaultPkiSession.openLocal(new LocalPkiSessionConfiguration(new ProviderConfig("fs",
                 Map.of("root", root.resolve("store").toString())), new ProviderConfig("memory", Map.of()),
                 "hybrid-test", Optional.of(signing), List.of(), List.of()),
-                PkiSessionRuntimeDependencies.withKeyringUnlockProvider(TestKeyringUnlocks.provider()), CLOCK, this);
+                PkiSessionRuntimeDependencies.withKeyringUnlockProvider(TestKeyringUnlocks.provider()), clock, this);
     }
 
     LocalSigningResult.Completed execute(PkiSession session, PkiSigningOperation operation) {
         LocalSigningResult result = session.localSigning().orElseThrow().execute(operation, CancellationSignal.NONE);
-        return assertInstanceOf(LocalSigningResult.Completed.class, result,
-                () -> result instanceof LocalSigningResult.Failed failed ? failed.failure().code()
-                        + failed.receipt().flatMap(receipt -> store.getSignWorkflow(receipt.operationId()))
-                                .map(workflow -> ": " + workflow.state() + "/" + workflow.stage() + "/"
-                                        + workflow.detailCode() + "/" + workflow.reconciliationFailureClass()).orElse("")
-                        : "Unexpected result");
+        return assertInstanceOf(LocalSigningResult.Completed.class, result, () -> failureDescription(result));
+    }
+
+    String failureDescription(LocalSigningResult result) {
+        String description = result instanceof LocalSigningResult.Failed failed
+                ? failed.failure().code() : "Unexpected result: " + result.getClass().getName();
+        if (store instanceof zeroecho.pki.impl.fs.FilesystemPkiStore filesystem) {
+            Throwable original = zeroecho.pki.impl.fs.FilesystemPkiStoreTestAccess.firstRecoveryFailure(filesystem);
+            if (original != null) {
+                original.printStackTrace(System.err);
+                description += "; original ledger failure: " + original;
+            }
+        }
+        if (result instanceof LocalSigningResult.Failed failed) {
+            try {
+                description += failed.receipt().flatMap(receipt -> store.getSignWorkflow(receipt.operationId()))
+                        .map(workflow -> ": " + workflow.state() + "/" + workflow.stage() + "/"
+                                + workflow.detailCode() + "/" + workflow.reconciliationFailureClass()).orElse("");
+            } catch (RuntimeException fenced) {
+                description += "; workflow unavailable: " + fenced.getClass().getSimpleName();
+            }
+        }
+        return description;
     }
 
     PkiId create(PkiSession session) {
@@ -201,11 +220,15 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
     }
 
     void verifyRoot(PkiId id, KeyPair expected) throws Exception {
+        verifyRoot(id, expected, mode);
+    }
+
+    void verifyRoot(PkiId id, KeyPair expected, HybridCertificateMode expectedProfileMode) throws Exception {
         X509Certificate certificate = certificate(id);
         assertTrue(java.util.Arrays.equals(expected.getPublic().getEncoded(), certificate.getPublicKey().getEncoded()));
         certificate.verify(expected.getPublic(), "BC");
         CaProfileBinding binding = assertInstanceOf(CaProfileBinding.class, store.getCredential(id).orElseThrow().profileBinding());
-        assertEquals(mode, store.getProfileVersion(binding.reference().profileId(), binding.reference().profileVersion())
+        assertEquals(expectedProfileMode, store.getProfileVersion(binding.reference().profileId(), binding.reference().profileVersion())
                 .orElseThrow().definition().hybridMode());
         if (mode instanceof HybridCertificateMode.AltSignature) {
             assertTrue(Pkix.verifyAlternativeSignatureCor3(certificate, altKey.getPublic()));
@@ -250,7 +273,13 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
             java.security.cert.X509CRL crl = (java.security.cert.X509CRL) CertificateFactory.getInstance("X.509", "BC")
                     .generateCRL(input);
             crl.verify(issuer.getPublic(), "BC");
-            assertNull(crl.getExtensionValue(AltSignatureExtensions.OID_ALT_SIGNATURE_VALUE));
+            if (mode instanceof HybridCertificateMode.AltSignature) {
+                var holder = new org.bouncycastle.cert.X509CRLHolder(crl.getEncoded());
+                assertTrue(holder.isAlternativeSignatureValid(new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
+                        .setProvider("BC").build(altKey.getPublic())));
+            } else {
+                assertNull(crl.getExtensionValue(AltSignatureExtensions.OID_ALT_SIGNATURE_VALUE));
+            }
         }
     }
 
@@ -272,10 +301,10 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
     @Override public void validateStore(ProviderConfig configuration) { PkiBootstrap.validateStoreConfiguration(configuration); }
     @Override public void validateAudit(ProviderConfig configuration) { PkiBootstrap.validateAuditConfiguration(configuration); }
     @Override public PkiStore openStore(ProviderConfig configuration) {
-        return openStore(configuration, new PkiStoreRuntimeDependencies(CLOCK));
+        return openStore(configuration, new PkiStoreRuntimeDependencies(clock));
     }
     @Override public PkiStore openStore(ProviderConfig configuration, PkiStoreRuntimeDependencies dependencies) {
-        store = PkiBootstrap.openStore(configuration, dependencies);
+        store = storeFactory.apply(configuration, dependencies);
         if (store.getActiveProfileRef("matrix-root").isEmpty()) {
             try {
                 RootCreationFixture.install(store, profile("matrix-root", 1, CertificateProfileKind.ROOT_CA, mode));
@@ -285,7 +314,18 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
                         CertificateProfileKind.INTERMEDIATE_CA, descendant));
             } catch (Exception failure) { throw new AssertionError("Profile fixture failed", failure); }
         }
-        return storeDecorator.apply(store);
+        PkiStore diagnosed = (PkiStore) java.lang.reflect.Proxy.newProxyInstance(PkiStore.class.getClassLoader(),
+                new Class<?>[] {PkiStore.class}, (proxy, method, arguments) -> {
+                    try { return method.invoke(store, arguments); }
+                    catch (java.lang.reflect.InvocationTargetException failure) {
+                        if (method.getName().equals("putStatusObjectFromSigning")) {
+                            System.err.println("Native test status publication failed at " + method.getName());
+                            failure.getCause().printStackTrace(System.err);
+                        }
+                        throw failure.getCause();
+                    }
+                });
+        return storeDecorator.apply(diagnosed);
     }
     @Override public AuditSink openAudit(ProviderConfig configuration) { return event -> { }; }
     @Override public PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,

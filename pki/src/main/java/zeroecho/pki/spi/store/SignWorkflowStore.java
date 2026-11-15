@@ -518,6 +518,31 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         }
     }
 
+    /** Internal hybrid CRL adoption phase; terminal status belongs to the parent domain. */
+    enum CrlHybridPhase {
+        /** No native child has been adopted; alternative signing may still be pending. */
+        AWAITING_ALT(10),
+        /** One exact native child and its content are durably linked. */
+        NATIVE_LINKED(20);
+        private final int code;
+        CrlHybridPhase(int code) { this.code = code; }
+        /** @return stable private metadata code */
+        public int persistentCode() { return code; }
+        /**
+         * Restores one explicitly supported phase.
+         * @param code private metadata code
+         * @return exact phase
+         * @throws IllegalArgumentException for an unknown code
+         */
+        public static CrlHybridPhase fromPersistentCode(int code) {
+            return switch (code) {
+                case 10 -> AWAITING_ALT;
+                case 20 -> NATIVE_LINKED;
+                default -> throw new IllegalArgumentException("Unknown hybrid CRL execution phase");
+            };
+        }
+    }
+
     /** Immutable execution policy selected at acceptance. */
     enum Mode {
         /** Ordinary durable signing with the existing reconciliation lifecycle. */
@@ -1332,6 +1357,81 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      * @return exact durable disposition
      */
     AcceptanceResult acceptSign(AcceptanceCommand command);
+
+    /**
+     * Reports implemented atomic hybrid CRL execution, dependency and recovery support.
+     * A false value keeps ordinary raw signing paths from probing unsupported
+     * private reverse links; it never substitutes for a failed supported lookup.
+     * @return true only when the complete hybrid continuation contract is implemented
+     */
+    default boolean supportsHybridCrlContinuations() { return false; }
+
+    /**
+     * Purely preflights every prospective hybrid CRL transaction using actual
+     * storage serialization and public signature bounds before alternative signing.
+     * It transfers no content custody and creates no records or reservations.
+     * Generic and classical signing behavior is unaffected.
+     * @param parentCommand complete explicitly hybrid parent acceptance
+     * @throws UnsupportedOperationException if this store has no hybrid CRL support
+     * @throws IllegalArgumentException if any prospective phase exceeds existing metadata limits
+     */
+    default void requireCrlHybridMetadataBudget(AcceptanceCommand parentCommand) {
+        throw new UnsupportedOperationException("Hybrid CRL metadata preflight unavailable");
+    }
+
+    /**
+     * Reads the complete retained parent execution link without interpreting absence as support.
+     * @param parentId canonical public parent signing identity
+     * @return retained execution or empty for an unknown or jointly purged operation
+     * @throws UnsupportedOperationException if hybrid CRL support is unavailable
+     */
+    default Optional<CrlHybridExecution> getCrlHybridExecution(PkiId parentId) {
+        throw new UnsupportedOperationException("Hybrid CRL execution lookup unavailable");
+    }
+
+    /**
+     * Reads and validates a native child's durable reverse link to its parent execution.
+     * @param childId canonical internal native-child identity
+     * @return exact linked parent execution or empty for an unknown or jointly purged child
+     * @throws UnsupportedOperationException if hybrid CRL support is unavailable
+     * @throws IllegalStateException if the retained graph is partial or inconsistent
+     */
+    default Optional<CrlHybridExecution> getCrlHybridExecutionForChild(PkiId childId) {
+        throw new UnsupportedOperationException("Hybrid CRL reverse lookup unavailable");
+    }
+
+    /**
+     * Atomically accepts one raw native child, transfers its candidate custody,
+     * and records both execution and reverse links against the retained parent.
+     * Exact linked replay is resolved before current fences; changed input conflicts.
+     * Admission enforces the original deadline, configured public verification,
+     * existing capacity and byte limits. Unknown commit outcomes must fence the store.
+     * @param parentId canonical public parent identity
+     * @param expectedParentRevision observed parent logical revision
+     * @param parentFence observed parent fencing token, not a synthetic SUCCEEDED lease
+     * @param expectedExecutionRevision observed execution-link revision
+     * @param child exact proposed native-child acceptance
+     * @return definitive acceptance, identical attachment, conflict, or temporary capacity rejection
+     * @throws UnsupportedOperationException if atomic hybrid adoption is unavailable
+     * @throws IllegalStateException if evidence or durable outcome cannot be established safely
+     */
+    default AcceptanceResult adoptCrlNativeChild(PkiId parentId, long expectedParentRevision, long parentFence,
+            long expectedExecutionRevision, AcceptanceCommand child) {
+        throw new UnsupportedOperationException("Atomic hybrid CRL child adoption unavailable");
+    }
+
+    /**
+     * Resolves uncertain adoption without crypto, staging, mutation, or blind retry.
+     * A partial execution/reverse/child graph is corruption, never confirmed absence.
+     * @param parentId original public parent identity
+     * @param childCommitment exact native-child acceptance commitment
+     * @return authoritative whole-graph resolution
+     * @throws UnsupportedOperationException if hybrid adoption resolution is unavailable
+     * @throws IllegalStateException if the retained graph cannot be verified
+     */
+    default AcceptanceResolution resolveCrlNativeChild(PkiId parentId, AcceptanceCommitment childCommitment) {
+        throw new UnsupportedOperationException("Hybrid CRL adoption resolution unavailable");
+    }
 
     /**
      * Resolves a previously uncertain acceptance without modifying workflow state.

@@ -185,6 +185,23 @@ final class FsCodecTest {
         assertInstanceOf(SimpleAttributeSet.class, decodedFramework.attributes());
         assertAttributeValues(values, decodedCore.attributes().getAll(id));
         assertAttributeValues(values, decodedFramework.attributes().getAll(id));
+
+        AttributeId first = new AttributeId("test.Aa");
+        AttributeId second = new AttributeId("test.BB");
+        assertEquals(first.hashCode(), second.hashCode(), "Exercise a real identifier hash collision");
+        Map<AttributeId, List<AttributeValue>> forward = new LinkedHashMap<>();
+        forward.put(first, values);
+        forward.put(second, List.of(new AttributeValue.StringValue("second")));
+        Map<AttributeId, List<AttributeValue>> reverse = new LinkedHashMap<>();
+        reverse.put(second, forward.get(second));
+        reverse.put(first, values);
+        byte[] canonical = FsCodec.encode(FsCodec.PARSED_REQUEST, request(
+                zeroecho.pki.impl.framework.x509.bc.SimpleAttributeSet.of(forward)));
+        assertArrayEquals(canonical, FsCodec.encode(FsCodec.PARSED_REQUEST, request(
+                zeroecho.pki.impl.framework.x509.bc.SimpleAttributeSet.of(reverse))));
+        ParsedCertificationRequest collisionDecoded = FsCodec.decode(FsCodec.PARSED_REQUEST, canonical);
+        assertAttributeValues(values, collisionDecoded.attributes().getAll(first));
+        assertArrayEquals(canonical, FsCodec.encode(FsCodec.PARSED_REQUEST, collisionDecoded));
         System.out.println("...canonical type=" + decodedFramework.attributes().getClass().getSimpleName());
         System.out.println("...ok");
     }

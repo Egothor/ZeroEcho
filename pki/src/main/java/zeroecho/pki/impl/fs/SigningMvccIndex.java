@@ -160,6 +160,21 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /** Returns the resident current-entry estimate used by actual key admission. */
+    /* default */ static long residentEntryBytes(MetadataKey key) {
+        return CanonicalKey.of(Objects.requireNonNull(key, "key")).estimatedResidentBytes();
+    }
+
+    /** Returns the actual candidate cardinality used by the next metadata preparation. */
+    /* default */ int preparedKeyCount() {
+        writeLock.lock();
+        try {
+            requireOpen();
+            PreparedApply tail = preparedApplies.peekLast();
+            return tail == null ? currentKeys : tail.candidateKeys;
+        } finally { writeLock.unlock(); }
+    }
+
     /** Expected {@code O(1)} current point lookup. */
     /* default */ Optional<SnapshotRecord> lookup(MetadataKey key) {
         Objects.requireNonNull(key, "key");

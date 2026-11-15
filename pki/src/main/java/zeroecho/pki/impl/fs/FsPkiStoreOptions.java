@@ -77,6 +77,7 @@ import java.util.Optional;
  * @param initialCrlNumber initial number for a newly created CRL scope counter,
  *                         from zero through {@code 2^159 - 1}; defaults to one
  * @param issuerAlgorithmEvidenceVerifier optional immutable public algorithm rules, preserved through snapshots and restore
+ * @param crlHybridNativeChildVerifier optional immutable configured public hybrid CRL authority
  * @param credentialSearch optional explicitly budgeted embedded credential search
  */
 @SuppressWarnings("PMD.LongVariable") // Public option names remain explicit and configuration-stable.
@@ -85,7 +86,32 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
         long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
         BigInteger initialCrlNumber, boolean signingEvidenceAudit, Optional<CredentialSearch> credentialSearch,
-        Optional<zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier) {
+        Optional<zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier,
+        Optional<zeroecho.pki.spi.store.CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier) {
+
+    /**
+     * Preserves existing options with hybrid CRL verification unavailable.
+     * @param caHistoryPolicy CA history policy @param profileHistoryPolicy profile history policy
+     * @param revocationHistoryPolicy revocation history policy @param workflowHistoryPolicy workflow history policy
+     * @param strictSnapshotExport strict snapshot validation @param signingOperationHorizon retained signing horizon
+     * @param signingIdPermittedSkew permitted identifier clock skew @param signingMaximumGroupSize signing group bound
+     * @param signingResidentIndexBudgetBytes resident index byte budget
+     * @param signingCompactionTransientBudgetBytes transient compaction byte budget
+     * @param initialCrlNumber initial CRL counter @param signingEvidenceAudit signing evidence audit setting
+     * @param credentialSearch optional credential search configuration
+     * @param issuerAlgorithmEvidenceVerifier optional configured public issuer verifier
+     */
+    public FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
+            FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
+            Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
+            long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
+            BigInteger initialCrlNumber, boolean signingEvidenceAudit, Optional<CredentialSearch> credentialSearch,
+            Optional<zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier) {
+        this(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize, signingResidentIndexBudgetBytes,
+                signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch,
+                issuerAlgorithmEvidenceVerifier, Optional.empty());
+    }
 
     private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
     private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
@@ -182,6 +208,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         Objects.requireNonNull(initialCrlNumber, "initialCrlNumber");
         credentialSearch = Objects.requireNonNull(credentialSearch, "credentialSearch");
         issuerAlgorithmEvidenceVerifier = Objects.requireNonNull(issuerAlgorithmEvidenceVerifier, "issuerAlgorithmEvidenceVerifier");
+        crlHybridNativeChildVerifier = Objects.requireNonNull(crlHybridNativeChildVerifier, "crlHybridNativeChildVerifier");
         if (initialCrlNumber.signum() < 0 || initialCrlNumber.bitLength() > 159) {
             throw new IllegalArgumentException("initialCrlNumber must be from zero through 2^159 - 1");
         }
@@ -243,7 +270,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, maximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -262,7 +289,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier);
+                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -278,7 +305,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier);
+                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -294,7 +321,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
     /**
      * Returns a copy enabling or disabling best-effort terminal signing and internal-proof evidence.
@@ -308,7 +335,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled, credentialSearch, issuerAlgorithmEvidenceVerifier);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -320,7 +347,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
                 strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
                 signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
-                signingEvidenceAudit, configuration, issuerAlgorithmEvidenceVerifier);
+                signingEvidenceAudit, configuration, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
     /**
      * Returns options carrying trusted immutable public algorithm rules through store lifecycle operations.
@@ -331,6 +358,19 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
                 strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
                 signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
-                signingEvidenceAudit, credentialSearch, Optional.of(Objects.requireNonNull(verifier, "verifier")));
+                signingEvidenceAudit, credentialSearch, Optional.of(Objects.requireNonNull(verifier, "verifier")), crlHybridNativeChildVerifier);
     }
+    /**
+     * Retains configured pure hybrid CRL verification through every store lifecycle copy.
+     * @param verifier immutable public verification authority, never a private-key resolver
+     * @return immutable options preserving all existing settings
+     */
+    public FsPkiStoreOptions withCrlHybridNativeChildVerifier(zeroecho.pki.spi.store.CrlHybridNativeChildVerifier verifier) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
+                strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
+                signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier,
+                Optional.of(Objects.requireNonNull(verifier, "verifier")));
+    }
+
 }

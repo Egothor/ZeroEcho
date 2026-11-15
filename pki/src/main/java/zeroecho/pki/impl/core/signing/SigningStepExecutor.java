@@ -309,6 +309,12 @@ public final class SigningStepExecutor {
             } catch (RuntimeException infrastructureFailure) {
                 deferOuterContinuation(workflow.operationId(), cancellation);
             }
+        } else if (store.supportsHybridCrlContinuations()
+                && store.getCrlHybridExecutionForChild(workflow.operationId()).isPresent()) {
+            var execution = store.getCrlHybridExecutionForChild(workflow.operationId()).orElseThrow();
+            var parent = store.getSignWorkflow(execution.parentId()).orElseThrow();
+            try { outerDriver.advance(parent); progress.run(); }
+            catch (RuntimeException infrastructureFailure) { deferOuterContinuation(parent.operationId(), cancellation); }
         } else if (workflow.state() != SignWorkflowStore.State.RETIRED) {
             store.retireSign(workflow.operationId(), workflow.revision(), workflow.fence())
                     .ifPresent(ignored -> progress.run());
