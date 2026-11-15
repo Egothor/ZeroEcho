@@ -105,6 +105,8 @@ try:
     assert json.loads(cli.stdout)['exit'] == 0
     assert json.loads(cli.stdout)['result']['state'] == 'DOWNLOADED'
     assert (root/'operator-cli-client.pem').read_bytes() == (root/'operator-client.pem').read_bytes()
+    from test_pki_tui import exercise_live_tui
+    exercise_live_tui(operator, root, realm, origin, variant, credential)
     # A completed scenario resumes by observation without new generation/issuance.
     run(exercise, options, root/'login.pem')
 finally:

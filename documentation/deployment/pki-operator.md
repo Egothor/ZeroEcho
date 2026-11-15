@@ -175,10 +175,124 @@ Import `pki_operator.Operator` with a shared `pki_http.Api` and use it as a cont
 manager. `submit`/`observe` return raw durable records, `action` returns its exact
 operation envelope, `read` returns result fields, and download methods return
 byte/identity evidence. Use `result_exit` to distinguish completion from pending.
-The future TUI can consume this layer directly without spawning Java to forward
+The TUI consumes this layer directly without spawning Java to forward
 requests; Java is used only for local chain cryptography.
 
 Removing this client change requires no server migration. Preserve retained
 checkpoints and reconcile any submitted requests before replacing client files.
 Removing a checkpoint does not cancel server work. No automatic cleanup/reset,
 server restart, certificate revocation or trust-store change is performed.
+
+## Interactive curses operator
+
+The Python 3/curses host interface uses the same `Api` and `Operator` as the
+commands above. Run it in a normal terminal, using the same connection and private
+checkpoint requirements. It does not invoke the Java CLI for HTTP requests.
+Java is needed only for the existing local chain cryptographic verifier.
+
+```sh
+./deploy/pki-tui.sh \
+  --url https://localhost:8443 --realm example \
+  --trust "$HOME/zeroecho-client/trust.pem" \
+  --p12 "$HOME/zeroecho-client/admin.p12" \
+  --checkpoint "$HOME/zeroecho-client/operator-state"
+```
+
+The password is prompted before opening curses. `--password-fd FD` is available
+for an inherited descriptor; password values are never command-line arguments
+or preferences. Keep the terminal private: result inspection may display sensitive
+or one-time response values. The program does not write a terminal transcript.
+
+The initial catalog groups operations by their discovered operation type.
+Use arrows (or `j`/`k`), Enter to select, and `a` to switch between the type tree
+and the same IDs in A–Z order. The highlighted operation survives switching.
+Unavailable operations remain visible and cannot be submitted. Discovery does
+not assert that every offered operation is authorized for the current principal;
+the server checks current permission and policy for every request.
+
+At the catalog, `s` opens session settings, `w` opens retained work, `d` opens
+artifact downloads and `q` exits. Escape returns one level. **F2 returns to the
+catalog** from forms, nested controls, review, results and settings. These keys
+never send a mutation. The active endpoint and expected realm remain visible.
+In text controls, Enter accepts, Backspace erases and Ctrl-U clears the value;
+Escape cancels the edit. Menu shortcuts do not interpret typed field values.
+
+Forms provide scalar, Boolean, enum, unique-set, nested-object and list controls.
+Enter an attribute, choose Edit, then accept its value; optional attributes can
+be omitted. Related nested attributes open their own subform. Lists support Add,
+Edit and Remove, with a maximum of 128 entries. Configuration metadata supplies
+format, managed-key and algorithm suggestions; active profile choices are loaded
+when their listing permission is available. Explicit values remain possible.
+Press `h` in an operation form for selected format/profile guidance and authorized
+profile metadata. X.509 DN guidance applies only when X.509 is selected.
+
+`profile.register` and `profile.validate` open a typed X.509 version-5 profile
+editor, starting from one of the shipped root, intermediate, TLS or VPN templates.
+Edit the profile identity/version and policy fields for the intended use. Nested
+subject and SAN rules, certificate policy, algorithm bindings, confirmation and
+hybrid fields use controls, never a JSON text editor. All six confirmation disclosure
+policies are available. The confirmation policy commitment is derived automatically
+from the selected disclosure, exact duration and proof-suite reference; it is not
+a manually editable hash. Profile registration calls
+the existing server `profile.validate` before allowing its reviewed mutation.
+Validation remains subject to the selected server's installed bindings and policy.
+A provider/format extension without a known structured contract reports a missing
+form capability and cannot be sent through a raw JSON fallback.
+
+CSR and backup fields select an owned private local file. Exact binary input is
+Base64 encoded for the existing API; X.509 CSR input also offers PEM-to-DER
+decoding. This file control has an 8-MiB limit. Select a DER certification request
+for exact binary CSR input and the existing backup payload format for backup
+input. The client never obtains a managed private key from the server.
+
+Choose **Review exact request** to inspect endpoint, realm, request ID, authority
+and the complete typed target. Exact request values wrap to terminal width and
+scroll vertically (arrows, Page Up/Down, Home/End). Encoded profile documents also
+show their decoded typed content beside the unchanged wire request. A separate
+menu defaults to Cancel; only choosing
+**CONFIRM SEND** sends. Navigation from a form or review does not submit. The
+result screen replaces the completed submission form and explicitly labels
+pending/approval-only and uncertain outcomes. Approval alone never means the
+original operation executed successfully.
+
+Worklist entries use the existing C05 checkpoint identities. Reopen a retained
+entry, inspect its intent/result, or select **Observe GET only**. Lost
+acknowledgements are reconciled by observation; the TUI does not resend them.
+Dedicated actions have no durable observation route and are never replayed.
+A retained definitive HTTP refusal is shown as FAILED/exit 2 with its exact intent
+and refusal status; it is not an uncertain acknowledgement or an instruction to
+observe a request that was refused.
+Approve/Reject on a retained request opens a decision form prefilled with its
+approval ID. Supply an explicit justification, review, and confirm that decision;
+then observe the original request for terminal execution. Eligibility and own
+request approval capabilities remain server decisions. Another approver may use
+the normal approval-list/inspect forms and their own identity-bound checkpoint.
+
+Result objects expose metadata and download actions for retained certificate,
+CA, status and issuer-path IDs. Metadata reads preserve applicable authority from
+the retained exact request; CA reads use the selected CA identity. If an
+authority-scoped metadata read has no retained or explicit session context, the
+TUI asks for it rather than inventing one. Realm-scoped reads receive no authority
+parameter. Downloads use the authenticated C05 routes,
+explicit representation/output, reviewed confirmation, and new files only.
+A downloaded certificate, possession of its private key, server signing-key
+custody, disclosure policy and public access are distinct facts. Individual
+certificate/CRL downloads validate transport and object representation; inspect
+`signatureVerified` before inferring cryptographic trust. Chain verification uses
+the explicitly selected downloaded anchor under the C05 rules above.
+
+Common context defaults apply only to fields present in the selected operation;
+explicit draft overrides remain unchanged. Connection settings contain only
+session values and local file references. Changing connection coordinates clears
+discovery, choices, drafts, review, results and target context before reconnecting
+and checking the new realm. Select a separate checkpoint for a different endpoint,
+realm or identity; C05 rejects binding reuse. If reconnection fails, the UI exits
+with status 2 and leaves accepted work in its original checkpoint for observation.
+Preferences and passwords are not persisted. Exiting the UI normally returns 0;
+this process exit is not a claim that pending operations succeeded. Per-request
+screens retain the documented 0/2/3/4 result meanings.
+
+Rollback removes the TUI files and guide additions only. Preserve checkpoints and
+observe attempted work with the host client; removing a TUI draft or checkpoint
+does not cancel work on the server. This interface is C06 client functionality,
+not actual Podman qualification or final F01–F06 closure.
