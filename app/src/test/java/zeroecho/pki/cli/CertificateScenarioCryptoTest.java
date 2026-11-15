@@ -108,6 +108,31 @@ final class CertificateScenarioCryptoTest {
         Path leafFile = file("client.der", certificate(request.getSubject().toString(), "CN=Child", leaf, child, leafAlt, childAlt, -1, signature));
         String[] verify = {"verify", variant, client.toString(), rootFile.toString(), childFile.toString(), leafFile.toString()};
         assertDoesNotThrow(() -> CertificateScenarioCrypto.main(verify));
+        Path bundle = file("chain.pem", pem(Files.readAllBytes(childFile)) + pem(Files.readAllBytes(rootFile)));
+        assertTrue(capture("verify-chain", bundle.toString()).startsWith("VERIFIED issuer-chain certificates=2 "));
+        Files.writeString(bundle, pem(Files.readAllBytes(rootFile)));
+        assertTrue(capture("verify-chain", bundle.toString()).startsWith("VERIFIED issuer-chain certificates=1 "));
+        for (String invalidBundle : new String[] {"", pem(Files.readAllBytes(childFile)),
+                pem(Files.readAllBytes(rootFile)) + pem(Files.readAllBytes(childFile)),
+                pem(Files.readAllBytes(rootFile)) + pem(Files.readAllBytes(rootFile)),
+                pem(Files.readAllBytes(childFile)) + pem(Files.readAllBytes(rootFile)) + "unexpected",
+                pem(Files.readAllBytes(leafFile)) + pem(Files.readAllBytes(childFile)) + pem(Files.readAllBytes(rootFile))}) {
+            Files.writeString(bundle, invalidBundle);
+            assertThrows(Exception.class, () -> CertificateScenarioCrypto.main(new String[] {"verify-chain", bundle.toString()}));
+        }
+        byte[] restrictedRoot = certificate("CN=Root", "CN=Root", root, root, rootAlt == null ? null : rootAlt.getPublic().getEncoded(), rootAlt, 0, signature);
+        Files.writeString(bundle, pem(Files.readAllBytes(childFile)) + pem(restrictedRoot));
+        assertThrows(IllegalArgumentException.class, () -> CertificateScenarioCrypto.main(new String[] {"verify-chain", bundle.toString()}));
+        byte[] damagedChild = Files.readAllBytes(childFile); damagedChild[damagedChild.length - 1] ^= 1;
+        Files.writeString(bundle, pem(damagedChild) + pem(Files.readAllBytes(rootFile)));
+        assertThrows(Exception.class, () -> CertificateScenarioCrypto.main(new String[] {"verify-chain", bundle.toString()}));
+        if (variant.equals("hybrid")) {
+            var wrongAlt = pair("mldsa87");
+            byte[] wrongRoot = certificate("CN=Root", "CN=Root", root, root, wrongAlt.getPublic().getEncoded(), wrongAlt, 1, signature);
+            Files.writeString(bundle, pem(Files.readAllBytes(childFile)) + pem(wrongRoot));
+            assertThrows(Exception.class, () -> CertificateScenarioCrypto.main(new String[] {"verify-chain", bundle.toString()}));
+        }
+
         privateFile(client.resolve("root.spki.der"), child.getPublic().getEncoded());
         assertThrows(IllegalArgumentException.class, () -> CertificateScenarioCrypto.main(verify));
         privateFile(client.resolve("root.spki.der"), root.getPublic().getEncoded());
@@ -195,6 +220,10 @@ final class CertificateScenarioCryptoTest {
 
     private static void privateFile(Path path, byte[] bytes) throws Exception {
         Files.write(path, bytes); Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));
+    }
+    private Path file(String name, String text) throws Exception { return file(name, text.getBytes(StandardCharsets.US_ASCII)); }
+    private static String pem(byte[] der) {
+        return "-----BEGIN CERTIFICATE-----\n" + java.util.Base64.getMimeEncoder(64, new byte[] {10}).encodeToString(der) + "\n-----END CERTIFICATE-----\n";
     }
     private Path file(String name, byte[] bytes) throws Exception {
         Path path = directory.resolve(name); Files.write(path, bytes); Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------")); return path;

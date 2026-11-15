@@ -21,6 +21,7 @@ class CertificateScenarioHttpTest {
         PkiAdminBootstrap.bootstrap(bootstrap, "administrator", "approver", "trusted-proxy");
         PkiAdminBootstrap.provisionRootAdmin(bootstrap, "administrator", "approver", "trusted-proxy");
         PkiAdminBootstrap.provisionCertificateAccess(bootstrap, "administrator", "approver", "trusted-proxy");
+        PkiAdminBootstrap.provisionStatusAccess(bootstrap, "administrator", "approver", "trusted-proxy");
         var tls = scenarioTls();
         var transport = HttpServerTestSupport.configuration(root.resolve("transport"), tls.clientCertificate());
         int port;
@@ -56,6 +57,54 @@ try:
         options.approved_sdk_target = proposal['targetSha512']
         run(exercise, options, root/'login.pem')
     assert json.loads((root/'client-output/algorithm-report.json').read_text())['verified'] is True
+    from pki_operator import Operator
+    import base64, os, subprocess, time
+    operator = Operator(exercise.api, realm, root/'operator-state', classpath)
+    profile = json.loads((root/'client-output/client-profile.json').read_text())
+    profile['profileId'] += '-operator'
+    intent = dict(version=1, requestId='operator-profile-'+variant, operation='profile.register',
+        arguments=dict(document=base64.b64encode(json.dumps(profile).encode()).decode()))
+    record = operator.submit(intent)
+    deadline = time.monotonic()+30
+    approved = False
+    while record['state'] != 'SUCCEEDED' and time.monotonic()<deadline:
+        if record['state'] == 'WAITING_APPROVAL' and not approved:
+            assert record.get('approvalId')
+            exercise.operation('security.approval.approve', dict(approvalId=record['approvalId'], justification='C05 localhost client verification'))
+            approved = True
+        record = operator.observe(intent['requestId'])
+    assert record['state'] == 'SUCCEEDED', record['state']
+    assert operator.submit(intent)['requestId'] == intent['requestId']
+    report = json.loads((root/'client-output/algorithm-report.json').read_text())
+    for role in ('root', 'intermediate', 'client'):
+        credential = exercise.state['artifacts'][role+'.der']['sourceId']
+        for representation, suffix in [('original', 'der'), ('pem', 'pem')]:
+            operator.download('certificate', credential, representation, root/('operator-'+role+'.'+suffix))
+    intermediate = report['generations']['intermediate']
+    operator.ca(intermediate['authorityId'], 'original', root/'operator-ca.der')
+    operator.chain(report['paths']['intermediate']['pathId'], root/'operator-chain.pem')
+    try:
+        status = exercise.job('operator-crl', 'status.generate', dict(issuerCaId=intermediate['authorityId'], type='CRL', formatId='x509'), intermediate['authorityId'])
+    except ExerciseFailure:
+        (root/'failed-crl-operation.txt').write_text(exercise.state['jobs'].get('operator-crl', {}).get('receipt', {}).get('signingOperationId', ''))
+        print('C05 retained CRL receipt:', json.dumps(exercise.state['jobs'].get('operator-crl', {}).get('receipt', {}), sort_keys=True), flush=True)
+        raise
+    operator.download('crl', status['statusObjectId'], 'original', root/'operator-crl.der')
+    operator.download('crl', status['statusObjectId'], 'pem', root/'operator-crl.pem')
+    password = b'local-c05-test-password\\n'
+    exported = subprocess.run(['openssl', 'pkcs12', '-export', '-inkey', str(root/'login.key'), '-in', str(root/'login.pem'),
+        '-out', str(root/'operator-login.p12'), '-passout', 'stdin'], input=password, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert exported.returncode == 0
+    os.chmod(root/'operator-login.p12', 0o600)
+    command = ['python3', str(Path(sys.argv[1])/'deploy/pki_operator.py'), '--url', origin, '--realm', realm,
+        '--trust', str(root/'trust.pem'), '--p12', str(root/'operator-login.p12'), '--password-fd', '0',
+        '--checkpoint', str(root/'operator-cli-state'), 'certificate', credential, '--representation', 'pem',
+        '--output', str(root/'operator-cli-client.pem')]
+    cli = subprocess.run(command, input=password, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    assert cli.returncode == 0, cli.stderr.decode()
+    assert json.loads(cli.stdout)['exit'] == 0
+    assert json.loads(cli.stdout)['result']['state'] == 'DOWNLOADED'
+    assert (root/'operator-cli-client.pem').read_bytes() == (root/'operator-client.pem').read_bytes()
     # A completed scenario resumes by observation without new generation/issuance.
     run(exercise, options, root/'login.pem')
 finally:
@@ -70,8 +119,58 @@ finally:
             boolean finished = process.waitFor(180, TimeUnit.SECONDS);
             if (!finished) process.destroyForcibly().waitFor();
             assertTrue(finished, () -> "Client timeout: " + read(log));
-            assertEquals(0, process.exitValue(), () -> read(log));
+            String signingDiagnostic = "";
+            Path failedOperation = root.resolve("failed-crl-operation.txt");
+            if (process.exitValue() != 0 && Files.exists(failedOperation)) {
+                String identity = Files.readString(failedOperation);
+                if (!identity.isBlank()) {
+                    var semantic = server.realm().session().semanticSigning().orElseThrow().find(new zeroecho.pki.api.PkiId(identity)).orElseThrow();
+                    var signature = server.realm().session().signing().orElseThrow().find(new zeroecho.pki.api.PkiId(identity)).orElseThrow();
+                    signingDiagnostic = "\nC05 native observer: domain=" + semantic.state() + " signing=" + semantic.signingState()
+                            + " domainRevision=" + semantic.revision() + " signingRevision=" + semantic.signingRevision()
+                            + " domainDetail=" + semantic.detailCode().orElse("") + " signature=" + signature.state()
+                            + " signatureDetail=" + signature.detailCode().orElse("");
+                }
+            }
+            String diagnostic = signingDiagnostic;
+            assertEquals(0, process.exitValue(), () -> read(log) + diagnostic);
             assertTrue(Files.isRegularFile(root.resolve("client-output/client.der")));
+            verifyOperatorArtifacts(root, variant);
+        }
+    }
+    private static void verifyOperatorArtifacts(Path root, String variant) throws Exception {
+        var factory = java.security.cert.CertificateFactory.getInstance("X.509", "BC");
+        for (String role : java.util.List.of("root", "intermediate", "client")) {
+            byte[] der = Files.readAllBytes(root.resolve("operator-" + role + ".der"));
+            try (var input = Files.newInputStream(root.resolve("operator-" + role + ".pem"))) {
+                assertArrayEquals(der, factory.generateCertificate(input).getEncoded());
+            }
+            assertArrayEquals(Files.readAllBytes(root.resolve("client-output/" + role + ".der")), der);
+        }
+        assertArrayEquals(Files.readAllBytes(root.resolve("operator-intermediate.der")), Files.readAllBytes(root.resolve("operator-ca.der")));
+        try (var input = Files.newInputStream(root.resolve("operator-chain.pem"))) {
+            var chain = factory.generateCertificates(input).stream().toList();
+            assertEquals(2, chain.size());
+            assertArrayEquals(Files.readAllBytes(root.resolve("operator-intermediate.der")), chain.get(0).getEncoded());
+            assertArrayEquals(Files.readAllBytes(root.resolve("operator-root.der")), chain.get(1).getEncoded());
+        }
+        java.security.cert.X509CRL crl;
+        try (var input = Files.newInputStream(root.resolve("operator-crl.pem"))) {
+            crl = (java.security.cert.X509CRL) factory.generateCRL(input);
+            assertArrayEquals(Files.readAllBytes(root.resolve("operator-crl.der")), crl.getEncoded());
+        }
+        java.security.cert.X509Certificate issuer;
+        try (var input = Files.newInputStream(root.resolve("operator-intermediate.der"))) {
+            issuer = (java.security.cert.X509Certificate) factory.generateCertificate(input);
+        }
+        assertEquals(issuer.getSubjectX500Principal(), crl.getIssuerX500Principal());
+        crl.verify(issuer.getPublicKey(), "BC");
+        if (variant.equals("hybrid")) {
+            var holder = new org.bouncycastle.cert.X509CRLHolder(crl.getEncoded());
+            byte[] altSpki = org.bouncycastle.asn1.ASN1OctetString.getInstance(issuer.getExtensionValue("2.5.29.72")).getOctets();
+            var spki = org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(altSpki);
+            var key = new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider("BC").getPublicKey(spki);
+            assertTrue(holder.isAlternativeSignatureValid(new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder().setProvider("BC").build(key)));
         }
     }
     private static HttpServerTestSupport.Fixture scenarioTls() throws Exception {

@@ -85,7 +85,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * Bounded client-owned cryptography for the approved certificate scenario recipes.
  * This helper has no transport, deployment, server-store or administrative capability.
  * Generated private keys are unencrypted PKCS#8 DER in an owner-only directory.
- * It is a recipe companion, outside the general PKI operation catalog.
+ * It is a recipe companion and local issuer-chain verifier, outside the general PKI operation catalog.
  */
 public final class CertificateScenarioCrypto {
     private static final String EC_OID = "1.2.840.10045.2.1";
@@ -103,6 +103,8 @@ public final class CertificateScenarioCrypto {
      * <p>Usage: {@code generate VARIANT NEW_DIRECTORY}; {@code verify VARIANT DIRECTORY ROOT_DER
      * INTERMEDIATE_DER CLIENT_DER}; {@code sign DIRECTORY F1_FILE F2_FILE F7_FILE ORIGIN REALM_ID
      * CLIENT_NONCE_HEX EXPECTED_TARGET_SHA512_HEX EXPECTED_AUTH_CONTEXT_SHA512_HEX};
+     * {@code verify-chain PEM_BUNDLE} (leaf issuer to explicitly selected self-signed anchor;
+     * verifies certificate signatures and CA constraints, without asserting external trust);
      * {@code describe VARIANT}; {@code auth-context LOGIN_CERT PRINCIPAL MODE TRANSPORT_PRINCIPAL}.
      * The sign caller must independently approve the F7 semantics and construct trusted F6
      * before passing their hashes; hashes copied blindly from the challenge are insufficient.
@@ -115,12 +117,59 @@ public final class CertificateScenarioCrypto {
             requireVariant(args[1]);
             System.out.println((switch (args[1]) { case "rsa4096" -> BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384;
                 case "mldsa87" -> BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE; default -> BootstrapAlgorithmIdentities.ECDSA_SHA384; }).canonicalForm());
-        } else if (args.length == 5 && args[0].equals("auth-context")) authContext(args);
+        } else if (args.length == 2 && args[0].equals("verify-chain")) verifyChain(Path.of(args[1]));
+        else if (args.length == 5 && args[0].equals("auth-context")) authContext(args);
         else if (args.length == 3 && args[0].equals("generate")) generate(args[1], Path.of(args[2]));
         else if (args.length == 6 && args[0].equals("verify")) verify(args[1], Path.of(args[2]),
                 Path.of(args[3]), Path.of(args[4]), Path.of(args[5]));
         else if (args.length == 10 && args[0].equals("sign")) sign(args);
-        else throw invalid("Usage: generate VARIANT NEW_DIRECTORY | verify VARIANT DIRECTORY ROOT INTERMEDIATE CLIENT | sign DIRECTORY F1 F2 F7 ORIGIN REALM NONCE_HEX TARGET_SHA512_HEX CONTEXT_SHA512_HEX");
+        else throw invalid("Usage: generate VARIANT NEW_DIRECTORY | verify VARIANT DIRECTORY ROOT INTERMEDIATE CLIENT | verify-chain PEM_BUNDLE | sign DIRECTORY F1 F2 F7 ORIGIN REALM NONCE_HEX TARGET_SHA512_HEX CONTEXT_SHA512_HEX");
+    }
+
+    private static void verifyChain(Path bundle) throws Exception {
+        byte[] encoded = read(bundle, 32 * 1048576);
+        String pem = new String(encoded, StandardCharsets.US_ASCII);
+        require(Arrays.equals(encoded, pem.getBytes(StandardCharsets.US_ASCII)), "Expected ASCII PEM chain");
+        var pattern = java.util.regex.Pattern.compile("-----BEGIN CERTIFICATE-----\\r?\\n[A-Za-z0-9+/=\\r\\n]+-----END CERTIFICATE-----");
+        var matcher = pattern.matcher(pem);
+        var chain = new java.util.ArrayList<X509Certificate>();
+        var identities = new java.util.HashSet<String>();
+        int end = 0;
+        while (matcher.find()) {
+            require(pem.substring(end, matcher.start()).isBlank(), "Unexpected data between PEM certificates");
+            require(chain.size() < 32, "Issuer chain exceeds 32 certificates");
+            var certificate = (X509Certificate) CertificateFactory.getInstance("X.509", "BC").generateCertificate(
+                    new java.io.ByteArrayInputStream(matcher.group().getBytes(StandardCharsets.US_ASCII)));
+            require(identities.add(hex(digest("SHA-256", certificate.getEncoded()))), "Duplicate issuer certificate");
+            chain.add(certificate);
+            end = matcher.end();
+        }
+        require(!chain.isEmpty() && pem.substring(end).isBlank(), "Expected a nonempty PEM certificate chain");
+        int subordinateCas = 0;
+        for (int i = 0; i < chain.size(); i++) {
+            var certificate = chain.get(i);
+            var issuer = chain.get(Math.min(i + 1, chain.size() - 1));
+            certificate.checkValidity();
+            require(certificate.getBasicConstraints() >= subordinateCas, "CA constraints or path length forbid this issuer path");
+            boolean[] usage = certificate.getKeyUsage();
+            require(usage != null && usage.length > 5 && usage[5], "Issuer certificate lacks keyCertSign usage");
+            require(certificate.getIssuerX500Principal().equals(issuer.getSubjectX500Principal()), "Issuer chain order or anchor name differs");
+            var holder = new X509CertificateHolder(certificate.getEncoded());
+            require(Arrays.equals(holder.getSignatureAlgorithm().getEncoded("DER"),
+                    holder.toASN1Structure().getTBSCertificate().getSignature().getEncoded("DER")), "Inner and outer signature algorithms differ");
+            certificate.verify(issuer.getPublicKey(), "BC");
+            boolean alternative = holder.getExtension(Extension.altSignatureAlgorithm) != null
+                    || holder.getExtension(Extension.altSignatureValue) != null || holder.getExtension(Extension.subjectAltPublicKeyInfo) != null;
+            if (alternative) {
+                require(holder.getExtension(Extension.altSignatureAlgorithm) != null
+                        && holder.getExtension(Extension.altSignatureValue) != null
+                        && holder.getExtension(Extension.subjectAltPublicKeyInfo) != null, "Incomplete alternative-signature certificate");
+                require(Pkix.verifyAlternativeSignatureCor3(certificate, publicKey(alternativeSpki(issuer))), "Alternative issuer signature is invalid");
+            }
+            if (!certificate.getSubjectX500Principal().equals(certificate.getIssuerX500Principal())) subordinateCas++;
+        }
+        System.out.println("VERIFIED issuer-chain certificates=" + chain.size() + " selected-anchor-sha256="
+                + hex(digest("SHA-256", chain.get(chain.size() - 1).getEncoded())));
     }
 
     private static void authContext(String[] args) throws Exception {

@@ -38,6 +38,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 import zeroecho.core.io.CancellationSignal;
@@ -111,7 +112,10 @@ public final class SigningStepExecutor {
      * Nonterminal observations use the caller's fenced claim and retain the observed
      * preclaim state to distinguish initial dispatch from recovery reconciliation.
      * Cancellation preserves mandatory bounded-attempt checkpoints. Retry eligibility,
-     * lease fencing, and durable state remain authoritative in the store.</p>
+     * lease fencing, and durable state remain authoritative in the store. Durable
+     * progress and a successful outer handoff request a rescan after the caller
+     * releases identifier retention; an unchanged ordinary pending observation
+     * does not request a rescan.</p>
      *
      * @param source authoritative observation, including its preclaim state
      * @param claim call-scoped fenced claim; empty means no step is eligible
@@ -127,17 +131,22 @@ public final class SigningStepExecutor {
         Objects.requireNonNull(claim, "claim");
         Objects.requireNonNull(cancellation, "cancellation");
         Objects.requireNonNull(progress, "progress");
+        AtomicBoolean progressed = new AtomicBoolean();
+        Runnable notifyProgress = () -> {
+            progressed.set(true);
+            progress.run();
+        };
         if (terminal(source.state())) {
-            advanceTerminal(source, cancellation, progress);
-            return false;
+            advanceTerminal(source, cancellation, notifyProgress);
+            return progressed.get();
         }
         Optional<Workflow> claimed = claim.apply(source);
         if (claimed.isEmpty()) {
             return false;
         }
         Workflow exact = claimed.orElseThrow();
-        advanceClaimed(source, exact, cancellation, progress);
-        return exact.mode() == SignWorkflowStore.Mode.BOUNDED_OBSERVATION
+        advanceClaimed(source, exact, cancellation, notifyProgress);
+        return progressed.get() || exact.mode() == SignWorkflowStore.Mode.BOUNDED_OBSERVATION
                 || exact.stage() != SignWorkflowStore.Stage.SINGLE;
     }
 
@@ -306,34 +315,42 @@ public final class SigningStepExecutor {
         if (workflow.envelope().outer().isPresent()) {
             try {
                 outerDriver.advance(workflow);
+                // The continuation may have created another due identifier while
+                // this identifier was retained by the caller's scheduling lane.
+                progress.run();
             } catch (RuntimeException infrastructureFailure) {
-                deferOuterContinuation(workflow.operationId(), cancellation);
+                if (deferOuterContinuation(workflow.operationId(), cancellation)) {
+                    progress.run();
+                }
             }
         } else if (store.supportsHybridCrlContinuations()
                 && store.getCrlHybridExecutionForChild(workflow.operationId()).isPresent()) {
             var execution = store.getCrlHybridExecutionForChild(workflow.operationId()).orElseThrow();
             var parent = store.getSignWorkflow(execution.parentId()).orElseThrow();
             try { outerDriver.advance(parent); progress.run(); }
-            catch (RuntimeException infrastructureFailure) { deferOuterContinuation(parent.operationId(), cancellation); }
+            catch (RuntimeException infrastructureFailure) {
+                if (deferOuterContinuation(parent.operationId(), cancellation)) {
+                    progress.run();
+                }
+            }
         } else if (workflow.state() != SignWorkflowStore.State.RETIRED) {
             store.retireSign(workflow.operationId(), workflow.revision(), workflow.fence())
                     .ifPresent(ignored -> progress.run());
         }
     }
 
-    private void deferOuterContinuation(PkiId operationId, CancellationSignal cancellation) {
+    private boolean deferOuterContinuation(PkiId operationId, CancellationSignal cancellation) {
         if (cancellation.isCancelled()) {
-            return;
+            return false;
         }
         Optional<Workflow> loaded = store.getSignWorkflow(operationId);
         if (loaded.isEmpty()) {
-            return;
+            return false;
         }
         Workflow fresh = loaded.orElseThrow();
-        if (fresh.state() == SignWorkflowStore.State.SUCCEEDED) {
-            store.deferSignReconciliation(operationId, fresh.revision(), fresh.fence(),
-                    SignWorkflowStore.ReconciliationFailureClass.LOCAL_FAILURE);
-        }
+        return fresh.state() == SignWorkflowStore.State.SUCCEEDED
+                && store.deferSignReconciliation(operationId, fresh.revision(), fresh.fence(),
+                        SignWorkflowStore.ReconciliationFailureClass.LOCAL_FAILURE).isPresent();
     }
 
     private boolean providerMatches(Workflow workflow) {

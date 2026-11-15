@@ -300,3 +300,6 @@ protocol qualification and release readiness require separately retained C08
 results. Scenario artifacts alone are not a full-catalogue, CRL, OCSP or protocol
 qualification report. Existing C03 native mixed-issuer, protocol, CRL and OCSP
 checks retain their narrower stated environments.
+
+For reusable requests and named downloads outside qualification scenarios, see
+[the host operator client](pki-operator.md).

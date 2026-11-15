@@ -141,7 +141,7 @@ final class SigningReactorTest {
                     });
             SignWorkflowStore.Workflow observed = store.getSignWorkflow(identity.id()).orElseThrow();
 
-            assertFalse(executor.advance(observed, workflow -> {
+            assertTrue(executor.advance(observed, workflow -> {
                 assertSame(caller, Thread.currentThread());
                 return store.claimSignStep(workflow.operationId(), workflow.revision(), Duration.ofSeconds(10));
             }, CancellationSignal.NONE, () -> {
@@ -151,7 +151,7 @@ final class SigningReactorTest {
 
             assertEquals(1, provider.dispatches.get());
             assertEquals(1, outerCalls.get());
-            assertEquals(1, progressCalls.get());
+            assertEquals(2, progressCalls.get());
             assertEquals(SignWorkflowStore.State.FAILED,
                     store.getSignWorkflow(fixture.command().operationId()).orElseThrow().state());
         }
@@ -177,7 +177,7 @@ final class SigningReactorTest {
             SigningStepExecutor executor = new SigningStepExecutor(store, provider,
                     Duration.ofSeconds(5), ignored -> { throw new AssertionError("No outer continuation"); });
 
-            assertFalse(executor.advance(store.getSignWorkflow(operationId).orElseThrow(),
+            assertTrue(executor.advance(store.getSignWorkflow(operationId).orElseThrow(),
                     workflow -> store.claimSignStep(workflow.operationId(), workflow.revision(), Duration.ofSeconds(10)),
                     CancellationSignal.NONE, () -> assertSame(caller, Thread.currentThread())));
 
@@ -204,6 +204,107 @@ final class SigningReactorTest {
 
             assertEquals(0, provider.dispatches.get());
             assertEquals(SignWorkflowStore.State.DISPATCHED, store.getSignWorkflow(operationId).orElseThrow().state());
+        }
+    }
+
+    @Test
+    void terminalHandoffSchedulesDynamicChildWithoutPollingOrExternalWake(@TempDir Path root)
+            throws Exception {
+        dynamicTerminalHandoff(root, false, false);
+    }
+
+    @Test
+    void recoveredTerminalHandoffSchedulesDynamicChildWithoutPollingOrExternalWake(@TempDir Path root)
+            throws Exception {
+        dynamicTerminalHandoff(root, true, false);
+    }
+
+    @Test
+    void uncertainRecoveredTerminalHandoffSchedulesCommittedChildWithoutReplay(@TempDir Path root)
+            throws Exception {
+        dynamicTerminalHandoff(root, true, true);
+    }
+
+    private static void dynamicTerminalHandoff(Path root, boolean recovered, boolean uncertain) throws Exception {
+        MutableClock clock = new MutableClock(NOW);
+        try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 8, clock)) {
+            List<SigningSubmissionId> identities = sortedIdentities(store, 2);
+            AcceptanceFixture child = staged(store, identities.getFirst(), OTHER_KEY,
+                    new PkiId("authority-child"), Optional.empty());
+            PkiId parent = accept(store, identities.getLast(), EXACT_KEY,
+                    new PkiId("authority-parent"), Optional.of(outer())).command().operationId();
+            if (recovered) {
+                SignWorkflowStore.Workflow intent = store.getSignWorkflow(parent).orElseThrow();
+                var claimed = store.claimSignStep(parent, intent.revision(), Duration.ofSeconds(10)).orElseThrow();
+                store.transitionSign(parent, claimed.revision(), claimed.fence(),
+                        uncertain ? SignWorkflowStore.State.SUCCEEDED : SignWorkflowStore.State.FAILED,
+                        Optional.of(uncertain ? "SIGNED" : "DENIED"),
+                        uncertain ? Optional.of(new EncodedObject(Encoding.BINARY, new byte[] {7})) : Optional.empty(),
+                        Optional.of(NOW.plusSeconds(1))).orElseThrow();
+            }
+            CountDownLatch initialScanComplete = new CountDownLatch(1);
+            PkiStore observed = proxy(store, (method, result) -> {
+                if ("pageDueSignWorkflows".equals(method)
+                        && ((SignWorkflowStore.DuePage) result).endReached()) {
+                    initialScanComplete.countDown();
+                }
+                return result;
+            });
+            AtomicInteger outerCalls = new AtomicInteger();
+            RecordingProvider provider = new RecordingProvider(store, recovered ? 1 : 2);
+            SigningReactor reactor = new SigningReactor(observed, provider,
+                    topology(2, Duration.ofSeconds(2), List.of(), new SigningLanePool(1, 2)), terminal -> {
+                        try { await(initialScanComplete); }
+                        catch (InterruptedException failure) { throw new IllegalStateException(failure); }
+                        assertEquals(parent, terminal.operationId());
+                        outerCalls.incrementAndGet();
+                        assertEquals(SignWorkflowStore.AcceptanceResult.ACCEPTED, store.acceptSign(child.command()));
+                        if (uncertain) {
+                            throw new IllegalStateException("Child committed before outer acknowledgement failed");
+                        }
+                        var domain = store.getDomainContinuation(parent).orElseThrow();
+                        store.transitionDomainContinuation(parent, domain.revision(), DomainContinuationStore.State.FAILED,
+                                Optional.empty(), Optional.of("DENIED")).orElseThrow();
+                        store.retireSign(parent, terminal.revision(), terminal.fence()).orElseThrow();
+                    });
+            reactor.start();
+            try {
+                await(provider.expectedCalls);
+                awaitState(store, child.command().operationId(), SignWorkflowStore.State.RETIRED);
+                assertEquals(recovered ? 1 : 2, provider.dispatches.get());
+                assertEquals(1, outerCalls.get());
+                var retainedParent = store.getSignWorkflow(parent).orElseThrow();
+                assertEquals(uncertain ? SignWorkflowStore.State.SUCCEEDED : SignWorkflowStore.State.RETIRED,
+                        retainedParent.state());
+                if (uncertain) {
+                    assertEquals(1, retainedParent.failureCount());
+                    assertTrue(retainedParent.nextEligibleAt().orElseThrow().isAfter(NOW));
+                    awaitRetainedCount(reactor, 0);
+                    assertEquals(1, outerCalls.get());
+                }
+            } finally { reactor.close(); }
+        }
+    }
+
+    @Test
+    void unchangedNormalPendingDoesNotRequestAnotherScan(@TempDir Path root) throws Exception {
+        MutableClock clock = new MutableClock(NOW);
+        try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 8, clock)) {
+            PkiId id = accept(store, EXACT_KEY, new PkiId("authority-pending")).command().operationId();
+            RecordingProvider provider = new RecordingProvider(store, 0) {
+                @Override public OperationObservation dispatch(SignRequest request, CallControl control) {
+                    dispatches.incrementAndGet();
+                    return new OperationObservation(request.operationId(), ObservationState.PENDING, NOW,
+                            DetailCode.PENDING, Optional.empty());
+                }
+            };
+            SigningStepExecutor executor = new SigningStepExecutor(store, provider, Duration.ofSeconds(5),
+                    ignored -> { throw new AssertionError("Pending has no terminal continuation"); });
+            assertFalse(executor.advance(store.getSignWorkflow(id).orElseThrow(),
+                    workflow -> store.claimSignStep(id, workflow.revision(), Duration.ofSeconds(10)),
+                    CancellationSignal.NONE, () -> { throw new AssertionError("No durable progress for unchanged pending"); }));
+            assertEquals(1, provider.dispatches.get());
+            assertEquals(SignWorkflowStore.State.DISPATCHED, store.getSignWorkflow(id).orElseThrow().state());
         }
     }
 
@@ -303,11 +404,17 @@ final class SigningReactorTest {
             }
             AtomicInteger scanCalls = new AtomicInteger();
             CountDownLatch thirdScan = new CountDownLatch(1);
+            CountDownLatch excessiveScan = new CountDownLatch(1);
+            int maximumScans = 3 + identities.size();
             List<Optional<String>> suppliedHighWatermarks = Collections.synchronizedList(
                     new ArrayList<>());
             PkiStore observed = proxy(store, (method, result) -> {
                 if ("pageDueSignWorkflows".equals(method)) {
-                    if (scanCalls.incrementAndGet() >= 3) {
+                    int observedCalls = scanCalls.incrementAndGet();
+                    if (observedCalls > maximumScans) {
+                        excessiveScan.countDown();
+                    }
+                    if (observedCalls >= 3) {
                         thirdScan.countDown();
                     }
                 }
@@ -326,7 +433,14 @@ final class SigningReactorTest {
                 provider.releaseFirst.countDown();
                 await(thirdScan);
                 await(provider.expectedCalls);
-                assertEquals(3, scanCalls.get());
+                for (SigningSubmissionId identity : identities) {
+                    awaitState(store, identity.id(), SignWorkflowStore.State.RETIRED);
+                }
+                awaitRetainedCount(reactor, 0);
+                assertFalse(excessiveScan.await(100L, TimeUnit.MILLISECONDS));
+                assertTrue(scanCalls.get() <= maximumScans);
+                // Later terminal progress may request fresh scans; the first three
+                // pages must still preserve the capacity-blocked cycle's snapshot.
                 assertEquals(Optional.empty(), suppliedHighWatermarks.getFirst());
                 assertTrue(suppliedHighWatermarks.get(1).isPresent());
                 assertEquals(suppliedHighWatermarks.get(1), suppliedHighWatermarks.get(2));
