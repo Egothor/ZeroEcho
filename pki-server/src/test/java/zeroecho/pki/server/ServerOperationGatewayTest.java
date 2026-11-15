@@ -90,6 +90,54 @@ class ServerOperationGatewayTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void retainedTargetReadUsesCurrentAuthorityWithoutRenormalizingCompletedMutation() throws Exception {
+        try(var opened=ServerTestSupport.open(temporaryDirectory)) {
+            var principal=ServerTestSupport.principal("auditor");
+            opened.store().createPrincipal(principal);
+            opened.store().createPrincipal(ServerTestSupport.principal("reader"));
+            var operation=new PkiOperation.SelectIssuancePath(ServerTestSupport.AUTHORITY,new PkiId("issuer-old"),new PkiId("path-old"),"Retained target");
+            var descriptor=new OperationSecurityDescriptors().require(operation.name());
+            var resource=new Permission.Resource(descriptor.resourceType(),ServerTestSupport.scope(),Optional.of(ServerTestSupport.AUTHORITY),Optional.empty());
+            var grant=ServerTestSupport.grant("retained-select","auditor",Permission.Effect.ALLOW,descriptor.action(),descriptor.resourceType(),
+                    ServerTestSupport.scope(),Permission.Relationship.ANY,descriptor.dataView());
+            opened.store().createGrant(grant);
+            var normalizations=new AtomicInteger();var executions=new AtomicInteger();
+            var outcome=new PkiOperationOutcome.Completed(new PkiOperationResult(operation.name(),Map.of()));
+            var executor=new zeroecho.pki.application.PkiOperationExecutor() {
+                @Override public PkiOperation normalize(PkiOperation selected) {
+                    normalizations.incrementAndGet();
+                    throw new IllegalStateException("Retained expected head is stale after successful mutation");
+                }
+                @Override public PkiOperationOutcome execute(PkiOperation selected,CancellationSignal cancellation) {
+                    executions.incrementAndGet();return outcome;
+                }
+            };
+            var gateway=gateway(opened,new AtomicInteger(),approvalPolicies(),outcome,new TestScopeResolver(),new AtomicReference<>(),
+                    opened.audit(),()->{},new AtomicReference<>(),executor);
+            var selected=request(operation,resource,Optional.empty());
+            var retained=gateway.assessRetainedAdministrativeRequest(selected);
+            assertEquals(operation,((AdministrativeOperation.Pki)retained.request().operation()).operation());
+            assertEquals(resource,retained.request().resource());
+            assertEquals(0,normalizations.get());assertEquals(0,executions.get());
+            assertThrows(IllegalStateException.class,()->gateway.assessAdministrativeRequest(selected));
+            assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,gateway.execute(selected,CancellationSignal.NONE));
+            assertEquals(2,normalizations.get());assertEquals(0,executions.get());
+            var noGrant=new ServerOperationGateway.Request(selected.realmId(),"reader",selected.operation(),selected.resource(),selected.relationship(),selected.context(),selected.approvalId(),"read-without-grant");
+            assertThrows(SecurityException.class,()->gateway.assessRetainedAdministrativeRequest(noGrant));
+            var foreign=new Permission.Resource(descriptor.resourceType(),new Permission.Scope(ServerTestSupport.REALM,Optional.of(new PkiId("other-ca")),Optional.empty(),Optional.empty()),Optional.of(ServerTestSupport.AUTHORITY),Optional.empty());
+            assertThrows(SecurityException.class,()->gateway.assessRetainedAdministrativeRequest(request(operation,foreign,Optional.empty())));
+            var revoked=new Permission.Grant(grant.grantId(),grant.principalId(),grant.effect(),grant.action(),grant.resourceType(),grant.scope(),grant.relationship(),grant.dataView(),grant.conditions(),grant.expiresAt(),false);
+            opened.store().replaceGrant(grant,revoked);
+            assertThrows(SecurityException.class,()->gateway.assessRetainedAdministrativeRequest(selected));
+            opened.store().replaceGrant(revoked,grant);
+            var disabled=new SecurityPrincipal(principal.principalId(),principal.type(),principal.displayName(),principal.organization(),principal.attributes(),false);
+            opened.store().replacePrincipal(principal,disabled);
+            assertThrows(SecurityException.class,()->gateway.assessRetainedAdministrativeRequest(selected));
+            assertEquals(2,normalizations.get());assertEquals(0,executions.get());
+        }
+    }
+
+    @Test
     void persistedControlCoordinatesBindBeforeAuthorizationAndRejectExplicitForeignScope() throws Exception {
         try(var opened=ServerTestSupport.open(temporaryDirectory)) {
             opened.store().createPrincipal(ServerTestSupport.principal("reader"));opened.store().createPrincipal(ServerTestSupport.principal("target"));

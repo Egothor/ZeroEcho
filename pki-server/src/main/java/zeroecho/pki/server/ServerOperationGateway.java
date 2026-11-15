@@ -431,8 +431,28 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * @throws SecurityException when current authority, scope or operation availability rejects the target
      */
     public Admission assessAdministrativeRequest(Request request) {
+        return assessAdministrativeAuthority(request, true);
+    }
+
+    /**
+     * Checks current authority to disclose an immutable retained administrative target.
+     *
+     * Unlike submission, a read must not refreeze creation defaults or test an old
+     * lifecycle fence against a head that successful execution intentionally changed.
+     * All current principal, grant, realm, scope, disclosure and policy checks remain.
+     *
+     * @param request decoded retained target with the current viewing principal
+     * @return current permission assessment over that exact immutable target
+     * @throws SecurityException if current authorization or authoritative scope is denied
+     * @throws IllegalArgumentException if retained coordinates are invalid
+     */
+    Admission assessRetainedAdministrativeRequest(Request request) {
+        return assessAdministrativeAuthority(request, false);
+    }
+
+    private Admission assessAdministrativeAuthority(Request request, boolean normalizeCreation) {
         openCheck.run();
-        Request exact = authoritativeRequest(Objects.requireNonNull(request, "request"));
+        Request exact = authoritativeRequest(Objects.requireNonNull(request, "request"), normalizeCreation);
         if (!realmId.equals(exact.realmId()) || !realmId.equals(exact.resource().scope().realmId())) throw new SecurityException("Outside realm");
         var descriptor = validateOperationScope(exact, null);
         if (!descriptor.mutating()) throw new SecurityException("Only mutations may be retained");
@@ -1214,7 +1234,11 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
     }
 
     private Request authoritativeRequest(Request request) {
-        Request exact = authoritativeControlRequest(normalizeCreationRequest(request));
+        return authoritativeRequest(request, true);
+    }
+
+    private Request authoritativeRequest(Request request, boolean normalizeCreation) {
+        Request exact = authoritativeControlRequest(normalizeCreation ? normalizeCreationRequest(request) : request);
         if (exact.operation() instanceof AdministrativeOperation.Control selected
                 && selected.operation() instanceof ServerControlOperation.ListCapabilities query) {
             Permission.Resource supplied = exact.resource();

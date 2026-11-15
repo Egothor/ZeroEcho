@@ -105,9 +105,10 @@ class ExerciseCatalogIntegrationTest {
         SSLContext ssl=tlsContext(transport,tlsPassword);
         var listener=HttpServerTestSupport.configuration(directory.resolve("transport-configuration"),client).listener();
         TestTlsProvider.install(ssl);
-        var unsigned=AdministrativeWorkflowFixture.configuration(directory.resolve("domain"),false);
+        var unsigned=withRecipePrerequisites(AdministrativeWorkflowFixture.configuration(directory.resolve("domain"),false));
+        assertEquals(1,unsigned.realm().approvalPolicies().get(OperationSecurityDescriptors.ApprovalCategory.ISSUANCE_SINGLE).threshold());
         PkiAdminBootstrap.bootstrap(unsigned,"bootstrap-admin","bootstrap-approver","trusted-proxy");
-        var domain=AdministrativeWorkflowFixture.configuration(directory.resolve("domain"),true);
+        var domain=withRecipePrerequisites(AdministrativeWorkflowFixture.configuration(directory.resolve("domain"),true));
         var mapping=new PkiServerConfiguration.ClientCertificateMapping("admin","bootstrap-admin",
                 Optional.of(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(client.getEncoded()))),Optional.empty(),Optional.empty());
         var authentication=new PkiServerConfiguration.Authentication(AdministrativeAuthenticationMode.DIRECT_MTLS,
@@ -123,7 +124,7 @@ class ExerciseCatalogIntegrationTest {
             List.of(new zeroecho.pki.spi.ProviderConfig("filesystem",java.util.Map.of("root",publicationRoot.toString(),"targetId","exercise-files"))),sessionBase.bindingProviders());
         var realmConfiguration=new ServerRealmConfiguration(realmBase.realmId(),realmBase.displayName(),realmBase.confirmationProofPolicy(),session,
             realmBase.authorityExposure(),realmBase.authorizationCommitment(),realmBase.approvalCommitment(),realmBase.extendedApprovalCommitment(),
-            realmBase.disclosureCommitment(),realmBase.disclosureDefaults(),realmBase.controlLogPath(),realmBase.controlStoreId(),realmBase.approvalPolicies());
+            realmBase.disclosureCommitment(),realmBase.disclosureDefaults(),realmBase.controlLogPath(),realmBase.controlStoreId(),realmBase.approvalPolicies(),realmBase.initialAdministratorPrincipalId());
         var configuration=new PkiServerConfiguration(domain.version(),domain.serverName(),realmConfiguration,listener,authentication,domain.execution(),domain.runtime());
         Path keyPath=directory.resolve("domain/keyring/signing.zek");
         Files.createDirectories(keyPath.getParent(),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
@@ -158,7 +159,7 @@ class ExerciseCatalogIntegrationTest {
                         exercise=exercise_pki.Exercise(exercise_pki.Api(sys.argv[2],Path(sys.argv[4]),cert,key),output)
                         options=SimpleNamespace(principal_id='bootstrap-admin',ca_key_ref='fixture:root.prv',ca_profile='root-ca',client_profile='vpn-client',maximum_download_bytes=67108864,require_public=False)
                         exercise_pki._live(exercise,options)
-                        excluded=lambda op: op.startswith(('backup.','acme.','est.','scep.','cmp.','enrollment.request.','ocsp.')) or op in {'publication.retry','publication.reconcile'}
+                        excluded=lambda op: op!='ocsp.responder.issue-certificate' and (op.startswith(('backup.','acme.','est.','scep.','cmp.','enrollment.request.','ocsp.')) or op in {'publication.retry','publication.reconcile'})
                         exercise.descriptors={op:desc for op,desc in exercise.descriptors.items() if not excluded(op)}
                         def assert_owned(origin,run_id):
                             assert origin==sys.argv[2] and run_id==exercise.state['runId'] and owned.is_dir()
@@ -172,6 +173,15 @@ class ExerciseCatalogIntegrationTest {
                             for name,step in exercise.state['jobs'].items() if step['intent']['operation'] in result['failed']}
                         print('SAFE_DURABLE_TRACE '+json.dumps(trace,sort_keys=True))
                         assert not result['qualified'], 'Partial native diagnostics must never claim global qualification'
+                        for operation in ('ca.rollover','issuer.path.select'):
+                            retained=next(step for step in exercise.state['jobs'].values() if step['intent']['operation']==operation)
+                            assert retained['receipt']['state']=='SUCCEEDED', 'Regression prerequisite: lifecycle mutation did not complete'
+                            from urllib.parse import quote
+                            for _ in range(2):
+                                _,wire=exercise.api.json('GET','/admin/v1/requests/'+quote(retained['intent']['requestId'],safe=''))
+                                projected=exercise_pki._result(wire,'administrative.request.inspect')
+                                assert isinstance(projected.get('result'),dict), 'Completed lifecycle result must survive head change: '+operation
+                                assert 'target' in projected, 'Current authorized viewer must retain exact original target'
                         assert not result['failed'], json.dumps(result['failed'],sort_keys=True)
                     """;
             Path output=directory.resolve("http-receipts");
@@ -179,6 +189,21 @@ class ExerciseCatalogIntegrationTest {
                     transport.resolve("logins/administrator.p12").toString(),transport.resolve("logins/web-ca.pem").toString(),output.toString(),directory.toString()),
                     (loginPassword+"\n").getBytes(StandardCharsets.UTF_8),directory.resolve("catalog-script.log"));
         }
+    }
+
+    private static PkiServerConfiguration withRecipePrerequisites(PkiServerConfiguration source) {
+        // The generation recipe must use the same immutable FIRST provenance as deployment bootstrap.
+        var realm=source.realm();
+        // The managed responder profile retains SINGLE approval; this fixture must supply its policy.
+        var policies=new java.util.HashMap<>(realm.approvalPolicies());
+        policies.put(OperationSecurityDescriptors.ApprovalCategory.ISSUANCE_SINGLE,
+                policies.get(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK));
+        var pinned=new ServerRealmConfiguration(realm.realmId(),realm.displayName(),realm.confirmationProofPolicy(),
+                realm.pkiSessionConfiguration(),realm.authorityExposure(),realm.authorizationCommitment(),realm.approvalCommitment(),
+                ServerRealmConfiguration.extendedApprovalCommitment(policies),realm.disclosureCommitment(),realm.disclosureDefaults(),realm.controlLogPath(),
+                realm.controlStoreId(),policies,Optional.of("bootstrap-admin"));
+        return new PkiServerConfiguration(source.version(),source.serverName(),pinned,source.listener(),source.authentication(),
+                source.execution(),source.runtime(),source.publicListener(),source.acmeListener(),source.estListener(),source.scepListener(),source.cmpListener(),source.auditProjection());
     }
 
     static String randomPassword() {

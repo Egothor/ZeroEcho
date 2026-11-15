@@ -51,6 +51,9 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -63,9 +66,11 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
-import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
-import zeroecho.pki.server.http.StrictJson;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.core.ObjectReadContext;
+import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.server.http.TestTlsProvider;
 
 /**
@@ -141,19 +146,62 @@ class ExercisePkiIntegrationTest {
             run(new ProcessBuilder("python3","-c",runner,repository.resolve("deploy").toString(),origin,
                     transport.resolve("logins/administrator.p12").toString(),transport.resolve("logins/web-ca.pem").toString(),output.toString()),
                     (loginPassword+"\n").getBytes(StandardCharsets.UTF_8),directory.resolve("script.log"));
-            var report=(PkiOperationValue.ObjectValue)StrictJson.parse(Files.readAllBytes(output.resolve("report.json")),8*1024*1024);
-            assertEquals(new PkiOperationValue.BooleanValue(true),report.fields().get("demoVerified"));
+            var report=diagnosticObject(output.resolve("report.json"));
+            assertEquals(Boolean.TRUE,report.get("demoVerified"));
             assertEquals(PosixFilePermissions.fromString("rw-------"),Files.getPosixFilePermissions(output.resolve("client.key")));
             for(String name:List.of("ca.der","ca.pem","client.der","client.pem","full.der","full.pem","delta.der","delta.pem","full-after.der","full-after.pem")) assertTrue(Files.size(output.resolve(name))>0,name);
-            var checkpoint=(PkiOperationValue.ObjectValue)StrictJson.parse(Files.readAllBytes(output.resolve("checkpoint.json")),8*1024*1024);
-            var jobs=(PkiOperationValue.ObjectValue)checkpoint.fields().get("jobs");
-            for(var value:jobs.fields().values()) {
-                var retained=(PkiOperationValue.ObjectValue)value;
-                var intent=(PkiOperationValue.ObjectValue)retained.fields().get("intent");
-                String id=((PkiOperationValue.Text)intent.fields().get("requestId")).value();
+            var checkpoint=diagnosticObject(output.resolve("checkpoint.json"));
+            var jobs=assertInstanceOf(Map.class,checkpoint.get("jobs"));
+            assertFalse(jobs.isEmpty(),"The external client must retain real completed requests");
+            for(var value:jobs.values()) {
+                var retained=assertInstanceOf(Map.class,value);
+                var intent=assertInstanceOf(Map.class,retained.get("intent"));
+                String id=assertInstanceOf(String.class,intent.get("requestId"));
                 assertEquals(AdministrativeRequest.State.SUCCEEDED,server.realm().administrativeRequests().inspect(id,"bootstrap-admin").state());
             }
         }
+    }
+
+    private static Map<?,?> diagnosticObject(Path path) throws Exception {
+        assertTrue(Files.size(path)<=8*1024*1024,"Client diagnostic document exceeds test bound");
+        try(var parser=JsonFactory.builder().build().createParser(ObjectReadContext.empty(),Files.readAllBytes(path))) {
+            assertNotNull(parser.nextToken(),"Client diagnostic document is empty");
+            var result=assertInstanceOf(Map.class,diagnosticValue(parser));
+            assertNull(parser.nextToken(),"Client diagnostic document has trailing content");
+            return result;
+        }
+    }
+
+    // Client diagnostics allow JSON null, unlike the deliberately restricted server wire algebra.
+    private static Object diagnosticValue(JsonParser parser) throws java.io.IOException {
+        return switch(parser.currentToken()) {
+            case START_OBJECT -> {
+                Map<String,Object> result=new LinkedHashMap<>();
+                while(parser.nextToken()!=JsonToken.END_OBJECT) {
+                    assertEquals(JsonToken.PROPERTY_NAME,parser.currentToken());
+                    String name=parser.currentName();
+                    assertFalse(result.containsKey(name),"Duplicate diagnostic field");
+                    assertNotNull(parser.nextToken());
+                    result.put(name,diagnosticValue(parser));
+                }
+                yield result;
+            }
+            case START_ARRAY -> {
+                List<Object> result=new ArrayList<>();
+                while(parser.nextToken()!=JsonToken.END_ARRAY) {
+                    assertNotNull(parser.currentToken());
+                    result.add(diagnosticValue(parser));
+                }
+                yield result;
+            }
+            case VALUE_STRING -> parser.getString();
+            case VALUE_TRUE -> true;
+            case VALUE_FALSE -> false;
+            case VALUE_NULL -> null;
+            case VALUE_NUMBER_INT -> parser.getBigIntegerValue();
+            case VALUE_NUMBER_FLOAT -> parser.getDecimalValue();
+            default -> throw new java.io.IOException("Unexpected client diagnostic JSON token");
+        };
     }
 
     static String randomPassword() {

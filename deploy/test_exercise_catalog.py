@@ -32,6 +32,8 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Executable catalog runner contracts; fake only its HTTP/ownership collaborators."""
+import base64
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -66,7 +68,7 @@ class CatalogContracts(unittest.TestCase):
         """An undiscovered operation cannot increase the executed denominator."""
         graph = self.module.plan(self.schema, {}, {})
         self.assertFalse(graph['steps'])
-        self.assertEqual(150, len(graph['not_discovered']))
+        self.assertEqual(152, len(graph['not_discovered']))
         self.assertEqual(['backup.restore'], graph['unavailable'])
 
     def test_mutation_requires_live_disposable_check_before_api(self):
@@ -122,7 +124,93 @@ class CatalogContracts(unittest.TestCase):
         exercise.descriptors = {'configuration.validate':{}}
         result = self.module.run(exercise, {})
         self.assertFalse(result['qualified'])
-        self.assertEqual(149, len(result['not_discovered']))
+        self.assertEqual(151, len(result['not_discovered']))
+
+    def test_managed_key_recipe_retains_explicit_generation_and_public_result(self):
+        recipe = self.module._RECIPES['key.generate']
+        exercise = FakeExercise()
+        values = self.module._initial_values(exercise, {})
+        row = next(row for row in self.schema if row['operationId']=='key.generate')
+        arguments = self.module._arguments(recipe, row, values)
+        self.assertEqual({'generationId':'exercise-'+'a'*32+'-managed-key',
+                          'parameters':'ECDSA_P384'}, arguments)
+        self.assertIsNone(self.module._authority(arguments, recipe, values, row))
+        self.assertEqual({'managedKeyRef':'keyRef', 'managedGenerationId':'generationId',
+                          'managedPublicKeyInfo':'subjectPublicKeyInfo'}, recipe['captures'])
+
+    def test_managed_key_receipt_rejects_changed_generation_and_private_material(self):
+        values = {'managedGenerationId':'owned-generation', 'managedParameters':'ECDSA_P384'}
+        good = {'generationId':'owned-generation','parameters':'ECDSA_P384',
+                'keyRef':'provider:managed-key.priv','subjectPublicKeyInfo':'c3BraQ=='}
+        self.module._postconditions(FakeExercise(), {}, 'key.generate', good, values)
+        for invalid in ({**good, 'generationId':'other'}, {**good, 'parameters':'RSA_4096'},
+                        {**good, 'privateKey':'forbidden'}, {**good, 'subjectPublicKeyInfo':'?'}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(self.module.CatalogFailure):
+                    self.module._postconditions(FakeExercise(), {}, 'key.generate', invalid, values)
+
+    def test_managed_responder_freezes_exact_roles_profile_generation_and_validity(self):
+        calls=[]
+        cached={}
+        bad_signature=[False]
+        module=self.module
+        exercise=FakeExercise()
+        operations=('key.generate','profile.register','profile.activate','ca.create','ca.list',
+                    'issuer.generation.inspect','ca.inspect','issuer.path.inspect',
+                    'ocsp.responder.issue-certificate','credential.inspect')
+        for operation in operations:
+            exercise.schema[operation]={'scope':'authority' if operation in ('profile.activate','ocsp.responder.issue-certificate','credential.inspect','ca.inspect') else 'realm',
+                'mutating':operation in ('key.generate','profile.register','profile.activate','ca.create','ocsp.responder.issue-certificate')}
+            exercise.descriptors[operation]={'durableRequest':True}
+        def invoke(operation,arguments,authority=None):
+            calls.append((operation,arguments,authority))
+            exercise.state['coverage'][operation]={'state':'EXECUTED'}
+            if operation=='key.generate':
+                return {**arguments,'keyRef':arguments['generationId']+'.priv','subjectPublicKeyInfo':'c3BraQ=='}
+            if operation=='profile.register':return {'canonicalSha256':'f'*64}
+            if operation=='profile.activate':return {'active':True}
+            if operation=='ca.create':return {'credentialId':'issuer-cert'}
+            if operation=='ca.list':return {'authorities':[{'caId':'hybrid-ca','currentIssuanceIssuerId':'exact-issuer'}]}
+            if operation=='issuer.generation.inspect':
+                prefix='exercise-'+'a'*32+'-ocsp-'
+                def role(name,signature):return {'keyRef':prefix+name+'.priv','signatureAlgorithmId':'unexpected' if bad_signature[0] else signature,
+                    'subjectSpkiSha256':hashlib.sha256(b'spki').hexdigest()}
+                return {'authorityId':'hybrid-ca','issuerId':'exact-issuer','credentialId':'issuer-cert',
+                    'cryptographicBinding':{'primary':role('issuer',module._OCSP_PRIMARY_SIGNATURE),
+                        'alternative':role('issuer-alt',module._OCSP_ALTERNATIVE_SIGNATURE)}}
+            if operation=='ca.inspect':return {'selectedPathId':'exact-path'}
+            if operation=='issuer.path.inspect':return {'issuerId':'exact-issuer','pathId':'exact-path','pathCommitment':'b'*64}
+            if operation=='ocsp.responder.issue-certificate':return {'credentialId':'responder-cert'}
+            if operation=='credential.inspect':return {'credentialId':'responder-cert'}
+            raise AssertionError(operation)
+        def job(name,operation,arguments,authority=None):
+            if name not in cached:cached[name]=(arguments,authority,invoke(operation,arguments,authority))
+            self.assertEqual((arguments,authority),cached[name][:2])
+            exercise.state['coverage'][operation]={'state':'EXECUTED'}
+            return cached[name][2]
+        exercise.job=job
+        exercise.operation=invoke
+        values={'authorityId':'catalog-ca'}
+        context={'assert_disposable':lambda *_:None}
+        first=module._issue_managed_responder(exercise,'ocsp.responder.issue-certificate',values,context)
+        module._issue_managed_responder(exercise,'ocsp.responder.issue-certificate',values,context)
+        target=values['managedResponderTarget']
+        self.assertEqual({'credentialId':'responder-cert'},first)
+        self.assertEqual(('hybrid-ca','exact-issuer','exact-path','b'*64),
+                         tuple(target[k] for k in ('authorityId','issuerId','chainPathId','chainPathCommitment')))
+        self.assertEqual('f'*64,target['profileSha256'])
+        self.assertNotEqual(target['primaryKeyRef'],target['alternativeKeyRef'])
+        self.assertNotIn('expectedPredecessorCredentialId',target)
+        self.assertEqual(1,sum(op=='ocsp.responder.issue-certificate' for op,_,_ in calls))
+        profiles=[json.loads(base64.b64decode(args['document'])) for op,args,_ in calls if op=='profile.register']
+        responder=profiles[1]
+        self.assertEqual(['1.3.6.1.5.5.7.3.9'],responder['leafCertificate']['extendedKeyUsage'])
+        self.assertEqual('SINGLE',responder['approvalRequirement'])
+        self.assertEqual(target['alternativeKeyRef'],responder['hybridMode']['altKeyRef'])
+        self.assertFalse(any(op=='ocsp.responder.register' for op,_,_ in calls))
+        bad_signature[0]=True
+        with self.assertRaisesRegex(module.CatalogFailure,'selected managed signing roles'):
+            module._issue_managed_responder(exercise,'ocsp.responder.issue-certificate',values,context)
 
     def test_protocol_recipes_use_frozen_protocol_authority(self):
         """Catalog rollover cannot retarget an RA capability bound to the baseline issuer."""
@@ -145,6 +233,66 @@ class CatalogContracts(unittest.TestCase):
         with self.assertRaises(self.module.CatalogFailure):
             self.module._postconditions(exercise,{},'ca.rollover',{'credentialId':'issued-cert'},{'authorityId':'owned-ca'})
         self.assertEqual(['ca.inspect','issuer.generation.inspect'],observations)
+
+    def test_changed_root_rotation_verifies_candidate_without_advancing_active_head(self):
+        exercise=FakeExercise()
+        head={'caId':'owned-ca','kind':'ROOT','currentIssuanceIssuerId':'active-issuer',
+              'selectedPathId':'active-path','headEpoch':7}
+        role=lambda digest,key: {'keyRef':key,'subjectSpkiSha256':digest,'publicKeyAlgorithmId':'rsa',
+            'signatureAlgorithmId':'rsa-sha256','signatureAlgorithmIdentifierDer':'canonical-der'}
+        candidate={'issuerId':'candidate-issuer','authorityId':'owned-ca','credentialId':'candidate-cert',
+            'activationState':'PENDING_ACTIVATION','cryptographicBinding':{'primary':role('new-spki','fixture:rotated.prv')}}
+        exercise.schema={name:{'scope':'realm','mutating':False} for name in ('ca.inspect','issuer.generation.inspect','issuer.path.inspect')}
+        exercise.descriptors={name:{} for name in exercise.schema}
+        def read(operation,arguments,authority=None):
+            if operation=='ca.inspect':return head
+            if operation=='issuer.generation.inspect':
+                self.assertEqual({'issuerId':'candidate-issuer'},arguments)
+                return candidate
+            if operation=='issuer.path.inspect':return {'pathId':'candidate-path','issuerId':'candidate-issuer',
+                'orderedCredentialIds':['candidate-cert']}
+            raise AssertionError(operation)
+        exercise.operation=read
+        result={'credentialId':'candidate-cert','candidateCredentialId':'candidate-cert','candidateIssuerId':'candidate-issuer',
+            'candidatePathId':'candidate-path','activationState':'PENDING_ACTIVATION'}
+        values={'authorityId':'owned-ca','rotationKeyRef':'fixture:rotated.prv','rotationHeadBefore':dict(head),
+            'rotationBindingBefore':{'primary':role('old-spki','fixture:root.prv')}}
+        self.module._postconditions(exercise,{},'ca.rotate',result,values)
+        for invalid in ({**head,'headEpoch':8},{**head,'currentIssuanceIssuerId':'candidate-issuer'}):
+            saved=dict(head);head.update(invalid)
+            with self.assertRaises(self.module.CatalogFailure):self.module._postconditions(exercise,{},'ca.rotate',result,values)
+            head.clear();head.update(saved)
+        candidate['cryptographicBinding']['primary']['keyRef']='wrong-key'
+        with self.assertRaises(self.module.CatalogFailure):self.module._postconditions(exercise,{},'ca.rotate',result,values)
+
+    def test_same_key_alias_rotation_uses_active_result_but_changed_tuple_cannot(self):
+        exercise=FakeExercise()
+        role={'keyRef':'canonical:key','subjectSpkiSha256':'same-spki','publicKeyAlgorithmId':'rsa',
+              'signatureAlgorithmId':'rsa-sha256','signatureAlgorithmIdentifierDer':'canonical-der'}
+        head={'caId':'owned-ca','kind':'ROOT','currentIssuanceIssuerId':'new-issuer',
+              'selectedPathId':'new-path','headEpoch':8}
+        generation={'issuerId':'new-issuer','authorityId':'owned-ca','credentialId':'new-cert',
+                    'cryptographicBinding':{'primary':dict(role)}}
+        exercise.schema={name:{'scope':'realm','mutating':False} for name in ('ca.inspect','issuer.generation.inspect','issuer.path.inspect')}
+        exercise.descriptors={name:{} for name in exercise.schema}
+        def read(operation,arguments,authority=None):
+            if operation=='ca.inspect':return head
+            if operation=='issuer.generation.inspect':return generation
+            return {'pathId':'new-path','issuerId':'new-issuer','orderedCredentialIds':['new-cert']}
+        exercise.operation=read
+        values={'authorityId':'owned-ca','rotationKeyRef':'alias:same-key',
+            'rotationHeadBefore':{**head,'currentIssuanceIssuerId':'old-issuer','headEpoch':7},
+            'rotationBindingBefore':{'primary':{**role,'keyRef':'different:old-alias'}}}
+        self.module._postconditions(exercise,{},'ca.rotate',{'credentialId':'new-cert'},values)
+        for field in ('subjectSpkiSha256','publicKeyAlgorithmId','signatureAlgorithmId','signatureAlgorithmIdentifierDer'):
+            generation['cryptographicBinding']['primary'][field]='changed-tuple'
+            with self.subTest(field=field):
+                with self.assertRaises(self.module.CatalogFailure):
+                    self.module._postconditions(exercise,{},'ca.rotate',{'credentialId':'new-cert'},values)
+            generation['cryptographicBinding']['primary'][field]=role[field]
+        generation['cryptographicBinding']['alternative']=dict(role)
+        with self.assertRaises(self.module.CatalogFailure):
+            self.module._postconditions(exercise,{},'ca.rotate',{'credentialId':'new-cert'},values)
 
     def test_signing_result_without_unique_credential_never_passes(self):
         """Missing output identity cannot be replaced by a successful HTTP status."""

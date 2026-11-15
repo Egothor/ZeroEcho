@@ -40,6 +40,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import quote
 
 from pki_http import ExerciseFailure
 from pki_operator import Operator, UnknownAcceptance, action_exit, main, result_exit
@@ -61,6 +62,7 @@ class HostApi:
         self.lost = False
         self.missing = False
         self.record_operation = "ca.create"
+        self.record_request_id = "request"
         self.signing_id = None
         self.approval_id = "approval"
         self.pem = b"-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(self.certificate_der) + b"-----END CERTIFICATE-----\n"
@@ -76,6 +78,7 @@ class HostApi:
         if path == "/admin/v1/operations":
             return 200, envelope("operation.list", {"operations": [
                 {"operation": "ca.create", "durableRequest": True},
+                {"operation": "ocsp.responder.issue-certificate", "durableRequest": True},
                 {"operation": "security.approval.approve", "durableRequest": False},
                 {"operation": "issuer.path.inspect", "durableRequest": False},
                 {"operation": "ca.inspect", "durableRequest": False},
@@ -88,7 +91,7 @@ class HostApi:
                 raise ExerciseFailure("unknown")
             if method == "GET" and self.missing:
                 raise ExerciseFailure("absent", 404)
-            record = {"requestId": "request", "operation": self.record_operation, "state": self.state, "approvalId": self.approval_id}
+            record = {"requestId": self.record_request_id, "operation": self.record_operation, "state": self.state, "approvalId": self.approval_id}
             if self.signing_id is not None:
                 record["signingOperationId"] = self.signing_id
             if self.state == "SUCCEEDED":
@@ -333,6 +336,83 @@ class OperatorTest(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertNotIn("secret", output.getvalue())
         self.assertEqual(2, json.loads(output.getvalue())["exit"])
+
+    def test_ocsp_canonical_receipt_keeps_local_intent_and_get_only_recovery(self):
+        self.api.record_operation = "ocsp.responder.issue-certificate"
+        canonical = "ocsp-prov:" + "a" * 64 + ":r1"
+        self.api.record_request_id = canonical
+        intent = self.intent | {"operation": self.api.record_operation}
+        self.assertEqual(canonical, self.operator.submit(intent)["requestId"])
+        saved = json.loads(self.operator._path("request").read_text())
+        self.assertEqual(intent, saved["intent"])
+        self.assertEqual(canonical, saved["canonicalRequestId"])
+        self.operator.close()
+        self.operator = Operator(self.api, "realm", self.root / "checkpoint")
+        self.api.state = "SUCCEEDED"
+        self.assertEqual(0, result_exit(self.operator.submit(intent)))
+        self.assertIn(("GET", "/admin/v1/requests/" + quote(canonical, safe=""), None), self.api.calls)
+        self.assertEqual(1, sum(method == "POST" for method, _, _ in self.api.calls))
+        with self.assertRaisesRegex(ExerciseFailure, "changed"):
+            self.operator.submit(intent | {"arguments": {}})
+
+    def test_ocsp_canonical_id_and_linked_identity_cannot_change(self):
+        self.api.record_operation = "ocsp.responder.issue-certificate"
+        self.api.record_request_id = "ocsp-prov:" + "b" * 64 + ":r2"
+        intent = self.intent | {"operation": self.api.record_operation}
+        self.operator.submit(intent)
+        retained = self.operator._path("request").read_bytes()
+        self.api.record_request_id = "ocsp-prov:" + "b" * 64 + ":r3"
+        with self.assertRaisesRegex(ExerciseFailure, "identity"):
+            self.operator.observe("request")
+        self.assertEqual(retained, self.operator._path("request").read_bytes())
+        self.api.record_request_id = "ocsp-prov:" + "b" * 64 + ":r2"
+        self.api.approval_id = "different"
+        with self.assertRaisesRegex(ExerciseFailure, "identity"):
+            self.operator.observe("request")
+        self.assertEqual(retained, self.operator._path("request").read_bytes())
+
+    def test_ocsp_lost_ack_never_guesses_local_id_or_replays(self):
+        self.api.record_operation = "ocsp.responder.issue-certificate"
+        self.api.lost = True
+        intent = self.intent | {"operation": self.api.record_operation}
+        with self.assertRaises(UnknownAcceptance):
+            self.operator.submit(intent)
+        self.operator.close()
+        self.operator = Operator(self.api, "realm", self.root / "checkpoint")
+        with self.assertRaises(UnknownAcceptance):
+            self.operator.submit(intent)
+        self.assertEqual(1, sum(method == "POST" for method, _, _ in self.api.calls))
+        self.assertFalse(any(method == "GET" and path.startswith("/admin/v1/requests/")
+                             for method, path, _ in self.api.calls))
+        self.assertNotIn("canonicalRequestId", json.loads(self.operator._path("request").read_text()))
+
+    def test_ocsp_malformed_or_wrong_operation_ack_does_not_bind_canonical(self):
+        for canonical, operation in [
+            ("ocsp-prov:" + "a" * 64 + ":r0", "ocsp.responder.issue-certificate"),
+            ("ocsp-prov:" + "a" * 64 + ":r01", "ocsp.responder.issue-certificate"),
+            ("ocsp-prov:" + "A" * 64 + ":r1", "ocsp.responder.issue-certificate"),
+            ("ocsp-prov:" + "a" * 64 + ":r9223372036854775808", "ocsp.responder.issue-certificate"),
+            ("arbitrary", "ocsp.responder.issue-certificate"),
+            ("ocsp-prov:" + "a" * 64 + ":r1", "ca.create")]:
+            with self.subTest(canonical=canonical, operation=operation):
+                self.api.record_operation, self.api.record_request_id = operation, canonical
+                local = "request-" + str(len(self.api.calls))
+                intent = self.intent | {"requestId": local, "operation": "ocsp.responder.issue-certificate"}
+                with self.assertRaises(UnknownAcceptance):
+                    self.operator.submit(intent)
+                self.assertNotIn("canonicalRequestId", json.loads(self.operator._path(local).read_text()))
+
+    def test_ordinary_operation_rejects_canonical_ocsp_alias(self):
+        self.api.record_request_id = "ocsp-prov:" + "a" * 64 + ":r1"
+        with self.assertRaisesRegex(ExerciseFailure, "identity"):
+            self.operator.submit(self.intent)
+
+    def test_ocsp_maximum_supported_revision_is_retained(self):
+        self.api.record_operation = 'ocsp.responder.issue-certificate'
+        self.api.record_request_id = 'ocsp-prov:' + 'c' * 64 + ':r9223372036854775807'
+        intent = self.intent | {'operation': self.api.record_operation}
+        self.assertEqual(self.api.record_request_id, self.operator.submit(intent)['requestId'])
+        self.assertEqual(self.api.record_request_id, self.operator.observe('request')['requestId'])
 
 
 if __name__ == "__main__":

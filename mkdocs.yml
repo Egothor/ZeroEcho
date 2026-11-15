@@ -167,6 +167,7 @@ nav:
               - deployment/security-hardening.md
               - deployment/rootless-podman.md
               - deployment/pki-exercise.md
+              - deployment/pki-operator.md
           - Administration:
               - admin/index.md
               - admin/console.md

@@ -82,6 +82,17 @@ invent a new ID as a retry. A crash between local attempt persistence and sendin
 may leave an unaccepted request; the client deliberately cannot guess that no
 mutation occurred. An operator must reconcile it before starting new work.
 
+For `ocsp.responder.issue-certificate`, the server returns its canonical
+`ocsp-prov:<slot>:r<revision>` request ID. The client preserves the original local
+request ID and complete intent, and retains that validated canonical ID separately.
+Continue using the original local ID with `observe`; the client resolves it to the
+retained canonical ID and sends GET only. The canonical ID and linked approval/signing
+identities cannot change. This exception applies only to managed OCSP issuance;
+other operations must return the exact submitted request ID. If the canonical
+acknowledgement was lost, the local ID is not a server alias: exit 4 requires manual
+reconciliation of the existing server request through authorized inspection.
+The client neither guesses a canonical ID nor repeats the mutation.
+
 `observe REQUEST_ID --wait 60` polls GET only for up to 60 seconds. Pending approval
 and approval alone are incomplete. The request retains its approvalId and exact
 target; approving does not require re-entering that target. The client never

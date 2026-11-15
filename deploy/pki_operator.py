@@ -66,6 +66,14 @@ def _identifier(value):
     return quote(value, safe="")
 
 
+def _canonical_ocsp_id(value):
+    if (not isinstance(value, str)
+            or not re.fullmatch(r"ocsp-prov:[0-9a-f]{64}:r[1-9][0-9]{0,18}", value)
+            or int(value.rsplit(":r", 1)[1]) > 9223372036854775807):
+        raise ExerciseFailure("Invalid canonical OCSP receipt identity")
+    return value
+
+
 def _same_intent(left, right):
     try:
         return json.dumps(left, sort_keys=True, separators=(",", ":"), allow_nan=False) == json.dumps(right, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -244,7 +252,17 @@ class Operator:
     def _record(self, checkpoint, wire, operation):
         record = _result(wire, operation)
         intent = checkpoint["intent"]
-        if record.get("requestId") != intent["requestId"] or record.get("operation") != intent["operation"]:
+        if record.get("operation") != intent["operation"]:
+            raise ExerciseFailure("Durable receipt identity differs from retained intent")
+        canonical = None
+        if intent["operation"] == "ocsp.responder.issue-certificate":
+            canonical = _canonical_ocsp_id(record.get("requestId"))
+            expected = checkpoint.get("canonicalRequestId")
+            if expected is not None and canonical != _canonical_ocsp_id(expected):
+                raise ExerciseFailure("Canonical durable receipt identity changed")
+            if expected is None and operation != "administrative.request.submit":
+                raise UnknownAcceptance("Canonical OCSP acknowledgement unknown; reconcile manually without replay")
+        elif record.get("requestId") != intent["requestId"]:
             raise ExerciseFailure("Durable receipt identity differs from retained intent")
         previous = checkpoint.get("receipt", {})
         for identity in ("approvalId", "signingOperationId"):
@@ -252,6 +270,8 @@ class Operator:
                 raise ExerciseFailure("Linked durable receipt identity changed")
         if record.get("state") == "SUCCEEDED" and not isinstance(record.get("result"), dict):
             raise ExerciseFailure("Completed request omitted its result")
+        if canonical is not None:
+            checkpoint["canonicalRequestId"] = canonical
         checkpoint["receipt"] = record
         _atomic_json(self._path(intent["requestId"]), checkpoint)
         return record
@@ -263,6 +283,8 @@ class Operator:
             intent: Version 1 object with requestId, operation, arguments and optional authorityId.
         Returns:
             Raw durable record; WAITING_APPROVAL/APPROVED/RUNNING never imply success.
+            Managed OCSP issuance retains its server-canonical ID separately from
+            the unchanged local intent; all later observation uses that ID.
         Raises:
             ExerciseFailure: Unsupported operation, changed intent or uncertain acknowledgement.
             OSError: Private intent cannot be retained before submission.
@@ -340,7 +362,9 @@ class Operator:
         """GET one retained request, returning its exact record without any mutation.
 
         Args:
-            request_id: Identity already retained in this client checkpoint.
+            request_id: Local intent identity already retained in this checkpoint.
+                For managed OCSP issuance its validated canonical server ID is used;
+                without a canonical acknowledgement manual reconciliation is required.
         Raises:
             ExerciseFailure: Receipt identity differs or acceptance remains unknown.
             OSError: Retained intent cannot be read.
@@ -348,9 +372,14 @@ class Operator:
         checkpoint = self._load(request_id)
         if checkpoint.get("mode") == "dedicated":
             raise ExerciseFailure("Dedicated actions have no durable observation route")
+        observed_id = request_id
+        if checkpoint["intent"]["operation"] == "ocsp.responder.issue-certificate":
+            if "canonicalRequestId" not in checkpoint:
+                raise UnknownAcceptance("Canonical OCSP acknowledgement unknown; reconcile manually without replay")
+            observed_id = _canonical_ocsp_id(checkpoint["canonicalRequestId"])
         self._guard()
         try:
-            _, wire = self.api.json("GET", "/admin/v1/requests/" + _identifier(request_id))
+            _, wire = self.api.json("GET", "/admin/v1/requests/" + _identifier(observed_id))
         except ExerciseFailure as error:
             if error.status == 404 or not error.status:
                 raise UnknownAcceptance("Acceptance unknown; retain checkpoint and observe; never resubmit") from error

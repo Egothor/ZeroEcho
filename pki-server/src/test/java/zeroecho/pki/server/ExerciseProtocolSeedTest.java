@@ -161,7 +161,7 @@ class ExerciseProtocolSeedTest {
                     print('ACTUAL_ACME_ACCOUNT_AND_TWO_EST_PENDING_PASS')
                     """;
             ExercisePkiIntegrationTest.run(new ProcessBuilder("python3","-c",runner,repository.resolve("deploy").toString(),root.toString(),"https://localhost:"+server.address().getPort(),"https://localhost:"+server.acmeAddress().orElseThrow().getPort(),authorityId,runId,"https://localhost:"+server.estAddress().orElseThrow().getPort(),"https://localhost:"+server.scepAddress().orElseThrow().getPort()),new byte[0],root.resolve("wire.log"));
-            ExerciseProtocolSeed.cmpWire(root,nonce,runId,java.net.URI.create("https://localhost:"+server.cmpAddress().orElseThrow().getPort()),"exercise-"+runId+"-endpoint",password.toCharArray());
+            ExerciseProtocolSeed.cmpWire(root,nonce,runId,java.net.URI.create("https://localhost:"+server.cmpAddress().orElseThrow().getPort()),"exercise-"+runId+"-endpoint",clientPassword.toCharArray());
         }
     }
     private static PkiOperationValue.ObjectValue object(Map<String,PkiOperationValue> fields){return new PkiOperationValue.ObjectValue(fields);}

@@ -82,6 +82,10 @@ for _operation in ("configuration.validate", "configuration.choices", "ca.list",
 
 _RECIPES["security.audit.verify-integrity"]["expected"]={"status":"INTACT"}
 
+_add("key.generate", {"generationId":"@managedGenerationId", "parameters":"@managedParameters"}, phase=6,
+     expected={"generationId":"@managedGenerationId", "parameters":"@managedParameters"},
+     captures={"managedKeyRef":"keyRef", "managedGenerationId":"generationId", "managedPublicKeyInfo":"subjectPublicKeyInfo"})
+
 _add("ca.create", {"formatId":"x509", "subjectRef":"@caSubject", "profileId":"@rootProfileId", "keyRef":"@rootKeyRef"}, phase=10, special="create_ca",
      expected={"caId":None}, captures={"authorityId":"caId", "caCredentialId":"credentialId", "issuerId":"issuerId"})
 _add("ca.inspect", {"caId":"@authorityId"}, phase=11, expected={"caId":"@authorityId"}, captures={"issuerId":"currentIssuanceIssuerId"})
@@ -137,7 +141,7 @@ _add("ca.intermediate.create", {"formatId":"x509", "issuerCaId":"@authorityId", 
      captures={"intermediateCaId":"caId"}, special="create_intermediate")
 _add("ca.intermediate.issue", {"formatId":"x509", "issuerCaId":"@authorityId", "subjectCaId":"@intermediateCaId", "profileId":"intermediate-ca"}, phase=86, authority=True)
 _add("ca.rollover", {"caId":"@authorityId"}, phase=87, authority=True)
-_add("ca.rotate", {"caId":"@authorityId", "newKeyRef":"@rotationKeyRef"}, phase=91, authority=True)
+_add("ca.rotate", {"caId":"@authorityId", "newKeyRef":"@rotationKeyRef"}, phase=91, authority=True, special="rotate_ca")
 _add("ca.transition", {"caId":"@authorityId", "state":"DISABLED", "reason":"@justification"}, phase=99, authority=True, expected={"state":"DISABLED"}, special="disable_owned_ca")
 
 # Governance objects are newly named, never the bootstrap identity or an existing grant.
@@ -192,6 +196,8 @@ _add("acme.directory.activate", {"directoryId":"@directoryId"}, phase=66, expect
 _add("acme.directory.deactivate", {"directoryId":"@directoryId"}, phase=93)
 _add("acme.account.inspect", {"accountId":"@accountId"}, phase=68, special="seed_acme_account")
 _add("acme.account.deactivate", {"accountId":"@accountId"}, phase=92)
+_add("ocsp.responder.issue-certificate", phase=68, authority=True, special="issue_managed_responder",
+     captures={"managedResponderCredentialId":"credentialId"})
 _add("ocsp.responder.register", {"responderId":"@responderId", "alias":"@responderAlias", "authorityId":"@authorityId", "issuerId":"@issuerId", "signingMode":"ISSUER_SIGNED", "responderCredentialId":"@caCredentialId", "signingKeyRef":"@rootKeyRef", "chainPathId":"@pathId", "signatureAlgorithm":"@signatureAlgorithm", "signatureBindingCommitment":"@signatureBindingCommitment", "responderIdForm":"BY_NAME", "responseValidityMillis":3600000, "noncePolicy":"OPTIONAL_ECHO", "maximumNonceBytes":32, "acceptedHashes":["SHA256"], "maximumRequestBytes":65536, "maximumEntries":1, "cacheLifetimeMillis":60000, "requestAuthenticationMode":"UNSIGNED_ONLY"}, phase=69, authority=True)
 _add("ocsp.responder.inspect", {"responderId":"@responderId"}, phase=70)
 _add("ocsp.responder.activate", {"responderId":"@responderId"}, phase=71, expected={"state":"ACTIVE"}, special="ocsp_wire")
@@ -302,6 +308,8 @@ def _initial_values(exercise, context):
     values.setdefault("acmeDnsNamespaces",[context.get("acmeDnsNamespace","example.invalid")])
     for name,suffix in {"principalId":"user","grantId":"grant","assignmentId":"role","breakGlassId":"emergency","emergencyGrantId":"emergency-grant","approvalId":"approval","publicationId":"publication","enrollmentProfileId":"enrollment","endpointLabel":"endpoint","directoryAlias":"directory","responderId":"ocsp","responderAlias":"ocsp-alias","catalogProfileId":"leaf-profile"}.items():
         values.setdefault(name,prefix+suffix)
+    values.setdefault("managedGenerationId",prefix+"managed-key")
+    values.setdefault("managedParameters","ECDSA_P384")
     values.setdefault("rootProfileId",context.get("rootProfileId","root-ca"))
     values.setdefault("rootKeyRef",context.get("rootKeyRef","zeroecho-lib:root.prv"))
     values.setdefault("intermediateKeyRef",context.get("intermediateKeyRef","zeroecho-lib:intermediate.prv"))
@@ -601,12 +609,51 @@ _DEFAULT_SCENARIOS.update({"create_intermediate":_create_intermediate,"publicati
                            "publication_reconcile":_publication_recovery})
 
 
+def _public_binding_tuple(binding):
+    """Compare immutable C03.5 public roles, ignoring reference aliases and certificate hashes."""
+    if not isinstance(binding,dict) or not isinstance(binding.get("primary"),dict):
+        raise CatalogFailure("Rotation requires authoritative pre/post public signing bindings")
+    roles=[]
+    for name in ("primary","alternative"):
+        if name not in binding:
+            roles.append(None)
+            continue
+        role=binding[name]
+        fields=("subjectSpkiSha256","publicKeyAlgorithmId","signatureAlgorithmId","signatureAlgorithmIdentifierDer")
+        if not isinstance(role,dict) or any(not isinstance(role.get(field),str) or not role[field] for field in fields):
+            raise CatalogFailure("Rotation signing-role public tuple is incomplete")
+        roles.append(tuple(role[field] for field in fields))
+    return tuple(roles)
+
+
+def _rotate_ca(exercise, operation, values, context):
+    """Retain the active head before requesting a changed-key candidate, without activation."""
+    if "rotationHeadBefore" not in values:
+        values["rotationHeadBefore"]=_call(exercise,context,"rotation-head-before","ca.inspect",{"caId":values["authorityId"]},values["authorityId"])
+        exercise.state["catalogObjects"]=values
+        exercise.save()
+    if "rotationBindingBefore" not in values:
+        before=_call(exercise,context,"rotation-binding-before","issuer.generation.inspect",
+            {"issuerId":values["rotationHeadBefore"]["currentIssuanceIssuerId"]},values["authorityId"])
+        values["rotationBindingBefore"]=before["cryptographicBinding"]
+        _public_binding_tuple(values["rotationBindingBefore"])
+        exercise.state["catalogObjects"]=values
+        exercise.save()
+    recipe=_RECIPES[operation]
+    return _call(exercise,context,"rotate-ca",operation,_arguments(recipe,exercise.schema[operation],values),values["authorityId"])
+
+
+_DEFAULT_SCENARIOS["rotate_ca"]=_rotate_ca
+
+
 def _postconditions(exercise, context, operation, result, values):
     """Read authoritative committed identities after signing and verify materialized files.
 
     Extra reads are real HTTP observations, not reconstructed signing receipts.
     Raises CatalogFailure on a missing committed credential or changed CA lineage.
     """
+    if operation=="key.generate":
+        _generated_key(result, values["managedGenerationId"], values["managedParameters"])
     signing={"credential.issue","credential.renew","credential.replace","credential.reissue","ca.rollover","ca.rotate","ca.intermediate.issue"}
     if operation in signing:
         identifiers=list(_values(result,"credentialId"))
@@ -618,10 +665,37 @@ def _postconditions(exercise, context, operation, result, values):
             assert_result(inspected,{"credentialId":credential},operation+" committed credential")
         if operation in {"ca.rollover","ca.rotate"}:
             ca=_call(exercise,context,"inspect-ca-"+operation,"ca.inspect",{"caId":values["authorityId"]},values["authorityId"])
+            if operation=="ca.rotate" and ca.get("kind")=="ROOT" and result.get("activationState")=="PENDING_ACTIVATION":
+                before=values.get("rotationHeadBefore",{})
+                if not before or any(ca.get(field)!=before.get(field) for field in ("currentIssuanceIssuerId","selectedPathId","headEpoch")):
+                    raise CatalogFailure("Changed-root rotation advanced the active head before activation")
+                assert_result(result,{"activationState":"PENDING_ACTIVATION","candidateCredentialId":credential},operation+" candidate receipt")
+                issuer=result.get("candidateIssuerId")
+                path=result.get("candidatePathId")
+                if not isinstance(issuer,str) or not isinstance(path,str):
+                    raise CatalogFailure("Changed-root candidate omitted exact issuer/path")
+                candidate=_call(exercise,context,"inspect-rotation-candidate","issuer.generation.inspect",{"issuerId":issuer},values["authorityId"])
+                assert_result(candidate,{"authorityId":values["authorityId"],"issuerId":issuer,"credentialId":credential,"activationState":"PENDING_ACTIVATION"},operation+" candidate generation")
+                if _public_binding_tuple(candidate.get("cryptographicBinding"))==_public_binding_tuple(values.get("rotationBindingBefore")):
+                    raise CatalogFailure("Same-key root rotation unexpectedly requires candidate activation")
+                if candidate.get("cryptographicBinding",{}).get("primary",{}).get("keyRef")!=values["rotationKeyRef"]:
+                    raise CatalogFailure("Changed-root candidate differs from selected rotation key")
+                selected=_call(exercise,context,"inspect-rotation-candidate-path","issuer.path.inspect",{"pathId":path},values["authorityId"])
+                assert_result(selected,{"issuerId":issuer,"pathId":path},operation+" candidate path")
+                if not selected.get("orderedCredentialIds") or selected["orderedCredentialIds"][0]!=credential:
+                    raise CatalogFailure("Changed-root candidate path differs from candidate credential")
+                return
             issuers=list(_values(ca,"currentIssuanceIssuerId"))
             if len(issuers)!=1: raise CatalogFailure("CA has no unique current issuer after "+operation)
             generation=_call(exercise,context,"inspect-generation-"+operation,"issuer.generation.inspect",{"issuerId":issuers[0]},values["authorityId"])
             assert_result(generation,{"credentialId":credential},operation+" current issuer")
+            if operation=="ca.rotate" and ca.get("kind")=="ROOT":
+                if _public_binding_tuple(generation.get("cryptographicBinding"))!=_public_binding_tuple(values.get("rotationBindingBefore")):
+                    raise CatalogFailure("Changed-root public binding became active without candidate activation")
+                selected=_call(exercise,context,"inspect-same-key-rotation-path","issuer.path.inspect",{"pathId":ca["selectedPathId"]},values["authorityId"])
+                assert_result(selected,{"issuerId":issuers[0],"pathId":ca["selectedPathId"]},operation+" active path")
+                if not selected.get("orderedCredentialIds") or selected["orderedCredentialIds"][0]!=credential:
+                    raise CatalogFailure("Same-key rotation path differs from completed credential")
     if operation=="publication.process":
         assert_result(result,{"publicationId":values["publicationId"],"status":"SUCCEEDED"},operation)
         publication=_call(exercise,context,"publication-http-state","publication.inspect",{"publicationId":values["publicationId"]},values["authorityId"])
@@ -655,3 +729,89 @@ def _disable_owned_ca(exercise, operation, values, context):
     return _call(exercise,context,"disable-owned-ca",operation,{"caId":values["authorityId"],"state":"DISABLED","reason":values["justification"]},values["authorityId"])
 
 _DEFAULT_SCENARIOS["disable_owned_ca"]=_disable_owned_ca
+
+
+def _generated_key(result, generation, parameters):
+    """Reject changed generation/parameter identities or non-public generation outputs."""
+    required={"generationId", "parameters", "keyRef", "subjectPublicKeyInfo"}
+    if set(result)!=required or result.get("generationId")!=generation or result.get("parameters")!=parameters:
+        raise CatalogFailure("Managed generation receipt differs from explicit public target")
+    if not isinstance(result["keyRef"],str) or not result["keyRef"]:
+        raise CatalogFailure("Managed generation receipt omitted its key reference")
+    try:
+        spki=base64.b64decode(result["subjectPublicKeyInfo"],validate=True)
+        if not spki or base64.b64encode(spki).decode()!=result["subjectPublicKeyInfo"]: raise ValueError()
+    except (ValueError,TypeError) as error:
+        raise CatalogFailure("Managed generation receipt omitted canonical public SPKI") from error
+
+
+# Exact built-in canonical identities from BootstrapAlgorithmIdentities; no aliases.
+_OCSP_PRIMARY_SIGNATURE="zealg:2:9:signature8:zeroecho5:ecdsa16:zeroecho.builtin"+str(len(base64.urlsafe_b64encode(b"digest=zeroecho.sha2-384.none").decode().rstrip("=")))+":"+base64.urlsafe_b64encode(b"digest=zeroecho.sha2-384.none").decode().rstrip("=")
+_OCSP_ALTERNATIVE_SIGNATURE="zealg:2:9:signature8:zeroecho9:ml-dsa-8716:zeroecho.builtin6:bm9uZQ"
+
+
+def _issue_managed_responder(exercise, operation, values, context):
+    """Provision dedicated managed dual roles through existing HTTP contracts only.
+
+    Reuses durable auxiliary job identities and freezes absolute validity before
+    sending. No responder registration, listener change or private-key export.
+    """
+    prefix="exercise-"+exercise.state["runId"]+"-ocsp-"
+    keys={}
+    for role,parameters in (("issuer","ECDSA_P384"),("issuer-alt","ML_DSA_87"),
+                            ("responder","ECDSA_P384"),("responder-alt","ML_DSA_87")):
+        generation=prefix+role
+        keys[role]=_call(exercise,context,"ocsp-key-"+role,"key.generate",{"generationId":generation,"parameters":parameters})
+        _generated_key(keys[role],generation,parameters)
+    if len({key["keyRef"] for key in keys.values()})!=4:
+        raise CatalogFailure("Dedicated OCSP signing roles reuse a managed key")
+    root=json.loads((Path(__file__).parent/"pki-server/profiles/root-ca.json").read_text())
+    root.update(profileId=prefix+"root-profile",displayName="Disposable OCSP hybrid root")
+    root["caCertificate"]["allowedSubjectKeyAlgorithms"]=["ECDSA"]
+    root["hybridMode"]={"type":"ALT_SIGNATURE","altSignatureAlgorithmId":_OCSP_ALTERNATIVE_SIGNATURE,"altKeyRef":keys["issuer-alt"]["keyRef"]}
+    profile=json.loads((Path(__file__).parent/"pki-server/profiles/vpn-client.json").read_text())
+    profile.update(profileId=prefix+"responder-profile",displayName="Disposable managed OCSP responder",maxValidity="PT24H",approvalRequirement="SINGLE")
+    profile["subject"]["allowEmpty"]=False
+    profile["subject"]["rules"][0]["minimumOccurrences"]=1
+    profile["subjectAlternativeNames"].update(minimumTotal=0,maximumTotal=0,rules=[])
+    profile["leafCertificate"].update(allowedKeyAlgorithms=["ECDSA"],extendedKeyUsage=["1.3.6.1.5.5.7.3.9"])
+    profile["hybridMode"]={"type":"ALT_SIGNATURE","altSignatureAlgorithmId":_OCSP_ALTERNATIVE_SIGNATURE,"altKeyRef":keys["responder-alt"]["keyRef"]}
+    references={}
+    for role,document in (("issuer",root),("responder",profile)):
+        encoded=base64.b64encode(json.dumps(document,separators=(",",":")).encode()).decode()
+        references[role]=_call(exercise,context,"ocsp-profile-"+role,"profile.register",{"document":encoded})
+        _call(exercise,context,"ocsp-profile-active-"+role,"profile.activate",{"profileId":document["profileId"],"profileVersion":1},values["authorityId"])
+    created=_call(exercise,context,"ocsp-root","ca.create",{"formatId":"x509","subjectRef":"CN=Disposable OCSP Root "+exercise.state["runId"],
+        "profileId":root["profileId"],"keyRef":keys["issuer"]["keyRef"],"signatureAlgorithmId":_OCSP_PRIMARY_SIGNATURE})
+    from exercise_algorithms import _created_generation
+    generation=_created_generation(exercise,created["credentialId"])
+    authority=generation["authorityId"]
+    binding=generation["cryptographicBinding"]
+    for role,bound in (("issuer",binding["primary"]),("issuer-alt",binding["alternative"])):
+        if bound["signatureAlgorithmId"]!=(_OCSP_PRIMARY_SIGNATURE if role=="issuer" else _OCSP_ALTERNATIVE_SIGNATURE) or bound["keyRef"]!=keys[role]["keyRef"] or bound["subjectSpkiSha256"]!=hashlib.sha256(base64.b64decode(keys[role]["subjectPublicKeyInfo"],validate=True)).hexdigest():
+            raise CatalogFailure("OCSP issuer generation differs from selected managed signing roles")
+    ca=_call(exercise,context,"ocsp-ca-inspect","ca.inspect",{"caId":authority},authority)
+    path=_call(exercise,context,"ocsp-path-inspect","issuer.path.inspect",{"pathId":ca["selectedPathId"]},authority)
+    assert_result(path,{"issuerId":generation["issuerId"]},"OCSP issuer path")
+    if "managedResponderValidity" not in values:
+        now=datetime.now(timezone.utc).replace(microsecond=0)
+        values["managedResponderValidity"]={"notBefore":now.isoformat().replace("+00:00","Z"),
+            "notAfter":(now+timedelta(hours=12)).isoformat().replace("+00:00","Z")}
+        exercise.state["catalogObjects"]=values
+        exercise.save()
+    arguments={"authorityId":authority,"issuerId":generation["issuerId"],"primaryKeyRef":keys["responder"]["keyRef"],
+        "alternativeKeyRef":keys["responder-alt"]["keyRef"],"subject":{"rdns":[{"type":"COMMON_NAME","value":"Disposable OCSP "+exercise.state["runId"]}]},
+        "profileId":profile["profileId"],"profileVersion":1,"profileSha256":references["responder"]["canonicalSha256"],
+        "chainPathId":path["pathId"],"chainPathCommitment":path["pathCommitment"],**values["managedResponderValidity"]}
+    result=_call(exercise,context,"managed-ocsp-responder",operation,arguments,authority)
+    credential=result.get("credentialId")
+    if not isinstance(credential,str) or not credential:
+        raise CatalogFailure("Managed responder signing receipt omitted its credential")
+    inspected=_call(exercise,context,"managed-ocsp-output","credential.inspect",{"credentialId":credential},authority)
+    assert_result(inspected,{"credentialId":credential},"managed responder committed credential")
+    values["managedResponderTarget"]=arguments
+    values["managedResponderKeys"]=keys
+    return result
+
+
+_DEFAULT_SCENARIOS["issue_managed_responder"]=_issue_managed_responder

@@ -435,10 +435,23 @@ class Exercise:
         deadline = self.clock() + self.timeout
         while self.clock() < deadline:
             if record is None:
-                _, wire = self.api.json("GET", "/admin/v1/requests/" + quote(intent["requestId"], safe=""))
+                if operation=="ocsp.responder.issue-certificate" and "canonicalRequestId" not in step:
+                    raise ExerciseFailure("Provisioning acknowledgement unknown; reconcile canonical request externally without replay")
+                _, wire = self.api.json("GET", "/admin/v1/requests/" + quote(step.get("canonicalRequestId",intent["requestId"]), safe=""))
                 record = _result(wire, "administrative.request.inspect")
-            if record.get("requestId") != intent["requestId"] or record.get("operation") != operation:
+            expected_id=step.get("canonicalRequestId",intent["requestId"])
+            observed_id=record.get("requestId")
+            if operation=="ocsp.responder.issue-certificate" and "canonicalRequestId" not in step:
+                if not isinstance(observed_id,str) or not re.fullmatch(r"ocsp-prov:[0-9a-f]{64}:r[1-9][0-9]{0,18}",observed_id) or int(observed_id.rsplit("r",1)[1])>9223372036854775807:
+                    raise ExerciseFailure("Invalid canonical provisioning receipt identity")
+                expected_id=observed_id
+            if observed_id!=expected_id or record.get("operation")!=operation:
                 raise ExerciseFailure("Durable receipt does not match the retained target")
+            previous=step.get("receipt",{})
+            for identity in ("approvalId","signingOperationId"):
+                if previous.get(identity) is not None and record.get(identity)!=previous[identity]:
+                    raise ExerciseFailure("Linked durable receipt identity changed")
+            if operation=="ocsp.responder.issue-certificate": step["canonicalRequestId"]=expected_id
             step["receipt"] = record
             self.save()
             state = record.get("state")
@@ -446,7 +459,7 @@ class Exercise:
                 result = record.get("result")
                 if not isinstance(result, dict):
                     raise ExerciseFailure("Completed request has no typed result")
-                self.state["coverage"][operation] = {"state": "EXECUTED", "requestId": intent["requestId"], "reason": "Verified durable terminal receipt"}
+                self.state["coverage"][operation] = {"state": "EXECUTED", "requestId": expected_id, "reason": "Verified durable terminal receipt"}
                 self.save()
                 return _fields(result)
             if state in TERMINAL:

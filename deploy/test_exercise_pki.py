@@ -101,6 +101,79 @@ class DurableExerciseTest(unittest.TestCase):
         value.discover()
         return value
 
+    def test_canonical_ocsp_id_is_retained_and_observed_without_reposting(self):
+        canonical='ocsp-prov:'+'a'*64+':r1'
+        api=FakeApi()
+        original=api.json
+        def json_call(method,path,document=None):
+            if method=='POST' and path=='/admin/v1/requests':
+                api.calls.append((method,path,document))
+                api.records[canonical]={'requestId':canonical,'operation':document['operation'],
+                    'state':'SUCCEEDED','result':{'credentialId':'responder-cert'}}
+                return 202,envelope('administrative.request.submit',api.records[canonical])
+            if method=='GET' and path.endswith(canonical.replace(':','%3A')):
+                api.calls.append((method,path,document))
+                return 200,envelope('administrative.request.inspect',api.records[canonical])
+            return original(method,path,document)
+        api.json=json_call
+        run=self.instance(api)
+        operation='ocsp.responder.issue-certificate'
+        run.schema[operation]={'fields':[],'scope':'realm'}
+        run.descriptors[operation]={'durableRequest':True}
+        self.assertEqual({'credentialId':'responder-cert'},run.job('responder',operation,{}))
+        run.job('responder',operation,{})
+        self.assertEqual(canonical,run.state['jobs']['responder']['canonicalRequestId'])
+        self.assertNotEqual(canonical,run.state['jobs']['responder']['intent']['requestId'])
+        self.assertEqual(1,sum(m=='POST' and p=='/admin/v1/requests' for m,p,_ in api.calls))
+        self.assertIn(('GET','/admin/v1/requests/'+canonical.replace(':','%3A'),None),api.calls)
+
+    def test_provisioning_lost_ack_remains_unknown_without_get_or_repost(self):
+        api=FakeApi(lost=True)
+        run=self.instance(api)
+        operation='ocsp.responder.issue-certificate'
+        run.schema[operation]={'fields':[],'scope':'realm'}
+        run.descriptors[operation]={'durableRequest':True}
+        for _ in range(2):
+            with self.assertRaisesRegex(exercise.ExerciseFailure,'acknowledgement unknown'):
+                run.job('responder',operation,{})
+        self.assertEqual(1,sum(m=='POST' and p=='/admin/v1/requests' for m,p,_ in api.calls))
+        self.assertFalse(any(m=='GET' and p.startswith('/admin/v1/requests/') for m,p,_ in api.calls))
+
+    def test_canonical_exception_rejects_malformed_changed_and_other_operation_ids(self):
+        for canonical,operation in (('ocsp-prov:'+'A'*64+':r1','ocsp.responder.issue-certificate'),
+                ('ocsp-prov:'+'a'*64+':r0','ocsp.responder.issue-certificate'),
+                ('ocsp-prov:'+'a'*64+':r9223372036854775808','ocsp.responder.issue-certificate'),
+                ('ocsp-prov:'+'a'*64+':r1','ca.create')):
+            with self.subTest(canonical=canonical,operation=operation):
+                with tempfile.TemporaryDirectory() as directory:
+                    api=FakeApi()
+                    original=api.json
+                    def json_call(method,path,document=None):
+                        if method=='POST' and path=='/admin/v1/requests':
+                            return 202,envelope('administrative.request.submit',{'requestId':canonical,
+                                'operation':document['operation'],'state':'SUCCEEDED','result':{'credentialId':'cert'}})
+                        return original(method,path,document)
+                    api.json=json_call
+                    run=exercise.Exercise(api,Path(directory)/'run')
+                    self.addCleanup(run.close)
+                    if run:
+                        run.discover()
+                        run.schema[operation]={'fields':[],'scope':'realm'}
+                        run.descriptors[operation]={'durableRequest':True}
+                        with self.assertRaises(exercise.ExerciseFailure): run.job('target',operation,{})
+        api=FakeApi()
+        run=self.instance(api)
+        operation='ocsp.responder.issue-certificate'
+        run.schema[operation]={'fields':[],'scope':'realm'}
+        run.descriptors[operation]={'durableRequest':True}
+        name='changed'
+        intent={'version':1,'requestId':'exercise-'+run.state['runId']+'-'+name,'operation':operation,'arguments':{}}
+        run.state['jobs'][name]={'intent':intent,'attempted':True,'decisionAttempted':False,
+            'canonicalRequestId':'ocsp-prov:'+'a'*64+':r1'}
+        api.json=lambda *args: (200,envelope('administrative.request.inspect',{'requestId':'ocsp-prov:'+'b'*64+':r1',
+            'operation':operation,'state':'SUCCEEDED','result':{'credentialId':'cert'}}))
+        with self.assertRaisesRegex(exercise.ExerciseFailure,'retained target'):run.job(name,operation,{})
+
     def test_submits_once_with_explicit_reason_and_terminal_receipt(self):
         api = FakeApi()
         run = self.instance(api)

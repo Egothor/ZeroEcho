@@ -638,7 +638,7 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         try {
             var original=request(value);
             var inspect=new ServerOperationGateway.Request(original.realmId(),viewer,original.authenticationMode(),original.transportPrincipalId(),Optional.empty(),original.operation(),original.resource(),original.relationship(),original.context(),original.approvalId(),original.correlationId());
-            realm.gateway().assessAdministrativeRequest(inspect);return true;
+            realm.gateway().assessRetainedAdministrativeRequest(inspect);return true;
         } catch(RuntimeException denied) { return false; }
     }
     private Optional<AdministrativeRequest> find(String id) { return control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,id).map(AdministrativeRequestCodec::decode); }
