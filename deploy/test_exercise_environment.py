@@ -128,6 +128,14 @@ class EnvironmentTests(unittest.TestCase):
             rootless_pki._main()
         start.assert_called_once_with(root)
 
+    def test_explicit_sdk_start_is_forwarded_to_preparation(self):
+        import subprocess
+        fixture=Mock();manager=Mock();manager.__enter__=Mock(return_value=fixture);manager.__exit__=Mock(return_value=False)
+        connection={"version":1,"purpose":"qualification","environmentId":"a"*32}
+        with patch("exercise_fixture.DisposableFixture",return_value=manager),patch("rootless_pki._image",return_value="a"*64),patch("shutil.which",return_value="tool"),patch("subprocess.run",return_value=subprocess.CompletedProcess([],0,b"-jdktrust",b"")),patch("os.geteuid",return_value=1000),patch.object(environment,"_provision",return_value=connection) as provision,patch("builtins.print"):
+            environment.start(self.base/"state",hybrid_sdk=True,read_command=lambda _:"stop",password_prompt=lambda _:"client-only-password")
+        provision.assert_called_once_with(fixture,self.base/"state-client","client-only-password",hybrid_sdk=True)
+
     def test_password_mismatch_refuses_before_image_build(self):
         with patch("rootless_pki._image") as build:
             passwords=iter(("first","second"))
@@ -145,6 +153,15 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(0o600,(self.base/"target").stat().st_mode & 0o777)
 
     def test_preparation_exports_only_client_inputs_and_does_not_verify_backup(self):
+        self._assert_preparation_export()
+
+    def test_explicit_sdk_preparation_uses_two_allocated_origins_and_minimum_public_budget(self):
+        self._assert_preparation_export(hybrid_sdk=True)
+
+    def test_explicit_sdk_disabled_preserves_native_public_budget_and_export_contract(self):
+        self._assert_preparation_export(hybrid_sdk=False)
+
+    def _assert_preparation_export(self, hybrid_sdk=None):
         root, client = self.base/"deployment", self.base/"client"
         root.mkdir(); client.mkdir()
         for name in ("config", "keyring/protocol-custody", "protocol-client", "provisioning", "logins", "deployment-preparation"):
@@ -160,19 +177,40 @@ class EnvironmentTests(unittest.TestCase):
         prep.operation.return_value={"publicKeyAlgorithms":["RSA"],"x509BindingPolicies":["binding"]}
         fixture=Mock();fixture.directory=root;fixture.nonce="a"*32;fixture.prefix="zeroecho-exercise-"+fixture.nonce
         fixture.admin_url="https://localhost:10000";fixture.public_url="https://localhost:10001";fixture.protocol_urls={name:"https://localhost:"+str(11000+i) for i,name in enumerate(("acme","est","scep","cmp"))}
-        fixture.configuration={"acmeListener":{"externalBaseUri":"https://localhost:8445"},"realm":{"pkiSession":{"signing":{"signatureAlgorithm":"safe-algorithm"}}}}
+        fixture.configuration={"acmeListener":{"externalBaseUri":"https://localhost:8445"},
+            "listener":{"maximumBodyBytes":1048576},
+            "publicListener":{"maximumBodyBytes":1024,"maximumHeaderBytes":16384,"maximumRequestsPerWindow":16},
+            "realm":{"pkiSession":{"signing":{"signatureAlgorithm":"safe-algorithm"}}}}
+        expected=json.loads(json.dumps(fixture.configuration))
+        expected["acmeListener"]["externalBaseUri"]=fixture.protocol_urls["acme"]
+        if hybrid_sdk:
+            expected["listener"]["hybridSdk"]={"canonicalOrigin":fixture.admin_url}
+            expected["publicListener"]["hybridSdk"]={"canonicalOrigin":fixture.public_url}
+            expected["publicListener"]["maximumBodyBytes"]=16384
+        persisted_at_restart=[]
+        fixture.restart.side_effect=lambda:persisted_at_restart.append(json.loads((root/"config/server.json").read_text()))
         fixture._helper_classes.return_value=Path("/public/helper/classes")
         def artifact(adapter,kind,identity,prefix,limit):
             (adapter.directory/(prefix+".der")).write_bytes(b"source")
             return {"authorityId":"seed-ca"}
         with patch("exercise_pki.Exercise",return_value=prep),patch("exercise_pki._artifact",side_effect=artifact):
-            result=environment._provision(fixture,client,"CLIENT-PASSWORD")
+            result=environment._provision(fixture,client,"CLIENT-PASSWORD",
+                **({} if hybrid_sdk is None else {"hybrid_sdk":hybrid_sdk}))
+        self.assertEqual([expected],persisted_at_restart)
+        self.assertEqual(expected,json.loads((root/"config/server.json").read_text()))
         self.assertEqual(fixture.protocol_urls["acme"],result["acmeDirectoryOrigin"])
         self.assertEqual(fixture.protocol_urls["acme"],json.loads((root/"config/server.json").read_text())["acmeListener"]["externalBaseUri"])
         fixture.restart.assert_called_once()
         self.assertEqual(b"client-only",(client/"protocol-client/client.zek.nonce").read_bytes())
         self.assertEqual(0o600,(client/"protocol-client/client.zek.nonce").stat().st_mode & 0o777)
         self.assertEqual("qualification",result["purpose"])
+        self.assertEqual(1,result["version"])
+        self.assertEqual({"version","purpose","environmentId","realmId","adminUrl","publicUrl","protocolUrls",
+            "adminPrincipalId","adminP12","trustFile","clientDirectory","protocolAuthorityId",
+            "protocolEnrollmentProfileId","protocolPublicKeyAlgorithms","protocolX509BindingPolicies",
+            "challengeProviderIds","clientJavaClasspath","requesterCertificate","requesterKey","acmeDirectoryOrigin",
+            "acmeDnsChallengeFile","acmeDnsNamespace","signatureAlgorithm","rootKeyRef","intermediateKeyRef",
+            "rotationKeyRef","publicationTargetId","preparedPublications","legacyBackup"},set(result))
         self.assertEqual("dns/protocol-dns.json",result["acmeDnsChallengeFile"])
         self.assertEqual(client/"dns",fixture.dns_records_directory)
         self.assertEqual("crl",result["preparedPublications"]["retry"]["sourceId"])

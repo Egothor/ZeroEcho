@@ -56,8 +56,8 @@
 # Pinning by digest is ideal for supply-chain reproducibility. Replace the tags
 # below with `image@sha256:<digest>` once you have selected a digest for your
 # registry mirror. Tags are an acceptable interim.
-ARG JDK_IMAGE=eclipse-temurin:25-jdk
-ARG JRE_IMAGE=eclipse-temurin:25-jre
+ARG JDK_IMAGE=docker.io/library/eclipse-temurin:25-jdk
+ARG JRE_IMAGE=docker.io/library/eclipse-temurin:25-jre
 
 ###############################################################################
 # Stage 1a: build the installDist trees from source (default).

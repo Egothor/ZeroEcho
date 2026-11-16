@@ -45,9 +45,9 @@
 ###############################################################################
 
 # --- Base image pins (replace tags with @sha256 digests for production) ------
-ARG NODE_IMAGE=node:22.23.3-bookworm
-ARG NGINX_IMAGE=nginx:1.27-bookworm
-ARG JAVA_IMAGE=eclipse-temurin:25-jdk
+ARG NODE_IMAGE=docker.io/library/node:22.23.3-bookworm
+ARG NGINX_IMAGE=docker.io/library/nginx:1.27-bookworm
+ARG JAVA_IMAGE=docker.io/library/eclipse-temurin:25-jdk
 
 # Generate the authoritative frontend input from Java, independently of Node.
 FROM ${JAVA_IMAGE} AS schema

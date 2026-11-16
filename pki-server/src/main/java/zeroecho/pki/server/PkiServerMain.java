@@ -234,7 +234,8 @@ public final class PkiServerMain {
                 newSession, realm.authorityExposure(), realm.authorizationCommitment(),
                 realm.approvalCommitment(), realm.extendedApprovalCommitment(),
                 realm.disclosureCommitment(), realm.disclosureDefaults(),
-                realm.controlLogPath(), realm.controlStoreId(), realm.approvalPolicies());
+                realm.controlLogPath(), realm.controlStoreId(), realm.approvalPolicies(),
+                realm.initialAdministratorPrincipalId());
         return new PkiServerConfiguration(
                 configuration.version(), configuration.serverName(), newRealm,
                 configuration.listener(), configuration.authentication(), configuration.execution(),

@@ -666,6 +666,32 @@ class SourceUpdateTest(unittest.TestCase):
             build.assert_not_called()
 
 
+class HybridSdkCliTest(unittest.TestCase):
+    def test_test_start_explicit_sdk_opt_in_is_forwarded_before_manifest_loading(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root=Path(parent)/"fresh"
+            with patch("sys.argv",["rootless-pki.sh","test-start","--hybrid-sdk","--directory",str(root)]), \
+                 patch("exercise_environment.start") as start:
+                installer._main()
+            start.assert_called_once_with(root,hybrid_sdk=True)
+
+    def test_install_sdk_opt_in_keeps_existing_install_route(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root=Path(parent)/"fresh";values=_values(root)
+            with patch("sys.argv",["rootless-pki.sh","install","--hybrid-sdk","--directory",str(root)]), \
+                 patch.object(installer.curses,"wrapper",return_value=values),patch.object(installer,"_install") as install:
+                installer._main()
+            self.assertTrue(install.call_args.args[0]["hybrid_sdk"])
+            self.assertEqual(root,Path(install.call_args.args[0]["directory"]))
+
+    def test_sdk_flag_rejected_for_unrelated_lifecycle_before_any_action(self):
+        for command in ("update","start","stop","status","_ready"):
+            with self.subTest(command=command),patch("sys.argv",["rootless-pki.sh",command,"--hybrid-sdk"]), \
+                 patch("sys.stderr"),patch.object(installer,"_preflight") as preflight:
+                with self.assertRaises(SystemExit) as error:installer._main()
+                self.assertEqual(2,error.exception.code);preflight.assert_not_called()
+
+
 class TLSIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -717,6 +743,53 @@ class ConfigurationCheck {
         document = json.loads((self.root / "config/profile-bootstrap.json").read_text())
         self.assertEqual([], document["publishers"])
         self.assertEqual([], document["bindingProviders"])
+
+    def test_existing_codec_rejects_small_sdk_public_body_and_accepts_exact_minimum(self):
+        libraries=installer.REPOSITORY/"pki-server/build/install/zeroecho-pki-server/lib"
+        self.assertTrue(libraries.is_dir(),"Existing server distribution is required for SDK configuration integration")
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            document=json.loads((self.root/"config/server.json").read_text())
+            public=json.loads((installer.REPOSITORY/"documentation/examples/configuration/pki-server-loopback-example.json").read_text())["publicListener"]
+            public["tlsProvider"]=document["listener"]["tlsProvider"]
+            document["publicListener"]=public
+            path=root/"configuration.json"
+            source=root/"SdkBudgetCodecCheck.java"
+            source.write_text('''import java.nio.file.Path;
+import zeroecho.pki.server.PkiServerConfigurationCodec;
+class SdkBudgetCodecCheck {
+ public static void main(String[] args) throws Exception {
+  PkiServerConfigurationCodec.read(Path.of(args[0]));
+ }
+}
+''')
+            def validate():
+                path.write_text(json.dumps(document))
+                return subprocess.run(["java","--class-path",str(libraries/"*"),
+                    str(source),str(path)],capture_output=True,text=True)
+            public["maximumBodyBytes"]=1024
+            baseline=validate();self.assertEqual(0,baseline.returncode,baseline.stderr)
+            public["hybridSdk"]={"canonicalOrigin":"https://localhost:19444"}
+            too_small=validate();self.assertNotEqual(0,too_small.returncode)
+            self.assertIn("SDK_BODY_BUDGET_TOO_SMALL",too_small.stderr)
+            public["maximumBodyBytes"]=16384
+            accepted=validate();self.assertEqual(0,accepted.returncode,accepted.stderr)
+
+    def test_regular_install_sdk_configuration_is_admin_only_and_preserves_public_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            baseline=root/"baseline";opted_in=root/"sdk"
+            for directory in (baseline,opted_in):
+                (directory/"config").mkdir(parents=True);(directory/"profiles").mkdir()
+            values=dict(self.values,hybrid_sdk=False)
+            installer._configuration(baseline,values,self.fingerprints)
+            baseline_public=json.loads((baseline/"config/server.json").read_text())["publicListener"]
+            values["hybrid_sdk"]=True
+            installer._configuration(opted_in,values,self.fingerprints)
+            document=json.loads((opted_in/"config/server.json").read_text())
+            self.assertEqual({"canonicalOrigin":"https://pki.example.test:8443"},document["listener"]["hybridSdk"])
+            self.assertNotIn("hybridSdk",document["publicListener"])
+            self.assertEqual(baseline_public,document["publicListener"])
 
     def test_tls_rejects_wrong_export_password(self):
         with self.assertRaises(RuntimeError):

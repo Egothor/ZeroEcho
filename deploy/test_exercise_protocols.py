@@ -219,4 +219,63 @@ class AcmeValidityBoundaryTests(unittest.TestCase):
         with self.assertRaises(ExerciseFailure):protocols._verify_acme_chain(exercise,self.other,certificate)
         self.assertIn('command=verify returnCode=',(self.root/'protocol-acme-openssl.log').read_text())
 
+class EstValidityBoundaryTests(unittest.TestCase):
+    """Delivered EST certificates become time-eligible before unchanged strict verification."""
+    def setUp(self):
+        import ssl
+        self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
+        self.root=Path(self.temporary.name)
+        (self.root/'protocol-0.csr').write_bytes(b'retained-csr')
+        self.start=ssl.cert_time_to_seconds('Nov 14 12:00:01 2026 GMT')
+        self.clock={'wall':self.start,'monotonic':0.0};self.pauses=[];self.verifications=[]
+        self.exercise=SimpleNamespace(directory=self.root,clock=lambda:self.clock['monotonic'],
+            sleep=self.pause,state={},save=lambda:None)
+        self.context={'protocolUrls':{'est':'https://localhost:18446'},'trustFile':'trust.pem',
+            'requesterCertificate':'requester.crt','requesterKey':'requester.key'}
+        self.raw_date=b'notBefore=Nov 14 12:00:01 2026 GMT\n'
+    def pause(self, delay):
+        self.pauses.append(delay);self.clock['wall']+=delay;self.clock['monotonic']+=delay
+    def openssl(self, arguments, **kwargs):
+        if arguments[0]=='pkcs7':return b'-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----'
+        if arguments[0]=='pkey' or '-pubkey' in arguments:return b'client-public-key'
+        if '-startdate' in arguments:return self.raw_date
+        if '-ext' in arguments:return b'DNS:protocol-0.example.invalid'
+        raise AssertionError('Unexpected OpenSSL operation')
+    def verify(self, exercise, protocol, arguments):
+        self.verifications.append((protocol,arguments,self.clock['wall']))
+        self.assertEqual('est',protocol)
+        self.assertEqual(['verify','-CAfile',self.root/'protocol-authority.pem',self.root/'protocol-est.pem'],arguments)
+        if self.clock['wall']<self.start:raise ExerciseFailure('certificate is not yet valid')
+        return b'OK'
+    def deliver(self):
+        with patch.object(protocols,'Api'),patch.object(protocols,'_raw',return_value=(200,{},base64.b64encode(b'pkcs7'))),\
+             patch.object(protocols,'_openssl',side_effect=self.openssl),\
+             patch.object(protocols,'_verified_openssl',side_effect=self.verify),\
+             patch.object(protocols.time,'time',side_effect=lambda:self.clock['wall']):
+            return protocols._est_delivery(self.exercise,{'endpointLabel':'owned'},self.context)
+    def test_eligible_est_certificate_verifies_without_wait(self):
+        result=self.deliver()
+        self.assertEqual([],self.pauses);self.assertEqual(1,len(self.verifications))
+        self.assertEqual('VERIFIED',result['state']);self.assertTrue(result['chainVerified'])
+    def test_est_waits_only_until_encoded_start_before_strict_verification(self):
+        self.clock['wall']=self.start-.25
+        result=self.deliver()
+        self.assertEqual('VERIFIED',result['state']);self.assertGreater(len(self.pauses),0)
+        self.assertLessEqual(sum(self.pauses),2.0);self.assertEqual(1,len(self.verifications))
+        self.assertGreaterEqual(self.verifications[0][2],self.start)
+    def test_malformed_est_start_fails_before_chain_verification(self):
+        self.raw_date=b'notBefore=malformed\n'
+        with self.assertRaisesRegex(ExerciseFailure,'EST.*malformed'):self.deliver()
+        self.assertEqual([],self.verifications);self.assertEqual([],self.pauses)
+    def test_excessively_future_est_start_fails_without_sleep_or_chain_verification(self):
+        self.clock['wall']=self.start-3
+        with self.assertRaisesRegex(ExerciseFailure,'EST.*exceeds'):self.deliver()
+        self.assertEqual([],self.verifications);self.assertEqual([],self.pauses)
+    def test_est_validity_wait_stops_at_monotonic_deadline_if_wall_clock_stalls(self):
+        self.clock['wall']=self.start-.25
+        def stalled_wall(delay):self.pauses.append(delay);self.clock['monotonic']+=delay
+        self.exercise.sleep=stalled_wall
+        with self.assertRaisesRegex(ExerciseFailure,'EST.*bounded wait'):self.deliver()
+        self.assertEqual([],self.verifications);self.assertLessEqual(sum(self.pauses),2.000001)
+
 if __name__=="__main__":unittest.main()

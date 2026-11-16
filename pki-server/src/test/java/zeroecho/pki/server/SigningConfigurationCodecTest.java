@@ -114,4 +114,38 @@ class SigningConfigurationCodecTest {
         return PkiServerConfigurationCodec.decode(example.replace("\"publishers\": []",
                 signing + "\"publishers\": []").getBytes(StandardCharsets.UTF_8));
     }
+
+    @Test
+    void startupPublisherResolutionPreservesConfiguredFirstAdministratorAndRealm() throws Exception {
+        assertStartupPublisherResolutionPreservesConfiguration(true);
+    }
+
+    @Test
+    void startupPublisherResolutionKeepsAbsentFirstAdministratorDisabled() throws Exception {
+        assertStartupPublisherResolutionPreservesConfiguration(false);
+    }
+
+    private static void assertStartupPublisherResolutionPreservesConfiguration(boolean configured) throws Exception {
+        String example = Files.readString(Path.of("..", "documentation", "examples", "configuration",
+                "pki-server-production-example.json"));
+        example = example.replace("\"publishers\": []", """
+                "publishers": [{"id":"filesystem","properties":{"root":"/tmp/startup-test-publication","targetId":"startup-test"}}]
+                """);
+        if (configured) {
+            example = example.replace("\"realmId\":", "\"initialAdministratorPrincipalId\":\"first-admin\",\"realmId\":");
+        }
+        PkiServerConfiguration input = PkiServerConfigurationCodec.decode(example.getBytes(StandardCharsets.UTF_8));
+        var resolve = PkiServerMain.class.getDeclaredMethod("resolvePublisherSecrets",
+                PkiServerConfiguration.class, char[].class);
+        // Exercise the production startup transformation without opening a server/session/store.
+        resolve.setAccessible(true);
+        PkiServerConfiguration result = (PkiServerConfiguration) resolve.invoke(null, input, null);
+        assertEquals(configured ? java.util.Optional.of("first-admin") : java.util.Optional.empty(),
+                result.realm().initialAdministratorPrincipalId());
+        assertEquals(input.realm().pkiSessionConfiguration().publishers(),
+                result.realm().pkiSessionConfiguration().publishers());
+        assertEquals(input.realm().approvalPolicies(), result.realm().approvalPolicies());
+        assertEquals(input.realm().pkiSessionConfiguration(), result.realm().pkiSessionConfiguration());
+        assertEquals(input, result, "Publisher resolution must preserve every unrelated startup configuration field");
+    }
 }

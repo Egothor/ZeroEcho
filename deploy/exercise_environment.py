@@ -147,13 +147,15 @@ def _publication_id(environment_id, name):
     return "exercise-" + environment_id + "-prepared-" + name
 
 
-def _provision(fixture, client, client_password):
+def _provision(fixture, client, client_password, *, hybrid_sdk=False):
     """Perform explicit one-time environment preparation, never qualification test recipes.
 
     Args:
         fixture: Newly created nonce-owned Podman deployment.
         client: Separate empty private client credential directory.
         client_password: Startup P12 password, distinct from server keyring custody.
+        hybrid_sdk: Explicit fresh qualification opt-in for administrative/public SDK origins
+            and the existing public SDK minimum 16384-byte request budget; false preserves defaults.
     Returns:
         Strict client connection metadata containing no server custody or control channel.
     Raises:
@@ -165,6 +167,10 @@ def _provision(fixture, client, client_password):
     fixture.bind(fixture.nonce)
     # The external directory must advertise the actual host-published origin, not its container listener port.
     fixture.configuration["acmeListener"]["externalBaseUri"] = fixture.protocol_urls["acme"]
+    if hybrid_sdk:
+        fixture.configuration["listener"]["hybridSdk"] = {"canonicalOrigin": fixture.admin_url}
+        fixture.configuration["publicListener"]["hybridSdk"] = {"canonicalOrigin": fixture.public_url}
+        fixture.configuration["publicListener"]["maximumBodyBytes"] = 16384
     _atomic_json(fixture.directory / "config/server.json", fixture.configuration)
     fixture.restart()
     preparation = Exercise(fixture.api, fixture.directory / "deployment-preparation")
@@ -245,7 +251,7 @@ def _failed_client_export(client, identity):
     print("Client preparation state retained: " + str(client), flush=True)
 
 
-def start(directory, *, client_directory=None, read_command=input, password_prompt=None):
+def start(directory, *, client_directory=None, read_command=input, password_prompt=None, hybrid_sdk=False):
     """Start the separate foreground Podman environment and own its lifecycle until stop.
 
     Args:
@@ -253,6 +259,7 @@ def start(directory, *, client_directory=None, read_command=input, password_prom
         client_directory: Optional new sibling directory for client-only credentials.
         read_command: Console input seam for status, restart and stop commands.
         password_prompt: Optional hidden startup P12 password prompt seam.
+        hybrid_sdk: Explicit fresh SDK qualification opt-in; false preserves native-only defaults.
     Returns:
         None after stop; the client exports remain available independently.
     Raises:
@@ -293,7 +300,10 @@ def start(directory, *, client_directory=None, read_command=input, password_prom
     ready = False
     try:
         with DisposableFixture(images, prepare=configure, directory=root, login_password=password) as fixture:
-            connection = _provision(fixture, client, password)
+            if hybrid_sdk:
+                connection = _provision(fixture, client, password, hybrid_sdk=True)
+            else:
+                connection = _provision(fixture, client, password)
             _atomic_json(client / "client-config.json", connection)
             ready = True
             print("READY " + str(client / "client-config.json"), flush=True)

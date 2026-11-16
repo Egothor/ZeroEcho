@@ -208,22 +208,33 @@ def _wire_acme_issue(exercise, client, values, context, account):
 
 
 
-def _wait_not_before(exercise, certificate):
+def _wait_not_before(exercise, certificate, protocol="ACME"):
+    """Observe certificate eligibility for at most two monotonic seconds before verification.
+
+    Args:
+        exercise: Client clock and condition-wait seams; no issuance is retried.
+        certificate: Retained public certificate whose actual notBefore is inspected.
+        protocol: Internal protocol label for safe validity diagnostics.
+    Returns:
+        None once the encoded validity start is reached; normal verification is still required.
+    Raises:
+        ExerciseFailure: Malformed, excessively future or still-ineligible validity, or tool failure.
+    """
     maximum_wait=2.0
     raw=_openssl(["x509","-in",certificate,"-noout","-startdate"]).decode("ascii").strip()
     try:
         if not raw.startswith("notBefore="):raise ValueError("Missing validity start")
         start=ssl.cert_time_to_seconds(raw[len("notBefore="):])
     except (ValueError,OverflowError) as failure:
-        raise ExerciseFailure("ACME certificate validity start is malformed") from failure
+        raise ExerciseFailure(protocol+" certificate validity start is malformed") from failure
     remaining=start-time.time()
     if remaining<=0:return
-    if remaining>maximum_wait:raise ExerciseFailure("ACME certificate validity start exceeds the bounded wait")
+    if remaining>maximum_wait:raise ExerciseFailure(protocol+" certificate validity start exceeds the bounded wait")
     deadline=exercise.clock()+maximum_wait
     # Issuance can round notBefore into the next second; eligibility, not a retry delay, controls this wait.
     while remaining>0:
         budget=deadline-exercise.clock()
-        if budget<=0:raise ExerciseFailure("ACME certificate did not become valid within the bounded wait")
+        if budget<=0:raise ExerciseFailure(protocol+" certificate did not become valid within the bounded wait")
         exercise.sleep(min(remaining,budget,0.05))
         remaining=start-time.time()
 
@@ -282,6 +293,7 @@ def _est_delivery(exercise, values, context):
     matching = [block for block in blocks if _openssl(["x509", "-pubkey", "-noout"], data=block) == public]
     if len(matching) != 1: raise ExerciseFailure("EST response did not match the retained client private key")
     certificate = exercise.directory / "protocol-est.pem"; certificate.write_bytes(matching[0]); certificate.chmod(0o600)
+    _wait_not_before(exercise,certificate,protocol="EST")
     _verified_openssl(exercise, "est", ["verify", "-CAfile", exercise.directory / "protocol-authority.pem", certificate])
     if b"DNS:protocol-0.example.invalid" not in _openssl(["x509", "-in", certificate, "-noout", "-ext", "subjectAltName"]): raise ExerciseFailure("EST certificate identifier differs")
     exercise.state.setdefault("protocolWireProofs", {})["est"] = {"state": "VERIFIED", "issuanceVerified": True, "keyMatchVerified": True, "chainVerified": True, "issuance": "approved, protected retrieval, matched retained private key and signed chain"}

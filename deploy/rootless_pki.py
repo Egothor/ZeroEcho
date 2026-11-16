@@ -790,10 +790,10 @@ def _main():
     parser.add_argument("--root-admin", action="store_true", help="With update, explicitly designate only the initial administrator for own-request approval")
     parser.add_argument("--certificate-access", action="store_true", help="With update, explicitly add certificate content/download access for the initial administrator pair")
     parser.add_argument("--status-access", action="store_true", help="With update, explicitly add status-object content download access for the initial administrator pair")
-    parser.add_argument("--hybrid-sdk", action="store_true", help="With fresh install, explicitly enable the existing administrative SDK at the external HTTPS origin")
+    parser.add_argument("--hybrid-sdk", action="store_true", help="With fresh install enable administrative SDK; with fresh test-start enable administrative and public OCSP SDK")
     args = parser.parse_args()
-    if args.hybrid_sdk and args.command != "install":
-        parser.error("--hybrid-sdk is only valid with a fresh install")
+    if args.hybrid_sdk and args.command not in ("install", "test-start"):
+        parser.error("--hybrid-sdk is only valid with a fresh install or test-start")
     if args.status_access and args.command != "update":
         parser.error("--status-access is only valid with update")
     if args.certificate_access and args.command != "update":
@@ -808,7 +808,10 @@ def _main():
         return
     if args.command == "test-start":
         from exercise_environment import start
-        start(args.directory)
+        if args.hybrid_sdk:
+            start(args.directory, hybrid_sdk=True)
+        else:
+            start(args.directory)
         return
     root = args.directory.expanduser().resolve()
     if root.stat().st_uid != os.geteuid() or root.stat().st_mode & 0o077:
